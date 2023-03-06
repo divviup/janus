@@ -5122,7 +5122,7 @@ mod tests {
     use futures::future::try_join_all;
     use janus_core::{
         hpke::{self, HpkeApplicationInfo, Label},
-        task::{VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
+        task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
         test_util::{
             dummy_vdaf::{self, AggregateShare, AggregationParam},
             install_test_trace_subscriber, run_vdaf,
@@ -6318,7 +6318,7 @@ mod tests {
                 tx.put_task(&task).await?;
                 for aggregation_job_id in aggregation_job_ids {
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Aes128Count,
                     >::new(
@@ -6335,7 +6335,7 @@ mod tests {
 
                 // Write an aggregation job that is finished. We don't want to retrieve this one.
                 tx.put_aggregation_job(&AggregationJob::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    PRIO3_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128Count,
                 >::new(
@@ -6359,7 +6359,7 @@ mod tests {
                 .build();
                 tx.put_task(&helper_task).await?;
                 tx.put_aggregation_job(&AggregationJob::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    PRIO3_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128Count,
                 >::new(
@@ -6583,7 +6583,7 @@ mod tests {
         let rslt = ds
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
+                    tx.get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                         &random(),
                         &random(),
                     )
@@ -6597,7 +6597,7 @@ mod tests {
         let rslt = ds
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.update_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
+                    tx.update_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                         &AggregationJob::new(
                             random(),
                             random(),
@@ -6705,12 +6705,12 @@ mod tests {
 
         let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
-        let verify_key: [u8; PRIO3_AES128_VERIFY_KEY_LENGTH] = random();
+        let verify_key: [u8; PRIO3_VERIFY_KEY_LENGTH] = random();
         let vdaf_transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), &report_id, &0);
         let prep_state = vdaf_transcript.prep_state(0, Role::Leader);
 
         for (ord, state) in [
-            ReportAggregationState::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::Start,
+            ReportAggregationState::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>::Start,
             ReportAggregationState::Waiting(prep_state.clone(), None),
             ReportAggregationState::Waiting(
                 prep_state.clone(),
@@ -6739,7 +6739,7 @@ mod tests {
                     Box::pin(async move {
                         tx.put_task(&task).await?;
                         tx.put_aggregation_job(&AggregationJob::<
-                            PRIO3_AES128_VERIFY_KEY_LENGTH,
+                            PRIO3_VERIFY_KEY_LENGTH,
                             TimeInterval,
                             Prio3Aes128Count,
                         >::new(
@@ -7012,7 +7012,7 @@ mod tests {
 
         let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
-        let verify_key: [u8; PRIO3_AES128_VERIFY_KEY_LENGTH] = random();
+        let verify_key: [u8; PRIO3_VERIFY_KEY_LENGTH] = random();
         let vdaf_transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), &report_id, &0);
 
         let task = TaskBuilder::new(
@@ -7035,7 +7035,7 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&task).await?;
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Aes128Count,
                     >::new(
@@ -7050,20 +7050,16 @@ mod tests {
                     .await?;
 
                     let mut report_aggregations = Vec::new();
-                    for (ord, state) in
-                        [
-                            ReportAggregationState::<
-                                PRIO3_AES128_VERIFY_KEY_LENGTH,
-                                Prio3Aes128Count,
-                            >::Start,
-                            ReportAggregationState::Waiting(prep_state.clone(), None),
-                            ReportAggregationState::Waiting(prep_state, Some(prep_msg)),
-                            ReportAggregationState::Finished(output_share),
-                            ReportAggregationState::Failed(ReportShareError::VdafPrepError),
-                            ReportAggregationState::Invalid,
-                        ]
-                        .iter()
-                        .enumerate()
+                    for (ord, state) in [
+                        ReportAggregationState::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>::Start,
+                        ReportAggregationState::Waiting(prep_state.clone(), None),
+                        ReportAggregationState::Waiting(prep_state, Some(prep_msg)),
+                        ReportAggregationState::Finished(output_share),
+                        ReportAggregationState::Failed(ReportShareError::VdafPrepError),
+                        ReportAggregationState::Invalid,
+                    ]
+                    .iter()
+                    .enumerate()
                     {
                         let report_id = ReportId::from((ord as u128).to_be_bytes());
                         tx.put_report_share(

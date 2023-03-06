@@ -836,7 +836,7 @@ mod tests {
             self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
         report_id::ReportIdChecksumExt,
-        task::{VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
+        task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
         test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
         time::{Clock, MockClock, TimeExt},
         Runtime,
@@ -893,7 +893,7 @@ mod tests {
             .to_batch_interval_start(task.time_precision())
             .unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
-        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+        let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
         let transcript = run_vdaf(
@@ -906,7 +906,7 @@ mod tests {
 
         let agg_auth_token = task.primary_aggregator_auth_token().clone();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+        let report = generate_report::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -924,7 +924,7 @@ mod tests {
                 tx.put_client_report(vdaf.borrow(), &report).await?;
 
                 tx.put_aggregation_job(&AggregationJob::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    PRIO3_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128Count,
                 >::new(
@@ -938,7 +938,7 @@ mod tests {
                 ))
                 .await?;
                 tx.put_report_aggregation(&ReportAggregation::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    PRIO3_VERIFY_KEY_LENGTH,
                     Prio3Aes128Count,
                 >::new(
                     *task.id(),
@@ -1039,7 +1039,7 @@ mod tests {
         }
 
         let want_aggregation_job =
-            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
+            AggregationJob::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 (),
@@ -1049,7 +1049,7 @@ mod tests {
                 AggregationJobState::Finished,
             );
         let want_report_aggregation =
-            ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
+            ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 *report.metadata().id(),
@@ -1064,7 +1064,7 @@ mod tests {
                     (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
+                        .get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -1116,7 +1116,7 @@ mod tests {
             .to_batch_interval_start(task.time_precision())
             .unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
-        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+        let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
         let transcript = run_vdaf(
@@ -1129,7 +1129,7 @@ mod tests {
 
         let agg_auth_token = task.primary_aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+        let report = generate_report::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -1137,18 +1137,17 @@ mod tests {
             Vec::new(),
             transcript.input_shares.clone(),
         );
-        let repeated_extension_report =
-            generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
-                *task.id(),
-                ReportMetadata::new(random(), time),
-                helper_hpke_keypair.config(),
-                (),
-                Vec::from([
-                    Extension::new(ExtensionType::Tbd, Vec::new()),
-                    Extension::new(ExtensionType::Tbd, Vec::new()),
-                ]),
-                transcript.input_shares.clone(),
-            );
+        let repeated_extension_report = generate_report::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+            *task.id(),
+            ReportMetadata::new(random(), time),
+            helper_hpke_keypair.config(),
+            (),
+            Vec::from([
+                Extension::new(ExtensionType::Tbd, Vec::new()),
+                Extension::new(ExtensionType::Tbd, Vec::new()),
+            ]),
+            transcript.input_shares.clone(),
+        );
         let aggregation_job_id = random();
 
         let lease = ds
@@ -1166,7 +1165,7 @@ mod tests {
                         .await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Aes128Count,
                     >::new(
@@ -1180,7 +1179,7 @@ mod tests {
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         Prio3Aes128Count,
                     >::new(
                         *task.id(),
@@ -1192,7 +1191,7 @@ mod tests {
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         Prio3Aes128Count,
                     >::new(
                         *task.id(),
@@ -1292,7 +1291,7 @@ mod tests {
         mocked_aggregate_success.assert_async().await;
 
         let want_aggregation_job =
-            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
+            AggregationJob::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 (),
@@ -1304,7 +1303,7 @@ mod tests {
         let leader_prep_state = transcript.prep_state(0, Role::Leader).clone();
         let prep_msg = transcript.prepare_messages[0].clone();
         let want_report_aggregation =
-            ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
+            ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 *report.metadata().id(),
@@ -1313,7 +1312,7 @@ mod tests {
                 ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
             );
         let want_repeated_extension_report_aggregation =
-            ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
+            ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 *repeated_extension_report.metadata().id(),
@@ -1328,7 +1327,7 @@ mod tests {
                     (Arc::clone(&vdaf), task.clone(), *report.metadata().id(), *repeated_extension_report.metadata().id());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
+                        .get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -1387,7 +1386,7 @@ mod tests {
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
         );
-        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+        let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
         let transcript = run_vdaf(
@@ -1400,7 +1399,7 @@ mod tests {
 
         let agg_auth_token = task.primary_aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+        let report = generate_report::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -1419,7 +1418,7 @@ mod tests {
                     tx.put_client_report(vdaf.borrow(), &report).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         FixedSize,
                         Prio3Aes128Count,
                     >::new(
@@ -1433,7 +1432,7 @@ mod tests {
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         Prio3Aes128Count,
                     >::new(
                         *task.id(),
@@ -1533,7 +1532,7 @@ mod tests {
         mocked_aggregate_success.assert_async().await;
 
         let want_aggregation_job =
-            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, FixedSize, Prio3Aes128Count>::new(
+            AggregationJob::<PRIO3_VERIFY_KEY_LENGTH, FixedSize, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 (),
@@ -1543,7 +1542,7 @@ mod tests {
                 AggregationJobState::InProgress,
             );
         let want_report_aggregation =
-            ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
+            ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 *report.metadata().id(),
@@ -1561,7 +1560,7 @@ mod tests {
                     (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, FixedSize, Prio3Aes128Count>(
+                        .get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, FixedSize, Prio3Aes128Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -1613,7 +1612,7 @@ mod tests {
             .to_batch_interval_start(task.time_precision())
             .unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
-        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+        let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
         let transcript = run_vdaf(
@@ -1626,7 +1625,7 @@ mod tests {
 
         let agg_auth_token = task.primary_aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+        let report = generate_report::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -1656,7 +1655,7 @@ mod tests {
                     tx.put_client_report(vdaf.borrow(), &report).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Aes128Count,
                     >::new(
@@ -1670,7 +1669,7 @@ mod tests {
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         Prio3Aes128Count,
                     >::new(
                         *task.id(),
@@ -1761,7 +1760,7 @@ mod tests {
         mocked_aggregate_success.assert_async().await;
 
         let want_aggregation_job =
-            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
+            AggregationJob::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 (),
@@ -1771,7 +1770,7 @@ mod tests {
                 AggregationJobState::Finished,
             );
         let want_report_aggregation =
-            ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
+            ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 *report.metadata().id(),
@@ -1785,7 +1784,7 @@ mod tests {
             .to_batch_interval_start(task.time_precision())
             .unwrap();
         let want_batch_aggregations = Vec::from([BatchAggregation::<
-            PRIO3_AES128_VERIFY_KEY_LENGTH,
+            PRIO3_VERIFY_KEY_LENGTH,
             TimeInterval,
             Prio3Aes128Count,
         >::new(
@@ -1803,7 +1802,7 @@ mod tests {
                 let (vdaf, task, report_metadata) = (Arc::clone(&vdaf), task.clone(), report.metadata().clone());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
+                        .get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -1819,7 +1818,7 @@ mod tests {
                         )
                         .await?
                         .unwrap();
-                    let batch_aggregations = TimeInterval::get_batch_aggregations_for_collect_identifier::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count, _>(
+                    let batch_aggregations = TimeInterval::get_batch_aggregations_for_collect_identifier::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count, _>(
                         tx,
                         &task,
                         &Interval::new(
@@ -1882,7 +1881,7 @@ mod tests {
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
         );
-        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+        let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
         let transcript = run_vdaf(
@@ -1895,7 +1894,7 @@ mod tests {
 
         let agg_auth_token = task.primary_aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+        let report = generate_report::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -1926,7 +1925,7 @@ mod tests {
                     tx.put_client_report(vdaf.borrow(), &report).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         FixedSize,
                         Prio3Aes128Count,
                     >::new(
@@ -1940,7 +1939,7 @@ mod tests {
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         Prio3Aes128Count,
                     >::new(
                         *task.id(),
@@ -2031,7 +2030,7 @@ mod tests {
         mocked_aggregate_success.assert_async().await;
 
         let want_aggregation_job =
-            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, FixedSize, Prio3Aes128Count>::new(
+            AggregationJob::<PRIO3_VERIFY_KEY_LENGTH, FixedSize, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 (),
@@ -2042,7 +2041,7 @@ mod tests {
             );
         let leader_output_share = transcript.output_share(Role::Leader);
         let want_report_aggregation =
-            ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
+            ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 *report.metadata().id(),
@@ -2051,7 +2050,7 @@ mod tests {
                 ReportAggregationState::Finished(leader_output_share.clone()),
             );
         let want_batch_aggregations = Vec::from([BatchAggregation::<
-            PRIO3_AES128_VERIFY_KEY_LENGTH,
+            PRIO3_VERIFY_KEY_LENGTH,
             FixedSize,
             Prio3Aes128Count,
         >::new(
@@ -2069,7 +2068,7 @@ mod tests {
                 let (vdaf, task, report_metadata) = (Arc::clone(&vdaf), task.clone(), report.metadata().clone());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, FixedSize, Prio3Aes128Count>(
+                        .get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, FixedSize, Prio3Aes128Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -2085,7 +2084,7 @@ mod tests {
                         )
                         .await?
                         .unwrap();
-                    let batch_aggregations = FixedSize::get_batch_aggregations_for_collect_identifier::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count, _>(
+                    let batch_aggregations = FixedSize::get_batch_aggregations_for_collect_identifier::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count, _>(
                         tx,
                         &task,
                         &batch_id,
@@ -2138,7 +2137,7 @@ mod tests {
             .to_batch_interval_start(task.time_precision())
             .unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
-        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+        let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
         let transcript = run_vdaf(
@@ -2150,7 +2149,7 @@ mod tests {
         );
 
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+        let report = generate_report::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -2161,7 +2160,7 @@ mod tests {
         let aggregation_job_id = random();
 
         let aggregation_job =
-            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
+            AggregationJob::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 (),
@@ -2171,7 +2170,7 @@ mod tests {
                 AggregationJobState::InProgress,
             );
         let report_aggregation =
-            ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
+            ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 *report.metadata().id(),
@@ -2227,7 +2226,7 @@ mod tests {
                     (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
+                        .get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -2324,7 +2323,7 @@ mod tests {
         .build();
         let agg_auth_token = task.primary_aggregator_auth_token();
         let aggregation_job_id = random();
-        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+        let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
@@ -2336,7 +2335,7 @@ mod tests {
             .unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
         let transcript = run_vdaf(&vdaf, verify_key.as_bytes(), &(), report_metadata.id(), &0);
-        let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+        let report = generate_report::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -2358,7 +2357,7 @@ mod tests {
                 tx.put_client_report(&vdaf, &report).await?;
 
                 tx.put_aggregation_job(&AggregationJob::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    PRIO3_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128Count,
                 >::new(
@@ -2373,7 +2372,7 @@ mod tests {
                 .await?;
 
                 tx.put_report_aggregation(&ReportAggregation::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    PRIO3_VERIFY_KEY_LENGTH,
                     Prio3Aes128Count,
                 >::new(
                     *task.id(),
@@ -2483,7 +2482,7 @@ mod tests {
             .run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
-                    tx.get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
+                    tx.get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                         task.id(),
                         &aggregation_job_id,
                     )
@@ -2495,7 +2494,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             aggregation_job_after,
-            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
+            AggregationJob::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 (),

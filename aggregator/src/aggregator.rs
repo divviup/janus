@@ -35,7 +35,7 @@ use janus_core::test_util::dummy_vdaf;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
     http::response_to_problem_details,
-    task::{AuthenticationToken, VdafInstance, DAP_AUTH_HEADER, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    task::{AuthenticationToken, VdafInstance, DAP_AUTH_HEADER, PRIO3_VERIFY_KEY_LENGTH},
     time::{Clock, DurationExt, IntervalExt, TimeExt},
 };
 use janus_messages::{
@@ -879,36 +879,30 @@ impl<C: Clock> TaskAggregator<C> {
 /// VdafOps stores VDAF-specific operations for a TaskAggregator in a non-generic way.
 #[allow(clippy::enum_variant_names)]
 enum VdafOps {
-    Prio3Aes128Count(
-        Arc<Prio3Aes128Count>,
-        VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH>,
-    ),
+    Prio3Aes128Count(Arc<Prio3Aes128Count>, VerifyKey<PRIO3_VERIFY_KEY_LENGTH>),
     Prio3Aes128CountVec(
         Arc<Prio3Aes128CountVecMultithreaded>,
-        VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH>,
+        VerifyKey<PRIO3_VERIFY_KEY_LENGTH>,
     ),
-    Prio3Aes128Sum(
-        Arc<Prio3Aes128Sum>,
-        VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH>,
-    ),
+    Prio3Aes128Sum(Arc<Prio3Aes128Sum>, VerifyKey<PRIO3_VERIFY_KEY_LENGTH>),
     Prio3Aes128Histogram(
         Arc<Prio3Aes128Histogram>,
-        VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH>,
+        VerifyKey<PRIO3_VERIFY_KEY_LENGTH>,
     ),
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3Aes128FixedPoint16BitBoundedL2VecSum(
         Arc<Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>>,
-        VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH>,
+        VerifyKey<PRIO3_VERIFY_KEY_LENGTH>,
     ),
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3Aes128FixedPoint32BitBoundedL2VecSum(
         Arc<Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>>,
-        VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH>,
+        VerifyKey<PRIO3_VERIFY_KEY_LENGTH>,
     ),
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3Aes128FixedPoint64BitBoundedL2VecSum(
         Arc<Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>>,
-        VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH>,
+        VerifyKey<PRIO3_VERIFY_KEY_LENGTH>,
     ),
 
     #[cfg(feature = "test-util")]
@@ -927,8 +921,7 @@ macro_rules! vdaf_ops_dispatch {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Count;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -936,8 +929,7 @@ macro_rules! vdaf_ops_dispatch {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128CountVecMultithreaded;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -945,8 +937,7 @@ macro_rules! vdaf_ops_dispatch {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Sum;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -954,8 +945,7 @@ macro_rules! vdaf_ops_dispatch {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Histogram;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -968,8 +958,7 @@ macro_rules! vdaf_ops_dispatch {
                 let $verify_key = verify_key;
                 type $Vdaf =
                     ::prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -982,8 +971,7 @@ macro_rules! vdaf_ops_dispatch {
                 let $verify_key = verify_key;
                 type $Vdaf =
                     ::prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -996,8 +984,7 @@ macro_rules! vdaf_ops_dispatch {
                 let $verify_key = verify_key;
                 type $Vdaf =
                     ::prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -3252,7 +3239,7 @@ mod tests {
             self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
         report_id::ReportIdChecksumExt,
-        task::{AuthenticationToken, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
+        task::{AuthenticationToken, VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
         test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf},
         time::{Clock, DurationExt, MockClock, RealClock, TimeExt},
     };
@@ -4146,7 +4133,7 @@ mod tests {
                 let task = task.clone();
                 Box::pin(async move {
                     tx.put_collection_job(&CollectionJob::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Aes128Count,
                     >::new(
@@ -5093,7 +5080,7 @@ mod tests {
         let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
-        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+        let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
         let hpke_key = task.current_hpke_key();
 
@@ -5204,7 +5191,7 @@ mod tests {
                     tx.put_report_share(task.id(), &report_share_2).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Aes128Count,
                     >::new(
@@ -5217,7 +5204,7 @@ mod tests {
                     ))
                     .await?;
 
-                    tx.put_report_aggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                    tx.put_report_aggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
                         &ReportAggregation::new(
                             *task.id(),
                             aggregation_job_id,
@@ -5228,7 +5215,7 @@ mod tests {
                         ),
                     )
                     .await?;
-                    tx.put_report_aggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                    tx.put_report_aggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
                         &ReportAggregation::new(
                             *task.id(),
                             aggregation_job_id,
@@ -5239,7 +5226,7 @@ mod tests {
                         ),
                     )
                     .await?;
-                    tx.put_report_aggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                    tx.put_report_aggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
                         &ReportAggregation::new(
                             *task.id(),
                             aggregation_job_id,
@@ -5251,7 +5238,7 @@ mod tests {
                     )
                     .await?;
 
-                    tx.put_aggregate_share_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
+                    tx.put_aggregate_share_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                         &AggregateShareJob::new(
                             *task.id(),
                             Interval::new(
@@ -5329,7 +5316,7 @@ mod tests {
                 let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
+                        .get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -5416,7 +5403,7 @@ mod tests {
         );
 
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+        let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
         let hpke_key = task.current_hpke_key();
 
@@ -5529,7 +5516,7 @@ mod tests {
                     tx.put_report_share(task.id(), &report_share_2).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Aes128Count,
                     >::new(
@@ -5544,7 +5531,7 @@ mod tests {
                     .await?;
 
                     tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         Prio3Aes128Count,
                     >::new(
                         *task.id(),
@@ -5556,7 +5543,7 @@ mod tests {
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         Prio3Aes128Count,
                     >::new(
                         *task.id(),
@@ -5568,7 +5555,7 @@ mod tests {
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         Prio3Aes128Count,
                     >::new(
                         *task.id(),
@@ -5640,7 +5627,7 @@ mod tests {
                 let (task, report_metadata_0) = (task.clone(), report_metadata_0.clone());
                 Box::pin(async move {
                     TimeInterval::get_batch_aggregations_for_collect_identifier::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         Prio3Aes128Count,
                         _,
                     >(
@@ -5664,7 +5651,7 @@ mod tests {
             .unwrap()
             .into_iter()
             .map(|agg| {
-                BatchAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
+                BatchAggregation::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                     *agg.task_id(),
                     *agg.batch_identifier(),
                     (),
@@ -5828,7 +5815,7 @@ mod tests {
                     tx.put_report_share(task.id(), &report_share_5).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Aes128Count,
                     >::new(
@@ -5843,7 +5830,7 @@ mod tests {
                     .await?;
 
                     tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         Prio3Aes128Count,
                     >::new(
                         *task.id(),
@@ -5855,7 +5842,7 @@ mod tests {
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         Prio3Aes128Count,
                     >::new(
                         *task.id(),
@@ -5867,7 +5854,7 @@ mod tests {
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         Prio3Aes128Count,
                     >::new(
                         *task.id(),
@@ -5939,7 +5926,7 @@ mod tests {
                 let (task, report_metadata_0) = (task.clone(), report_metadata_0.clone());
                 Box::pin(async move {
                     TimeInterval::get_batch_aggregations_for_collect_identifier::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        PRIO3_VERIFY_KEY_LENGTH,
                         Prio3Aes128Count,
                         _,
                     >(
@@ -5963,7 +5950,7 @@ mod tests {
             .unwrap()
             .into_iter()
             .map(|agg| {
-                BatchAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
+                BatchAggregation::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                     *agg.task_id(),
                     *agg.batch_identifier(),
                     (),
