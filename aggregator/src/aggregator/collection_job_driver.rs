@@ -71,24 +71,24 @@ impl CollectionJobDriver {
     ) -> Result<(), Error> {
         match lease.leased().query_type() {
             task::QueryType::TimeInterval => {
-                vdaf_dispatch!(lease.leased().vdaf(), (_, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
                     self.step_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
                         C,
                         TimeInterval,
                         VdafType
-                    >(datastore, lease)
+                    >(datastore, Arc::new(vdaf), lease)
                     .await
                 })
             }
             task::QueryType::FixedSize { .. } => {
-                vdaf_dispatch!(lease.leased().vdaf(), (_, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
                     self.step_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
                         C,
                         FixedSize,
                         VdafType
-                    >(datastore, lease)
+                    >(datastore, Arc::new(vdaf), lease)
                     .await
                 })
             }
@@ -100,25 +100,22 @@ impl CollectionJobDriver {
         const L: usize,
         C: Clock,
         Q: CollectableQueryType,
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16> + Send + Sync,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
+        vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredCollectionJob>>,
     ) -> Result<(), Error>
     where
         A: 'static,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: 'static + Send + Sync,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-        A::OutputShare: PartialEq + Eq + Send + Sync + for<'a> TryFrom<&'a [u8]>,
-        for<'a> &'a A::OutputShare: Into<Vec<u8>>,
+        A::OutputShare: PartialEq + Eq + Send + Sync,
     {
         let (task, collection_job, batch_aggregations) = datastore
             .run_tx_with_name("step_collection_job_1", |tx| {
-                let lease = Arc::clone(&lease);
+                let (vdaf, lease) = (Arc::clone(&vdaf), Arc::clone(&lease));
                 Box::pin(async move {
                     // TODO(#224): Consider fleshing out `AcquiredCollectionJob` to include a `Task`,
                     // `A::AggregationParam`, etc. so that we don't have to do more DB queries here.
@@ -132,7 +129,10 @@ impl CollectionJobDriver {
                         })?;
 
                     let collection_job = tx
-                        .get_collection_job::<L, Q, A>(lease.leased().collection_job_id())
+                        .get_collection_job::<L, Q, A>(
+                            vdaf.as_ref(),
+                            lease.leased().collection_job_id(),
+                        )
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -146,6 +146,7 @@ impl CollectionJobDriver {
                     let batch_aggregations = Q::get_batch_aggregations_for_collect_identifier(
                         tx,
                         &task,
+                        vdaf.as_ref(),
                         collection_job.batch_identifier(),
                         collection_job.aggregation_parameter(),
                     )
@@ -201,12 +202,12 @@ impl CollectionJobDriver {
         );
         datastore
             .run_tx_with_name("step_collection_job_2", |tx| {
-                let (lease, collection_job) = (Arc::clone(&lease), Arc::clone(&collection_job));
+                let (vdaf, lease, collection_job) = (Arc::clone(&vdaf), Arc::clone(&lease), Arc::clone(&collection_job));
                 let metrics = self.metrics.clone();
 
                 Box::pin(async move {
                     let maybe_updated_collection_job = tx
-                        .get_collection_job::<L, Q, A>(collection_job.collection_job_id())
+                        .get_collection_job::<L, Q, A>(vdaf.as_ref(), collection_job.collection_job_id())
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -260,18 +261,20 @@ impl CollectionJobDriver {
     ) -> Result<(), Error> {
         match lease.leased().query_type() {
             task::QueryType::TimeInterval => {
-                vdaf_dispatch!(lease.leased().vdaf(), (_, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
                     self.abandon_collection_job_generic::<VERIFY_KEY_LENGTH, C, TimeInterval, VdafType>(
                         datastore,
+                        Arc::new(vdaf),
                         lease,
                     )
                     .await
                 })
             }
             task::QueryType::FixedSize { .. } => {
-                vdaf_dispatch!(lease.leased().vdaf(), (_, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
                     self.abandon_collection_job_generic::<VERIFY_KEY_LENGTH, C, FixedSize, VdafType>(
                         datastore,
+                        Arc::new(vdaf),
                         lease,
                     )
                     .await
@@ -284,25 +287,24 @@ impl CollectionJobDriver {
         const L: usize,
         C: Clock,
         Q: QueryType,
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16> + Send + Sync + 'static,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
+        vdaf: Arc<A>,
         lease: Lease<AcquiredCollectionJob>,
     ) -> Result<(), Error>
     where
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
     {
         let lease = Arc::new(lease);
         datastore
             .run_tx_with_name("abandon_collection_job", |tx| {
-                let lease = Arc::clone(&lease);
+                let (vdaf, lease) = (Arc::clone(&vdaf), Arc::clone(&lease));
                 Box::pin(async move {
                     let collection_job = tx
-                        .get_collection_job::<L, Q, A>(lease.leased().collection_job_id())
+                        .get_collection_job::<L, Q, A>(&vdaf, lease.leased().collection_job_id())
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::DbState(format!(
@@ -807,7 +809,10 @@ mod tests {
         ds.run_tx(|tx| {
             Box::pin(async move {
                 let collection_job = tx
-                    .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&collection_job_id)
+                    .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &dummy_vdaf::Vdaf::new(),
+                        &collection_job_id,
+                    )
                     .await
                     .unwrap()
                     .unwrap();
@@ -854,7 +859,10 @@ mod tests {
             let helper_aggregate_share = helper_response.encrypted_aggregate_share().clone();
             Box::pin(async move {
                 let collection_job = tx
-                    .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&collection_job_id)
+                    .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &dummy_vdaf::Vdaf::new(),
+                        &collection_job_id,
+                    )
                     .await
                     .unwrap()
                     .unwrap();
@@ -906,6 +914,7 @@ mod tests {
                 Box::pin(async move {
                     let abandoned_collection_job = tx
                         .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &dummy_vdaf::Vdaf::new(),
                             collection_job.collection_job_id(),
                         )
                         .await?
@@ -1008,6 +1017,7 @@ mod tests {
                 let collection_job = collection_job.clone();
                 Box::pin(async move {
                     tx.get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &dummy_vdaf::Vdaf::new(),
                         collection_job.collection_job_id(),
                     )
                     .await
@@ -1082,6 +1092,7 @@ mod tests {
             Box::pin(async move {
                 let collection_job = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &dummy_vdaf::Vdaf::new(),
                         collection_job.collection_job_id(),
                     )
                     .await

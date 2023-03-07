@@ -167,13 +167,11 @@ pub trait ReportWriter<C: Clock>: Debug + Send + Sync {
 #[derive(Debug)]
 pub struct WritableReport<const L: usize, Q, A>
 where
-    A: vdaf::Aggregator<L> + Send + Sync + 'static,
+    A: vdaf::Aggregator<L, 16> + Send + Sync + 'static,
     A::InputShare: PartialEq + Send + Sync,
     A::PublicShare: PartialEq + Send + Sync,
     A::AggregationParam: Send + Sync,
     A::AggregateShare: Send + Sync,
-    for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
-    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     Q: UploadableQueryType,
 {
     vdaf: Arc<A>,
@@ -183,13 +181,11 @@ where
 
 impl<const L: usize, Q, A> WritableReport<L, Q, A>
 where
-    A: vdaf::Aggregator<L> + Send + Sync + 'static,
+    A: vdaf::Aggregator<L, 16> + Send + Sync + 'static,
     A::InputShare: PartialEq + Send + Sync,
     A::PublicShare: PartialEq + Send + Sync,
     A::AggregationParam: Send + Sync,
     A::AggregateShare: Send + Sync,
-    for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
-    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     Q: UploadableQueryType,
 {
     pub fn new(vdaf: Arc<A>, report: LeaderStoredReport<L, A>) -> Self {
@@ -204,18 +200,16 @@ where
 #[async_trait]
 impl<const L: usize, C, Q, A> ReportWriter<C> for WritableReport<L, Q, A>
 where
-    A: vdaf::Aggregator<L> + Send + Sync + 'static,
+    A: vdaf::Aggregator<L, 16> + Send + Sync + 'static,
     A::InputShare: PartialEq + Send + Sync,
     A::PublicShare: PartialEq + Send + Sync,
     A::AggregationParam: Send + Sync,
     A::AggregateShare: Send + Sync,
-    for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
-    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     C: Clock,
     Q: UploadableQueryType,
 {
     async fn write_report(&self, tx: &Transaction<C>) -> Result<(), datastore::Error> {
-        Q::validate_uploaded_report(tx, &self.report).await?;
+        Q::validate_uploaded_report(tx, self.vdaf.as_ref(), &self.report).await?;
 
         // Store the report.
         match tx.put_client_report::<L, A>(&self.vdaf, &self.report).await {

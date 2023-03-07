@@ -142,7 +142,7 @@ impl<'a> JanusPair<'a> {
     }
 }
 
-/// This test exercises Prio3Aes128Count with Janus as both the leader and the helper.
+/// This test exercises Prio3Count with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_janus_count() {
     install_test_trace_subscriber();
@@ -151,7 +151,7 @@ async fn janus_janus_count() {
     let container_client = container_client();
     let janus_pair = JanusPair::new(
         &container_client,
-        VdafInstance::Prio3Aes128Count,
+        VdafInstance::Prio3Count,
         QueryType::TimeInterval,
     )
     .await;
@@ -166,7 +166,7 @@ async fn janus_janus_count() {
     .await;
 }
 
-/// This test exercises Prio3Aes128Sum with Janus as both the leader and the helper.
+/// This test exercises Prio3Sum with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_janus_sum_16() {
     install_test_trace_subscriber();
@@ -175,7 +175,7 @@ async fn janus_janus_sum_16() {
     let container_client = container_client();
     let janus_pair = JanusPair::new(
         &container_client,
-        VdafInstance::Prio3Aes128Sum { bits: 16 },
+        VdafInstance::Prio3Sum { bits: 16 },
         QueryType::TimeInterval,
     )
     .await;
@@ -190,7 +190,7 @@ async fn janus_janus_sum_16() {
     .await;
 }
 
-/// This test exercises Prio3Aes128Histogram with Janus as both the leader and the helper.
+/// This test exercises Prio3Histogram with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_janus_histogram_4_buckets() {
     install_test_trace_subscriber();
@@ -201,7 +201,7 @@ async fn janus_janus_histogram_4_buckets() {
     let container_client = container_client();
     let janus_pair = JanusPair::new(
         &container_client,
-        VdafInstance::Prio3Aes128Histogram { buckets },
+        VdafInstance::Prio3Histogram { buckets },
         QueryType::TimeInterval,
     )
     .await;
@@ -216,7 +216,7 @@ async fn janus_janus_histogram_4_buckets() {
     .await;
 }
 
-/// This test exercises Prio3Aes128CountVec with Janus as both the leader and the helper.
+/// This test exercises Prio3CountVec with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_janus_count_vec_15() {
     install_test_trace_subscriber();
@@ -225,7 +225,7 @@ async fn janus_janus_count_vec_15() {
     let container_client = container_client();
     let janus_pair = JanusPair::new(
         &container_client,
-        VdafInstance::Prio3Aes128CountVec { length: 15 },
+        VdafInstance::Prio3CountVec { length: 15 },
         QueryType::TimeInterval,
     )
     .await;
@@ -249,7 +249,7 @@ async fn janus_janus_fixed_size() {
     let container_client = container_client();
     let janus_pair = JanusPair::new(
         &container_client,
-        VdafInstance::Prio3Aes128Count,
+        VdafInstance::Prio3Count,
         QueryType::FixedSize { max_batch_size: 50 },
     )
     .await;

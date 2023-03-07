@@ -11,14 +11,14 @@ use prio::vdaf::{self, Aggregatable};
 /// been driven to completion, and that the query count requirements have been validated for the
 /// included batches.
 #[tracing::instrument(skip(task), fields(task_id = ?task.id()), err)]
-pub(crate) async fn compute_aggregate_share<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+pub(crate) async fn compute_aggregate_share<
+    const L: usize,
+    Q: QueryType,
+    A: vdaf::Aggregator<L, 16>,
+>(
     task: &Task,
     batch_aggregations: &[BatchAggregation<L, Q, A>],
-) -> Result<(A::AggregateShare, u64, ReportIdChecksum), Error>
-where
-    Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-    for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-{
+) -> Result<(A::AggregateShare, u64, ReportIdChecksum), Error> {
     // At the moment we construct an aggregate share (either handling AggregateShareReq in the
     // helper or driving a collection job in the leader), there could be some incomplete aggregation
     // jobs whose results not been accumulated into the batch aggregations we just queried from the

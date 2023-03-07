@@ -9,7 +9,7 @@ use prio::{
     codec::Encode,
     vdaf::{
         self,
-        prio3::{Prio3Aes128Count, Prio3Aes128CountVec, Prio3Aes128Histogram, Prio3Aes128Sum},
+        prio3::{Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec},
     },
 };
 use rand::random;
@@ -20,32 +20,29 @@ use url::Url;
 
 /// Extension trait to encode measurements for VDAFs as JSON objects, according to
 /// draft-dcook-ppm-dap-interop-test-design.
-pub trait InteropClientEncoding: vdaf::Client
-where
-    for<'a> Vec<u8>: From<&'a Self::AggregateShare>,
-{
+pub trait InteropClientEncoding: vdaf::Client<16> {
     fn json_encode_measurement(&self, measurement: &Self::Measurement) -> Value;
 }
 
-impl InteropClientEncoding for Prio3Aes128Count {
+impl InteropClientEncoding for Prio3Count {
     fn json_encode_measurement(&self, measurement: &Self::Measurement) -> Value {
         Value::String(format!("{measurement}"))
     }
 }
 
-impl InteropClientEncoding for Prio3Aes128Sum {
+impl InteropClientEncoding for Prio3Sum {
     fn json_encode_measurement(&self, measurement: &Self::Measurement) -> Value {
         Value::String(format!("{measurement}"))
     }
 }
 
-impl InteropClientEncoding for Prio3Aes128Histogram {
+impl InteropClientEncoding for Prio3Histogram {
     fn json_encode_measurement(&self, measurement: &Self::Measurement) -> Value {
         Value::String(format!("{measurement}"))
     }
 }
 
-impl InteropClientEncoding for Prio3Aes128CountVec {
+impl InteropClientEncoding for Prio3SumVec {
     fn json_encode_measurement(&self, measurement: &Self::Measurement) -> Value {
         Value::Array(
             measurement
@@ -58,18 +55,18 @@ impl InteropClientEncoding for Prio3Aes128CountVec {
 
 fn json_encode_vdaf(vdaf: &VdafInstance) -> Value {
     match vdaf {
-        VdafInstance::Prio3Aes128Count => json!({
-            "type": "Prio3Aes128Count"
+        VdafInstance::Prio3Count => json!({
+            "type": "Prio3Count"
         }),
-        VdafInstance::Prio3Aes128CountVec { length } => json!({
-            "type": "Prio3Aes128CountVec",
+        VdafInstance::Prio3CountVec { length } => json!({
+            "type": "Prio3CountVec",
             "length": format!("{length}"),
         }),
-        VdafInstance::Prio3Aes128Sum { bits } => json!({
-            "type": "Prio3Aes128Sum",
+        VdafInstance::Prio3Sum { bits } => json!({
+            "type": "Prio3Sum",
             "bits": format!("{bits}"),
         }),
-        VdafInstance::Prio3Aes128Histogram { buckets } => {
+        VdafInstance::Prio3Histogram { buckets } => {
             let buckets = Value::Array(
                 buckets
                     .iter()
@@ -77,7 +74,7 @@ fn json_encode_vdaf(vdaf: &VdafInstance) -> Value {
                     .collect(),
             );
             json!({
-                "type": "Prio3Aes128Histogram",
+                "type": "Prio3Histogram",
                 "buckets": buckets,
             })
         }
@@ -157,8 +154,7 @@ impl<'a> ClientBackend<'a> {
         vdaf: V,
     ) -> anyhow::Result<ClientImplementation<'a, V>>
     where
-        V: vdaf::Client + InteropClientEncoding,
-        for<'b> Vec<u8>: From<&'b V::AggregateShare>,
+        V: vdaf::Client<16> + InteropClientEncoding,
     {
         match self {
             ClientBackend::InProcess => {
@@ -183,8 +179,7 @@ impl<'a> ClientBackend<'a> {
 
 pub struct ContainerClientImplementation<'d, V>
 where
-    V: vdaf::Client,
-    for<'a> Vec<u8>: From<&'a V::AggregateShare>,
+    V: vdaf::Client<16>,
 {
     _container: ContainerLogsDropGuard<'d, InteropClient>,
     leader: Url,
@@ -201,8 +196,7 @@ where
 /// [`ClientBackend`].
 pub enum ClientImplementation<'d, V>
 where
-    V: vdaf::Client,
-    for<'a> Vec<u8>: From<&'a V::AggregateShare>,
+    V: vdaf::Client<16>,
 {
     InProcess { client: Client<V, RealClock> },
     Container(Box<ContainerClientImplementation<'d, V>>),
@@ -210,8 +204,7 @@ where
 
 impl<'d, V> ClientImplementation<'d, V>
 where
-    V: vdaf::Client + InteropClientEncoding,
-    for<'a> Vec<u8>: From<&'a V::AggregateShare>,
+    V: vdaf::Client<16> + InteropClientEncoding,
 {
     pub async fn new_in_process(
         task: &Task,

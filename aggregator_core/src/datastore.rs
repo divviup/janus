@@ -868,10 +868,9 @@ impl<C: Clock> Transaction<'_, C> {
         report_id: &ReportId,
     ) -> Result<Option<LeaderStoredReport<L, A>>, Error>
     where
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16>,
         A::InputShare: PartialEq,
         A::PublicShare: PartialEq,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
             .prepare_cached(
@@ -923,7 +922,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     #[cfg(feature = "test-util")]
-    pub async fn get_client_reports_for_task<const L: usize, A: vdaf::Aggregator<L>>(
+    pub async fn get_client_reports_for_task<const L: usize, A: vdaf::Aggregator<L, 16>>(
         &self,
         vdaf: &A,
         task_id: &TaskId,
@@ -931,7 +930,6 @@ impl<C: Clock> Transaction<'_, C> {
     where
         A::InputShare: PartialEq,
         A::PublicShare: PartialEq,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
             .prepare_cached(
@@ -961,7 +959,7 @@ impl<C: Clock> Transaction<'_, C> {
             .collect()
     }
 
-    fn client_report_from_row<const L: usize, A: vdaf::Aggregator<L>>(
+    fn client_report_from_row<const L: usize, A: vdaf::Aggregator<L, 16>>(
         vdaf: &A,
         task_id: TaskId,
         report_id: ReportId,
@@ -970,7 +968,6 @@ impl<C: Clock> Transaction<'_, C> {
     where
         A::InputShare: PartialEq,
         A::PublicShare: PartialEq,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let time = Time::from_naive_date_time(&row.get("client_timestamp"));
 
@@ -979,7 +976,7 @@ impl<C: Clock> Transaction<'_, C> {
             decode_u16_items(&(), &mut Cursor::new(&encoded_extensions))?;
 
         let encoded_public_share: Vec<u8> = row.get("public_share");
-        let public_share = A::PublicShare::get_decoded_with_param(&vdaf, &encoded_public_share)?;
+        let public_share = A::PublicShare::get_decoded_with_param(vdaf, &encoded_public_share)?;
 
         let encoded_leader_input_share: Vec<u8> = row.get("leader_input_share");
         let leader_input_share = A::InputShare::get_decoded_with_param(
@@ -1059,8 +1056,7 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
     ) -> Result<Vec<(ReportId, Time, A::AggregationParam)>, Error>
     where
-        A: vdaf::Aggregator<L> + VdafHasAggregationParameter,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        A: vdaf::Aggregator<L, 16> + VdafHasAggregationParameter,
     {
         // TODO(#224): lock retrieved client_reports rows
         // TODO(#269): allow the number of returned results to be controlled?
@@ -1219,10 +1215,9 @@ impl<C: Clock> Transaction<'_, C> {
         new_report: &LeaderStoredReport<L, A>,
     ) -> Result<(), Error>
     where
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16>,
         A::InputShare: PartialEq,
         A::PublicShare: PartialEq,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let encoded_public_share = new_report.public_share().get_encoded();
         let encoded_leader_share = new_report.leader_input_share().get_encoded();
@@ -1249,8 +1244,8 @@ impl<C: Clock> Transaction<'_, C> {
             .execute(
                 &stmt,
                 &[
-                    /* task_id */ &new_report.task_id().get_encoded(),
-                    /* report_id */ &new_report.metadata().id().get_encoded(),
+                    /* task_id */ new_report.task_id().as_ref(),
+                    /* report_id */ new_report.metadata().id().as_ref(),
                     /* client_timestamp */
                     &new_report.metadata().time().as_naive_date_time()?,
                     /* extensions */ &encoded_extensions,
@@ -1354,14 +1349,11 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// get_aggregation_job retrieves an aggregation job by ID.
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_aggregation_job<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    pub async fn get_aggregation_job<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>>(
         &self,
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
-    ) -> Result<Option<AggregationJob<L, Q, A>>, Error>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<Option<AggregationJob<L, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
                 "SELECT aggregation_param, batch_id, client_timestamp_interval, state
@@ -1388,14 +1380,11 @@ impl<C: Clock> Transaction<'_, C> {
     pub async fn get_aggregation_jobs_for_task<
         const L: usize,
         Q: QueryType,
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16>,
     >(
         &self,
         task_id: &TaskId,
-    ) -> Result<Vec<AggregationJob<L, Q, A>>, Error>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<Vec<AggregationJob<L, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -1418,14 +1407,11 @@ impl<C: Clock> Transaction<'_, C> {
             .collect()
     }
 
-    fn aggregation_job_from_row<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    fn aggregation_job_from_row<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>>(
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
         row: &Row,
-    ) -> Result<AggregationJob<L, Q, A>, Error>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<AggregationJob<L, Q, A>, Error> {
         Ok(AggregationJob::new(
             *task_id,
             *aggregation_job_id,
@@ -1537,13 +1523,10 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// put_aggregation_job stores an aggregation job.
     #[tracing::instrument(skip(self), err)]
-    pub async fn put_aggregation_job<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    pub async fn put_aggregation_job<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>>(
         &self,
         aggregation_job: &AggregationJob<L, Q, A>,
-    ) -> Result<(), Error>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<(), Error> {
         let stmt = self
             .prepare_cached(
                 "INSERT INTO aggregation_jobs
@@ -1585,13 +1568,14 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// update_aggregation_job updates a stored aggregation job.
     #[tracing::instrument(skip(self), err)]
-    pub async fn update_aggregation_job<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    pub async fn update_aggregation_job<
+        const L: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<L, 16>,
+    >(
         &self,
         aggregation_job: &AggregationJob<L, Q, A>,
-    ) -> Result<(), Error>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<(), Error> {
         let stmt = self
             .prepare_cached(
                 "UPDATE aggregation_jobs SET
@@ -1625,8 +1609,7 @@ impl<C: Clock> Transaction<'_, C> {
         aggregation_job_id: &AggregationJobId,
     ) -> Result<bool, Error>
     where
-        A: vdaf::Aggregator<L>,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        A: vdaf::Aggregator<L, 16>,
     {
         let stmt = self.prepare_cached(
             "SELECT 1 FROM report_aggregations
@@ -1654,7 +1637,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// get_report_aggregation gets a report aggregation by ID.
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_report_aggregation<const L: usize, A: vdaf::Aggregator<L>>(
+    pub async fn get_report_aggregation<const L: usize, A: vdaf::Aggregator<L, 16>>(
         &self,
         vdaf: &A,
         role: &Role,
@@ -1664,17 +1647,17 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<Option<ReportAggregation<L, A>>, Error>
     where
         for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
-        A::OutputShare: for<'a> TryFrom<&'a [u8]>,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
             .prepare_cached(
                 "SELECT client_reports.report_id, client_reports.client_timestamp,
                 report_aggregations.ord, report_aggregations.state, report_aggregations.prep_state,
-                report_aggregations.prep_msg, report_aggregations.out_share, report_aggregations.error_code
+                report_aggregations.prep_msg, report_aggregations.out_share,
+                report_aggregations.error_code, aggregation_jobs.aggregation_param
                 FROM report_aggregations
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
-                WHERE report_aggregations.aggregation_job_id = (SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1)
+                JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                WHERE aggregation_jobs.aggregation_job_id = $1
                   AND client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $2)
                   AND client_reports.report_id = $3",
             )
@@ -1706,7 +1689,7 @@ impl<C: Clock> Transaction<'_, C> {
     #[tracing::instrument(skip(self), err)]
     pub async fn get_report_aggregations_for_aggregation_job<
         const L: usize,
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16>,
     >(
         &self,
         vdaf: &A,
@@ -1716,19 +1699,19 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<Vec<ReportAggregation<L, A>>, Error>
     where
         for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
-        A::OutputShare: for<'a> TryFrom<&'a [u8]>,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
             .prepare_cached(
                 "SELECT client_reports.report_id, client_reports.client_timestamp,
                 report_aggregations.ord, report_aggregations.state, report_aggregations.prep_state,
-                report_aggregations.prep_msg, report_aggregations.out_share, report_aggregations.error_code
+                report_aggregations.prep_msg, report_aggregations.out_share,
+                report_aggregations.error_code, aggregation_jobs.aggregation_param
                 FROM report_aggregations
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
-                WHERE report_aggregations.aggregation_job_id = (SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1)
+                JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                WHERE aggregation_jobs.aggregation_job_id = $1
                   AND client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $2)
-                ORDER BY report_aggregations.ord ASC"
+                ORDER BY report_aggregations.ord ASC",
             )
             .await?;
         self.query(
@@ -1756,7 +1739,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// get_report_aggregations_for_task retrieves all report aggregations associated with a given
     /// task.
     #[cfg(feature = "test-util")]
-    pub async fn get_report_aggregations_for_task<const L: usize, A: vdaf::Aggregator<L>>(
+    pub async fn get_report_aggregations_for_task<const L: usize, A: vdaf::Aggregator<L, 16>>(
         &self,
         vdaf: &A,
         role: &Role,
@@ -1764,8 +1747,6 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<Vec<ReportAggregation<L, A>>, Error>
     where
         for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
-        A::OutputShare: for<'a> TryFrom<&'a [u8]>,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
             .prepare_cached(
@@ -1774,7 +1755,7 @@ impl<C: Clock> Transaction<'_, C> {
                     client_reports.client_timestamp, report_aggregations.ord,
                     report_aggregations.state, report_aggregations.prep_state,
                     report_aggregations.prep_msg, report_aggregations.out_share,
-                    report_aggregations.error_code
+                    report_aggregations.error_code, aggregation_jobs.aggregation_param
                 FROM report_aggregations
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
@@ -1797,7 +1778,7 @@ impl<C: Clock> Transaction<'_, C> {
             .collect()
     }
 
-    fn report_aggregation_from_row<const L: usize, A: vdaf::Aggregator<L>>(
+    fn report_aggregation_from_row<const L: usize, A: vdaf::Aggregator<L, 16>>(
         vdaf: &A,
         role: &Role,
         task_id: &TaskId,
@@ -1807,8 +1788,6 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<ReportAggregation<L, A>, Error>
     where
         for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
-        A::OutputShare: for<'a> TryFrom<&'a [u8]>,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let time = Time::from_naive_date_time(&row.get("client_timestamp"));
         let ord: u64 = row.get_bigint_and_convert("ord")?;
@@ -1817,6 +1796,7 @@ impl<C: Clock> Transaction<'_, C> {
         let prep_msg_bytes: Option<Vec<u8>> = row.get("prep_msg");
         let out_share_bytes: Option<Vec<u8>> = row.get("out_share");
         let error_code: Option<i16> = row.get("error_code");
+        let aggregation_param_bytes = row.get("aggregation_param");
 
         let error_code = match error_code {
             Some(c) => {
@@ -1850,16 +1830,18 @@ impl<C: Clock> Transaction<'_, C> {
                     .transpose()?;
                 ReportAggregationState::Waiting(prep_state, prep_msg)
             }
-            ReportAggregationStateCode::Finished => ReportAggregationState::Finished(
-                A::OutputShare::try_from(&out_share_bytes.ok_or_else(|| {
-                    Error::DbState(
-                        "report aggregation in state FINISHED but out_share is NULL".to_string(),
-                    )
-                })?)
-                .map_err(|_| {
-                    Error::Decode(CodecError::Other("couldn't decode output share".into()))
-                })?,
-            ),
+            ReportAggregationStateCode::Finished => {
+                let aggregation_param = A::AggregationParam::get_decoded(aggregation_param_bytes)?;
+                ReportAggregationState::Finished(A::OutputShare::get_decoded_with_param(
+                    &(vdaf, &aggregation_param),
+                    &out_share_bytes.ok_or_else(|| {
+                        Error::DbState(
+                            "report aggregation in state FINISHED but out_share is NULL"
+                                .to_string(),
+                        )
+                    })?,
+                )?)
+            }
             ReportAggregationStateCode::Failed => {
                 ReportAggregationState::Failed(error_code.ok_or_else(|| {
                     Error::DbState(
@@ -1882,14 +1864,12 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// put_report_aggregation stores aggregation data for a single report.
     #[tracing::instrument(skip(self), err)]
-    pub async fn put_report_aggregation<const L: usize, A: vdaf::Aggregator<L>>(
+    pub async fn put_report_aggregation<const L: usize, A: vdaf::Aggregator<L, 16>>(
         &self,
         report_aggregation: &ReportAggregation<L, A>,
     ) -> Result<(), Error>
     where
         A::PrepareState: Encode,
-        for<'a> &'a A::OutputShare: Into<Vec<u8>>,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let encoded_state_values = report_aggregation.state().encoded_values_from_state();
 
@@ -1922,14 +1902,12 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     #[tracing::instrument(skip(self), err)]
-    pub async fn update_report_aggregation<const L: usize, A: vdaf::Aggregator<L>>(
+    pub async fn update_report_aggregation<const L: usize, A: vdaf::Aggregator<L, 16>>(
         &self,
         report_aggregation: &ReportAggregation<L, A>,
     ) -> Result<(), Error>
     where
         A::PrepareState: Encode,
-        for<'a> &'a A::OutputShare: Into<Vec<u8>>,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let encoded_state_values = report_aggregation.state().encoded_values_from_state();
 
@@ -1964,14 +1942,11 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Returns the collection job for the provided ID, or `None` if no such collection job exists.
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_collection_job<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    pub async fn get_collection_job<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>>(
         &self,
+        vdaf: &A,
         collection_job_id: &CollectionJobId,
-    ) -> Result<Option<CollectionJob<L, Q, A>>, Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<Option<CollectionJob<L, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -1992,22 +1967,25 @@ impl<C: Clock> Transaction<'_, C> {
                 let task_id = TaskId::get_decoded(row.get("task_id"))?;
                 let batch_identifier =
                     Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
-                Self::collection_job_from_row(task_id, batch_identifier, *collection_job_id, &row)
+                Self::collection_job_from_row(
+                    vdaf,
+                    task_id,
+                    batch_identifier,
+                    *collection_job_id,
+                    &row,
+                )
             })
             .transpose()
     }
 
     /// Returns all collection jobs for the given task which include the given timestamp. Applies only
     /// to time-interval tasks.
-    pub async fn get_collection_jobs_including_time<const L: usize, A: vdaf::Aggregator<L>>(
+    pub async fn get_collection_jobs_including_time<const L: usize, A: vdaf::Aggregator<L, 16>>(
         &self,
+        vdaf: &A,
         task_id: &TaskId,
         timestamp: &Time,
-    ) -> Result<Vec<CollectionJob<L, TimeInterval, A>>, Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<Vec<CollectionJob<L, TimeInterval, A>>, Error> {
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -2036,22 +2014,22 @@ impl<C: Clock> Transaction<'_, C> {
             let batch_identifier = Interval::get_decoded(row.get("batch_identifier"))?;
             let collection_job_id =
                 row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-            Self::collection_job_from_row(*task_id, batch_identifier, collection_job_id, &row)
+            Self::collection_job_from_row(vdaf, *task_id, batch_identifier, collection_job_id, &row)
         })
         .collect()
     }
 
     /// Returns all collection jobs for the given task whose collect intervals intersect with the given
     /// interval. Applies only to time-interval tasks.
-    pub async fn get_collection_jobs_intersecting_interval<const L: usize, A: vdaf::Aggregator<L>>(
+    pub async fn get_collection_jobs_intersecting_interval<
+        const L: usize,
+        A: vdaf::Aggregator<L, 16>,
+    >(
         &self,
+        vdaf: &A,
         task_id: &TaskId,
         batch_interval: &Interval,
-    ) -> Result<Vec<CollectionJob<L, TimeInterval, A>>, Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<Vec<CollectionJob<L, TimeInterval, A>>, Error> {
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -2081,6 +2059,7 @@ impl<C: Clock> Transaction<'_, C> {
             let collection_job_id =
                 row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
             Self::collection_job_from_row::<L, TimeInterval, A>(
+                vdaf,
                 *task_id,
                 batch_identifier,
                 collection_job_id,
@@ -2095,16 +2074,13 @@ impl<C: Clock> Transaction<'_, C> {
     pub async fn get_collection_jobs_by_batch_identifier<
         const L: usize,
         Q: QueryType,
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16>,
     >(
         &self,
+        vdaf: &A,
         task_id: &TaskId,
         batch_identifier: &Q::BatchIdentifier,
-    ) -> Result<Vec<CollectionJob<L, Q, A>>, Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<Vec<CollectionJob<L, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -2132,6 +2108,7 @@ impl<C: Clock> Transaction<'_, C> {
             let collection_job_id =
                 row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
             Self::collection_job_from_row(
+                vdaf,
                 *task_id,
                 batch_identifier.clone(),
                 collection_job_id,
@@ -2145,15 +2122,12 @@ impl<C: Clock> Transaction<'_, C> {
     pub async fn get_collection_jobs_for_task<
         const L: usize,
         Q: QueryType,
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16>,
     >(
         &self,
+        vdaf: &A,
         task_id: &TaskId,
-    ) -> Result<Vec<CollectionJob<L, Q, A>>, Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<Vec<CollectionJob<L, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -2176,21 +2150,24 @@ impl<C: Clock> Transaction<'_, C> {
                     row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
                 let batch_identifier =
                     Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
-                Self::collection_job_from_row(*task_id, batch_identifier, collection_job_id, &row)
+                Self::collection_job_from_row(
+                    vdaf,
+                    *task_id,
+                    batch_identifier,
+                    collection_job_id,
+                    &row,
+                )
             })
             .collect()
     }
 
-    fn collection_job_from_row<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    fn collection_job_from_row<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>>(
+        vdaf: &A,
         task_id: TaskId,
         batch_identifier: Q::BatchIdentifier,
         collection_job_id: CollectionJobId,
         row: &Row,
-    ) -> Result<CollectionJob<L, Q, A>, Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<CollectionJob<L, Q, A>, Error> {
         let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
         let state: CollectionJobStateCode = row.get("state");
         let report_count: Option<i64> = row.get("report_count");
@@ -2214,19 +2191,15 @@ impl<C: Clock> Transaction<'_, C> {
                         )
                     })?,
                 )?;
-                let leader_aggregate_share = A::AggregateShare::try_from(
+                let leader_aggregate_share = A::AggregateShare::get_decoded_with_param(
+                    &(vdaf, &aggregation_param),
                     &leader_aggregate_share_bytes.ok_or_else(|| {
                         Error::DbState(
                             "collection job is in state FINISHED but leader_aggregate_share is NULL"
                                 .to_string(),
                         )
                     })?,
-                )
-                .map_err(|err| {
-                    Error::DbState(format!(
-                        "leader_aggregate_share stored in database is invalid: {err:?}"
-                    ))
-                })?;
+                )?;
                 CollectionJobState::Finished {
                     report_count,
                     encrypted_helper_aggregate_share,
@@ -2253,14 +2226,13 @@ impl<C: Clock> Transaction<'_, C> {
     pub async fn put_collection_job<
         const L: usize,
         Q: CollectableQueryType,
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16>,
     >(
         &self,
         collection_job: &CollectionJob<L, Q, A>,
     ) -> Result<(), Error>
     where
-        A::AggregationParam: Encode + std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        A::AggregationParam: std::fmt::Debug,
     {
         let batch_interval =
             Q::to_batch_interval(collection_job.batch_identifier()).map(SqlInterval::from);
@@ -2481,14 +2453,10 @@ ORDER BY id DESC
 
     /// Updates an existing collection job.
     #[tracing::instrument(skip(self), err)]
-    pub async fn update_collection_job<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    pub async fn update_collection_job<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>>(
         &self,
         collection_job: &CollectionJob<L, Q, A>,
-    ) -> Result<(), Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<(), Error> {
         let (report_count, leader_aggregate_share, helper_aggregate_share) = match collection_job
             .state()
         {
@@ -2503,7 +2471,8 @@ ORDER BY id DESC
                 leader_aggregate_share,
             } => {
                 let report_count: Option<i64> = Some(i64::try_from(*report_count)?);
-                let leader_aggregate_share: Option<Vec<u8>> = Some(leader_aggregate_share.into());
+                let leader_aggregate_share: Option<Vec<u8>> =
+                    Some(leader_aggregate_share.get_encoded());
                 let helper_aggregate_share = Some(encrypted_helper_aggregate_share.get_encoded());
 
                 (report_count, leader_aggregate_share, helper_aggregate_share)
@@ -2538,17 +2507,14 @@ ORDER BY id DESC
     }
 
     /// Retrieves an existing batch aggregation.
-    pub async fn get_batch_aggregation<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    pub async fn get_batch_aggregation<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>>(
         &self,
+        vdaf: &A,
         task_id: &TaskId,
         batch_identifier: &Q::BatchIdentifier,
         aggregation_parameter: &A::AggregationParam,
         ord: u64,
-    ) -> Result<Option<BatchAggregation<L, Q, A>>, Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<Option<BatchAggregation<L, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
                 "SELECT aggregate_share, report_count, client_timestamp_interval, checksum
@@ -2573,6 +2539,7 @@ ORDER BY id DESC
         .await?
         .map(|row| {
             Self::batch_aggregation_from_row(
+                vdaf,
                 *task_id,
                 batch_identifier.clone(),
                 aggregation_parameter.clone(),
@@ -2588,17 +2555,14 @@ ORDER BY id DESC
     pub async fn get_batch_aggregations_for_batch<
         const L: usize,
         Q: QueryType,
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16>,
     >(
         &self,
+        vdaf: &A,
         task_id: &TaskId,
         batch_identifier: &Q::BatchIdentifier,
         aggregation_parameter: &A::AggregationParam,
-    ) -> Result<Vec<BatchAggregation<L, Q, A>>, Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<Vec<BatchAggregation<L, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
                 "SELECT ord, aggregate_share, report_count, client_timestamp_interval, checksum
@@ -2622,6 +2586,7 @@ ORDER BY id DESC
         .into_iter()
         .map(|row| {
             Self::batch_aggregation_from_row(
+                vdaf,
                 *task_id,
                 batch_identifier.clone(),
                 aggregation_parameter.clone(),
@@ -2636,15 +2601,12 @@ ORDER BY id DESC
     pub async fn get_batch_aggregations_for_task<
         const L: usize,
         Q: QueryType,
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16>,
     >(
         &self,
+        vdaf: &A,
         task_id: &TaskId,
-    ) -> Result<Vec<BatchAggregation<L, Q, A>>, Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<Vec<BatchAggregation<L, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -2666,6 +2628,7 @@ ORDER BY id DESC
                 let ord = row.get_bigint_and_convert("ord")?;
 
                 Self::batch_aggregation_from_row(
+                    vdaf,
                     *task_id,
                     batch_identifier,
                     aggregation_param,
@@ -2676,18 +2639,16 @@ ORDER BY id DESC
             .collect()
     }
 
-    fn batch_aggregation_from_row<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    fn batch_aggregation_from_row<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>>(
+        vdaf: &A,
         task_id: TaskId,
         batch_identifier: Q::BatchIdentifier,
         aggregation_parameter: A::AggregationParam,
         ord: u64,
         row: Row,
-    ) -> Result<BatchAggregation<L, Q, A>, Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
-        let aggregate_share = row.get_bytea_and_convert("aggregate_share")?;
+    ) -> Result<BatchAggregation<L, Q, A>, Error> {
+        let aggregate_share =
+            row.get_bytea_and_decode("aggregate_share", &(vdaf, &aggregation_parameter))?;
         let report_count = row.get_bigint_and_convert("report_count")?;
         let checksum = ReportIdChecksum::get_decoded(row.get("checksum"))?;
         let client_timestamp_interval = row
@@ -2710,15 +2671,14 @@ ORDER BY id DESC
     pub async fn put_batch_aggregation<
         const L: usize,
         Q: AccumulableQueryType,
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16>,
     >(
         &self,
         batch_aggregation: &BatchAggregation<L, Q, A>,
     ) -> Result<(), Error>
     where
-        A::AggregationParam: Encode + std::fmt::Debug,
+        A::AggregationParam: std::fmt::Debug,
         A::AggregateShare: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let batch_interval =
             Q::to_batch_interval(batch_aggregation.batch_identifier()).map(SqlInterval::from);
@@ -2743,7 +2703,7 @@ ORDER BY id DESC
                     /* aggregation_param */
                     &batch_aggregation.aggregation_parameter().get_encoded(),
                     /* ord */ &TryInto::<i64>::try_into(batch_aggregation.ord())?,
-                    /* aggregate_share */ &batch_aggregation.aggregate_share().into(),
+                    /* aggregate_share */ &batch_aggregation.aggregate_share().get_encoded(),
                     /* report_count */
                     &i64::try_from(batch_aggregation.report_count())?,
                     /* client_timestamp_interval */
@@ -2762,14 +2722,17 @@ ORDER BY id DESC
     /// Update an existing `batch_aggregations` row with the values from the provided batch
     /// aggregation.
     #[tracing::instrument(skip(self), err)]
-    pub async fn update_batch_aggregation<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    pub async fn update_batch_aggregation<
+        const L: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<L, 16>,
+    >(
         &self,
         batch_aggregation: &BatchAggregation<L, Q, A>,
     ) -> Result<(), Error>
     where
-        A::AggregationParam: Encode + std::fmt::Debug,
+        A::AggregationParam: std::fmt::Debug,
         A::AggregateShare: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
             .prepare_cached(
@@ -2791,7 +2754,7 @@ ORDER BY id DESC
                 &stmt,
                 &[
                     /* aggregate_share */
-                    &batch_aggregation.aggregate_share().into(),
+                    &batch_aggregation.aggregate_share().get_encoded(),
                     /* report_count */
                     &i64::try_from(batch_aggregation.report_count())?,
                     /* client_timestamp_interval */
@@ -2814,16 +2777,17 @@ ORDER BY id DESC
     /// Fetch an [`AggregateShareJob`] from the datastore corresponding to given parameters, or
     /// `None` if no such job exists.
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_aggregate_share_job<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    pub async fn get_aggregate_share_job<
+        const L: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<L, 16>,
+    >(
         &self,
+        vdaf: &A,
         task_id: &TaskId,
         batch_identifier: &Q::BatchIdentifier,
         aggregation_parameter: &A::AggregationParam,
-    ) -> Result<Option<AggregateShareJob<L, Q, A>>, Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<Option<AggregateShareJob<L, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
                 "SELECT helper_aggregate_share, report_count, checksum FROM aggregate_share_jobs
@@ -2844,6 +2808,7 @@ ORDER BY id DESC
         .await?
         .map(|row| {
             Self::aggregate_share_job_from_row(
+                vdaf,
                 task_id,
                 batch_identifier.clone(),
                 aggregation_parameter.clone(),
@@ -2855,15 +2820,15 @@ ORDER BY id DESC
 
     /// Returns all aggregate share jobs for the given task which include the given timestamp.
     /// Applies only to time-interval tasks.
-    pub async fn get_aggregate_share_jobs_including_time<const L: usize, A: vdaf::Aggregator<L>>(
+    pub async fn get_aggregate_share_jobs_including_time<
+        const L: usize,
+        A: vdaf::Aggregator<L, 16>,
+    >(
         &self,
+        vdaf: &A,
         task_id: &TaskId,
         timestamp: &Time,
-    ) -> Result<Vec<AggregateShareJob<L, TimeInterval, A>>, Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<Vec<AggregateShareJob<L, TimeInterval, A>>, Error> {
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -2889,7 +2854,13 @@ ORDER BY id DESC
         .map(|row| {
             let batch_identifier = Interval::get_decoded(row.get("batch_identifier"))?;
             let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
-            Self::aggregate_share_job_from_row(task_id, batch_identifier, aggregation_param, &row)
+            Self::aggregate_share_job_from_row(
+                vdaf,
+                task_id,
+                batch_identifier,
+                aggregation_param,
+                &row,
+            )
         })
         .collect()
     }
@@ -2898,16 +2869,13 @@ ORDER BY id DESC
     /// the given interval. Applies only to time-interval tasks.
     pub async fn get_aggregate_share_jobs_intersecting_interval<
         const L: usize,
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16>,
     >(
         &self,
+        vdaf: &A,
         task_id: &TaskId,
         interval: &Interval,
-    ) -> Result<Vec<AggregateShareJob<L, TimeInterval, A>>, Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<Vec<AggregateShareJob<L, TimeInterval, A>>, Error> {
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -2933,7 +2901,13 @@ ORDER BY id DESC
         .map(|row| {
             let batch_identifier = Interval::get_decoded(row.get("batch_identifier"))?;
             let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
-            Self::aggregate_share_job_from_row(task_id, batch_identifier, aggregation_param, &row)
+            Self::aggregate_share_job_from_row(
+                vdaf,
+                task_id,
+                batch_identifier,
+                aggregation_param,
+                &row,
+            )
         })
         .collect()
     }
@@ -2943,16 +2917,13 @@ ORDER BY id DESC
     pub async fn get_aggregate_share_jobs_by_batch_identifier<
         const L: usize,
         Q: QueryType,
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16>,
     >(
         &self,
+        vdaf: &A,
         task_id: &TaskId,
         batch_identifier: &Q::BatchIdentifier,
-    ) -> Result<Vec<AggregateShareJob<L, Q, A>>, Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<Vec<AggregateShareJob<L, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -2977,6 +2948,7 @@ ORDER BY id DESC
         .map(|row| {
             let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
             Self::aggregate_share_job_from_row(
+                vdaf,
                 task_id,
                 batch_identifier.clone(),
                 aggregation_param,
@@ -2990,15 +2962,12 @@ ORDER BY id DESC
     pub async fn get_aggregate_share_jobs_for_task<
         const L: usize,
         Q: QueryType,
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16>,
     >(
         &self,
+        vdaf: &A,
         task_id: &TaskId,
-    ) -> Result<Vec<AggregateShareJob<L, Q, A>>, Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<Vec<AggregateShareJob<L, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -3020,6 +2989,7 @@ ORDER BY id DESC
                 let aggregation_param =
                     A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
                 Self::aggregate_share_job_from_row(
+                    vdaf,
                     task_id,
                     batch_identifier,
                     aggregation_param,
@@ -3029,21 +2999,20 @@ ORDER BY id DESC
             .collect()
     }
 
-    fn aggregate_share_job_from_row<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    fn aggregate_share_job_from_row<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>>(
+        vdaf: &A,
         task_id: &TaskId,
         batch_identifier: Q::BatchIdentifier,
         aggregation_param: A::AggregationParam,
         row: &Row,
-    ) -> Result<AggregateShareJob<L, Q, A>, Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<AggregateShareJob<L, Q, A>, Error> {
+        let helper_aggregate_share =
+            row.get_bytea_and_decode("helper_aggregate_share", &(vdaf, &aggregation_param))?;
         Ok(AggregateShareJob::new(
             *task_id,
             batch_identifier,
             aggregation_param,
-            row.get_bytea_and_convert("helper_aggregate_share")?,
+            helper_aggregate_share,
             row.get_bigint_and_convert("report_count")?,
             ReportIdChecksum::get_decoded(row.get("checksum"))?,
         ))
@@ -3054,15 +3023,11 @@ ORDER BY id DESC
     pub async fn put_aggregate_share_job<
         const L: usize,
         Q: CollectableQueryType,
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16>,
     >(
         &self,
         job: &AggregateShareJob<L, Q, A>,
-    ) -> Result<(), Error>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-    {
+    ) -> Result<(), Error> {
         let batch_interval = Q::to_batch_interval(job.batch_identifier()).map(SqlInterval::from);
 
         let stmt = self
@@ -3081,7 +3046,7 @@ ORDER BY id DESC
                 /* batch_identifier */ &job.batch_identifier().get_encoded(),
                 /* batch_interval */ &batch_interval,
                 /* aggregation_param */ &job.aggregation_parameter().get_encoded(),
-                /* helper_aggregate_share */ &job.helper_aggregate_share().into(),
+                /* helper_aggregate_share */ &job.helper_aggregate_share().get_encoded(),
                 /* report_count */ &i64::try_from(job.report_count())?,
                 /* checksum */ &job.checksum().get_encoded(),
             ],
@@ -3500,6 +3465,15 @@ trait RowExt {
     where
         for<'a> T: TryFrom<&'a [u8]>,
         for<'a> <T as TryFrom<&'a [u8]>>::Error: std::fmt::Debug;
+
+    /// Get a PostgreSQL `BYTEA` from the row and attempt to decode a `T` value from it.
+    fn get_bytea_and_decode<T, P>(
+        &self,
+        idx: &'static str,
+        decoding_parameter: &P,
+    ) -> Result<T, Error>
+    where
+        T: ParameterizedDecode<P>;
 }
 
 impl RowExt for Row {
@@ -3544,6 +3518,19 @@ impl RowExt for Row {
     {
         let encoded: Vec<u8> = self.try_get(idx)?;
         T::try_from(&encoded)
+            .map_err(|err| Error::DbState(format!("{idx} stored in database is invalid: {err:?}")))
+    }
+
+    fn get_bytea_and_decode<T, P>(
+        &self,
+        idx: &'static str,
+        decoding_parameter: &P,
+    ) -> Result<T, Error>
+    where
+        T: ParameterizedDecode<P>,
+    {
+        let encoded: Vec<u8> = self.try_get(idx)?;
+        T::get_decoded_with_param(decoding_parameter, &encoded)
             .map_err(|err| Error::DbState(format!("{idx} stored in database is invalid: {err:?}")))
     }
 }
@@ -3744,8 +3731,7 @@ pub mod models {
     #[derivative(Debug)]
     pub struct LeaderStoredReport<const L: usize, A>
     where
-        A: vdaf::Aggregator<L>,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        A: vdaf::Aggregator<L, 16>,
     {
         task_id: TaskId,
         metadata: ReportMetadata,
@@ -3760,8 +3746,7 @@ pub mod models {
 
     impl<const L: usize, A> LeaderStoredReport<L, A>
     where
-        A: vdaf::Aggregator<L>,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        A: vdaf::Aggregator<L, 16>,
     {
         pub fn new(
             task_id: TaskId,
@@ -3808,10 +3793,9 @@ pub mod models {
 
     impl<const L: usize, A> PartialEq for LeaderStoredReport<L, A>
     where
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16>,
         A::InputShare: PartialEq,
         A::PublicShare: PartialEq,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         fn eq(&self, other: &Self) -> bool {
             self.task_id == other.task_id
@@ -3825,10 +3809,9 @@ pub mod models {
 
     impl<const L: usize, A> Eq for LeaderStoredReport<L, A>
     where
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16>,
         A::InputShare: Eq,
         A::PublicShare: PartialEq,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
     }
 
@@ -3888,10 +3871,7 @@ pub mod models {
     /// AggregationJob represents an aggregation job from the DAP specification.
     #[derive(Clone, Derivative)]
     #[derivative(Debug)]
-    pub struct AggregationJob<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    pub struct AggregationJob<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>> {
         /// The ID of the task this aggregation job belongs to.
         task_id: TaskId,
         /// The ID of this aggregation job.
@@ -3908,10 +3888,7 @@ pub mod models {
         state: AggregationJobState,
     }
 
-    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> AggregationJob<L, Q, A>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>> AggregationJob<L, Q, A> {
         /// Creates a new [`AggregationJob`].
         pub fn new(
             task_id: TaskId,
@@ -3972,20 +3949,16 @@ pub mod models {
         }
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> AggregationJob<L, FixedSize, A>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    impl<const L: usize, A: vdaf::Aggregator<L, 16>> AggregationJob<L, FixedSize, A> {
         /// Gets the batch ID associated with this aggregation job.
         pub fn batch_id(&self) -> &BatchId {
             self.partial_batch_identifier()
         }
     }
 
-    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> PartialEq for AggregationJob<L, Q, A>
+    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>> PartialEq for AggregationJob<L, Q, A>
     where
         A::AggregationParam: PartialEq,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         fn eq(&self, other: &Self) -> bool {
             self.task_id == other.task_id
@@ -3997,10 +3970,8 @@ pub mod models {
         }
     }
 
-    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> Eq for AggregationJob<L, Q, A>
-    where
-        A::AggregationParam: Eq,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>> Eq for AggregationJob<L, Q, A> where
+        A::AggregationParam: Eq
     {
     }
 
@@ -4220,10 +4191,7 @@ pub mod models {
 
     /// ReportAggregation represents a the state of a single client report's ongoing aggregation.
     #[derive(Clone, Debug)]
-    pub struct ReportAggregation<const L: usize, A: vdaf::Aggregator<L>>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    pub struct ReportAggregation<const L: usize, A: vdaf::Aggregator<L, 16>> {
         task_id: TaskId,
         aggregation_job_id: AggregationJobId,
         report_id: ReportId,
@@ -4232,10 +4200,7 @@ pub mod models {
         state: ReportAggregationState<L, A>,
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> ReportAggregation<L, A>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    impl<const L: usize, A: vdaf::Aggregator<L, 16>> ReportAggregation<L, A> {
         /// Creates a new [`ReportAggregation`].
         pub fn new(
             task_id: TaskId,
@@ -4297,12 +4262,11 @@ pub mod models {
         }
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> PartialEq for ReportAggregation<L, A>
+    impl<const L: usize, A: vdaf::Aggregator<L, 16>> PartialEq for ReportAggregation<L, A>
     where
         A::PrepareState: PartialEq,
         A::PrepareMessage: PartialEq,
         A::OutputShare: PartialEq,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         fn eq(&self, other: &Self) -> bool {
             self.task_id == other.task_id
@@ -4314,12 +4278,11 @@ pub mod models {
         }
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> Eq for ReportAggregation<L, A>
+    impl<const L: usize, A: vdaf::Aggregator<L, 16>> Eq for ReportAggregation<L, A>
     where
         A::PrepareState: Eq,
         A::PrepareMessage: Eq,
         A::OutputShare: Eq,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
     }
 
@@ -4327,10 +4290,7 @@ pub mod models {
     /// to the REPORT_AGGREGATION_STATE enum in the schema, along with the state-specific data.
     #[derive(Clone, Derivative)]
     #[derivative(Debug)]
-    pub enum ReportAggregationState<const L: usize, A: vdaf::Aggregator<L>>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    pub enum ReportAggregationState<const L: usize, A: vdaf::Aggregator<L, 16>> {
         Start,
         Waiting(
             #[derivative(Debug = "ignore")] A::PrepareState,
@@ -4341,10 +4301,7 @@ pub mod models {
         Invalid,
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> ReportAggregationState<L, A>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    impl<const L: usize, A: vdaf::Aggregator<L, 16>> ReportAggregationState<L, A> {
         pub fn state_code(&self) -> ReportAggregationStateCode {
             match self {
                 ReportAggregationState::Start => ReportAggregationStateCode::Start,
@@ -4361,8 +4318,6 @@ pub mod models {
         pub(super) fn encoded_values_from_state(&self) -> EncodedReportAggregationStateValues
         where
             A::PrepareState: Encode,
-            for<'a> &'a A::OutputShare: Into<Vec<u8>>,
-            for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         {
             let (prep_state, prep_msg, output_share, report_share_err) = match self {
                 ReportAggregationState::Start => (None, None, None, None),
@@ -4373,7 +4328,7 @@ pub mod models {
                     None,
                 ),
                 ReportAggregationState::Finished(output_share) => {
-                    (None, None, Some(output_share.into()), None)
+                    (None, None, Some(output_share.get_encoded()), None)
                 }
                 ReportAggregationState::Failed(report_share_err) => {
                     (None, None, None, Some(*report_share_err as i16))
@@ -4415,12 +4370,11 @@ pub mod models {
         Invalid,
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> PartialEq for ReportAggregationState<L, A>
+    impl<const L: usize, A: vdaf::Aggregator<L, 16>> PartialEq for ReportAggregationState<L, A>
     where
         A::PrepareState: PartialEq,
         A::PrepareMessage: PartialEq,
         A::OutputShare: PartialEq,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         fn eq(&self, other: &Self) -> bool {
             match (self, other) {
@@ -4439,12 +4393,11 @@ pub mod models {
         }
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> Eq for ReportAggregationState<L, A>
+    impl<const L: usize, A: vdaf::Aggregator<L, 16>> Eq for ReportAggregationState<L, A>
     where
         A::PrepareState: Eq,
         A::PrepareMessage: Eq,
         A::OutputShare: Eq,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
     }
 
@@ -4455,10 +4408,7 @@ pub mod models {
     /// request consists of one or more `BatchAggregation`s merged together.
     #[derive(Clone, Derivative)]
     #[derivative(Debug)]
-    pub struct BatchAggregation<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    pub struct BatchAggregation<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>> {
         /// The task ID for this aggregation result.
         task_id: TaskId,
         /// The identifier of the batch being aggregated over.
@@ -4483,10 +4433,7 @@ pub mod models {
         checksum: ReportIdChecksum,
     }
 
-    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> BatchAggregation<L, Q, A>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>> BatchAggregation<L, Q, A> {
         /// Creates a new [`BatchAggregation`].
         #[allow(clippy::too_many_arguments)]
         pub fn new(
@@ -4578,31 +4525,25 @@ pub mod models {
         }
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> BatchAggregation<L, TimeInterval, A>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    impl<const L: usize, A: vdaf::Aggregator<L, 16>> BatchAggregation<L, TimeInterval, A> {
         /// Gets the batch interval associated with this batch aggregation.
         pub fn batch_interval(&self) -> &Interval {
             self.batch_identifier()
         }
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> BatchAggregation<L, FixedSize, A>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    impl<const L: usize, A: vdaf::Aggregator<L, 16>> BatchAggregation<L, FixedSize, A> {
         /// Gets the batch ID associated with this batch aggregation.
         pub fn batch_id(&self) -> &BatchId {
             self.batch_identifier()
         }
     }
 
-    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> PartialEq for BatchAggregation<L, Q, A>
+    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>> PartialEq
+        for BatchAggregation<L, Q, A>
     where
         A::AggregationParam: PartialEq,
         A::AggregateShare: PartialEq,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         fn eq(&self, other: &Self) -> bool {
             self.task_id == other.task_id
@@ -4615,11 +4556,10 @@ pub mod models {
         }
     }
 
-    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> Eq for BatchAggregation<L, Q, A>
+    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>> Eq for BatchAggregation<L, Q, A>
     where
         A::AggregationParam: Eq,
         A::AggregateShare: Eq,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
     }
 
@@ -4627,10 +4567,7 @@ pub mod models {
     /// running collection jobs and store the results of completed ones.
     #[derive(Clone, Derivative)]
     #[derivative(Debug)]
-    pub struct CollectionJob<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    pub struct CollectionJob<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>> {
         /// The task ID for this collection job.
         task_id: TaskId,
         /// The unique identifier for the collection job.
@@ -4644,10 +4581,7 @@ pub mod models {
         state: CollectionJobState<L, A>,
     }
 
-    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> CollectionJob<L, Q, A>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>> CollectionJob<L, Q, A> {
         /// Creates a new [`CollectionJob`].
         pub fn new(
             task_id: TaskId,
@@ -4701,29 +4635,22 @@ pub mod models {
         }
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> CollectionJob<L, TimeInterval, A>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    impl<const L: usize, A: vdaf::Aggregator<L, 16>> CollectionJob<L, TimeInterval, A> {
         /// Gets the batch interval associated with this collection job.
         pub fn batch_interval(&self) -> &Interval {
             self.batch_identifier()
         }
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> CollectionJob<L, FixedSize, A>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    impl<const L: usize, A: vdaf::Aggregator<L, 16>> CollectionJob<L, FixedSize, A> {
         /// Gets the batch ID associated with this collection job.
         pub fn batch_id(&self) -> &BatchId {
             self.batch_identifier()
         }
     }
 
-    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> PartialEq for CollectionJob<L, Q, A>
+    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>> PartialEq for CollectionJob<L, Q, A>
     where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::AggregationParam: PartialEq,
         CollectionJobState<L, A>: PartialEq,
     {
@@ -4736,9 +4663,8 @@ pub mod models {
         }
     }
 
-    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> Eq for CollectionJob<L, Q, A>
+    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>> Eq for CollectionJob<L, Q, A>
     where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::AggregationParam: Eq,
         CollectionJobState<L, A>: Eq,
     {
@@ -4746,10 +4672,7 @@ pub mod models {
 
     #[derive(Clone, Derivative)]
     #[derivative(Debug)]
-    pub enum CollectionJobState<const L: usize, A: vdaf::Aggregator<L>>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    pub enum CollectionJobState<const L: usize, A: vdaf::Aggregator<L, 16>> {
         Start,
         Finished {
             /// The number of reports included in this collection job.
@@ -4766,8 +4689,7 @@ pub mod models {
 
     impl<const L: usize, A> CollectionJobState<L, A>
     where
-        A: vdaf::Aggregator<L>,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        A: vdaf::Aggregator<L, 16>,
     {
         pub fn collection_job_state_code(&self) -> CollectionJobStateCode {
             match self {
@@ -4781,8 +4703,7 @@ pub mod models {
 
     impl<const L: usize, A> Display for CollectionJobState<L, A>
     where
-        A: vdaf::Aggregator<L>,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        A: vdaf::Aggregator<L, 16>,
     {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             write!(
@@ -4798,9 +4719,8 @@ pub mod models {
         }
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> PartialEq for CollectionJobState<L, A>
+    impl<const L: usize, A: vdaf::Aggregator<L, 16>> PartialEq for CollectionJobState<L, A>
     where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::AggregateShare: PartialEq,
     {
         fn eq(&self, other: &Self) -> bool {
@@ -4826,10 +4746,8 @@ pub mod models {
         }
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> Eq for CollectionJobState<L, A>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-        A::AggregateShare: Eq,
+    impl<const L: usize, A: vdaf::Aggregator<L, 16>> Eq for CollectionJobState<L, A> where
+        A::AggregateShare: Eq
     {
     }
 
@@ -4851,10 +4769,7 @@ pub mod models {
 
     #[derive(Clone, Derivative)]
     #[derivative(Debug)]
-    pub struct AggregateShareJob<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    pub struct AggregateShareJob<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>> {
         /// The task ID for this aggregate share.
         task_id: TaskId,
         /// The batch identifier for the batch covered by the aggregate share.
@@ -4872,10 +4787,7 @@ pub mod models {
         checksum: ReportIdChecksum,
     }
 
-    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> AggregateShareJob<L, Q, A>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>> AggregateShareJob<L, Q, A> {
         /// Creates a new [`AggregateShareJob`].
         pub fn new(
             task_id: TaskId,
@@ -4926,31 +4838,25 @@ pub mod models {
         }
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> AggregateShareJob<L, TimeInterval, A>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    impl<const L: usize, A: vdaf::Aggregator<L, 16>> AggregateShareJob<L, TimeInterval, A> {
         /// Gets the batch interval associated with this aggregate share job.
         pub fn batch_interval(&self) -> &Interval {
             self.batch_identifier()
         }
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> AggregateShareJob<L, FixedSize, A>
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    impl<const L: usize, A: vdaf::Aggregator<L, 16>> AggregateShareJob<L, FixedSize, A> {
         /// Gets the batch ID associated with this aggregate share job.
         pub fn batch_id(&self) -> &BatchId {
             self.batch_identifier()
         }
     }
 
-    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> PartialEq for AggregateShareJob<L, Q, A>
+    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>> PartialEq
+        for AggregateShareJob<L, Q, A>
     where
         A::AggregationParam: PartialEq,
         A::AggregateShare: PartialEq,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         fn eq(&self, other: &Self) -> bool {
             self.task_id == other.task_id
@@ -4962,11 +4868,10 @@ pub mod models {
         }
     }
 
-    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> Eq for AggregateShareJob<L, Q, A>
+    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>> Eq for AggregateShareJob<L, Q, A>
     where
         A::AggregationParam: Eq,
         A::AggregateShare: Eq,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
     }
 
@@ -5172,7 +5077,7 @@ mod tests {
     };
     use prio::{
         codec::{Decode, Encode},
-        vdaf::prio3::{Prio3, Prio3Aes128Count},
+        vdaf::prio3::{Prio3, Prio3Count},
     };
     use rand::{distributions::Standard, random, thread_rng, Rng};
     use std::{
@@ -5192,25 +5097,19 @@ mod tests {
         // Insert tasks, check that they can be retrieved by ID.
         let mut want_tasks = HashMap::new();
         for (vdaf, role) in [
-            (VdafInstance::Prio3Aes128Count, Role::Leader),
+            (VdafInstance::Prio3Count, Role::Leader),
+            (VdafInstance::Prio3CountVec { length: 8 }, Role::Leader),
+            (VdafInstance::Prio3CountVec { length: 64 }, Role::Helper),
+            (VdafInstance::Prio3Sum { bits: 64 }, Role::Helper),
+            (VdafInstance::Prio3Sum { bits: 32 }, Role::Helper),
             (
-                VdafInstance::Prio3Aes128CountVec { length: 8 },
-                Role::Leader,
-            ),
-            (
-                VdafInstance::Prio3Aes128CountVec { length: 64 },
-                Role::Helper,
-            ),
-            (VdafInstance::Prio3Aes128Sum { bits: 64 }, Role::Helper),
-            (VdafInstance::Prio3Aes128Sum { bits: 32 }, Role::Helper),
-            (
-                VdafInstance::Prio3Aes128Histogram {
+                VdafInstance::Prio3Histogram {
                     buckets: Vec::from([0, 100, 200, 400]),
                 },
                 Role::Leader,
             ),
             (
-                VdafInstance::Prio3Aes128Histogram {
+                VdafInstance::Prio3Histogram {
                     buckets: Vec::from([0, 25, 50, 75, 100]),
                 },
                 Role::Leader,
@@ -5440,13 +5339,13 @@ mod tests {
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count,
+            VdafInstance::Prio3Count,
             Role::Leader,
         )
         .build();
         let unrelated_task = TaskBuilder::new(
             task::QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count,
+            VdafInstance::Prio3Count,
             Role::Leader,
         )
         .build();
@@ -6095,7 +5994,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count,
+            VdafInstance::Prio3Count,
             Role::Leader,
         )
         .build();
@@ -6335,7 +6234,7 @@ mod tests {
         const AGGREGATION_JOB_COUNT: usize = 10;
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count,
+            VdafInstance::Prio3Count,
             Role::Leader,
         )
         .build();
@@ -6355,7 +6254,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Prio3Aes128Count,
+                        Prio3Count,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
@@ -6372,7 +6271,7 @@ mod tests {
                 tx.put_aggregation_job(&AggregationJob::<
                     PRIO3_VERIFY_KEY_LENGTH,
                     TimeInterval,
-                    Prio3Aes128Count,
+                    Prio3Count,
                 >::new(
                     *task.id(),
                     random(),
@@ -6388,7 +6287,7 @@ mod tests {
                 // We don't want to retrieve this one, either.
                 let helper_task = TaskBuilder::new(
                     task::QueryType::TimeInterval,
-                    VdafInstance::Prio3Aes128Count,
+                    VdafInstance::Prio3Count,
                     Role::Helper,
                 )
                 .build();
@@ -6396,7 +6295,7 @@ mod tests {
                 tx.put_aggregation_job(&AggregationJob::<
                     PRIO3_VERIFY_KEY_LENGTH,
                     TimeInterval,
-                    Prio3Aes128Count,
+                    Prio3Count,
                 >::new(
                     *helper_task.id(),
                     random(),
@@ -6457,7 +6356,7 @@ mod tests {
                         *task.id(),
                         agg_job_id,
                         task::QueryType::TimeInterval,
-                        VdafInstance::Prio3Aes128Count,
+                        VdafInstance::Prio3Count,
                     ),
                     want_expiry_time,
                 )
@@ -6541,7 +6440,7 @@ mod tests {
                         *task.id(),
                         job_id,
                         task::QueryType::TimeInterval,
-                        VdafInstance::Prio3Aes128Count,
+                        VdafInstance::Prio3Count,
                     ),
                     want_expiry_time,
                 )
@@ -6618,7 +6517,7 @@ mod tests {
         let rslt = ds
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
+                    tx.get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
                         &random(),
                         &random(),
                     )
@@ -6632,13 +6531,17 @@ mod tests {
         let rslt = ds
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.update_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
+                    tx.update_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
                         &AggregationJob::new(
                             random(),
                             random(),
                             (),
                             (),
-                            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+                            Interval::new(
+                                Time::from_seconds_since_epoch(0),
+                                Duration::from_seconds(1),
+                            )
+                            .unwrap(),
                             AggregationJobState::InProgress,
                         ),
                     )
@@ -6739,13 +6642,13 @@ mod tests {
         let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
-        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
+        let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let verify_key: [u8; PRIO3_VERIFY_KEY_LENGTH] = random();
         let vdaf_transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), &report_id, &0);
         let prep_state = vdaf_transcript.prep_state(0, Role::Leader);
 
         for (ord, state) in [
-            ReportAggregationState::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>::Start,
+            ReportAggregationState::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::Start,
             ReportAggregationState::Waiting(prep_state.clone(), None),
             ReportAggregationState::Waiting(
                 prep_state.clone(),
@@ -6760,7 +6663,7 @@ mod tests {
         {
             let task = TaskBuilder::new(
                 task::QueryType::TimeInterval,
-                VdafInstance::Prio3Aes128Count,
+                VdafInstance::Prio3Count,
                 Role::Leader,
             )
             .build();
@@ -6776,7 +6679,7 @@ mod tests {
                         tx.put_aggregation_job(&AggregationJob::<
                             PRIO3_VERIFY_KEY_LENGTH,
                             TimeInterval,
-                            Prio3Aes128Count,
+                            Prio3Count,
                         >::new(
                             *task.id(),
                             aggregation_job_id,
@@ -7046,13 +6949,13 @@ mod tests {
         let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
-        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
+        let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let verify_key: [u8; PRIO3_VERIFY_KEY_LENGTH] = random();
         let vdaf_transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), &report_id, &0);
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count,
+            VdafInstance::Prio3Count,
             Role::Leader,
         )
         .build();
@@ -7072,7 +6975,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Prio3Aes128Count,
+                        Prio3Count,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
@@ -7086,7 +6989,7 @@ mod tests {
 
                     let mut report_aggregations = Vec::new();
                     for (ord, state) in [
-                        ReportAggregationState::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>::Start,
+                        ReportAggregationState::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::Start,
                         ReportAggregationState::Waiting(prep_state.clone(), None),
                         ReportAggregationState::Waiting(prep_state, Some(prep_msg)),
                         ReportAggregationState::Finished(output_share),
@@ -7216,6 +7119,7 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&task).await.unwrap();
 
+                let vdaf = dummy_vdaf::Vdaf::new();
                 let first_collection_job = CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                     *task.id(),
                     random(),
@@ -7236,6 +7140,7 @@ mod tests {
 
                 let first_collection_job_again = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &vdaf,
                         first_collection_job.collection_job_id(),
                     )
                     .await
@@ -7245,6 +7150,7 @@ mod tests {
 
                 let second_collection_job_again = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &vdaf,
                         second_collection_job.collection_job_id(),
                     )
                     .await
@@ -7283,6 +7189,7 @@ mod tests {
 
                 let updated_first_collection_job = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &vdaf,
                         first_collection_job.collection_job_id(),
                     )
                     .await
@@ -7327,6 +7234,7 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&task).await?;
 
+                let vdaf = dummy_vdaf::Vdaf::new();
                 let aggregation_param = AggregationParam(10);
                 let abandoned_collection_job =
                     CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
@@ -7350,6 +7258,7 @@ mod tests {
 
                 let abandoned_collection_job_again = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &vdaf,
                         abandoned_collection_job.collection_job_id(),
                     )
                     .await?
@@ -7375,6 +7284,7 @@ mod tests {
 
                 let abandoned_collection_job_again = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &vdaf,
                         abandoned_collection_job.collection_job_id(),
                     )
                     .await?
@@ -7382,6 +7292,7 @@ mod tests {
 
                 let deleted_collection_job_again = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &vdaf,
                         deleted_collection_job.collection_job_id(),
                     )
                     .await?
@@ -8431,6 +8342,7 @@ mod tests {
                     Role::Leader,
                 )
                 .build();
+                let vdaf = dummy_vdaf::Vdaf::new();
                 let aggregate_share = AggregateShare(23);
                 let aggregation_param = AggregationParam(12);
 
@@ -8551,6 +8463,7 @@ mod tests {
                     >(
                         tx,
                         &task,
+                        &vdaf,
                         &Interval::new(
                             Time::from_seconds_since_epoch(100),
                             Duration::from_seconds(3 * time_precision.as_seconds()),
@@ -8594,6 +8507,7 @@ mod tests {
                     >(
                         tx,
                         &task,
+                        &vdaf,
                         &Interval::new(
                             Time::from_seconds_since_epoch(100),
                             Duration::from_seconds(3 * time_precision.as_seconds()),
@@ -8643,6 +8557,7 @@ mod tests {
                     Role::Leader,
                 )
                 .build();
+                let vdaf = dummy_vdaf::Vdaf::new();
                 let batch_id = random();
                 let aggregate_share = AggregateShare(23);
                 let aggregation_param = AggregationParam(12);
@@ -8713,6 +8628,7 @@ mod tests {
 
                 let got_batch_aggregation = tx
                     .get_batch_aggregation::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        &vdaf,
                         task.id(),
                         &batch_id,
                         &aggregation_param,
@@ -8735,6 +8651,7 @@ mod tests {
 
                 let got_batch_aggregation = tx
                     .get_batch_aggregation::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        &vdaf,
                         task.id(),
                         &batch_id,
                         &aggregation_param,
@@ -8763,6 +8680,7 @@ mod tests {
                         .build();
                 tx.put_task(&task).await?;
 
+                let vdaf = dummy_vdaf::Vdaf::new();
                 let aggregate_share = AggregateShare(42);
                 let batch_interval = Interval::new(
                     Time::from_seconds_since_epoch(100),
@@ -8796,6 +8714,7 @@ mod tests {
 
                 let aggregate_share_job_again = tx
                     .get_aggregate_share_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &vdaf,
                         task.id(),
                         &batch_interval,
                         &aggregation_param,
@@ -8808,6 +8727,7 @@ mod tests {
 
                 assert!(tx
                     .get_aggregate_share_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &vdaf,
                         task.id(),
                         &other_batch_interval,
                         &aggregation_param,
@@ -8820,6 +8740,7 @@ mod tests {
 
                 let got_aggregate_share_jobs = tx
                     .get_aggregate_share_jobs_including_time::<0, dummy_vdaf::Vdaf>(
+                        &vdaf,
                         task.id(),
                         &Time::from_seconds_since_epoch(150),
                     )
@@ -8828,6 +8749,7 @@ mod tests {
 
                 let got_aggregate_share_jobs = tx
                     .get_aggregate_share_jobs_intersecting_interval::<0, dummy_vdaf::Vdaf>(
+                        &vdaf,
                         task.id(),
                         &Interval::new(
                             Time::from_seconds_since_epoch(145),
@@ -8840,6 +8762,7 @@ mod tests {
 
                 let got_aggregate_share_jobs = tx
                     .get_aggregate_share_jobs_by_batch_identifier::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &vdaf,
                         task.id(),
                         &batch_interval
                     ).await?;
@@ -9888,6 +9811,7 @@ mod tests {
 
                     let leader_time_interval_batch_aggregation_ids = tx
                         .get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             &leader_time_interval_task_id,
                         )
                         .await
@@ -9896,6 +9820,7 @@ mod tests {
                         .map(|agg| agg.batch_identifier().get_encoded());
                     let helper_time_interval_batch_aggregation_ids = tx
                         .get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             &helper_time_interval_task_id,
                         )
                         .await
@@ -9904,6 +9829,7 @@ mod tests {
                         .map(|agg| agg.batch_identifier().get_encoded());
                     let leader_fixed_size_batch_aggregation_ids = tx
                         .get_batch_aggregations_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             &leader_fixed_size_task_id,
                         )
                         .await
@@ -9912,6 +9838,7 @@ mod tests {
                         .map(|agg| agg.batch_identifier().get_encoded());
                     let helper_fixed_size_batch_aggregation_ids = tx
                         .get_batch_aggregations_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             &helper_fixed_size_task_id,
                         )
                         .await
@@ -9920,6 +9847,7 @@ mod tests {
                         .map(|agg| agg.batch_identifier().get_encoded());
                     let other_task_batch_aggregation_ids = tx
                         .get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             &other_task_id,
                         )
                         .await
@@ -10393,8 +10321,10 @@ mod tests {
         let (got_collection_job_ids, got_aggregate_share_job_ids, got_outstanding_batch_ids) = ds
             .run_tx(|tx| {
                 Box::pin(async move {
+                    let vdaf = dummy_vdaf::Vdaf::new();
                     let leader_time_interval_collection_job_ids = tx
                         .get_collection_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             &leader_time_interval_task_id,
                         )
                         .await
@@ -10403,6 +10333,7 @@ mod tests {
                         .map(|collection_job| *collection_job.collection_job_id());
                     let helper_time_interval_collection_job_ids = tx
                         .get_collection_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             &helper_time_interval_task_id,
                         )
                         .await
@@ -10411,6 +10342,7 @@ mod tests {
                         .map(|collection_job| *collection_job.collection_job_id());
                     let leader_fixed_size_collection_job_ids = tx
                         .get_collection_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             &leader_fixed_size_task_id,
                         )
                         .await
@@ -10419,6 +10351,7 @@ mod tests {
                         .map(|collection_job| *collection_job.collection_job_id());
                     let helper_fixed_size_collection_job_ids = tx
                         .get_collection_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             &helper_fixed_size_task_id,
                         )
                         .await
@@ -10427,6 +10360,7 @@ mod tests {
                         .map(|collection_job| *collection_job.collection_job_id());
                     let other_task_collection_job_ids = tx
                         .get_collection_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             &other_task_id,
                         )
                         .await
@@ -10442,6 +10376,7 @@ mod tests {
 
                     let leader_time_interval_aggregate_share_job_ids = tx
                         .get_aggregate_share_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             &leader_time_interval_task_id,
                         )
                         .await
@@ -10450,6 +10385,7 @@ mod tests {
                         .map(|job| (*job.task_id(), job.batch_identifier().get_encoded()));
                     let helper_time_interval_aggregate_share_job_ids = tx
                         .get_aggregate_share_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             &helper_time_interval_task_id,
                         )
                         .await
@@ -10458,6 +10394,7 @@ mod tests {
                         .map(|job| (*job.task_id(), job.batch_identifier().get_encoded()));
                     let leader_fixed_size_aggregate_share_job_ids = tx
                         .get_aggregate_share_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             &leader_fixed_size_task_id,
                         )
                         .await
@@ -10466,6 +10403,7 @@ mod tests {
                         .map(|job| (*job.task_id(), job.batch_identifier().get_encoded()));
                     let helper_fixed_size_aggregate_share_job_ids = tx
                         .get_aggregate_share_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             &helper_fixed_size_task_id,
                         )
                         .await
@@ -10474,6 +10412,7 @@ mod tests {
                         .map(|job| (*job.task_id(), job.batch_identifier().get_encoded()));
                     let other_task_aggregate_share_job_ids = tx
                         .get_aggregate_share_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             &leader_time_interval_task_id,
                         )
                         .await

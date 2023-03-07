@@ -14,7 +14,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-fpvec_bounded_l2 = []
+fpvec_bounded_l2 = ["prio/experimental"]
 test-util = [
     "dep:assert_matches",
     "dep:lazy_static",

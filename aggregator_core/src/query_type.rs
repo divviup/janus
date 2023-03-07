@@ -30,16 +30,14 @@ pub trait AccumulableQueryType: QueryType {
     async fn get_conflicting_aggregate_share_jobs<
         const L: usize,
         C: Clock,
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16> + Send + Sync,
     >(
         tx: &Transaction<'_, C>,
+        vdaf: &A,
         task_id: &TaskId,
         partial_batch_identifier: &Self::PartialBatchIdentifier,
         report_metadata: &ReportMetadata,
-    ) -> Result<Vec<AggregateShareJob<L, Self, A>>, datastore::Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>;
+    ) -> Result<Vec<AggregateShareJob<L, Self, A>>, datastore::Error>;
 
     /// Some query types (e.g. [`TimeInterval`]) can represent their batch identifiers as an
     /// interval. This method extracts the interval from such identifiers, or returns `None` if the
@@ -77,18 +75,15 @@ impl AccumulableQueryType for TimeInterval {
     async fn get_conflicting_aggregate_share_jobs<
         const L: usize,
         C: Clock,
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16> + Send + Sync,
     >(
         tx: &Transaction<'_, C>,
+        vdaf: &A,
         task_id: &TaskId,
         _: &Self::PartialBatchIdentifier,
         report_metadata: &ReportMetadata,
-    ) -> Result<Vec<AggregateShareJob<L, Self, A>>, datastore::Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
-        tx.get_aggregate_share_jobs_including_time::<L, A>(task_id, report_metadata.time())
+    ) -> Result<Vec<AggregateShareJob<L, Self, A>>, datastore::Error> {
+        tx.get_aggregate_share_jobs_including_time::<L, A>(vdaf, task_id, report_metadata.time())
             .await
     }
 
@@ -126,18 +121,15 @@ impl AccumulableQueryType for FixedSize {
     async fn get_conflicting_aggregate_share_jobs<
         const L: usize,
         C: Clock,
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16> + Send + Sync,
     >(
         tx: &Transaction<'_, C>,
+        vdaf: &A,
         task_id: &TaskId,
         batch_id: &Self::PartialBatchIdentifier,
         _: &ReportMetadata,
-    ) -> Result<Vec<AggregateShareJob<L, Self, A>>, datastore::Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
-        tx.get_aggregate_share_jobs_by_batch_identifier(task_id, batch_id)
+    ) -> Result<Vec<AggregateShareJob<L, Self, A>>, datastore::Error> {
+        tx.get_aggregate_share_jobs_by_batch_identifier(vdaf, task_id, batch_id)
             .await
     }
 
@@ -200,19 +192,18 @@ pub trait CollectableQueryType: AccumulableQueryType {
     /// identifier.
     async fn get_batch_aggregations_for_collect_identifier<
         const L: usize,
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L, 16> + Send + Sync,
         C: Clock,
     >(
         tx: &Transaction<C>,
         task: &Task,
+        vdaf: &A,
         collect_identifier: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
     ) -> Result<Vec<BatchAggregation<L, Self, A>>, datastore::Error>
     where
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
     {
         Ok(try_join_all(
             Self::batch_identifiers_for_collect_identifier(task, collect_identifier).map(
@@ -220,6 +211,7 @@ pub trait CollectableQueryType: AccumulableQueryType {
                     let (task_id, aggregation_param) = (*task.id(), aggregation_param.clone());
                     async move {
                         tx.get_batch_aggregations_for_batch(
+                            vdaf,
                             &task_id,
                             &batch_identifier,
                             &aggregation_param,

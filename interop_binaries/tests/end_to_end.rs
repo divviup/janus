@@ -554,7 +554,7 @@ async fn run(
 async fn e2e_prio3_count() {
     let result = run(
         QueryKind::TimeInterval,
-        json!({"type": "Prio3Aes128Count"}),
+        json!({"type": "Prio3Count"}),
         &[
             json!("0"),
             json!("1"),
@@ -585,7 +585,7 @@ async fn e2e_prio3_count() {
 async fn e2e_prio3_sum() {
     let result = run(
         QueryKind::TimeInterval,
-        json!({"type": "Prio3Aes128Sum", "bits": "64"}),
+        json!({"type": "Prio3Sum", "bits": "64"}),
         &[
             json!("0"),
             json!("10"),
@@ -606,7 +606,7 @@ async fn e2e_prio3_histogram() {
     let result = run(
         QueryKind::TimeInterval,
         json!({
-            "type": "Prio3Aes128Histogram",
+            "type": "Prio3Histogram",
             "buckets": ["0", "1", "10", "100", "1000", "10000", "100000"],
         }),
         &[
@@ -636,7 +636,7 @@ async fn e2e_prio3_histogram() {
 async fn e2e_prio3_count_vec() {
     let result = run(
         QueryKind::TimeInterval,
-        json!({"type": "Prio3Aes128CountVec", "length": "4"}),
+        json!({"type": "Prio3CountVec", "length": "4"}),
         &[
             json!(["0", "0", "0", "1"]),
             json!(["0", "0", "1", "0"]),
@@ -661,7 +661,7 @@ async fn e2e_prio3_fixed16vec() {
     let fp16_16_inv = fixed!(0.0625: I1F15);
     let result = run(
         QueryKind::TimeInterval,
-        json!({"type": "Prio3Aes128FixedPoint16BitBoundedL2VecSum", "length": "3"}),
+        json!({"type": "Prio3FixedPoint16BitBoundedL2VecSum", "length": "3"}),
         &[
             json!([
                 fp16_4_inv.to_string(),
@@ -697,7 +697,7 @@ async fn e2e_prio3_fixed32vec() {
     let fp32_16_inv = fixed!(0.0625: I1F31);
     let result = run(
         QueryKind::TimeInterval,
-        json!({"type": "Prio3Aes128FixedPoint32BitBoundedL2VecSum", "length": "3"}),
+        json!({"type": "Prio3FixedPoint32BitBoundedL2VecSum", "length": "3"}),
         &[
             json!([
                 fp32_4_inv.to_string(),
@@ -733,7 +733,7 @@ async fn e2e_prio3_fixed64vec() {
     let fp64_16_inv = fixed!(0.0625: I1F63);
     let result = run(
         QueryKind::TimeInterval,
-        json!({"type": "Prio3Aes128FixedPoint64BitBoundedL2VecSum", "length": "3"}),
+        json!({"type": "Prio3FixedPoint64BitBoundedL2VecSum", "length": "3"}),
         &[
             json!([
                 fp64_4_inv.to_string(),
@@ -769,7 +769,7 @@ async fn e2e_prio3_fixed16vec_fixed_size() {
     let fp16_16_inv = fixed!(0.0625: I1F15);
     let result = run(
         QueryKind::FixedSize,
-        json!({"type": "Prio3Aes128FixedPoint16BitBoundedL2VecSum", "length": "3"}),
+        json!({"type": "Prio3FixedPoint16BitBoundedL2VecSum", "length": "3"}),
         &[
             json!([
                 fp16_4_inv.to_string(),
@@ -805,7 +805,7 @@ async fn e2e_prio3_fixed32vec_fixed_size() {
     let fp32_16_inv = fixed!(0.0625: I1F31);
     let result = run(
         QueryKind::FixedSize,
-        json!({"type": "Prio3Aes128FixedPoint32BitBoundedL2VecSum", "length": "3"}),
+        json!({"type": "Prio3FixedPoint32BitBoundedL2VecSum", "length": "3"}),
         &[
             json!([
                 fp32_4_inv.to_string(),
@@ -841,7 +841,7 @@ async fn e2e_prio3_fixed64vec_fixed_size() {
     let fp64_16_inv = fixed!(0.0625: I1F63);
     let result = run(
         QueryKind::FixedSize,
-        json!({"type": "Prio3Aes128FixedPoint64BitBoundedL2VecSum", "length": "3"}),
+        json!({"type": "Prio3FixedPoint64BitBoundedL2VecSum", "length": "3"}),
         &[
             json!([
                 fp64_4_inv.to_string(),
@@ -874,7 +874,7 @@ async fn e2e_prio3_fixed64vec_fixed_size() {
 async fn e2e_prio3_count_fixed_size() {
     let result = run(
         QueryKind::FixedSize,
-        json!({"type": "Prio3Aes128Count"}),
+        json!({"type": "Prio3Count"}),
         &[
             json!("0"),
             json!("1"),

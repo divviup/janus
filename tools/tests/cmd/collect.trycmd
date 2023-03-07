@@ -36,10 +36,10 @@ VDAF Algorithm and Parameters:
           VDAF algorithm
 
           Possible values:
-          - count:     Prio3Aes128Count
-          - countvec:  Prio3Aes128CountVec
-          - sum:       Prio3Aes128Sum
-          - histogram: Prio3Aes128Histogram
+          - count:     Prio3Count
+          - countvec:  Prio3CountVec
+          - sum:       Prio3Sum
+          - histogram: Prio3Histogram
 
       --length <LENGTH>
           Number of vector elements, for use with --vdaf=countvec

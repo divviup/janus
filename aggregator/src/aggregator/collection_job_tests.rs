@@ -244,6 +244,7 @@ async fn collection_job_success_fixed_size() {
 
     let mut saw_batch_id_1 = false;
     let mut saw_batch_id_2 = false;
+    let vdaf = dummy_vdaf::Vdaf::new();
     let leader_aggregate_share = dummy_vdaf::AggregateShare(0);
     let helper_aggregate_share = dummy_vdaf::AggregateShare(1);
     let request = CollectionReq::new(
@@ -268,10 +269,14 @@ async fn collection_job_success_fixed_size() {
             .datastore
             .run_tx(|tx| {
                 let task = test_case.task.clone();
-                let helper_aggregate_share_bytes: Vec<u8> = (&helper_aggregate_share).into();
+                let vdaf = vdaf.clone();
+                let helper_aggregate_share_bytes = helper_aggregate_share.get_encoded();
                 Box::pin(async move {
                     let collection_job = tx
-                        .get_collection_job::<0, FixedSize, dummy_vdaf::Vdaf>(&collection_job_id)
+                        .get_collection_job::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &vdaf,
+                            &collection_job_id,
+                        )
                         .await
                         .unwrap()
                         .unwrap();
@@ -356,7 +361,7 @@ async fn collection_job_success_fixed_size() {
         .unwrap();
         assert_eq!(
             leader_aggregate_share,
-            dummy_vdaf::AggregateShare::try_from(decrypted_leader_aggregate_share.as_ref())
+            dummy_vdaf::AggregateShare::get_decoded(decrypted_leader_aggregate_share.as_ref())
                 .unwrap()
         );
 
@@ -374,7 +379,7 @@ async fn collection_job_success_fixed_size() {
         .unwrap();
         assert_eq!(
             helper_aggregate_share,
-            dummy_vdaf::AggregateShare::try_from(decrypted_helper_aggregate_share.as_ref())
+            dummy_vdaf::AggregateShare::get_decoded(decrypted_helper_aggregate_share.as_ref())
                 .unwrap()
         );
     }
@@ -431,9 +436,12 @@ async fn collection_job_put_idempotence_time_interval() {
         .datastore
         .run_tx(|tx| {
             let task_id = *test_case.task.id();
+            let vdaf = dummy_vdaf::Vdaf::new();
             Box::pin(async move {
                 let collection_jobs = tx
-                    .get_collection_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(&task_id)
+                    .get_collection_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &vdaf, &task_id,
+                    )
                     .await
                     .unwrap();
                 assert_eq!(collection_jobs.len(), 1);
@@ -548,8 +556,11 @@ async fn collection_job_put_idempotence_fixed_size_current_batch() {
             .run_tx(|tx| {
                 let task_id = *test_case.task.id();
                 Box::pin(async move {
+                    let vdaf = dummy_vdaf::Vdaf::new();
                     let collection_jobs = tx
-                        .get_collection_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(&task_id)
+                        .get_collection_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &vdaf, &task_id,
+                        )
                         .await
                         .unwrap();
                     assert_eq!(collection_jobs.len(), 1);
