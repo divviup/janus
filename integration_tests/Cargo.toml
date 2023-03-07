@@ -26,7 +26,7 @@ janus_messages = { path = "../messages" }
 k8s-openapi.workspace = true
 kube.workspace = true
 portpicker = "0.1"
-prio = { version = "0.10.0", features = ["multithreaded"] }
+prio = { version = "0.11.0", features = ["multithreaded"] }
 rand = "0.8"
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
 serde = "1.0.152"
