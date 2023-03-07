@@ -101,26 +101,26 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum VdafObject {
-    Prio3Aes128Count,
-    Prio3Aes128CountVec {
+    Prio3Count,
+    Prio3CountVec {
         length: NumberAsString<usize>,
     },
-    Prio3Aes128Sum {
+    Prio3Sum {
         bits: NumberAsString<u32>,
     },
-    Prio3Aes128Histogram {
+    Prio3Histogram {
         buckets: Vec<NumberAsString<u64>>,
     },
     #[cfg(feature = "fpvec_bounded_l2")]
-    Prio3Aes128FixedPoint16BitBoundedL2VecSum {
+    Prio3FixedPoint16BitBoundedL2VecSum {
         length: NumberAsString<usize>,
     },
     #[cfg(feature = "fpvec_bounded_l2")]
-    Prio3Aes128FixedPoint32BitBoundedL2VecSum {
+    Prio3FixedPoint32BitBoundedL2VecSum {
         length: NumberAsString<usize>,
     },
     #[cfg(feature = "fpvec_bounded_l2")]
-    Prio3Aes128FixedPoint64BitBoundedL2VecSum {
+    Prio3FixedPoint64BitBoundedL2VecSum {
         length: NumberAsString<usize>,
     },
 }
@@ -128,37 +128,37 @@ pub enum VdafObject {
 impl From<VdafInstance> for VdafObject {
     fn from(vdaf: VdafInstance) -> Self {
         match vdaf {
-            VdafInstance::Prio3Aes128Count => VdafObject::Prio3Aes128Count,
+            VdafInstance::Prio3Count => VdafObject::Prio3Count,
 
-            VdafInstance::Prio3Aes128CountVec { length } => VdafObject::Prio3Aes128CountVec {
+            VdafInstance::Prio3CountVec { length } => VdafObject::Prio3CountVec {
                 length: NumberAsString(length),
             },
 
-            VdafInstance::Prio3Aes128Sum { bits } => VdafObject::Prio3Aes128Sum {
+            VdafInstance::Prio3Sum { bits } => VdafObject::Prio3Sum {
                 bits: NumberAsString(bits),
             },
 
-            VdafInstance::Prio3Aes128Histogram { buckets } => VdafObject::Prio3Aes128Histogram {
+            VdafInstance::Prio3Histogram { buckets } => VdafObject::Prio3Histogram {
                 buckets: buckets.iter().copied().map(NumberAsString).collect(),
             },
 
             #[cfg(feature = "fpvec_bounded_l2")]
-            VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum { length } => {
-                VdafObject::Prio3Aes128FixedPoint16BitBoundedL2VecSum {
+            VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { length } => {
+                VdafObject::Prio3FixedPoint16BitBoundedL2VecSum {
                     length: NumberAsString(length),
                 }
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
-            VdafInstance::Prio3Aes128FixedPoint32BitBoundedL2VecSum { length } => {
-                VdafObject::Prio3Aes128FixedPoint32BitBoundedL2VecSum {
+            VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { length } => {
+                VdafObject::Prio3FixedPoint32BitBoundedL2VecSum {
                     length: NumberAsString(length),
                 }
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
-            VdafInstance::Prio3Aes128FixedPoint64BitBoundedL2VecSum { length } => {
-                VdafObject::Prio3Aes128FixedPoint64BitBoundedL2VecSum {
+            VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { length } => {
+                VdafObject::Prio3FixedPoint64BitBoundedL2VecSum {
                     length: NumberAsString(length),
                 }
             }
@@ -170,31 +170,31 @@ impl From<VdafInstance> for VdafObject {
 impl From<VdafObject> for VdafInstance {
     fn from(vdaf: VdafObject) -> Self {
         match vdaf {
-            VdafObject::Prio3Aes128Count => VdafInstance::Prio3Aes128Count,
+            VdafObject::Prio3Count => VdafInstance::Prio3Count,
 
-            VdafObject::Prio3Aes128CountVec { length } => {
-                VdafInstance::Prio3Aes128CountVec { length: length.0 }
+            VdafObject::Prio3CountVec { length } => {
+                VdafInstance::Prio3CountVec { length: length.0 }
             }
 
-            VdafObject::Prio3Aes128Sum { bits } => VdafInstance::Prio3Aes128Sum { bits: bits.0 },
+            VdafObject::Prio3Sum { bits } => VdafInstance::Prio3Sum { bits: bits.0 },
 
-            VdafObject::Prio3Aes128Histogram { buckets } => VdafInstance::Prio3Aes128Histogram {
+            VdafObject::Prio3Histogram { buckets } => VdafInstance::Prio3Histogram {
                 buckets: buckets.iter().map(|value| value.0).collect(),
             },
 
             #[cfg(feature = "fpvec_bounded_l2")]
-            VdafObject::Prio3Aes128FixedPoint16BitBoundedL2VecSum { length } => {
-                VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum { length: length.0 }
+            VdafObject::Prio3FixedPoint16BitBoundedL2VecSum { length } => {
+                VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { length: length.0 }
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
-            VdafObject::Prio3Aes128FixedPoint32BitBoundedL2VecSum { length } => {
-                VdafInstance::Prio3Aes128FixedPoint32BitBoundedL2VecSum { length: length.0 }
+            VdafObject::Prio3FixedPoint32BitBoundedL2VecSum { length } => {
+                VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { length: length.0 }
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
-            VdafObject::Prio3Aes128FixedPoint64BitBoundedL2VecSum { length } => {
-                VdafInstance::Prio3Aes128FixedPoint64BitBoundedL2VecSum { length: length.0 }
+            VdafObject::Prio3FixedPoint64BitBoundedL2VecSum { length } => {
+                VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { length: length.0 }
             }
         }
     }

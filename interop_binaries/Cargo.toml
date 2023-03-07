@@ -9,7 +9,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-fpvec_bounded_l2 = ["dep:fixed", "dep:fixed-macro", "janus_core/fpvec_bounded_l2", "janus_aggregator/fpvec_bounded_l2"]
+fpvec_bounded_l2 = ["dep:fixed", "dep:fixed-macro", "janus_core/fpvec_bounded_l2", "janus_aggregator/fpvec_bounded_l2", "prio/experimental"]
 test-util = [
     "dep:hex",
     "dep:futures",

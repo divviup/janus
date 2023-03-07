@@ -14,26 +14,32 @@ use prio::vdaf;
 
 #[async_trait]
 pub trait UploadableQueryType: QueryType {
-    async fn validate_uploaded_report<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
+    async fn validate_uploaded_report<
+        const L: usize,
+        C: Clock,
+        A: vdaf::Aggregator<L, 16> + Send + Sync,
+    >(
         tx: &Transaction<'_, C>,
+        vdaf: &A,
         report: &LeaderStoredReport<L, A>,
     ) -> Result<(), datastore::Error>
     where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::InputShare: Send + Sync,
         A::PublicShare: Send + Sync;
 }
 
 #[async_trait]
 impl UploadableQueryType for TimeInterval {
-    async fn validate_uploaded_report<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
+    async fn validate_uploaded_report<
+        const L: usize,
+        C: Clock,
+        A: vdaf::Aggregator<L, 16> + Send + Sync,
+    >(
         tx: &Transaction<'_, C>,
+        vdaf: &A,
         report: &LeaderStoredReport<L, A>,
     ) -> Result<(), datastore::Error>
     where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::InputShare: Send + Sync,
         A::PublicShare: Send + Sync,
     {
@@ -41,7 +47,11 @@ impl UploadableQueryType for TimeInterval {
         // collected.
         // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-4.3.2-17
         let conflicting_collect_jobs = tx
-            .get_collection_jobs_including_time::<L, A>(report.task_id(), report.metadata().time())
+            .get_collection_jobs_including_time::<L, A>(
+                vdaf,
+                report.task_id(),
+                report.metadata().time(),
+            )
             .await?;
         if !conflicting_collect_jobs.is_empty() {
             return Err(datastore::Error::User(
@@ -59,14 +69,15 @@ impl UploadableQueryType for TimeInterval {
 
 #[async_trait]
 impl UploadableQueryType for FixedSize {
-    async fn validate_uploaded_report<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
+    async fn validate_uploaded_report<
+        const L: usize,
+        C: Clock,
+        A: vdaf::Aggregator<L, 16> + Send + Sync,
+    >(
         _: &Transaction<'_, C>,
+        _: &A,
         _: &LeaderStoredReport<L, A>,
-    ) -> Result<(), datastore::Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<(), datastore::Error> {
         // Fixed-size tasks associate reports to batches at time of aggregation rather than at time
         // of upload, and there are no other relevant checks to apply here, so this method simply
         // returns Ok(()).
@@ -80,40 +91,51 @@ impl UploadableQueryType for FixedSize {
 pub trait CollectableQueryType: CoreCollectableQueryType + AccumulableQueryType {
     /// Validates query count for a given batch, per the size checks in
     /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6>.
-    async fn validate_query_count<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
+    async fn validate_query_count<
+        const L: usize,
+        C: Clock,
+        A: vdaf::Aggregator<L, 16> + Send + Sync,
+    >(
         tx: &Transaction<'_, C>,
+        vdaf: &A,
         task: &Task,
         batch_identifier: &Self::BatchIdentifier,
-    ) -> Result<(), datastore::Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>;
+    ) -> Result<(), datastore::Error>;
 }
 
 #[async_trait]
 impl CollectableQueryType for TimeInterval {
-    async fn validate_query_count<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
+    async fn validate_query_count<
+        const L: usize,
+        C: Clock,
+        A: vdaf::Aggregator<L, 16> + Send + Sync,
+    >(
         tx: &Transaction<'_, C>,
+        vdaf: &A,
         task: &Task,
         collect_interval: &Self::BatchIdentifier,
-    ) -> Result<(), datastore::Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<(), datastore::Error> {
         // Check how many rows in the relevant table have an intersecting batch interval.
         // Each such row consumes one unit of query count.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
         let intersecting_intervals: Vec<_> = match task.role() {
             Role::Leader => tx
-                .get_collection_jobs_intersecting_interval::<L, A>(task.id(), collect_interval)
+                .get_collection_jobs_intersecting_interval::<L, A>(
+                    vdaf,
+                    task.id(),
+                    collect_interval,
+                )
                 .await?
                 .into_iter()
                 .map(|job| *job.batch_interval())
                 .collect(),
 
             Role::Helper => tx
-                .get_aggregate_share_jobs_intersecting_interval::<L, A>(task.id(), collect_interval)
+                .get_aggregate_share_jobs_intersecting_interval::<L, A>(
+                    vdaf,
+                    task.id(),
+                    collect_interval,
+                )
                 .await?
                 .into_iter()
                 .map(|job| *job.batch_interval())
@@ -148,23 +170,29 @@ impl CollectableQueryType for TimeInterval {
 
 #[async_trait]
 impl CollectableQueryType for FixedSize {
-    async fn validate_query_count<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
+    async fn validate_query_count<
+        const L: usize,
+        C: Clock,
+        A: vdaf::Aggregator<L, 16> + Send + Sync,
+    >(
         tx: &Transaction<'_, C>,
+        vdaf: &A,
         task: &Task,
         batch_id: &Self::BatchIdentifier,
-    ) -> Result<(), datastore::Error>
-    where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Result<(), datastore::Error> {
         let query_count = match task.role() {
             Role::Leader => tx
-                .get_collection_jobs_by_batch_identifier::<L, FixedSize, A>(task.id(), batch_id)
+                .get_collection_jobs_by_batch_identifier::<L, FixedSize, A>(
+                    vdaf,
+                    task.id(),
+                    batch_id,
+                )
                 .await?
                 .len(),
 
             Role::Helper => tx
                 .get_aggregate_share_jobs_by_batch_identifier::<L, FixedSize, A>(
+                    vdaf,
                     task.id(),
                     batch_id,
                 )

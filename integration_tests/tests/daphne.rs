@@ -23,7 +23,7 @@ async fn daphne_janus() {
     // Start servers.
     let network = generate_network_name();
     let (collector_private_key, leader_task, helper_task) =
-        test_task_builders(VdafInstance::Prio3Aes128Count);
+        test_task_builders(VdafInstance::Prio3Count);
 
     // Daphne is hardcoded to serve from a path starting with /v01/.
     let [leader_task, helper_task]: [Task; 2] = [leader_task, helper_task]
@@ -59,7 +59,7 @@ async fn janus_daphne() {
     // Start servers.
     let network = generate_network_name();
     let (collector_private_key, leader_task, helper_task) =
-        test_task_builders(VdafInstance::Prio3Aes128Count);
+        test_task_builders(VdafInstance::Prio3Count);
 
     // Daphne is hardcoded to serve from a path starting with /v01/.
     let [leader_task, helper_task]: [Task; 2] = [leader_task, helper_task]

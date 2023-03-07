@@ -126,7 +126,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
 
     let task = TaskBuilder::new(
         QueryType::TimeInterval,
-        VdafInstance::Prio3Aes128Count,
+        VdafInstance::Prio3Count,
         Role::Leader,
     )
     .build();

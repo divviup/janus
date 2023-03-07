@@ -58,8 +58,7 @@ pub fn translate_url_for_external_access(url: &Url, external_port: u16) -> Url {
 /// A set of inputs and an expected output for a VDAF's aggregation.
 pub struct AggregationTestCase<V>
 where
-    V: vdaf::Client + vdaf::Collector,
-    Vec<u8>: for<'a> From<&'a V::AggregateShare>,
+    V: vdaf::Client<16> + vdaf::Collector,
 {
     measurements: Vec<V::Measurement>,
     aggregation_parameter: V::AggregationParam,
@@ -74,8 +73,7 @@ pub async fn collect_generic<'a, V, Q>(
     port: u16,
 ) -> Result<Collection<V::AggregateResult, Q>, janus_collector::Error>
 where
-    V: vdaf::Client + vdaf::Collector + InteropClientEncoding,
-    Vec<u8>: for<'b> From<&'b V::AggregateShare>,
+    V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
     Q: query_type::QueryType,
 {
     // An extra retry loop is needed here because our collect request may race against the
@@ -114,8 +112,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
     test_case: &'a AggregationTestCase<V>,
     client_implementation: &'a ClientImplementation<'a, V>,
 ) where
-    V: vdaf::Client + vdaf::Collector + InteropClientEncoding,
-    Vec<u8>: for<'b> From<&'b V::AggregateShare>,
+    V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
     V::AggregateResult: PartialEq,
 {
     // Submit some measurements, recording a timestamp before measurement upload to allow us to
@@ -232,8 +229,8 @@ pub async fn submit_measurements_and_verify_aggregate(
     let total_measurements: usize = leader_task.min_batch_size().try_into().unwrap();
 
     match leader_task.vdaf() {
-        VdafInstance::Prio3Aes128Count => {
-            let vdaf = Prio3::new_aes128_count(2).unwrap();
+        VdafInstance::Prio3Count => {
+            let vdaf = Prio3::new_count(2).unwrap();
 
             let num_nonzero_measurements = total_measurements / 2;
             let num_zero_measurements = total_measurements - num_nonzero_measurements;
@@ -263,8 +260,8 @@ pub async fn submit_measurements_and_verify_aggregate(
             )
             .await;
         }
-        VdafInstance::Prio3Aes128Sum { bits } => {
-            let vdaf = Prio3::new_aes128_sum(2, *bits).unwrap();
+        VdafInstance::Prio3Sum { bits } => {
+            let vdaf = Prio3::new_sum(2, *bits).unwrap();
 
             let measurements = iter::repeat_with(|| (random::<u128>()) >> (128 - bits))
                 .take(total_measurements)
@@ -291,8 +288,8 @@ pub async fn submit_measurements_and_verify_aggregate(
             )
             .await;
         }
-        VdafInstance::Prio3Aes128Histogram { buckets } => {
-            let vdaf = Prio3::new_aes128_histogram(2, buckets).unwrap();
+        VdafInstance::Prio3Histogram { buckets } => {
+            let vdaf = Prio3::new_histogram(2, buckets).unwrap();
 
             let mut aggregate_result = vec![0; buckets.len() + 1];
             aggregate_result.resize(buckets.len() + 1, 0);
@@ -330,8 +327,8 @@ pub async fn submit_measurements_and_verify_aggregate(
             )
             .await;
         }
-        VdafInstance::Prio3Aes128CountVec { length } => {
-            let vdaf = Prio3::new_aes128_count_vec(2, *length).unwrap();
+        VdafInstance::Prio3CountVec { length } => {
+            let vdaf = Prio3::new_sum_vec(2, 1, *length).unwrap();
 
             let measurements = iter::repeat_with(|| {
                 iter::repeat_with(|| random::<bool>() as u128)

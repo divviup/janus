@@ -9,7 +9,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-fpvec_bounded_l2 = ["dep:fixed", "janus_collector/fpvec_bounded_l2"]
+fpvec_bounded_l2 = ["dep:fixed", "janus_collector/fpvec_bounded_l2", "prio/experimental"]
 
 [dependencies]
 anyhow = "1"

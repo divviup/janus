@@ -36,7 +36,7 @@
 //! );
 //!
 //! // Supply a VDAF implementation, corresponding to this task.
-//! let vdaf = Prio3::new_aes128_count(2).unwrap();
+//! let vdaf = Prio3::new_count(2).unwrap();
 //! // Use the default HTTP client as-is.
 //! let http_client = default_http_client().unwrap();
 //! let collector = Collector::new(parameters, vdaf, http_client);
@@ -72,7 +72,7 @@ use janus_messages::{
     CollectionReq, HpkeConfig, PartialBatchSelector, Query, Role, TaskId,
 };
 use prio::{
-    codec::{Decode, Encode},
+    codec::{Decode, Encode, ParameterizedDecode},
     vdaf,
 };
 use rand::random;
@@ -367,19 +367,13 @@ where
 
 /// A DAP collector.
 #[derive(Debug)]
-pub struct Collector<V: vdaf::Collector>
-where
-    for<'a> Vec<u8>: From<&'a <V as vdaf::Vdaf>::AggregateShare>,
-{
+pub struct Collector<V: vdaf::Collector> {
     parameters: CollectorParameters,
     vdaf_collector: V,
     http_client: reqwest::Client,
 }
 
-impl<V: vdaf::Collector> Collector<V>
-where
-    for<'a> Vec<u8>: From<&'a V::AggregateShare>,
-{
+impl<V: vdaf::Collector> Collector<V> {
     /// Construct a new collector. This requires certain DAP task parameters, an implementation of
     /// the task's VDAF, and a [`reqwest::Client`], configured to never follow redirects, that will
     /// be used to communicate with the leader aggregator.
@@ -540,7 +534,11 @@ where
             });
         let aggregate_shares = aggregate_shares_bytes
             .map(|bytes| {
-                V::AggregateShare::try_from(&bytes?).map_err(|_err| Error::AggregateShareDecode)
+                V::AggregateShare::get_decoded_with_param(
+                    &(&self.vdaf_collector, &job.aggregation_parameter),
+                    &bytes?,
+                )
+                .map_err(|_err| Error::AggregateShareDecode)
             })
             .collect::<Result<Vec<_>, Error>>()?;
 
@@ -650,10 +648,7 @@ pub mod test_util {
         aggregation_parameter: &V::AggregationParam,
         host: &str,
         port: u16,
-    ) -> Result<Collection<V::AggregateResult, Q>, Error>
-    where
-        for<'a> Vec<u8>: From<&'a <V as vdaf::Vdaf>::AggregateShare>,
-    {
+    ) -> Result<Collection<V::AggregateResult, Q>, Error> {
         let mut job = collector
             .start_collection(query, aggregation_parameter)
             .await?;
@@ -692,7 +687,7 @@ mod tests {
     use prio::{
         codec::Encode,
         field::Field64,
-        vdaf::{self, prio3::Prio3, AggregateShare},
+        vdaf::{self, prio3::Prio3, AggregateShare, OutputShare},
     };
     use rand::random;
     use reqwest::{header::CONTENT_TYPE, StatusCode, Url};
@@ -701,10 +696,7 @@ mod tests {
     fn setup_collector<V: vdaf::Collector>(
         server: &mut mockito::Server,
         vdaf_collector: V,
-    ) -> Collector<V>
-    where
-        for<'a> Vec<u8>: From<&'a V::AggregateShare>,
-    {
+    ) -> Collector<V> {
         let server_url = Url::parse(&server.url()).unwrap();
         let hpke_keypair = generate_test_hpke_config_and_private_key();
         let parameters = CollectorParameters::new(
@@ -727,14 +719,11 @@ mod tests {
         ))
     }
 
-    fn build_collect_response_time<const L: usize, V: vdaf::Aggregator<L>>(
+    fn build_collect_response_time<const L: usize, V: vdaf::Aggregator<L, 16>>(
         transcript: &VdafTranscript<L, V>,
         parameters: &CollectorParameters,
         batch_interval: Interval,
-    ) -> CollectionMessage<TimeInterval>
-    where
-        for<'a> Vec<u8>: From<&'a V::AggregateShare>,
-    {
+    ) -> CollectionMessage<TimeInterval> {
         let associated_data = AggregateShareAad::new(
             parameters.task_id,
             BatchSelector::new_time_interval(batch_interval),
@@ -751,7 +740,7 @@ mod tests {
                         &Role::Leader,
                         &Role::Collector,
                     ),
-                    &<Vec<u8>>::from(&transcript.aggregate_shares[0]),
+                    &transcript.aggregate_shares[0].get_encoded(),
                     &associated_data.get_encoded(),
                 )
                 .unwrap(),
@@ -762,7 +751,7 @@ mod tests {
                         &Role::Helper,
                         &Role::Collector,
                     ),
-                    &<Vec<u8>>::from(&transcript.aggregate_shares[1]),
+                    &transcript.aggregate_shares[1].get_encoded(),
                     &associated_data.get_encoded(),
                 )
                 .unwrap(),
@@ -770,14 +759,11 @@ mod tests {
         )
     }
 
-    fn build_collect_response_fixed<const L: usize, V: vdaf::Aggregator<L>>(
+    fn build_collect_response_fixed<const L: usize, V: vdaf::Aggregator<L, 16>>(
         transcript: &VdafTranscript<L, V>,
         parameters: &CollectorParameters,
         batch_id: BatchId,
-    ) -> CollectionMessage<FixedSize>
-    where
-        for<'a> Vec<u8>: From<&'a V::AggregateShare>,
-    {
+    ) -> CollectionMessage<FixedSize> {
         let associated_data =
             AggregateShareAad::new(parameters.task_id, BatchSelector::new_fixed_size(batch_id));
         CollectionMessage::new(
@@ -792,7 +778,7 @@ mod tests {
                         &Role::Leader,
                         &Role::Collector,
                     ),
-                    &<Vec<u8>>::from(&transcript.aggregate_shares[0]),
+                    &transcript.aggregate_shares[0].get_encoded(),
                     &associated_data.get_encoded(),
                 )
                 .unwrap(),
@@ -803,7 +789,7 @@ mod tests {
                         &Role::Helper,
                         &Role::Collector,
                     ),
-                    &<Vec<u8>>::from(&transcript.aggregate_shares[1]),
+                    &transcript.aggregate_shares[1].get_encoded(),
                     &associated_data.get_encoded(),
                 )
                 .unwrap(),
@@ -845,7 +831,7 @@ mod tests {
     async fn successful_collect_prio3_count() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_aes128_count(2).unwrap();
+        let vdaf = Prio3::new_count(2).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &1);
         let collector = setup_collector(&mut server, vdaf);
 
@@ -941,7 +927,7 @@ mod tests {
     async fn successful_collect_prio3_sum() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_aes128_sum(2, 8).unwrap();
+        let vdaf = Prio3::new_sum(2, 8).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &144);
         let collector = setup_collector(&mut server, vdaf);
 
@@ -1008,7 +994,7 @@ mod tests {
     async fn successful_collect_prio3_histogram() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_aes128_histogram(2, &[25, 50, 75, 100]).unwrap();
+        let vdaf = Prio3::new_histogram(2, &[25, 50, 75, 100]).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &80);
         let collector = setup_collector(&mut server, vdaf);
 
@@ -1076,7 +1062,7 @@ mod tests {
     async fn successful_collect_prio3_fixedpoint_boundedl2_vec_sum() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_aes128_fixedpoint_boundedl2_vec_sum(2, 3).unwrap();
+        let vdaf = Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, 3).unwrap();
         let fp32_4_inv = fixed!(0.25: I1F31);
         let fp32_8_inv = fixed!(0.125: I1F31);
         let fp32_16_inv = fixed!(0.0625: I1F31);
@@ -1153,7 +1139,7 @@ mod tests {
     async fn successful_collect_fixed_size() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_aes128_count(2).unwrap();
+        let vdaf = Prio3::new_count(2).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &1);
         let collector = setup_collector(&mut server, vdaf);
 
@@ -1223,7 +1209,7 @@ mod tests {
     async fn failed_collect_start() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_aes128_count(2).unwrap();
+        let vdaf = Prio3::new_count(2).unwrap();
         let collector = setup_collector(&mut server, vdaf);
         let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
 
@@ -1314,7 +1300,7 @@ mod tests {
     async fn failed_collect_poll() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_aes128_count(2).unwrap();
+        let vdaf = Prio3::new_count(2).unwrap();
         let collector = setup_collector(&mut server, vdaf);
         let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
 
@@ -1534,7 +1520,8 @@ mod tests {
                         &Role::Leader,
                         &Role::Collector,
                     ),
-                    &<Vec<u8>>::from(&AggregateShare::from(Vec::from([Field64::from(0)]))),
+                    &AggregateShare::from(OutputShare::from(Vec::from([Field64::from(0)])))
+                        .get_encoded(),
                     &associated_data.get_encoded(),
                 )
                 .unwrap(),
@@ -1545,16 +1532,17 @@ mod tests {
                         &Role::Helper,
                         &Role::Collector,
                     ),
-                    &<Vec<u8>>::from(&AggregateShare::from(Vec::from([
+                    &AggregateShare::from(OutputShare::from(Vec::from([
                         Field64::from(0),
                         Field64::from(0),
-                    ]))),
+                    ])))
+                    .get_encoded(),
                     &associated_data.get_encoded(),
                 )
                 .unwrap(),
             ]),
         );
-        let mock_collection_job_unshard_failure = server
+        let mock_collection_job_wrong_length = server
             .mock("POST", job.collection_job_url.path())
             .with_status(200)
             .with_header(
@@ -1567,9 +1555,9 @@ mod tests {
             .await;
 
         let error = collector.poll_once(&job).await.unwrap_err();
-        assert_matches!(error, Error::Vdaf(_));
+        assert_matches!(error, Error::AggregateShareDecode);
 
-        mock_collection_job_unshard_failure.assert_async().await;
+        mock_collection_job_wrong_length.assert_async().await;
 
         let mock_collection_job_always_fail = server
             .mock("POST", job.collection_job_url.path())
@@ -1589,7 +1577,7 @@ mod tests {
     async fn collect_poll_retry_after() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_aes128_count(2).unwrap();
+        let vdaf = Prio3::new_count(2).unwrap();
         let collector = setup_collector(&mut server, vdaf);
         let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
 
@@ -1661,7 +1649,7 @@ mod tests {
         // used for this because hyper uses `tokio::time::Interval` internally, see issue #234.
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_aes128_count(2).unwrap();
+        let vdaf = Prio3::new_count(2).unwrap();
         let mut collector = setup_collector(&mut server, vdaf);
         collector
             .parameters

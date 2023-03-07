@@ -36,10 +36,10 @@ VDAF Algorithm and Parameters:
           VDAF algorithm
 
           Possible values:
-          - count:                          Prio3Aes128Count
-          - countvec:                       Prio3Aes128CountVec
-          - sum:                            Prio3Aes128Sum
-          - histogram:                      Prio3Aes128Histogram
+          - count:                          Prio3Count
+          - countvec:                       Prio3CountVec
+          - sum:                            Prio3Sum
+          - histogram:                      Prio3Histogram
           - fixedpoint16bitboundedl2vecsum: Prio3FixedPoint16BitBoundedL2VecSum
           - fixedpoint32bitboundedl2vecsum: Prio3FixedPoint32BitBoundedL2VecSum
           - fixedpoint64bitboundedl2vecsum: Prio3FixedPoint64BitBoundedL2VecSum

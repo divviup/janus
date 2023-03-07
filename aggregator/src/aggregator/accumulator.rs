@@ -21,10 +21,7 @@ use std::{collections::HashMap, sync::Arc};
 /// interval begins to the accumulated aggregate share, report count and checksum.
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub struct Accumulator<const L: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<L>>
-where
-    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-{
+pub struct Accumulator<const L: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<L, 16>> {
     task: Arc<Task>,
     shard_count: u64,
     #[derivative(Debug = "ignore")]
@@ -32,11 +29,7 @@ where
     aggregations: HashMap<Q::BatchIdentifier, BatchAggregation<L, Q, A>>,
 }
 
-impl<'t, const L: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<L>> Accumulator<L, Q, A>
-where
-    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-{
+impl<'t, const L: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<L, 16>> Accumulator<L, Q, A> {
     /// Creates a new accumulator.
     pub fn new(
         task: Arc<Task>,
@@ -96,10 +89,12 @@ where
     pub async fn flush_to_datastore<C: Clock>(
         &self,
         tx: &Transaction<'_, C>,
+        vdaf: &A,
     ) -> Result<(), datastore::Error> {
         try_join_all(self.aggregations.values().map(|agg| async move {
             match tx
                 .get_batch_aggregation::<L, Q, A>(
+                    vdaf,
                     agg.task_id(),
                     agg.batch_identifier(),
                     agg.aggregation_parameter(),

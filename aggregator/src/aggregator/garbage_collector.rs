@@ -229,11 +229,13 @@ mod tests {
                         .await?;
                     let batch_aggregations = tx
                         .get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             task.id(),
                         )
                         .await?;
                     let collection_jobs = tx
                         .get_collection_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             task.id(),
                         )
                         .await?;
@@ -392,11 +394,13 @@ mod tests {
                         .await?;
                     let batch_aggregations = tx
                         .get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             task.id(),
                         )
                         .await?;
                     let aggregate_share_jobs = tx
                         .get_aggregate_share_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             task.id(),
                         )
                         .await?;
@@ -542,11 +546,15 @@ mod tests {
                         .await?;
                     let batch_aggregations = tx
                         .get_batch_aggregations_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             task.id(),
                         )
                         .await?;
                     let collection_jobs = tx
-                        .get_collection_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(task.id())
+                        .get_collection_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &vdaf,
+                            task.id(),
+                        )
                         .await?;
                     let outstanding_batches =
                         tx.get_outstanding_batches_for_task(task.id()).await?;
@@ -702,11 +710,13 @@ mod tests {
                         .await?;
                     let batch_aggregations = tx
                         .get_batch_aggregations_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             task.id(),
                         )
                         .await?;
                     let aggregate_share_jobs = tx
                         .get_aggregate_share_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &vdaf,
                             task.id(),
                         )
                         .await?;

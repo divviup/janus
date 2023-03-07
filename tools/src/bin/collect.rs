@@ -17,7 +17,7 @@ use janus_messages::{
     Time,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
-use prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSum;
+use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded;
 use prio::{
     codec::Decode,
     vdaf::{self, prio3::Prio3},
@@ -53,13 +53,13 @@ impl From<clap::Error> for Error {
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 #[clap(rename_all = "lower")]
 enum VdafType {
-    /// Prio3Aes128Count
+    /// Prio3Count
     Count,
-    /// Prio3Aes128CountVec
+    /// Prio3CountVec
     CountVec,
-    /// Prio3Aes128Sum
+    /// Prio3Sum
     Sum,
-    /// Prio3Aes128Histogram
+    /// Prio3Histogram
     Histogram,
     #[cfg(feature = "fpvec_bounded_l2")]
     /// Prio3FixedPoint16BitBoundedL2VecSum
@@ -413,35 +413,34 @@ where
     let http_client = default_http_client().map_err(|err| Error::Anyhow(err.into()))?;
     match (options.vdaf, options.length, options.bits, options.buckets) {
         (VdafType::Count, None, None, None) => {
-            let vdaf = Prio3::new_aes128_count(2).map_err(|err| Error::Anyhow(err.into()))?;
+            let vdaf = Prio3::new_count(2).map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
         }
         (VdafType::CountVec, Some(length), None, None) => {
-            let vdaf =
-                Prio3::new_aes128_count_vec(2, length).map_err(|err| Error::Anyhow(err.into()))?;
+            let vdaf = Prio3::new_sum_vec(2, 1, length).map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
         }
         (VdafType::Sum, None, Some(bits), None) => {
-            let vdaf = Prio3::new_aes128_sum(2, bits).map_err(|err| Error::Anyhow(err.into()))?;
+            let vdaf = Prio3::new_sum(2, bits).map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
         }
         (VdafType::Histogram, None, None, Some(ref buckets)) => {
-            let vdaf = Prio3::new_aes128_histogram(2, &buckets.0)
-                .map_err(|err| Error::Anyhow(err.into()))?;
+            let vdaf =
+                Prio3::new_histogram(2, &buckets.0).map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
         }
         #[cfg(feature = "fpvec_bounded_l2")]
         (VdafType::FixedPoint16BitBoundedL2VecSum, Some(length), None, None) => {
-            let vdaf: Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>> =
-                Prio3::new_aes128_fixedpoint_boundedl2_vec_sum(2, length)
+            let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>> =
+                Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
                     .map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
@@ -449,8 +448,8 @@ where
         }
         #[cfg(feature = "fpvec_bounded_l2")]
         (VdafType::FixedPoint32BitBoundedL2VecSum, Some(length), None, None) => {
-            let vdaf: Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>> =
-                Prio3::new_aes128_fixedpoint_boundedl2_vec_sum(2, length)
+            let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>> =
+                Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
                     .map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
@@ -458,8 +457,8 @@ where
         }
         #[cfg(feature = "fpvec_bounded_l2")]
         (VdafType::FixedPoint64BitBoundedL2VecSum, Some(length), None, None) => {
-            let vdaf: Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>> =
-                Prio3::new_aes128_fixedpoint_boundedl2_vec_sum(2, length)
+            let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>> =
+                Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
                     .map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
@@ -489,7 +488,6 @@ async fn run_collection_generic<V: vdaf::Collector, Q: QueryTypeExt>(
     agg_param: &V::AggregationParam,
 ) -> Result<(), janus_collector::Error>
 where
-    for<'a> Vec<u8>: From<&'a V::AggregateShare>,
     V::AggregateResult: Debug,
 {
     let collector = Collector::new(parameters, vdaf, http_client);

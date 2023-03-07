@@ -27,7 +27,7 @@ impl AsRef<[u8]> for SecretBytes {
 /// A marker trait for VDAFs that have an aggregation parameter other than the unit type.
 pub trait VdafHasAggregationParameter {}
 
-impl<I, P, const L: usize> VdafHasAggregationParameter for prio::vdaf::poplar1::Poplar1<I, P, L> {}
+impl<P, const L: usize> VdafHasAggregationParameter for prio::vdaf::poplar1::Poplar1<P, L> {}
 
 #[cfg(feature = "test-util")]
 impl VdafHasAggregationParameter for dummy_vdaf::Vdaf {}

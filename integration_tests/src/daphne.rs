@@ -311,15 +311,15 @@ impl<'a> Drop for Daphne<'a> {
 
 fn daphne_vdaf_config_from_janus_vdaf(vdaf: &VdafInstance) -> daphne::VdafConfig {
     match vdaf {
-        VdafInstance::Prio3Aes128Count => daphne::VdafConfig::Prio3(daphne::Prio3Config::Count),
+        VdafInstance::Prio3Count => daphne::VdafConfig::Prio3(daphne::Prio3Config::Count),
 
-        VdafInstance::Prio3Aes128Histogram { buckets } => {
+        VdafInstance::Prio3Histogram { buckets } => {
             daphne::VdafConfig::Prio3(daphne::Prio3Config::Histogram {
                 buckets: buckets.clone(),
             })
         }
 
-        VdafInstance::Prio3Aes128Sum { bits } => {
+        VdafInstance::Prio3Sum { bits } => {
             daphne::VdafConfig::Prio3(daphne::Prio3Config::Sum { bits: *bits })
         }
 
