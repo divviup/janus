@@ -31,7 +31,7 @@ rand = { version = "0.8", features = ["min_const_gen"] }
 reqwest = { version = "0.11.14", default-features = false, features = ["rustls-tls", "json"] }
 retry-after = "0.3.1"
 thiserror = "1.0"
-tokio = { version = "1.25", features = ["full"] }
+tokio = { version = "1.26", features = ["full"] }
 tracing = "0.1.37"
 url = "2.3.1"
 
