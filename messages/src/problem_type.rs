@@ -5,6 +5,7 @@ use std::str::FromStr;
 pub enum DapProblemType {
     UnrecognizedMessage,
     UnrecognizedTask,
+    RoundMismatch,
     MissingTaskId,
     UnrecognizedAggregationJob,
     OutdatedConfig,
@@ -26,6 +27,7 @@ impl DapProblemType {
                 "urn:ietf:params:ppm:dap:error:unrecognizedMessage"
             }
             DapProblemType::UnrecognizedTask => "urn:ietf:params:ppm:dap:error:unrecognizedTask",
+            DapProblemType::RoundMismatch => "urn:ietf:params:ppm:dap:error:roundMismatch",
             DapProblemType::MissingTaskId => "urn:ietf:params:ppm:dap:error:missingTaskID",
             DapProblemType::UnrecognizedAggregationJob => {
                 "urn:ietf:params:ppm:dap:error:unrecognizedAggregationJob"
@@ -54,6 +56,9 @@ impl DapProblemType {
             }
             DapProblemType::UnrecognizedTask => {
                 "An endpoint received a message with an unknown task ID."
+            }
+            DapProblemType::RoundMismatch => {
+                "The leader and helper are not on the same round of VDAF preparation."
             }
             DapProblemType::MissingTaskId => {
                 "HPKE configuration was requested without specifying a task ID."
@@ -101,6 +106,7 @@ impl FromStr for DapProblemType {
             "urn:ietf:params:ppm:dap:error:unrecognizedTask" => {
                 Ok(DapProblemType::UnrecognizedTask)
             }
+            "urn:ietf:params:ppm:dap:error:roundMismatch" => Ok(DapProblemType::RoundMismatch),
             "urn:ietf:params:ppm:dap:error:missingTaskID" => Ok(DapProblemType::MissingTaskId),
             "urn:ietf:params:ppm:dap:error:unrecognizedAggregationJob" => {
                 Ok(DapProblemType::UnrecognizedAggregationJob)

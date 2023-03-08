@@ -17,7 +17,7 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
-    Duration as DurationMsg, Interval, Role, TaskId,
+    AggregationJobRound, Duration as DurationMsg, Interval, Role, TaskId,
 };
 use opentelemetry::{
     metrics::{Histogram, Unit},
@@ -392,6 +392,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             (),
                             client_timestamp_interval,
                             AggregationJobState::InProgress,
+                            AggregationJobRound::from(0),
                         ));
 
                         for (ord, (report_id, time)) in agg_job_reports.iter().enumerate() {
@@ -577,6 +578,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             *batch.id(),
                             client_timestamp_interval,
                             AggregationJobState::InProgress,
+                            AggregationJobRound::from(0),
                         ));
 
                         if is_batch_new {
@@ -704,6 +706,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 (),
                                 client_timestamp_interval,
                                 AggregationJobState::InProgress,
+                                AggregationJobRound::from(0),
                             ));
 
                             for (ord, (report_id, time)) in agg_job_reports.iter().enumerate() {
@@ -762,7 +765,7 @@ mod tests {
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
-        AggregationJobId, Interval, ReportId, Role, TaskId, Time,
+        AggregationJobId, AggregationJobRound, Interval, ReportId, Role, TaskId, Time,
     };
     use prio::{
         codec::ParameterizedDecode,
@@ -873,19 +876,11 @@ mod tests {
             .unwrap();
         assert!(helper_agg_jobs.is_empty());
         assert_eq!(leader_agg_jobs.len(), 1);
+        let leader_agg_job = leader_agg_jobs.values().next().unwrap();
+        assert_eq!(leader_agg_job.0.partial_batch_identifier(), &());
+        assert_eq!(leader_agg_job.0.round(), AggregationJobRound::from(0));
         assert_eq!(
-            leader_agg_jobs
-                .iter()
-                .next()
-                .unwrap()
-                .1
-                 .0
-                .partial_batch_identifier(),
-            &()
-        );
-        let report_times_and_ids = leader_agg_jobs.into_iter().next().unwrap().1 .1;
-        assert_eq!(
-            report_times_and_ids,
+            leader_agg_job.1,
             HashSet::from([(
                 *leader_report.metadata().time(),
                 *leader_report.metadata().id()
@@ -969,7 +964,9 @@ mod tests {
             .await
             .unwrap();
         let mut seen_report_ids = HashSet::new();
-        for (_, (_, times_and_ids)) in agg_jobs {
+        for (_, (agg_job, times_and_ids)) in agg_jobs {
+            // Jobs are created in round 0
+            assert_eq!(agg_job.round(), AggregationJobRound::from(0));
             // The batch is at most MAX_AGGREGATION_JOB_SIZE in size.
             assert!(times_and_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
 
@@ -1196,6 +1193,8 @@ mod tests {
         let mut seen_report_ids = HashSet::new();
         let mut batches_with_small_agg_jobs = HashSet::new();
         for (_, (agg_job, times_and_ids)) in agg_jobs {
+            // Aggregation jobs are created in round 0
+            assert_eq!(agg_job.round(), AggregationJobRound::from(0));
             // At most one aggregation job per batch will be smaller than the normal minimum
             // aggregation job size.
             if times_and_ids.len() < MIN_AGGREGATION_JOB_SIZE {

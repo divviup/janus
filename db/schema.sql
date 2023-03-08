@@ -105,6 +105,7 @@ CREATE TABLE aggregation_jobs(
     batch_id                  BYTEA NOT NULL,                  -- batch ID (fixed-size only; corresponds to identifier in BatchSelector)
     client_timestamp_interval TSRANGE NOT NULL,                -- the minimal interval containing all of client timestamps included in this aggregation job
     state                     AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
+    round                     INTEGER NOT NULL,                -- current round of the VDAF preparation protocol
 
     lease_expiry             TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this aggregation job expires; -infinity implies no current lease
     lease_token              BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease

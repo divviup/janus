@@ -30,7 +30,7 @@ use opentelemetry::{
     metrics::{Counter, Histogram},
     Context, KeyValue,
 };
-use postgres_types::{Json, ToSql};
+use postgres_types::{FromSql, Json, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
     vdaf,
@@ -1356,7 +1356,7 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<Option<AggregationJob<L, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
-                "SELECT aggregation_param, batch_id, client_timestamp_interval, state
+                "SELECT aggregation_param, batch_id, client_timestamp_interval, state, round
                 FROM aggregation_jobs JOIN tasks ON tasks.id = aggregation_jobs.task_id
                 WHERE tasks.task_id = $1 AND aggregation_jobs.aggregation_job_id = $2",
             )
@@ -1389,7 +1389,7 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT
                     aggregation_job_id, aggregation_param, batch_id, client_timestamp_interval,
-                    state
+                    state, round
                 FROM aggregation_jobs JOIN tasks ON tasks.id = aggregation_jobs.task_id
                 WHERE tasks.task_id = $1",
             )
@@ -1420,6 +1420,7 @@ impl<C: Clock> Transaction<'_, C> {
             row.get::<_, SqlInterval>("client_timestamp_interval")
                 .as_interval(),
             row.get("state"),
+            row.get_postgres_integer_and_convert::<i32, _, _>("round")?,
         ))
     }
 
@@ -1536,9 +1537,10 @@ impl<C: Clock> Transaction<'_, C> {
                     aggregation_param,
                     batch_id,
                     client_timestamp_interval,
-                    state
+                    state,
+                    round
                 )
-                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6)
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7)
                 ON CONFLICT DO NOTHING",
             )
             .await?;
@@ -1555,6 +1557,7 @@ impl<C: Clock> Transaction<'_, C> {
                     /* client_timestamp_interval */
                     &SqlInterval::from(aggregation_job.client_timestamp_interval()),
                     /* state */ &aggregation_job.state(),
+                    /* round */ &(u16::from(aggregation_job.round()) as i32),
                 ],
             )
             .await?;
@@ -1579,9 +1582,10 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "UPDATE aggregation_jobs SET
-                    state = $1
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $2)
-                  AND aggregation_job_id = $3",
+                    state = $1,
+                    round = $2
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $3)
+                  AND aggregation_job_id = $4",
             )
             .await?;
         check_single_row_mutation(
@@ -1589,6 +1593,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* state */ &aggregation_job.state(),
+                    /* round */ &(u16::from(aggregation_job.round()) as i32),
                     /* task_id */ &aggregation_job.task_id().as_ref(),
                     /* aggregation_job_id */
                     &aggregation_job.id().as_ref(),
@@ -3451,6 +3456,14 @@ fn add_naive_date_time_duration(
 
 /// Extensions for [`tokio_postgres::row::Row`]
 trait RowExt {
+    /// Get an integer of type `P` from the row, then attempt to convert it to the desired integer
+    /// type `T`.
+    fn get_postgres_integer_and_convert<'a, P, I, T>(&'a self, idx: I) -> Result<T, Error>
+    where
+        P: FromSql<'a>,
+        I: RowIndex + Display,
+        T: TryFrom<P, Error = std::num::TryFromIntError>;
+
     /// Get a PostgreSQL `BIGINT` from the row, which is represented in Rust as
     /// i64 ([1]), then attempt to convert it to the desired integer type `T`.
     ///
@@ -3458,19 +3471,16 @@ trait RowExt {
     fn get_bigint_and_convert<I, T>(&self, idx: I) -> Result<T, Error>
     where
         I: RowIndex + Display,
-        T: TryFrom<i64, Error = std::num::TryFromIntError>;
+        T: TryFrom<i64, Error = std::num::TryFromIntError>,
+    {
+        self.get_postgres_integer_and_convert::<i64, I, T>(idx)
+    }
 
     /// Like [`Self::get_bigint_and_convert`] but handles nullable columns.
     fn get_nullable_bigint_and_convert<I, T>(&self, idx: I) -> Result<Option<T>, Error>
     where
         I: RowIndex + Display,
         T: TryFrom<i64, Error = std::num::TryFromIntError>;
-
-    /// Get a PostgreSQL `BYTEA` from the row and then attempt to convert it to
-    /// u64, treating it as an 8 byte big endian array.
-    fn get_bytea_as_u64<I>(&self, idx: I) -> Result<u64, Error>
-    where
-        I: RowIndex + Display;
 
     /// Get a PostgreSQL `BYTEA` from the row and attempt to convert it to `T`.
     fn get_bytea_and_convert<T>(&self, idx: &'static str) -> Result<T, Error>
@@ -3489,13 +3499,14 @@ trait RowExt {
 }
 
 impl RowExt for Row {
-    fn get_bigint_and_convert<I, T>(&self, idx: I) -> Result<T, Error>
+    fn get_postgres_integer_and_convert<'a, P, I, T>(&'a self, idx: I) -> Result<T, Error>
     where
+        P: FromSql<'a>,
         I: RowIndex + Display,
-        T: TryFrom<i64, Error = std::num::TryFromIntError>,
+        T: TryFrom<P, Error = std::num::TryFromIntError>,
     {
-        let bigint: i64 = self.try_get(idx)?;
-        Ok(T::try_from(bigint)?)
+        let postgres_integer: P = self.try_get(idx)?;
+        Ok(T::try_from(postgres_integer)?)
     }
 
     fn get_nullable_bigint_and_convert<I, T>(&self, idx: I) -> Result<Option<T>, Error>
@@ -3505,22 +3516,6 @@ impl RowExt for Row {
     {
         let bigint: Option<i64> = self.try_get(idx)?;
         Ok(bigint.map(|bigint| T::try_from(bigint)).transpose()?)
-    }
-
-    fn get_bytea_as_u64<I>(&self, idx: I) -> Result<u64, Error>
-    where
-        I: RowIndex + Display,
-    {
-        let encoded_u64: Vec<u8> = self.try_get(idx)?;
-
-        // `u64::from_be_bytes` takes `[u8; 8]` and `Vec<u8>::try_into` will
-        // fail unless the vector has exactly that length [1].
-        //
-        // [1]: https://doc.rust-lang.org/std/primitive.array.html#method.try_from-4
-        Ok(u64::from_be_bytes(encoded_u64.try_into().map_err(
-            // The error is just the vector that was rejected
-            |_| Error::DbState("byte array in database does not have expected length".to_string()),
-        )?))
     }
 
     fn get_bytea_and_convert<T>(&self, idx: &'static str) -> Result<T, Error>
@@ -3717,8 +3712,9 @@ pub mod models {
     };
     use janus_messages::{
         query_type::{FixedSize, QueryType, TimeInterval},
-        AggregationJobId, BatchId, CollectionJobId, Duration, Extension, HpkeCiphertext, Interval,
-        ReportId, ReportIdChecksum, ReportMetadata, ReportShareError, Role, TaskId, Time,
+        AggregationJobId, AggregationJobRound, BatchId, CollectionJobId, Duration, Extension,
+        HpkeCiphertext, Interval, ReportId, ReportIdChecksum, ReportMetadata, ReportShareError,
+        Role, TaskId, Time,
     };
     use postgres_protocol::types::{
         range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql, Range, RangeBound,
@@ -3898,6 +3894,8 @@ pub mod models {
         client_timestamp_interval: Interval,
         /// The overall state of this aggregation job.
         state: AggregationJobState,
+        /// The round of VDAF preparation that this aggregation job is currently on.
+        round: AggregationJobRound,
     }
 
     impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>> AggregationJob<L, Q, A> {
@@ -3909,6 +3907,7 @@ pub mod models {
             batch_id: Q::PartialBatchIdentifier,
             client_timestamp_interval: Interval,
             state: AggregationJobState,
+            round: AggregationJobRound,
         ) -> Self {
             Self {
                 task_id,
@@ -3917,6 +3916,7 @@ pub mod models {
                 batch_id,
                 client_timestamp_interval,
                 state,
+                round,
             }
         }
 
@@ -3959,6 +3959,17 @@ pub mod models {
         pub fn with_state(self, state: AggregationJobState) -> Self {
             AggregationJob { state, ..self }
         }
+
+        /// Returns the round of the VDAF preparation protocol the aggregation job is on.
+        pub fn round(&self) -> AggregationJobRound {
+            self.round
+        }
+
+        /// Returns a new [`AggregationJob`] corresponding to this aggregation job updated to be on
+        /// the given VDAF preparation round.
+        pub fn with_round(self, round: AggregationJobRound) -> Self {
+            Self { round, ..self }
+        }
     }
 
     impl<const L: usize, A: vdaf::Aggregator<L, 16>> AggregationJob<L, FixedSize, A> {
@@ -3979,6 +3990,7 @@ pub mod models {
                 && self.batch_id == other.batch_id
                 && self.client_timestamp_interval == other.client_timestamp_interval
                 && self.state == other.state
+                && self.round == other.round
         }
     }
 
@@ -4329,8 +4341,7 @@ pub mod models {
 
         /// Get the helper's prepare share, or an error if this is a leader's preprocessed prepare
         /// message.
-        #[cfg(test)]
-        pub(crate) fn get_helper_prepare_share(&self) -> Result<&A::PrepareShare, Error>
+        pub fn get_helper_prepare_share(&self) -> Result<&A::PrepareShare, Error>
         where
             A::PrepareShare: Encode,
         {
@@ -5162,9 +5173,10 @@ mod tests {
     };
     use janus_messages::{
         query_type::{FixedSize, QueryType, TimeInterval},
-        AggregateShareAad, AggregationJobId, BatchId, BatchSelector, CollectionJobId, Duration,
-        Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval, ReportId,
-        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
+        AggregateShareAad, AggregationJobId, AggregationJobRound, BatchId, BatchSelector,
+        CollectionJobId, Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId,
+        Interval, ReportId, ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role,
+        TaskId, Time,
     };
     use prio::{
         codec::{Decode, Encode},
@@ -5724,6 +5736,7 @@ mod tests {
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
                     AggregationJobState::InProgress,
+                    AggregationJobRound::from(0),
                 ))
                 .await?;
                 tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -5993,6 +6006,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     );
                     let aggregation_job_0_report_aggregation_0 =
                         ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -6021,6 +6035,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     );
                     let aggregation_job_1_report_aggregation_0 =
                         ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -6199,6 +6214,7 @@ mod tests {
             )
             .unwrap(),
             AggregationJobState::InProgress,
+            AggregationJobRound::from(0),
         );
         let helper_aggregation_job = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
             *task.id(),
@@ -6211,6 +6227,7 @@ mod tests {
             )
             .unwrap(),
             AggregationJobState::InProgress,
+            AggregationJobRound::from(0),
         );
 
         ds.run_tx(|tx| {
@@ -6297,6 +6314,7 @@ mod tests {
             )
             .unwrap(),
             AggregationJobState::InProgress,
+            AggregationJobRound::from(0),
         );
         ds.run_tx(|tx| {
             let new_leader_aggregation_job = new_leader_aggregation_job.clone();
@@ -6354,6 +6372,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     ))
                     .await?;
                 }
@@ -6371,6 +6390,7 @@ mod tests {
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
                     AggregationJobState::Finished,
+                    AggregationJobRound::from(1),
                 ))
                 .await?;
 
@@ -6395,6 +6415,7 @@ mod tests {
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
                     AggregationJobState::InProgress,
+                    AggregationJobRound::from(0),
                 ))
                 .await
             })
@@ -6634,6 +6655,7 @@ mod tests {
                             )
                             .unwrap(),
                             AggregationJobState::InProgress,
+                            AggregationJobRound::from(0),
                         ),
                     )
                     .await
@@ -6665,6 +6687,7 @@ mod tests {
             random(),
             Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
             AggregationJobState::InProgress,
+            AggregationJobRound::from(0),
         );
         let second_aggregation_job = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
             *task.id(),
@@ -6673,6 +6696,7 @@ mod tests {
             random(),
             Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
             AggregationJobState::InProgress,
+            AggregationJobRound::from(0),
         );
 
         ds.run_tx(|tx| {
@@ -6703,6 +6727,7 @@ mod tests {
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
                     AggregationJobState::InProgress,
+                    AggregationJobRound::from(0),
                 ))
                 .await
             })
@@ -6803,6 +6828,7 @@ mod tests {
                             )
                             .unwrap(),
                             AggregationJobState::InProgress,
+                            AggregationJobRound::from(0),
                         ))
                         .await?;
                         tx.put_report_share(
@@ -6930,6 +6956,7 @@ mod tests {
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
                     AggregationJobState::InProgress,
+                    AggregationJobRound::from(0),
                 ))
                 .await?;
                 tx.put_report_share(
@@ -7111,6 +7138,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     ))
                     .await?;
 
@@ -7623,6 +7651,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
+                AggregationJobRound::from(1),
             )]);
         let report_aggregations = Vec::from([ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
             task_id,
@@ -7752,6 +7781,7 @@ mod tests {
             batch_id,
             Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
             AggregationJobState::Finished,
+            AggregationJobRound::from(1),
         )]);
         let report_aggregations = Vec::from([ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
             task_id,
@@ -7880,6 +7910,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
+                AggregationJobRound::from(1),
             )]);
 
         let collection_job_test_cases = Vec::from([CollectionJobTestCase::<TimeInterval> {
@@ -7933,6 +7964,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
+                AggregationJobRound::from(1),
             )]);
 
         let collection_job_test_cases = Vec::from([CollectionJobTestCase::<TimeInterval> {
@@ -7985,6 +8017,7 @@ mod tests {
                 )
                 .unwrap(),
                 AggregationJobState::Finished,
+                AggregationJobRound::from(1),
             )]);
         let report_aggregations = Vec::from([ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
             task_id,
@@ -8047,6 +8080,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
+                AggregationJobRound::from(1),
             )]);
 
         let report_aggregations = Vec::from([ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -8110,6 +8144,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
+                AggregationJobRound::from(1),
             ),
             AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
@@ -8120,6 +8155,7 @@ mod tests {
                     .unwrap(),
                 // Aggregation job included in collect request is in progress
                 AggregationJobState::InProgress,
+                AggregationJobRound::from(0),
             ),
         ]);
 
@@ -8192,6 +8228,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
+                AggregationJobRound::from(1),
             ),
             AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
@@ -8201,6 +8238,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
+                AggregationJobRound::from(1),
             ),
         ]);
         let report_aggregations = Vec::from([
@@ -8343,6 +8381,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
+                AggregationJobRound::from(1),
             ),
             AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
@@ -8352,6 +8391,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
+                AggregationJobRound::from(1),
             ),
             AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
@@ -8361,6 +8401,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
+                AggregationJobRound::from(1),
             ),
         ]);
         let report_aggregations = Vec::from([
@@ -8936,6 +8977,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::Finished,
+                        AggregationJobRound::from(1),
                     );
                     let report_aggregation_0_0 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
@@ -8981,6 +9023,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::Finished,
+                        AggregationJobRound::from(1),
                     );
                     let report_aggregation_1_0 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
@@ -9251,6 +9294,7 @@ mod tests {
                         )
                         .unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     );
                     let report_aggregation = ReportAggregation::new(
                         *task.id(),
@@ -9374,6 +9418,7 @@ mod tests {
                 Q::partial_batch_identifier(&batch_identifier).clone(),
                 client_timestamp_interval,
                 AggregationJobState::InProgress,
+                AggregationJobRound::from(0),
             );
             tx.put_aggregation_job(&aggregation_job).await.unwrap();
 
@@ -10085,6 +10130,7 @@ mod tests {
                     Q::partial_batch_identifier(&batch_identifier).clone(),
                     Interval::new(*client_timestamp, Duration::from_seconds(1)).unwrap(),
                     AggregationJobState::InProgress,
+                    AggregationJobRound::from(0),
                 );
                 tx.put_aggregation_job(&aggregation_job).await.unwrap();
 

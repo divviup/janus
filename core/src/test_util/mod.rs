@@ -31,10 +31,7 @@ pub struct VdafTranscript<const L: usize, V: vdaf::Aggregator<L, 16>> {
     pub aggregate_shares: Vec<V::AggregateShare>,
 }
 
-impl<const L: usize, V> VdafTranscript<L, V>
-where
-    V: vdaf::Aggregator<L, 16>,
-{
+impl<const L: usize, V: vdaf::Aggregator<L, 16>> VdafTranscript<L, V> {
     /// Get the leader's preparation state at the requested round.
     pub fn leader_prep_state(&self, round: usize) -> &V::PrepareState {
         assert_matches!(
