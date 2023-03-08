@@ -1846,7 +1846,7 @@ impl VdafOps {
 
                     // The leader is advancing us to the next round. Step the aggregation job to
                     // compute the next round of prepare messages and state.
-                    return Self::step_aggregation_job(
+                    Self::step_aggregation_job(
                         tx,
                         &task,
                         &vdaf,
@@ -1856,7 +1856,7 @@ impl VdafOps {
                         &leader_aggregation_job,
                         &aggregate_step_failure_counter,
                     )
-                    .await;
+                    .await
                 })
             })
             .await?)
