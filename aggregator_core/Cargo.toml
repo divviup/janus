@@ -46,7 +46,7 @@ rand = { version = "0.8", features = ["min_const_gen"] }
 regex = "1"
 reqwest = { version = "0.11.14", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.16.20"
-serde = { version = "1.0.152", features = ["derive"] }
+serde = { version = "1.0.153", features = ["derive"] }
 serde_json = "1.0.94"
 serde_yaml = "0.9.19"
 testcontainers = { version = "0.14.0", optional = true }
