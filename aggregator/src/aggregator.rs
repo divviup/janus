@@ -86,6 +86,7 @@ pub mod accumulator;
 #[cfg(test)]
 mod aggregate_init_tests;
 pub mod aggregate_share;
+pub mod aggregation_job_continue;
 pub mod aggregation_job_creator;
 pub mod aggregation_job_driver;
 pub mod collection_job_driver;
@@ -3229,6 +3230,9 @@ async fn send_request_to_helper<T: Encode>(
 mod tests {
     use crate::aggregator::{
         aggregate_init_tests::{put_aggregation_job, setup_aggregate_init_test},
+        aggregation_job_continue::test_util::{
+            post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
+        },
         aggregator_filter,
         collection_job_tests::setup_collection_job_test_case,
         error_handler, send_request_to_helper, Aggregator, BatchMismatch, Config, Error,
@@ -4850,7 +4854,8 @@ mod tests {
         );
         let mutated_timestamp_report_share = test_case
             .report_share_generator
-            .next_with_metadata(mutated_timestamp_report_metadata);
+            .next_with_metadata(mutated_timestamp_report_metadata)
+            .0;
 
         // Send another aggregate job re-using the same report ID but with a different timestamp. It
         // should be flagged as a replay.
@@ -5308,30 +5313,8 @@ mod tests {
         let filter =
             aggregator_filter(datastore.clone(), clock, default_aggregator_config()).unwrap();
 
-        let mut response = warp::test::request()
-            .method("POST")
-            .path(
-                task.aggregation_job_uri(&aggregation_job_id)
-                    .unwrap()
-                    .path(),
-            )
-            .header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get(CONTENT_TYPE).unwrap(),
-            AggregationJobResp::MEDIA_TYPE
-        );
-        let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
-        let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
+        let aggregate_resp =
+            post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &filter).await;
 
         // Validate response.
         assert_eq!(
@@ -5645,30 +5628,8 @@ mod tests {
         )
         .unwrap();
 
-        let response = warp::test::request()
-            .method("POST")
-            .path(
-                format!(
-                    "/tasks/{}/aggregation_jobs/{aggregation_job_id_0}",
-                    task.id()
-                )
-                .as_str(),
-            )
-            .header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get(CONTENT_TYPE).unwrap(),
-            AggregationJobResp::MEDIA_TYPE
-        );
+        let _ =
+            post_aggregation_job_and_decode(&task, &aggregation_job_id_0, &request, &filter).await;
 
         // Map the batch aggregation ordinal value to 0, as it may vary due to sharding.
         let batch_aggregations: Vec<_> = datastore
@@ -5963,28 +5924,8 @@ mod tests {
         )
         .unwrap();
 
-        let response = warp::test::request()
-            .method("POST")
-            .path(
-                task.aggregation_job_uri(&aggregation_job_id_1)
-                    .unwrap()
-                    .path(),
-            )
-            .header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get(CONTENT_TYPE).unwrap(),
-            AggregationJobResp::MEDIA_TYPE
-        );
+        let _ =
+            post_aggregation_job_and_decode(&task, &aggregation_job_id_1, &request, &filter).await;
 
         // Map the batch aggregation ordinal value to 0, as it may vary due to sharding, and merge
         // batch aggregations over the same interval. (the task & aggregation parameter will always
@@ -6178,38 +6119,16 @@ mod tests {
         let filter =
             aggregator_filter(datastore.clone(), clock, default_aggregator_config()).unwrap();
 
-        let (parts, body) = warp::test::request()
-            .method("POST")
-            .path(
-                task.aggregation_job_uri(&aggregation_job_id)
-                    .unwrap()
-                    .path(),
-            )
-            .header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response()
-            .into_parts();
-
-        // Check that response is as desired.
-        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
-        assert_eq!(
-            problem_details,
-            json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
-                "title": "The message type for a response was incorrect or the payload was malformed.",
-                "taskid": format!("{}", task.id()),
-            })
-        );
+        post_aggregation_job_expecting_error(
+            &task,
+            &aggregation_job_id,
+            &request,
+            &filter,
+            StatusCode::BAD_REQUEST,
+            "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
+            "The message type for a response was incorrect or the payload was malformed.",
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -6296,33 +6215,8 @@ mod tests {
         let filter =
             aggregator_filter(datastore.clone(), clock, default_aggregator_config()).unwrap();
 
-        let (parts, body) = warp::test::request()
-            .method("POST")
-            .path(
-                task.aggregation_job_uri(&aggregation_job_id)
-                    .unwrap()
-                    .path(),
-            )
-            .header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response()
-            .into_parts();
-
-        // Check that response is as desired.
-        assert_eq!(parts.status, StatusCode::OK);
-        assert_eq!(
-            parts.headers.get(CONTENT_TYPE).unwrap(),
-            AggregationJobResp::MEDIA_TYPE
-        );
-        let body_bytes = body::to_bytes(body).await.unwrap();
-        let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
+        let aggregate_resp =
+            post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &filter).await;
         assert_eq!(
             aggregate_resp,
             AggregationJobResp::new(Vec::from([PrepareStep::new(
@@ -6464,38 +6358,16 @@ mod tests {
         let filter =
             aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
-        let (parts, body) = warp::test::request()
-            .method("POST")
-            .path(
-                task.aggregation_job_uri(&aggregation_job_id)
-                    .unwrap()
-                    .path(),
-            )
-            .header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response()
-            .into_parts();
-
-        // Check that response is as desired.
-        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
-        assert_eq!(
-            problem_details,
-            json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
-                "title": "The message type for a response was incorrect or the payload was malformed.",
-                "taskid": format!("{}", task.id()),
-            })
-        );
+        post_aggregation_job_expecting_error(
+            &task,
+            &aggregation_job_id,
+            &request,
+            &filter,
+            StatusCode::BAD_REQUEST,
+            "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
+            "The message type for a response was incorrect or the payload was malformed.",
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -6625,38 +6497,16 @@ mod tests {
         let filter =
             aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
-        let (parts, body) = warp::test::request()
-            .method("POST")
-            .path(
-                task.aggregation_job_uri(&aggregation_job_id)
-                    .unwrap()
-                    .path(),
-            )
-            .header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response()
-            .into_parts();
-
-        // Check that response is as desired.
-        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
-        assert_eq!(
-            problem_details,
-            json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
-                "title": "The message type for a response was incorrect or the payload was malformed.",
-                "taskid": format!("{}", task.id()),
-            })
-        );
+        post_aggregation_job_expecting_error(
+            &task,
+            &aggregation_job_id,
+            &request,
+            &filter,
+            StatusCode::BAD_REQUEST,
+            "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
+            "The message type for a response was incorrect or the payload was malformed.",
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -6736,38 +6586,16 @@ mod tests {
         let filter =
             aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
-        let (parts, body) = warp::test::request()
-            .method("POST")
-            .path(
-                task.aggregation_job_uri(&aggregation_job_id)
-                    .unwrap()
-                    .path(),
-            )
-            .header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response()
-            .into_parts();
-
-        // Check that response is as desired.
-        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
-        assert_eq!(
-            problem_details,
-            json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
-                "title": "The message type for a response was incorrect or the payload was malformed.",
-                "taskid": format!("{}", task.id()),
-            })
-        );
+        post_aggregation_job_expecting_error(
+            &task,
+            &aggregation_job_id,
+            &request,
+            &filter,
+            StatusCode::BAD_REQUEST,
+            "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
+            "The message type for a response was incorrect or the payload was malformed.",
+        )
+        .await;
     }
 
     #[tokio::test]

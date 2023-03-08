@@ -9,7 +9,7 @@ use janus_aggregator_core::{
 };
 use janus_core::{
     task::VdafInstance,
-    test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf},
+    test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf, VdafTranscript},
     time::{Clock, MockClock, TimeExt as _},
 };
 use janus_messages::{
@@ -29,7 +29,11 @@ pub(super) struct ReportShareGenerator {
 }
 
 impl ReportShareGenerator {
-    fn new(clock: MockClock, task: Task, aggregation_param: dummy_vdaf::AggregationParam) -> Self {
+    pub(super) fn new(
+        clock: MockClock,
+        task: Task,
+        aggregation_param: dummy_vdaf::AggregationParam,
+    ) -> Self {
         Self {
             clock,
             task,
@@ -43,7 +47,7 @@ impl ReportShareGenerator {
         self
     }
 
-    fn next(&self) -> ReportShare {
+    pub(super) fn next(&self) -> (ReportShare, VdafTranscript<0, dummy_vdaf::Vdaf>) {
         self.next_with_metadata(ReportMetadata::new(
             random(),
             self.clock
@@ -53,7 +57,10 @@ impl ReportShareGenerator {
         ))
     }
 
-    pub(super) fn next_with_metadata(&self, report_metadata: ReportMetadata) -> ReportShare {
+    pub(super) fn next_with_metadata(
+        &self,
+        report_metadata: ReportMetadata,
+    ) -> (ReportShare, VdafTranscript<0, dummy_vdaf::Vdaf>) {
         let transcript = run_vdaf(
             &self.vdaf,
             self.task.primary_vdaf_verify_key().unwrap().as_bytes(),
@@ -61,14 +68,16 @@ impl ReportShareGenerator {
             report_metadata.id(),
             &(),
         );
-        generate_helper_report_share::<dummy_vdaf::Vdaf>(
+        let report_share = generate_helper_report_share::<dummy_vdaf::Vdaf>(
             *self.task.id(),
             report_metadata,
             self.task.current_hpke_key().config(),
             &transcript.public_share,
             Vec::new(),
             &transcript.input_shares[1],
-        )
+        );
+
+        (report_share, transcript)
     }
 }
 
@@ -103,7 +112,10 @@ pub(super) async fn setup_aggregate_init_test() -> AggregationJobInitTestCase<im
     let report_share_generator =
         ReportShareGenerator::new(clock.clone(), task.clone(), aggregation_param);
 
-    let report_shares = Vec::from([report_share_generator.next(), report_share_generator.next()]);
+    let report_shares = Vec::from([
+        report_share_generator.next().0,
+        report_share_generator.next().0,
+    ]);
 
     let aggregation_job_id = random();
     let aggregation_job_init_req = AggregationJobInitializeReq::new(
@@ -191,13 +203,13 @@ async fn aggregation_job_mutation_report_shares() {
         // Include a different report share than was included previously
         [
             &test_case.report_shares[0..test_case.report_shares.len() - 1],
-            &[test_case.report_share_generator.next()],
+            &[test_case.report_share_generator.next().0],
         ]
         .concat(),
         // Include an extra report share than was included previously
         [
             test_case.report_shares.as_slice(),
-            &[test_case.report_share_generator.next()],
+            &[test_case.report_share_generator.next().0],
         ]
         .concat(),
         // Reverse the order of the reports
@@ -232,7 +244,11 @@ async fn aggregation_job_mutation_report_aggregations() {
     let mutated_report_shares = test_case
         .report_shares
         .iter()
-        .map(|s| mutated_report_shares_generator.next_with_metadata(s.metadata().clone()))
+        .map(|s| {
+            mutated_report_shares_generator
+                .next_with_metadata(s.metadata().clone())
+                .0
+        })
         .collect();
 
     let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
