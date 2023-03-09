@@ -335,6 +335,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     ) -> anyhow::Result<bool>
     where
         A::PrepareMessage: Send + Sync,
+        A::PrepareShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
         A::OutputShare: Send + Sync,
     {
@@ -436,6 +437,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     ) -> anyhow::Result<bool>
     where
         A::PrepareMessage: Send + Sync,
+        A::PrepareShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
         A::OutputShare: Send + Sync,
     {
@@ -633,6 +635,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     where
         A: vdaf::Aggregator<L, 16> + janus_aggregator_core::VdafHasAggregationParameter,
         A::PrepareMessage: Send + Sync,
+        A::PrepareShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
         A::OutputShare: Send + Sync,
         A::AggregationParam: Send + Sync + Eq + std::hash::Hash,

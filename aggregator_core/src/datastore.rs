@@ -3,8 +3,8 @@
 use self::models::{
     AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
     AggregatorRole, BatchAggregation, CollectionJob, CollectionJobState, CollectionJobStateCode,
-    LeaderStoredReport, Lease, LeaseToken, OutstandingBatch, ReportAggregation,
-    ReportAggregationState, ReportAggregationStateCode, SqlInterval,
+    LeaderStoredReport, Lease, LeaseToken, OutstandingBatch, PrepareMessageOrShare,
+    ReportAggregation, ReportAggregationState, ReportAggregationStateCode, SqlInterval,
 };
 #[cfg(feature = "test-util")]
 use crate::VdafHasAggregationParameter;
@@ -1825,9 +1825,21 @@ impl<C: Clock> Transaction<'_, C> {
                         )
                     })?,
                 )?;
-                let prep_msg = prep_msg_bytes
-                    .map(|bytes| A::PrepareMessage::get_decoded_with_param(&prep_state, &bytes))
-                    .transpose()?;
+                let prep_msg_bytes = prep_msg_bytes.ok_or_else(|| {
+                    Error::DbState(
+                        "report aggregation in state WAITING but prep_msg is NULL".to_string(),
+                    )
+                })?;
+                let prep_msg = match role {
+                    Role::Leader => PrepareMessageOrShare::Leader(
+                        A::PrepareMessage::get_decoded_with_param(&prep_state, &prep_msg_bytes)?,
+                    ),
+                    Role::Helper => PrepareMessageOrShare::Helper(
+                        A::PrepareShare::get_decoded_with_param(&prep_state, &prep_msg_bytes)?,
+                    ),
+                    _ => return Err(Error::DbState(format!("unexpected role {role}"))),
+                };
+
                 ReportAggregationState::Waiting(prep_state, prep_msg)
             }
             ReportAggregationStateCode::Finished => {
@@ -4266,6 +4278,7 @@ pub mod models {
     where
         A::PrepareState: PartialEq,
         A::PrepareMessage: PartialEq,
+        A::PrepareShare: PartialEq,
         A::OutputShare: PartialEq,
     {
         fn eq(&self, other: &Self) -> bool {
@@ -4282,7 +4295,77 @@ pub mod models {
     where
         A::PrepareState: Eq,
         A::PrepareMessage: Eq,
+        A::PrepareShare: Eq,
         A::OutputShare: Eq,
+    {
+    }
+
+    /// Represents either a preprocessed VDAF preparation message (for the leader) or a VDAF
+    /// preparation message share (for the helper).
+    #[derive(Clone, Derivative)]
+    #[derivative(Debug)]
+    pub enum PrepareMessageOrShare<const L: usize, A: vdaf::Aggregator<L, 16>> {
+        /// The helper stores a prepare message share
+        Helper(#[derivative(Debug = "ignore")] A::PrepareShare),
+        /// The leader stores a combined prepare message
+        Leader(#[derivative(Debug = "ignore")] A::PrepareMessage),
+    }
+
+    impl<const L: usize, A: vdaf::Aggregator<L, 16>> PrepareMessageOrShare<L, A> {
+        /// Get the leader's preprocessed prepare message, or an error if this is a helper's prepare
+        /// share.
+        pub fn get_leader_prepare_message(&self) -> Result<&A::PrepareMessage, Error>
+        where
+            A::PrepareMessage: Encode,
+        {
+            if let Self::Leader(prep_msg) = self {
+                Ok(prep_msg)
+            } else {
+                Err(Error::InvalidParameter(
+                    "does not contain a prepare message",
+                ))
+            }
+        }
+
+        /// Get the helper's prepare share, or an error if this is a leader's preprocessed prepare
+        /// message.
+        #[cfg(test)]
+        pub(crate) fn get_helper_prepare_share(&self) -> Result<&A::PrepareShare, Error>
+        where
+            A::PrepareShare: Encode,
+        {
+            if let Self::Helper(prep_share) = self {
+                Ok(prep_share)
+            } else {
+                Err(Error::InvalidParameter("does not contain a prepare share"))
+            }
+        }
+    }
+
+    impl<const L: usize, A> PartialEq for PrepareMessageOrShare<L, A>
+    where
+        A: vdaf::Aggregator<L, 16>,
+        A::PrepareShare: PartialEq,
+        A::PrepareMessage: PartialEq,
+    {
+        fn eq(&self, other: &Self) -> bool {
+            match (self, other) {
+                (Self::Helper(self_prep_share), Self::Helper(other_prep_share)) => {
+                    self_prep_share.eq(other_prep_share)
+                }
+                (Self::Leader(self_prep_msg), Self::Leader(other_prep_msg)) => {
+                    self_prep_msg.eq(other_prep_msg)
+                }
+                _ => false,
+            }
+        }
+    }
+
+    impl<const L: usize, A> Eq for PrepareMessageOrShare<L, A>
+    where
+        A: vdaf::Aggregator<L, 16>,
+        A::PrepareShare: Eq,
+        A::PrepareMessage: Eq,
     {
     }
 
@@ -4294,7 +4377,7 @@ pub mod models {
         Start,
         Waiting(
             #[derivative(Debug = "ignore")] A::PrepareState,
-            #[derivative(Debug = "ignore")] Option<A::PrepareMessage>,
+            #[derivative(Debug = "ignore")] PrepareMessageOrShare<L, A>,
         ),
         Finished(#[derivative(Debug = "ignore")] A::OutputShare),
         Failed(ReportShareError),
@@ -4321,12 +4404,18 @@ pub mod models {
         {
             let (prep_state, prep_msg, output_share, report_share_err) = match self {
                 ReportAggregationState::Start => (None, None, None, None),
-                ReportAggregationState::Waiting(prep_state, prep_msg) => (
-                    Some(prep_state.get_encoded()),
-                    prep_msg.as_ref().map(|msg| msg.get_encoded()),
-                    None,
-                    None,
-                ),
+                ReportAggregationState::Waiting(prep_state, prep_msg) => {
+                    let encoded_msg = match prep_msg {
+                        PrepareMessageOrShare::Leader(prep_msg) => prep_msg.get_encoded(),
+                        PrepareMessageOrShare::Helper(prep_share) => prep_share.get_encoded(),
+                    };
+                    (
+                        Some(prep_state.get_encoded()),
+                        Some(encoded_msg),
+                        None,
+                        None,
+                    )
+                }
                 ReportAggregationState::Finished(output_share) => {
                     (None, None, Some(output_share.get_encoded()), None)
                 }
@@ -4374,6 +4463,7 @@ pub mod models {
     where
         A::PrepareState: PartialEq,
         A::PrepareMessage: PartialEq,
+        A::PrepareShare: PartialEq,
         A::OutputShare: PartialEq,
     {
         fn eq(&self, other: &Self) -> bool {
@@ -4397,6 +4487,7 @@ pub mod models {
     where
         A::PrepareState: Eq,
         A::PrepareMessage: Eq,
+        A::PrepareShare: Eq,
         A::OutputShare: Eq,
     {
     }
@@ -5047,8 +5138,8 @@ mod tests {
             models::{
                 AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
                 AggregationJobState, BatchAggregation, CollectionJob, CollectionJobState,
-                LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
-                ReportAggregationState, SqlInterval,
+                LeaderStoredReport, Lease, OutstandingBatch, PrepareMessageOrShare,
+                ReportAggregation, ReportAggregationState, SqlInterval,
             },
             test_util::{ephemeral_datastore, generate_aead_key},
             Crypter, Datastore, Error, Transaction,
@@ -6645,18 +6736,39 @@ mod tests {
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let verify_key: [u8; PRIO3_VERIFY_KEY_LENGTH] = random();
         let vdaf_transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), &report_id, &0);
-        let prep_state = vdaf_transcript.prep_state(0, Role::Leader);
+        let (helper_prep_state, helper_prep_share) = vdaf_transcript.helper_prep_state(0);
+        let leader_prep_state = vdaf_transcript.leader_prep_state(0);
 
-        for (ord, state) in [
-            ReportAggregationState::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::Start,
-            ReportAggregationState::Waiting(prep_state.clone(), None),
-            ReportAggregationState::Waiting(
-                prep_state.clone(),
-                Some(vdaf_transcript.prepare_messages[0].clone()),
+        for (ord, (role, state)) in [
+            (
+                Role::Leader,
+                ReportAggregationState::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::Start,
             ),
-            ReportAggregationState::Finished(vdaf_transcript.output_share(Role::Leader).clone()),
-            ReportAggregationState::Failed(ReportShareError::VdafPrepError),
-            ReportAggregationState::Invalid,
+            (
+                Role::Helper,
+                ReportAggregationState::Waiting(
+                    helper_prep_state.clone(),
+                    PrepareMessageOrShare::Helper(helper_prep_share.clone()),
+                ),
+            ),
+            (
+                Role::Leader,
+                ReportAggregationState::Waiting(
+                    leader_prep_state.clone(),
+                    PrepareMessageOrShare::Leader(vdaf_transcript.prepare_messages[0].clone()),
+                ),
+            ),
+            (
+                Role::Leader,
+                ReportAggregationState::Finished(
+                    vdaf_transcript.output_share(Role::Leader).clone(),
+                ),
+            ),
+            (
+                Role::Leader,
+                ReportAggregationState::Failed(ReportShareError::VdafPrepError),
+            ),
+            (Role::Leader, ReportAggregationState::Invalid),
         ]
         .into_iter()
         .enumerate()
@@ -6664,7 +6776,7 @@ mod tests {
             let task = TaskBuilder::new(
                 task::QueryType::TimeInterval,
                 VdafInstance::Prio3Count,
-                Role::Leader,
+                role,
             )
             .build();
             let aggregation_job_id = random();
@@ -6728,7 +6840,7 @@ mod tests {
                     Box::pin(async move {
                         tx.get_report_aggregation(
                             vdaf.as_ref(),
-                            &Role::Leader,
+                            &role,
                             task.id(),
                             &aggregation_job_id,
                             &report_id,
@@ -6737,8 +6849,23 @@ mod tests {
                     })
                 })
                 .await
+                .unwrap()
                 .unwrap();
-            assert_eq!(Some(&report_aggregation), got_report_aggregation.as_ref());
+            assert_eq!(report_aggregation, got_report_aggregation);
+
+            if let ReportAggregationState::Waiting(_, message) = got_report_aggregation.state() {
+                match role {
+                    Role::Leader => {
+                        assert!(message.get_leader_prepare_message().is_ok());
+                        assert!(message.get_helper_prepare_share().is_err());
+                    }
+                    Role::Helper => {
+                        assert!(message.get_helper_prepare_share().is_ok());
+                        assert!(message.get_leader_prepare_message().is_err());
+                    }
+                    _ => panic!("unexpected role"),
+                }
+            }
 
             let new_report_aggregation = ReportAggregation::new(
                 *report_aggregation.task_id(),
@@ -6761,7 +6888,7 @@ mod tests {
                     Box::pin(async move {
                         tx.get_report_aggregation(
                             vdaf.as_ref(),
-                            &Role::Leader,
+                            &role,
                             task.id(),
                             &aggregation_job_id,
                             &report_id,
@@ -6967,7 +7094,7 @@ mod tests {
                 let (task, prep_msg, prep_state, output_share) = (
                     task.clone(),
                     vdaf_transcript.prepare_messages[0].clone(),
-                    vdaf_transcript.prep_state(0, Role::Leader).clone(),
+                    vdaf_transcript.leader_prep_state(0).clone(),
                     vdaf_transcript.output_share(Role::Leader).clone(),
                 );
                 Box::pin(async move {
@@ -6990,8 +7117,10 @@ mod tests {
                     let mut report_aggregations = Vec::new();
                     for (ord, state) in [
                         ReportAggregationState::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::Start,
-                        ReportAggregationState::Waiting(prep_state.clone(), None),
-                        ReportAggregationState::Waiting(prep_state, Some(prep_msg)),
+                        ReportAggregationState::Waiting(
+                            prep_state.clone(),
+                            PrepareMessageOrShare::Leader(prep_msg),
+                        ),
                         ReportAggregationState::Finished(output_share),
                         ReportAggregationState::Failed(ReportShareError::VdafPrepError),
                         ReportAggregationState::Invalid,
@@ -8824,7 +8953,7 @@ mod tests {
                         1,
                         ReportAggregationState::Waiting(
                             dummy_vdaf::PrepareState::default(),
-                            Some(()),
+                            PrepareMessageOrShare::Leader(()),
                         ), // Counted among max_size.
                     );
                     let report_aggregation_0_2 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(

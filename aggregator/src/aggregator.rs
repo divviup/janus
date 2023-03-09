@@ -23,8 +23,8 @@ use janus_aggregator_core::{
         self,
         models::{
             AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
-            CollectionJob, CollectionJobState, LeaderStoredReport, ReportAggregation,
-            ReportAggregationState,
+            CollectionJob, CollectionJobState, LeaderStoredReport, PrepareMessageOrShare,
+            ReportAggregation, ReportAggregationState,
         },
         Datastore, Transaction,
     },
@@ -1327,6 +1327,7 @@ impl VdafOps {
         A::AggregationParam: Send + Sync + PartialEq,
         A::AggregateShare: Send + Sync,
         A::PrepareMessage: Send + Sync + PartialEq,
+        A::PrepareShare: Send + Sync + PartialEq,
         for<'a> A::PrepareState:
             Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)> + PartialEq,
         A::OutputShare: Send + Sync + PartialEq,
@@ -1410,6 +1411,7 @@ impl VdafOps {
         A::AggregationParam: Send + Sync + PartialEq,
         A::AggregateShare: Send + Sync,
         A::PrepareMessage: Send + Sync + PartialEq,
+        A::PrepareShare: Send + Sync + PartialEq,
         for<'a> A::PrepareState:
             Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)> + PartialEq,
         A::OutputShare: Send + Sync + PartialEq,
@@ -1543,6 +1545,8 @@ impl VdafOps {
             report_share_data.push(match init_rslt {
                 Ok((prep_state, prep_share)) => {
                     saw_continue = true;
+
+                    let encoded_prep_share = prep_share.get_encoded();
                     ReportShareData::new(
                         report_share.clone(),
                         ReportAggregation::<L, A>::new(
@@ -1551,9 +1555,12 @@ impl VdafOps {
                             *report_share.metadata().id(),
                             *report_share.metadata().time(),
                             ord.try_into()?,
-                            ReportAggregationState::<L, A>::Waiting(prep_state, None),
+                            ReportAggregationState::<L, A>::Waiting(
+                                prep_state,
+                                PrepareMessageOrShare::Helper(prep_share),
+                            ),
                         ),
-                        PrepareStepResult::Continued(prep_share.get_encoded()),
+                        PrepareStepResult::Continued(encoded_prep_share),
                     )
                 }
 
@@ -1865,7 +1872,7 @@ impl VdafOps {
                                     *prep_step.report_id(),
                                     PrepareStepResult::Continued(prep_share.get_encoded()),
                                 ));
-                                ReportAggregationState::Waiting(prep_state, None)
+                                ReportAggregationState::Waiting(prep_state, PrepareMessageOrShare::Helper(prep_share))
                             }
 
                             Ok(PrepareTransition::Finish(output_share)) => {
@@ -3238,7 +3245,8 @@ mod tests {
         datastore::{
             models::{
                 AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
-                CollectionJob, CollectionJobState, ReportAggregation, ReportAggregationState,
+                CollectionJob, CollectionJobState, PrepareMessageOrShare, ReportAggregation,
+                ReportAggregationState,
             },
             test_util::{ephemeral_datastore, EphemeralDatastore},
             Datastore,
@@ -5110,7 +5118,7 @@ mod tests {
             report_metadata_0.id(),
             &0,
         );
-        let prep_state_0 = transcript_0.prep_state(0, Role::Helper);
+        let (prep_state_0, prep_share_0) = transcript_0.helper_prep_state(0);
         let prep_msg_0 = transcript_0.prepare_messages[0].clone();
         let report_share_0 = generate_helper_report_share::<Prio3Count>(
             *task.id(),
@@ -5136,7 +5144,8 @@ mod tests {
             report_metadata_1.id(),
             &0,
         );
-        let prep_state_1 = transcript_1.prep_state(0, Role::Helper);
+
+        let (prep_state_1, prep_share_1) = transcript_1.helper_prep_state(0);
         let report_share_1 = generate_helper_report_share::<Prio3Count>(
             *task.id(),
             report_metadata_1.clone(),
@@ -5164,7 +5173,7 @@ mod tests {
             report_metadata_2.id(),
             &0,
         );
-        let prep_state_2 = transcript_2.prep_state(0, Role::Helper);
+        let (prep_state_2, prep_share_2) = transcript_2.helper_prep_state(0);
         let prep_msg_2 = transcript_2.prepare_messages[0].clone();
         let report_share_2 = generate_helper_report_share::<Prio3Count>(
             *task.id(),
@@ -5182,6 +5191,11 @@ mod tests {
                     report_share_0.clone(),
                     report_share_1.clone(),
                     report_share_2.clone(),
+                );
+                let (prep_share_0, prep_share_1, prep_share_2) = (
+                    prep_share_0.clone(),
+                    prep_share_1.clone(),
+                    prep_share_2.clone(),
                 );
                 let (prep_state_0, prep_state_1, prep_state_2) = (
                     prep_state_0.clone(),
@@ -5223,7 +5237,10 @@ mod tests {
                             *report_metadata_0.id(),
                             *report_metadata_0.time(),
                             0,
-                            ReportAggregationState::Waiting(prep_state_0, None),
+                            ReportAggregationState::Waiting(
+                                prep_state_0,
+                                PrepareMessageOrShare::Helper(prep_share_0),
+                            ),
                         ),
                     )
                     .await?;
@@ -5234,7 +5251,10 @@ mod tests {
                             *report_metadata_1.id(),
                             *report_metadata_1.time(),
                             1,
-                            ReportAggregationState::Waiting(prep_state_1, None),
+                            ReportAggregationState::Waiting(
+                                prep_state_1,
+                                PrepareMessageOrShare::Helper(prep_share_1),
+                            ),
                         ),
                     )
                     .await?;
@@ -5245,7 +5265,10 @@ mod tests {
                             *report_metadata_2.id(),
                             *report_metadata_2.time(),
                             2,
-                            ReportAggregationState::Waiting(prep_state_2, None),
+                            ReportAggregationState::Waiting(
+                                prep_state_2,
+                                PrepareMessageOrShare::Helper(prep_share_2),
+                            ),
                         ),
                     )
                     .await?;
@@ -5434,7 +5457,7 @@ mod tests {
             report_metadata_0.id(),
             &0,
         );
-        let prep_state_0 = transcript_0.prep_state(0, Role::Helper);
+        let (prep_state_0, prep_share_0) = transcript_0.helper_prep_state(0);
         let out_share_0 = transcript_0.output_share(Role::Helper);
         let prep_msg_0 = transcript_0.prepare_messages[0].clone();
         let report_share_0 = generate_helper_report_share::<Prio3Count>(
@@ -5462,7 +5485,7 @@ mod tests {
             report_metadata_1.id(),
             &0,
         );
-        let prep_state_1 = transcript_1.prep_state(0, Role::Helper);
+        let (prep_state_1, prep_share_1) = transcript_1.helper_prep_state(0);
         let out_share_1 = transcript_1.output_share(Role::Helper);
         let prep_msg_1 = transcript_1.prepare_messages[0].clone();
         let report_share_1 = generate_helper_report_share::<Prio3Count>(
@@ -5489,7 +5512,7 @@ mod tests {
             report_metadata_2.id(),
             &0,
         );
-        let prep_state_2 = transcript_2.prep_state(0, Role::Helper);
+        let (prep_state_2, prep_share_2) = transcript_2.helper_prep_state(0);
         let out_share_2 = transcript_2.output_share(Role::Helper);
         let prep_msg_2 = transcript_2.prepare_messages[0].clone();
         let report_share_2 = generate_helper_report_share::<Prio3Count>(
@@ -5508,6 +5531,11 @@ mod tests {
                     report_share_0.clone(),
                     report_share_1.clone(),
                     report_share_2.clone(),
+                );
+                let (prep_share_0, prep_share_1, prep_share_2) = (
+                    prep_share_0.clone(),
+                    prep_share_1.clone(),
+                    prep_share_2.clone(),
                 );
                 let (prep_state_0, prep_state_1, prep_state_2) = (
                     prep_state_0.clone(),
@@ -5551,7 +5579,10 @@ mod tests {
                         *report_metadata_0.id(),
                         *report_metadata_0.time(),
                         0,
-                        ReportAggregationState::Waiting(prep_state_0, None),
+                        ReportAggregationState::Waiting(
+                            prep_state_0,
+                            PrepareMessageOrShare::Helper(prep_share_0),
+                        ),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -5563,7 +5594,10 @@ mod tests {
                         *report_metadata_1.id(),
                         *report_metadata_1.time(),
                         1,
-                        ReportAggregationState::Waiting(prep_state_1, None),
+                        ReportAggregationState::Waiting(
+                            prep_state_1,
+                            PrepareMessageOrShare::Helper(prep_share_1),
+                        ),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -5575,7 +5609,10 @@ mod tests {
                         *report_metadata_2.id(),
                         *report_metadata_2.time(),
                         2,
-                        ReportAggregationState::Waiting(prep_state_2, None),
+                        ReportAggregationState::Waiting(
+                            prep_state_2,
+                            PrepareMessageOrShare::Helper(prep_share_2),
+                        ),
                     ))
                     .await?;
 
@@ -5741,7 +5778,7 @@ mod tests {
             report_metadata_3.id(),
             &0,
         );
-        let prep_state_3 = transcript_3.prep_state(0, Role::Helper);
+        let (prep_state_3, prep_share_3) = transcript_3.helper_prep_state(0);
         let out_share_3 = transcript_3.output_share(Role::Helper);
         let prep_msg_3 = transcript_3.prepare_messages[0].clone();
         let report_share_3 = generate_helper_report_share::<Prio3Count>(
@@ -5768,7 +5805,7 @@ mod tests {
             report_metadata_4.id(),
             &0,
         );
-        let prep_state_4 = transcript_4.prep_state(0, Role::Helper);
+        let (prep_state_4, prep_share_4) = transcript_4.helper_prep_state(0);
         let out_share_4 = transcript_4.output_share(Role::Helper);
         let prep_msg_4 = transcript_4.prepare_messages[0].clone();
         let report_share_4 = generate_helper_report_share::<Prio3Count>(
@@ -5795,7 +5832,7 @@ mod tests {
             report_metadata_5.id(),
             &0,
         );
-        let prep_state_5 = transcript_5.prep_state(0, Role::Helper);
+        let (prep_state_5, prep_share_5) = transcript_5.helper_prep_state(0);
         let out_share_5 = transcript_5.output_share(Role::Helper);
         let prep_msg_5 = transcript_5.prepare_messages[0].clone();
         let report_share_5 = generate_helper_report_share::<Prio3Count>(
@@ -5814,6 +5851,11 @@ mod tests {
                     report_share_3.clone(),
                     report_share_4.clone(),
                     report_share_5.clone(),
+                );
+                let (prep_share_3, prep_share_4, prep_share_5) = (
+                    prep_share_3.clone(),
+                    prep_share_4.clone(),
+                    prep_share_5.clone(),
                 );
                 let (prep_state_3, prep_state_4, prep_state_5) = (
                     prep_state_3.clone(),
@@ -5855,7 +5897,10 @@ mod tests {
                         *report_metadata_3.id(),
                         *report_metadata_3.time(),
                         3,
-                        ReportAggregationState::Waiting(prep_state_3, None),
+                        ReportAggregationState::Waiting(
+                            prep_state_3,
+                            PrepareMessageOrShare::Helper(prep_share_3),
+                        ),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -5867,7 +5912,10 @@ mod tests {
                         *report_metadata_4.id(),
                         *report_metadata_4.time(),
                         4,
-                        ReportAggregationState::Waiting(prep_state_4, None),
+                        ReportAggregationState::Waiting(
+                            prep_state_4,
+                            PrepareMessageOrShare::Helper(prep_share_4),
+                        ),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -5879,7 +5927,10 @@ mod tests {
                         *report_metadata_5.id(),
                         *report_metadata_5.time(),
                         5,
-                        ReportAggregationState::Waiting(prep_state_5, None),
+                        ReportAggregationState::Waiting(
+                            prep_state_5,
+                            PrepareMessageOrShare::Helper(prep_share_5),
+                        ),
                     ))
                     .await?;
 
@@ -6107,7 +6158,10 @@ mod tests {
                         *report_metadata.id(),
                         *report_metadata.time(),
                         0,
-                        ReportAggregationState::Waiting(dummy_vdaf::PrepareState::default(), None),
+                        ReportAggregationState::Waiting(
+                            dummy_vdaf::PrepareState::default(),
+                            PrepareMessageOrShare::Helper(()),
+                        ),
                     ))
                     .await
                 })
@@ -6222,7 +6276,10 @@ mod tests {
                         *report_metadata.id(),
                         *report_metadata.time(),
                         0,
-                        ReportAggregationState::Waiting(dummy_vdaf::PrepareState::default(), None),
+                        ReportAggregationState::Waiting(
+                            dummy_vdaf::PrepareState::default(),
+                            PrepareMessageOrShare::Helper(()),
+                        ),
                     ))
                     .await
                 })
@@ -6385,7 +6442,10 @@ mod tests {
                         *report_metadata.id(),
                         *report_metadata.time(),
                         0,
-                        ReportAggregationState::Waiting(dummy_vdaf::PrepareState::default(), None),
+                        ReportAggregationState::Waiting(
+                            dummy_vdaf::PrepareState::default(),
+                            PrepareMessageOrShare::Helper(()),
+                        ),
                     ))
                     .await
                 })
@@ -6523,7 +6583,10 @@ mod tests {
                         *report_metadata_0.id(),
                         *report_metadata_0.time(),
                         0,
-                        ReportAggregationState::Waiting(dummy_vdaf::PrepareState::default(), None),
+                        ReportAggregationState::Waiting(
+                            dummy_vdaf::PrepareState::default(),
+                            PrepareMessageOrShare::Helper(()),
+                        ),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -6535,7 +6598,10 @@ mod tests {
                         *report_metadata_1.id(),
                         *report_metadata_1.time(),
                         1,
-                        ReportAggregationState::Waiting(dummy_vdaf::PrepareState::default(), None),
+                        ReportAggregationState::Waiting(
+                            dummy_vdaf::PrepareState::default(),
+                            PrepareMessageOrShare::Helper(()),
+                        ),
                     ))
                     .await
                 })
