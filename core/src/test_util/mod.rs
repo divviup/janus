@@ -13,6 +13,7 @@ pub mod testcontainers;
 
 /// A transcript of a VDAF run. All fields are indexed by natural role index (i.e., index 0 =
 /// leader, index 1 = helper).
+#[derive(Clone, Debug)]
 pub struct VdafTranscript<const L: usize, V: vdaf::Aggregator<L, 16>> {
     /// The public share, from the sharding algorithm.
     pub public_share: V::PublicShare,
