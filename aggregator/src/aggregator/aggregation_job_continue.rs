@@ -230,13 +230,9 @@ impl VdafOps {
         A: vdaf::Aggregator<L, 16> + 'static + Send + Sync,
         for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
     {
-        // DAP suggests that when detecting a replayed aggregation job continuation request, helper
-        // implementations should verify that the current leader request matches whatever request we
-        // previously serviced (i.e., that they contain the same report IDs and the same prepare
-        // messages). The idea is to stop the leader from rewinding VDAF preparation and re-running
-        // it with different parameters. However, we have already committed to the previous request
-        // by updating the relevant report_aggregations rows. If the leader did vary the request
-        // contents, the response we generate here will still be based on the previous request.
+        // TODO(issue #994): verify that the replayed request matches the previous one and error out
+        // if not
+
         let response_prep_steps = report_aggregations
             .iter()
             .map(|report_aggregation| {
@@ -518,6 +514,8 @@ mod tests {
 
     #[tokio::test]
     #[allow(clippy::unit_arg)]
+    // TODO(issue #994): enable this test
+    #[ignore]
     async fn aggregation_job_continue_round_recovery_mutate_continue_request() {
         let test_case = setup_aggregation_job_continue_round_recovery_test().await;
 
@@ -570,16 +568,16 @@ mod tests {
             )]),
         );
 
-        let second_response = post_aggregation_job_and_decode(
+        post_aggregation_job_expecting_error(
             &test_case.task,
             &test_case.aggregation_job_id,
             &modified_request,
             &test_case.filter,
+            StatusCode::BAD_REQUEST,
+            "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
+            "The message type for a response was incorrect or the payload was malformed.",
         )
         .await;
-
-        // Despite mutating the request, we should get the same response as the first time.
-        assert_eq!(test_case.first_continue_response, second_response);
 
         // Make sure the state of the aggregation job and report aggregations has not changed
         let (after_aggregation_job, after_report_aggregations) = test_case
