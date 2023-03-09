@@ -2078,7 +2078,7 @@ impl<Q: QueryType> Decode for AggregationJobInitializeReq<Q> {
     }
 }
 
-/// DAP protocol message representing the round of an aggregation job.
+/// Type representing the round of an aggregation job.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct AggregationJobRound(u16);
 
