@@ -98,14 +98,16 @@ CREATE TYPE AGGREGATION_JOB_STATE AS ENUM(
 
 -- An aggregation job, representing the aggregation of a number of client reports.
 CREATE TABLE aggregation_jobs(
-    id                        BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
-    task_id                   BIGINT NOT NULL,                 -- ID of related task
-    aggregation_job_id        BYTEA NOT NULL,                  -- 16-byte AggregationJobID as defined by the DAP specification
-    aggregation_param         BYTEA NOT NULL,                  -- encoded aggregation parameter (opaque VDAF message)
-    batch_id                  BYTEA NOT NULL,                  -- batch ID (fixed-size only; corresponds to identifier in BatchSelector)
-    client_timestamp_interval TSRANGE NOT NULL,                -- the minimal interval containing all of client timestamps included in this aggregation job
-    state                     AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
-    round                     INTEGER NOT NULL,                -- current round of the VDAF preparation protocol
+    id                         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
+    task_id                    BIGINT NOT NULL,                 -- ID of related task
+    aggregation_job_id         BYTEA NOT NULL,                  -- 16-byte AggregationJobID as defined by the DAP specification
+    aggregation_param          BYTEA NOT NULL,                  -- encoded aggregation parameter (opaque VDAF message)
+    batch_id                   BYTEA NOT NULL,                  -- batch ID (fixed-size only; corresponds to identifier in BatchSelector)
+    client_timestamp_interval  TSRANGE NOT NULL,                -- the minimal interval containing all of client timestamps included in this aggregation job
+    state                      AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
+    round                      INTEGER NOT NULL,                -- current round of the VDAF preparation protocol
+    last_continue_request_hash BYTEA,                           -- SHA-256 hash of the most recently received AggregationJobContinueReq
+                                                                -- (helper only and only after the first round of the job)
 
     lease_expiry             TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this aggregation job expires; -infinity implies no current lease
     lease_token              BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease

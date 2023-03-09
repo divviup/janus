@@ -1356,7 +1356,13 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<Option<AggregationJob<L, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
-                "SELECT aggregation_param, batch_id, client_timestamp_interval, state, round
+                "SELECT
+                    aggregation_param,
+                    batch_id,
+                    client_timestamp_interval,
+                    state,
+                    round,
+                    last_continue_request_hash
                 FROM aggregation_jobs JOIN tasks ON tasks.id = aggregation_jobs.task_id
                 WHERE tasks.task_id = $1 AND aggregation_jobs.aggregation_job_id = $2",
             )
@@ -1388,8 +1394,13 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "SELECT
-                    aggregation_job_id, aggregation_param, batch_id, client_timestamp_interval,
-                    state, round
+                    aggregation_job_id,
+                    aggregation_param,
+                    batch_id,
+                    client_timestamp_interval,
+                    state,
+                    round,
+                    last_continue_request_hash
                 FROM aggregation_jobs JOIN tasks ON tasks.id = aggregation_jobs.task_id
                 WHERE tasks.task_id = $1",
             )
@@ -1412,7 +1423,7 @@ impl<C: Clock> Transaction<'_, C> {
         aggregation_job_id: &AggregationJobId,
         row: &Row,
     ) -> Result<AggregationJob<L, Q, A>, Error> {
-        Ok(AggregationJob::new(
+        let mut job = AggregationJob::new(
             *task_id,
             *aggregation_job_id,
             A::AggregationParam::get_decoded(row.get("aggregation_param"))?,
@@ -1421,7 +1432,17 @@ impl<C: Clock> Transaction<'_, C> {
                 .as_interval(),
             row.get("state"),
             row.get_postgres_integer_and_convert::<i32, _, _>("round")?,
-        ))
+        );
+
+        if let Some(hash) = row.try_get::<_, Option<Vec<u8>>>("last_continue_request_hash")? {
+            job = job.with_last_continue_request_hash(hash.try_into().map_err(|h| {
+                Error::DbState(format!(
+                    "last_continue_request_hash value {h:?} cannot be converted to 32 byte array"
+                ))
+            })?);
+        }
+
+        Ok(job)
     }
 
     /// acquire_incomplete_aggregation_jobs retrieves & acquires the IDs of unclaimed incomplete
@@ -1538,9 +1559,10 @@ impl<C: Clock> Transaction<'_, C> {
                     batch_id,
                     client_timestamp_interval,
                     state,
-                    round
+                    round,
+                    last_continue_request_hash
                 )
-                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7)
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8)
                 ON CONFLICT DO NOTHING",
             )
             .await?;
@@ -1558,6 +1580,8 @@ impl<C: Clock> Transaction<'_, C> {
                     &SqlInterval::from(aggregation_job.client_timestamp_interval()),
                     /* state */ &aggregation_job.state(),
                     /* round */ &(u16::from(aggregation_job.round()) as i32),
+                    /* last_continue_request_hash */
+                    &aggregation_job.last_continue_request_hash(),
                 ],
             )
             .await?;
@@ -1583,9 +1607,10 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "UPDATE aggregation_jobs SET
                     state = $1,
-                    round = $2
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $3)
-                  AND aggregation_job_id = $4",
+                    round = $2,
+                    last_continue_request_hash = $3
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $4)
+                  AND aggregation_job_id = $5",
             )
             .await?;
         check_single_row_mutation(
@@ -1594,6 +1619,8 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* state */ &aggregation_job.state(),
                     /* round */ &(u16::from(aggregation_job.round()) as i32),
+                    /* last_continue_request_hash */
+                    &aggregation_job.last_continue_request_hash(),
                     /* task_id */ &aggregation_job.task_id().as_ref(),
                     /* aggregation_job_id */
                     &aggregation_job.id().as_ref(),
@@ -3896,6 +3923,10 @@ pub mod models {
         state: AggregationJobState,
         /// The round of VDAF preparation that this aggregation job is currently on.
         round: AggregationJobRound,
+        /// The SHA-256 hash of the most recent [`janus_messages::AggregationJobContinueReq`]
+        /// received for this aggregation job. Will only be set for helpers, and only after the
+        /// first round of the job.
+        last_continue_request_hash: Option<[u8; 32]>,
     }
 
     impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L, 16>> AggregationJob<L, Q, A> {
@@ -3917,6 +3948,7 @@ pub mod models {
                 client_timestamp_interval,
                 state,
                 round,
+                last_continue_request_hash: None,
             }
         }
 
@@ -3970,6 +4002,21 @@ pub mod models {
         pub fn with_round(self, round: AggregationJobRound) -> Self {
             Self { round, ..self }
         }
+
+        /// Returns the SHA-256 digest of the most recent
+        /// [`janus_messages::AggregationJobContinueReq`] for the job, if any.
+        pub fn last_continue_request_hash(&self) -> Option<[u8; 32]> {
+            self.last_continue_request_hash
+        }
+
+        /// Returns a new [`AggregationJob`] corresponding to this aggregation job updated to have
+        /// the given last continue request hash.
+        pub fn with_last_continue_request_hash(self, hash: [u8; 32]) -> Self {
+            Self {
+                last_continue_request_hash: Some(hash),
+                ..self
+            }
+        }
     }
 
     impl<const L: usize, A: vdaf::Aggregator<L, 16>> AggregationJob<L, FixedSize, A> {
@@ -3991,6 +4038,7 @@ pub mod models {
                 && self.client_timestamp_interval == other.client_timestamp_interval
                 && self.state == other.state
                 && self.round == other.round
+                && self.last_continue_request_hash == other.last_continue_request_hash
         }
     }
 
@@ -6237,9 +6285,15 @@ mod tests {
                 helper_aggregation_job.clone(),
             );
             Box::pin(async move {
-                tx.put_task(&task).await?;
-                tx.put_aggregation_job(&leader_aggregation_job).await?;
-                tx.put_aggregation_job(&helper_aggregation_job).await
+                tx.put_task(&task).await.unwrap();
+                tx.put_aggregation_job(&leader_aggregation_job)
+                    .await
+                    .unwrap();
+                tx.put_aggregation_job(&helper_aggregation_job)
+                    .await
+                    .unwrap();
+
+                Ok(())
             })
         })
         .await
@@ -6257,12 +6311,14 @@ mod tests {
                             leader_aggregation_job.task_id(),
                             leader_aggregation_job.id(),
                         )
-                        .await?,
+                        .await
+                        .unwrap(),
                         tx.get_aggregation_job(
                             helper_aggregation_job.task_id(),
                             helper_aggregation_job.id(),
                         )
-                        .await?,
+                        .await
+                        .unwrap(),
                     ))
                 })
             })
@@ -6277,30 +6333,57 @@ mod tests {
             got_helper_aggregation_job.as_ref()
         );
 
-        let new_aggregation_job = leader_aggregation_job
+        let new_leader_aggregation_job = leader_aggregation_job
             .clone()
             .with_state(AggregationJobState::Finished);
+        let new_helper_aggregation_job =
+            helper_aggregation_job.with_last_continue_request_hash([3; 32]);
         ds.run_tx(|tx| {
-            let new_aggregation_job = new_aggregation_job.clone();
-            Box::pin(async move { tx.update_aggregation_job(&new_aggregation_job).await })
+            let (new_leader_aggregation_job, new_helper_aggregation_job) = (
+                new_leader_aggregation_job.clone(),
+                new_helper_aggregation_job.clone(),
+            );
+            Box::pin(async move {
+                tx.update_aggregation_job(&new_leader_aggregation_job)
+                    .await
+                    .unwrap();
+                tx.update_aggregation_job(&new_helper_aggregation_job)
+                    .await
+                    .unwrap();
+
+                Ok(())
+            })
         })
         .await
         .unwrap();
 
-        let got_aggregation_job = ds
+        let (got_leader_aggregation_job, got_helper_aggregation_job) = ds
             .run_tx(|tx| {
-                let leader_aggregation_job = leader_aggregation_job.clone();
+                let (new_leader_aggregation_job, new_helper_aggregation_job) = (
+                    new_leader_aggregation_job.clone(),
+                    new_helper_aggregation_job.clone(),
+                );
                 Box::pin(async move {
-                    tx.get_aggregation_job(
-                        leader_aggregation_job.task_id(),
-                        leader_aggregation_job.id(),
-                    )
-                    .await
+                    Ok((
+                        tx.get_aggregation_job(
+                            new_leader_aggregation_job.task_id(),
+                            new_leader_aggregation_job.id(),
+                        )
+                        .await
+                        .unwrap(),
+                        tx.get_aggregation_job(
+                            new_helper_aggregation_job.task_id(),
+                            new_helper_aggregation_job.id(),
+                        )
+                        .await
+                        .unwrap(),
+                    ))
                 })
             })
             .await
             .unwrap();
-        assert_eq!(Some(new_aggregation_job), got_aggregation_job);
+        assert_eq!(Some(new_leader_aggregation_job), got_leader_aggregation_job);
+        assert_eq!(Some(new_helper_aggregation_job), got_helper_aggregation_job);
 
         // Trying to write an aggregation job again should fail.
         let new_leader_aggregation_job = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
@@ -6698,17 +6781,33 @@ mod tests {
             AggregationJobState::InProgress,
             AggregationJobRound::from(0),
         );
+        let aggregation_job_with_request_hash =
+            AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                *task.id(),
+                random(),
+                AggregationParam(42),
+                random(),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
+                AggregationJobState::InProgress,
+                AggregationJobRound::from(0),
+            )
+            .with_last_continue_request_hash([3; 32]);
+
+        let mut want_agg_jobs = Vec::from([
+            first_aggregation_job,
+            second_aggregation_job,
+            aggregation_job_with_request_hash,
+        ]);
 
         ds.run_tx(|tx| {
-            let (task, first_aggregation_job, second_aggregation_job) = (
-                task.clone(),
-                first_aggregation_job.clone(),
-                second_aggregation_job.clone(),
-            );
+            let (task, want_agg_jobs) = (task.clone(), want_agg_jobs.clone());
             Box::pin(async move {
                 tx.put_task(&task).await?;
-                tx.put_aggregation_job(&first_aggregation_job).await?;
-                tx.put_aggregation_job(&second_aggregation_job).await?;
+
+                for agg_job in want_agg_jobs {
+                    tx.put_aggregation_job(&agg_job).await.unwrap();
+                }
 
                 // Also write an unrelated aggregation job with a different task ID to check that it
                 // is not returned.
@@ -6736,7 +6835,6 @@ mod tests {
         .unwrap();
 
         // Run.
-        let mut want_agg_jobs = Vec::from([first_aggregation_job, second_aggregation_job]);
         want_agg_jobs.sort_by_key(|agg_job| *agg_job.id());
         let mut got_agg_jobs = ds
             .run_tx(|tx| {
