@@ -65,6 +65,7 @@ use prio::{
 };
 use regex::Regex;
 use reqwest::Client;
+use ring::digest::{digest, SHA256};
 use std::{
     borrow::Borrow,
     collections::{HashMap, HashSet},
@@ -503,6 +504,8 @@ impl<C: Clock> Aggregator<C> {
         }
 
         let req = AggregationJobContinueReq::get_decoded(req_bytes)?;
+        // unwrap safety: SHA-256 computed by ring should always be 32 bytes
+        let request_hash = digest(&SHA256, req_bytes).as_ref().try_into().unwrap();
 
         Ok(task_aggregator
             .handle_aggregate_continue(
@@ -511,6 +514,7 @@ impl<C: Clock> Aggregator<C> {
                 self.cfg.batch_aggregation_shard_count,
                 aggregation_job_id,
                 req,
+                request_hash,
             )
             .await?
             .get_encoded())
@@ -822,6 +826,7 @@ impl<C: Clock> TaskAggregator<C> {
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         req: AggregationJobContinueReq,
+        request_hash: [u8; 32],
     ) -> Result<AggregationJobResp, Error> {
         self.vdaf_ops
             .handle_aggregate_continue(
@@ -831,6 +836,7 @@ impl<C: Clock> TaskAggregator<C> {
                 batch_aggregation_shard_count,
                 aggregation_job_id,
                 Arc::new(req),
+                request_hash,
             )
             .await
     }
@@ -1090,6 +1096,7 @@ impl VdafOps {
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         req: Arc<AggregationJobContinueReq>,
+        request_hash: [u8; 32],
     ) -> Result<AggregationJobResp, Error> {
         match task.query_type() {
             task::QueryType::TimeInterval => {
@@ -1102,6 +1109,7 @@ impl VdafOps {
                         batch_aggregation_shard_count,
                         aggregation_job_id,
                         req,
+                        request_hash,
                     )
                     .await
                 })
@@ -1116,6 +1124,7 @@ impl VdafOps {
                         batch_aggregation_shard_count,
                         aggregation_job_id,
                         req,
+                        request_hash,
                     )
                     .await
                 })
@@ -1773,6 +1782,7 @@ impl VdafOps {
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         leader_aggregation_job: Arc<AggregationJobContinueReq>,
+        request_hash: [u8; 32],
     ) -> Result<AggregationJobResp, Error>
     where
         A: 'static + Send + Sync,
@@ -1783,6 +1793,13 @@ impl VdafOps {
         A::PrepareMessage: Send + Sync,
         A::OutputShare: Send + Sync,
     {
+        if leader_aggregation_job.round() == AggregationJobRound::from(0) {
+            return Err(Error::UnrecognizedMessage(
+                Some(*task.id()),
+                "aggregation job cannot be advanced to round 0",
+            ));
+        }
+
         // TODO(#224): don't hold DB transaction open while computing VDAF updates?
         // TODO(#224): don't do O(n) network round-trips (where n is the number of prepare steps)
         Ok(datastore
@@ -1825,6 +1842,20 @@ impl VdafOps {
                     // but the leader never got our response and so retried stepping the job.
                     // TODO(issue #1087): measure how often this happens with a Prometheus metric
                     if helper_aggregation_job.round() == leader_aggregation_job.round() {
+                        match helper_aggregation_job.last_continue_request_hash() {
+                            None => {
+                                return Err(datastore::Error::User(Error::Internal(format!(
+                                    "aggregation job {aggregation_job_id} is in round {} but has no last request hash",
+                                    helper_aggregation_job.round(),
+                                )).into()));
+                            },
+                            Some(previous_hash) => if request_hash != previous_hash {
+                                return Err(datastore::Error::User(Error::ForbiddenMutation {
+                                    resource_type: "aggregation job continuation",
+                                    identifier: aggregation_job_id.to_string(),
+                                }.into()));
+                            }
+                        }
                         return Self::replay_aggregation_job_round::<C, L, Q, A>(
                             report_aggregations,
                         );
@@ -1854,6 +1885,7 @@ impl VdafOps {
                         helper_aggregation_job,
                         report_aggregations,
                         &leader_aggregation_job,
+                        request_hash,
                         &aggregate_step_failure_counter,
                     )
                     .await
@@ -5266,33 +5298,35 @@ mod tests {
         );
 
         // Validate datastore.
-        let (aggregation_job, report_aggregations) = datastore
-            .run_tx(|tx| {
-                let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
-                Box::pin(async move {
-                    let aggregation_job = tx
+        let (aggregation_job, report_aggregations) =
+            datastore
+                .run_tx(|tx| {
+                    let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
+                    Box::pin(async move {
+                        let aggregation_job = tx
                         .get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
-                        .await?;
-                    let report_aggregations = tx
-                        .get_report_aggregations_for_aggregation_job(
-                            vdaf.as_ref(),
-                            &Role::Helper,
-                            task.id(),
-                            &aggregation_job_id,
-                        )
-                        .await?;
-                    Ok((aggregation_job, report_aggregations))
+                        .await.unwrap().unwrap();
+                        let report_aggregations = tx
+                            .get_report_aggregations_for_aggregation_job(
+                                vdaf.as_ref(),
+                                &Role::Helper,
+                                task.id(),
+                                &aggregation_job_id,
+                            )
+                            .await
+                            .unwrap();
+                        Ok((aggregation_job, report_aggregations))
+                    })
                 })
-            })
-            .await
-            .unwrap();
+                .await
+                .unwrap();
 
         assert_eq!(
             aggregation_job,
-            Some(AggregationJob::new(
+            AggregationJob::new(
                 *task.id(),
                 aggregation_job_id,
                 (),
@@ -5301,7 +5335,8 @@ mod tests {
                     .unwrap(),
                 AggregationJobState::Finished,
                 AggregationJobRound::from(1),
-            ))
+            )
+            .with_last_continue_request_hash(aggregation_job.last_continue_request_hash().unwrap())
         );
         assert_eq!(
             report_aggregations,
@@ -6189,7 +6224,7 @@ mod tests {
                             task.id(),
                             &aggregation_job_id,
                         )
-                        .await?;
+                        .await.unwrap().unwrap();
                     let report_aggregation = tx
                         .get_report_aggregation(
                             &dummy_vdaf::Vdaf::default(),
@@ -6198,7 +6233,7 @@ mod tests {
                             &aggregation_job_id,
                             report_metadata.id(),
                         )
-                        .await?;
+                        .await.unwrap().unwrap();
                     Ok((aggregation_job, report_aggregation))
                 })
             })
@@ -6207,7 +6242,7 @@ mod tests {
 
         assert_eq!(
             aggregation_job,
-            Some(AggregationJob::new(
+            AggregationJob::new(
                 *task.id(),
                 aggregation_job_id,
                 dummy_vdaf::AggregationParam(0),
@@ -6216,18 +6251,19 @@ mod tests {
                     .unwrap(),
                 AggregationJobState::Finished,
                 AggregationJobRound::from(1),
-            ))
+            )
+            .with_last_continue_request_hash(aggregation_job.last_continue_request_hash().unwrap())
         );
         assert_eq!(
             report_aggregation,
-            Some(ReportAggregation::new(
+            ReportAggregation::new(
                 *task.id(),
                 aggregation_job_id,
                 *report_metadata.id(),
                 *report_metadata.time(),
                 0,
                 ReportAggregationState::Failed(ReportShareError::VdafPrepError),
-            ))
+            )
         );
     }
 

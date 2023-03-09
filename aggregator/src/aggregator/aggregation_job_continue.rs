@@ -37,6 +37,7 @@ impl VdafOps {
         helper_aggregation_job: AggregationJob<L, Q, A>,
         report_aggregations: Vec<ReportAggregation<L, A>>,
         leader_aggregation_job: &Arc<AggregationJobContinueReq>,
+        request_hash: [u8; 32],
         aggregate_step_failure_counter: &Counter<u64>,
     ) -> Result<AggregationJobResp, datastore::Error>
     where
@@ -212,7 +213,8 @@ impl VdafOps {
                         .into(),
                     ))
                 }
-            });
+            })
+            .with_last_continue_request_hash(request_hash);
         tx.update_aggregation_job(&helper_aggregation_job).await?;
 
         accumulator.flush_to_datastore(tx, vdaf).await?;
@@ -230,9 +232,6 @@ impl VdafOps {
         A: vdaf::Aggregator<L, 16> + 'static + Send + Sync,
         for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
     {
-        // TODO(issue #994): verify that the replayed request matches the previous one and error out
-        // if not
-
         let response_prep_steps = report_aggregations
             .iter()
             .map(|report_aggregation| {
@@ -270,7 +269,7 @@ impl VdafOps {
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use http::{header::CONTENT_TYPE, StatusCode};
-    use hyper::body;
+    use hyper::{body, Body};
     use janus_aggregator_core::task::Task;
     use janus_messages::{AggregationJobContinueReq, AggregationJobId, AggregationJobResp};
     use prio::codec::{Decode, Encode};
@@ -315,6 +314,22 @@ pub mod test_util {
         AggregationJobResp::get_decoded(&body_bytes).unwrap()
     }
 
+    pub async fn post_aggregation_job_expecting_status(
+        task: &Task,
+        aggregation_job_id: &AggregationJobId,
+        request: &AggregationJobContinueReq,
+        filter: &BoxedFilter<(impl Reply + 'static,)>,
+        want_status: StatusCode,
+    ) -> Body {
+        let (parts, body) = post_aggregation_job(task, aggregation_job_id, request, filter)
+            .await
+            .into_parts();
+
+        assert_eq!(want_status, parts.status);
+
+        body
+    }
+
     pub async fn post_aggregation_job_expecting_error(
         task: &Task,
         aggregation_job_id: &AggregationJobId,
@@ -324,11 +339,15 @@ pub mod test_util {
         want_error_type: &str,
         want_error_title: &str,
     ) {
-        let (parts, body) = post_aggregation_job(task, aggregation_job_id, request, filter)
-            .await
-            .into_parts();
+        let body = post_aggregation_job_expecting_status(
+            task,
+            aggregation_job_id,
+            request,
+            filter,
+            want_status,
+        )
+        .await;
 
-        assert_eq!(want_status, parts.status);
         let problem_details: serde_json::Value =
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
@@ -349,6 +368,7 @@ mod tests {
         aggregate_init_tests::ReportShareGenerator,
         aggregation_job_continue::test_util::{
             post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
+            post_aggregation_job_expecting_status,
         },
         aggregator_filter,
         tests::default_aggregator_config,
@@ -385,14 +405,14 @@ mod tests {
         report_generator: ReportShareGenerator,
         aggregation_job_id: AggregationJobId,
         first_continue_request: AggregationJobContinueReq,
-        first_continue_response: AggregationJobResp,
+        first_continue_response: Option<AggregationJobResp>,
         filter: BoxedFilter<(R,)>,
         _ephemeral_datastore: EphemeralDatastore,
     }
 
-    /// Set up a helper with an aggregation job in round 1
+    /// Set up a helper with an aggregation job in round 0
     #[allow(clippy::unit_arg)]
-    async fn setup_aggregation_job_continue_round_recovery_test(
+    async fn setup_aggregation_job_continue_test(
     ) -> AggregationJobContinueTestCase<impl Reply + 'static> {
         // Prepare datastore & request.
         install_test_trace_subscriber();
@@ -463,26 +483,9 @@ mod tests {
             )]),
         );
 
-        // Create aggregator filter, send request, and parse response.
+        // Create aggregator filter.
         let filter =
             aggregator_filter(datastore.clone(), clock, default_aggregator_config()).unwrap();
-
-        let first_continue_response = post_aggregation_job_and_decode(
-            &task,
-            &aggregation_job_id,
-            &first_continue_request,
-            &filter,
-        )
-        .await;
-
-        // Validate response.
-        assert_eq!(
-            first_continue_response,
-            AggregationJobResp::new(Vec::from([PrepareStep::new(
-                *report.0.metadata().id(),
-                PrepareStepResult::Finished,
-            ),]))
-        );
 
         AggregationJobContinueTestCase {
             task,
@@ -490,10 +493,64 @@ mod tests {
             report_generator,
             aggregation_job_id,
             first_continue_request,
-            first_continue_response,
+            first_continue_response: None,
             filter,
             _ephemeral_datastore: ephemeral_datastore,
         }
+    }
+
+    /// Set up a helper with an aggregation job in round 1
+    #[allow(clippy::unit_arg)]
+    async fn setup_aggregation_job_continue_round_recovery_test(
+    ) -> AggregationJobContinueTestCase<impl Reply + 'static> {
+        let mut test_case = setup_aggregation_job_continue_test().await;
+
+        let first_continue_response = post_aggregation_job_and_decode(
+            &test_case.task,
+            &test_case.aggregation_job_id,
+            &test_case.first_continue_request,
+            &test_case.filter,
+        )
+        .await;
+
+        // Validate response.
+        assert_eq!(
+            first_continue_response,
+            AggregationJobResp::new(
+                test_case
+                    .first_continue_request
+                    .prepare_steps()
+                    .iter()
+                    .map(|step| PrepareStep::new(*step.report_id(), PrepareStepResult::Finished))
+                    .collect()
+            )
+        );
+
+        test_case.first_continue_response = Some(first_continue_response);
+        test_case
+    }
+
+    #[tokio::test]
+    async fn aggregation_job_continue_round_zero() {
+        let test_case = setup_aggregation_job_continue_test().await;
+
+        // The job is initialized into round 0 but has never been continued. Send a continue request
+        // to advance to round 0. Should be rejected because that is an illegal transition.
+        let round_zero_request = AggregationJobContinueReq::new(
+            AggregationJobRound::from(0),
+            test_case.first_continue_request.prepare_steps().to_vec(),
+        );
+
+        post_aggregation_job_expecting_error(
+            &test_case.task,
+            &test_case.aggregation_job_id,
+            &round_zero_request,
+            &test_case.filter,
+            StatusCode::BAD_REQUEST,
+            "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
+            "The message type for a response was incorrect or the payload was malformed.",
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -509,13 +566,14 @@ mod tests {
             &test_case.filter,
         )
         .await;
-        assert_eq!(test_case.first_continue_response, second_continue_resp);
+        assert_eq!(
+            test_case.first_continue_response.unwrap(),
+            second_continue_resp
+        );
     }
 
     #[tokio::test]
     #[allow(clippy::unit_arg)]
-    // TODO(issue #994): enable this test
-    #[ignore]
     async fn aggregation_job_continue_round_recovery_mutate_continue_request() {
         let test_case = setup_aggregation_job_continue_round_recovery_test().await;
 
@@ -568,14 +626,12 @@ mod tests {
             )]),
         );
 
-        post_aggregation_job_expecting_error(
+        let _ = post_aggregation_job_expecting_status(
             &test_case.task,
             &test_case.aggregation_job_id,
             &modified_request,
             &test_case.filter,
-            StatusCode::BAD_REQUEST,
-            "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
-            "The message type for a response was incorrect or the payload was malformed.",
+            StatusCode::CONFLICT,
         )
         .await;
 
@@ -618,9 +674,37 @@ mod tests {
     async fn aggregation_job_continue_round_recovery_past_round() {
         let test_case = setup_aggregation_job_continue_round_recovery_test().await;
 
+        test_case
+            .datastore
+            .run_tx(|tx| {
+                let (task_id, aggregation_job_id) =
+                    (*test_case.task.id(), test_case.aggregation_job_id);
+                Box::pin(async move {
+                    // This is a cheat: dummy_vdaf only has a single round, so we artificially force
+                    // this job into round 2 so that we can send a request for round 1 and force a
+                    // round mismatch error instead of tripping the check for a request to continue
+                    // to round 0.
+                    let aggregation_job = tx
+                        .get_aggregation_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &task_id,
+                            &aggregation_job_id,
+                        )
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .with_round(AggregationJobRound::from(2));
+
+                    tx.update_aggregation_job(&aggregation_job).await.unwrap();
+
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
         // Send another request for a round that the helper is past. Should fail.
         let past_round_request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(0),
+            AggregationJobRound::from(1),
             test_case.first_continue_request.prepare_steps().to_vec(),
         );
 
