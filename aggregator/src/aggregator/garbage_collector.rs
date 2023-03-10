@@ -101,7 +101,8 @@ mod tests {
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
-        Duration, HpkeCiphertext, HpkeConfigId, Interval, ReportMetadata, ReportShare, Role,
+        AggregationJobRound, Duration, HpkeCiphertext, HpkeConfigId, Interval, ReportMetadata,
+        ReportShare, Role,
     };
     use rand::random;
     use std::sync::Arc;
@@ -148,6 +149,7 @@ mod tests {
                         (),
                         batch_identifier,
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     );
                     tx.put_aggregation_job(&aggregation_job).await.unwrap();
 
@@ -308,6 +310,7 @@ mod tests {
                         (),
                         batch_identifier,
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     );
                     tx.put_aggregation_job(&aggregation_job).await.unwrap();
 
@@ -464,6 +467,7 @@ mod tests {
                         batch_identifier,
                         Interval::new(client_timestamp, Duration::from_seconds(1)).unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     );
                     tx.put_aggregation_job(&aggregation_job).await.unwrap();
 
@@ -628,6 +632,7 @@ mod tests {
                         batch_identifier,
                         Interval::new(client_timestamp, Duration::from_seconds(1)).unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     );
                     tx.put_aggregation_job(&aggregation_job).await.unwrap();
 

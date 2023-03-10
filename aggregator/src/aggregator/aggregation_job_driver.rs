@@ -448,7 +448,7 @@ impl AggregationJobDriver {
         // Construct request, send it to the helper, and process the response.
         // TODO(#235): abandon work immediately on "terminal" failures from helper, or other
         // unexpected cases such as unknown/unexpected content type.
-        let req = AggregationJobResp::new(prepare_steps);
+        let req = AggregationJobContinueReq::new(aggregation_job.round(), prepare_steps);
 
         let resp_bytes = send_request_to_helper(
             &self.http_client,
@@ -487,10 +487,10 @@ impl AggregationJobDriver {
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: Arc<Task>,
-        aggregation_job: AggregationJob<L, Q, A>,
+        leader_aggregation_job: AggregationJob<L, Q, A>,
         stepped_aggregations: &[SteppedAggregation<L, A>],
         mut report_aggregations_to_write: Vec<ReportAggregation<L, A>>,
-        prep_steps: &[PrepareStep],
+        helper_prep_steps: &[PrepareStep],
     ) -> Result<()>
     where
         A: 'static,
@@ -502,7 +502,7 @@ impl AggregationJobDriver {
         A::PrepareState: Send + Sync + Encode,
     {
         // Handle response, computing the new report aggregations to be stored.
-        if stepped_aggregations.len() != prep_steps.len() {
+        if stepped_aggregations.len() != helper_prep_steps.len() {
             return Err(anyhow!(
                 "missing, duplicate, out-of-order, or unexpected prepare steps in response"
             ));
@@ -510,9 +510,11 @@ impl AggregationJobDriver {
         let mut accumulator = Accumulator::<L, Q, A>::new(
             Arc::clone(&task),
             self.batch_aggregation_shard_count,
-            aggregation_job.aggregation_parameter().clone(),
+            leader_aggregation_job.aggregation_parameter().clone(),
         );
-        for (stepped_aggregation, helper_prep_step) in stepped_aggregations.iter().zip(prep_steps) {
+        for (stepped_aggregation, helper_prep_step) in
+            stepped_aggregations.iter().zip(helper_prep_steps)
+        {
             let (report_aggregation, leader_transition) = (
                 &stepped_aggregation.report_aggregation,
                 &stepped_aggregation.leader_transition,
@@ -571,7 +573,7 @@ impl AggregationJobDriver {
                     // If the leader didn't finish too, we transition to INVALID.
                     if let PrepareTransition::Finish(out_share) = leader_transition {
                         match accumulator.update(
-                            aggregation_job.partial_batch_identifier(),
+                            leader_aggregation_job.partial_batch_identifier(),
                             report_aggregation.report_id(),
                             report_aggregation.time(),
                             out_share,
@@ -619,11 +621,22 @@ impl AggregationJobDriver {
         let aggregation_job_is_finished = report_aggregations_to_write
             .iter()
             .all(|ra| !matches!(ra.state(), ReportAggregationState::Waiting(_, _)));
-        let aggregation_job_to_write = if aggregation_job_is_finished {
-            Some(aggregation_job.with_state(AggregationJobState::Finished))
+        let (next_round, next_state) = if aggregation_job_is_finished {
+            (
+                leader_aggregation_job.round(),
+                AggregationJobState::Finished,
+            )
         } else {
-            None
+            (
+                // Advance self to next VDAF preparation round
+                leader_aggregation_job.round().increment(),
+                AggregationJobState::InProgress,
+            )
         };
+
+        let aggregation_job_to_write = leader_aggregation_job
+            .with_round(next_round)
+            .with_state(next_state);
         let report_aggregations_to_write = Arc::new(report_aggregations_to_write);
         let aggregation_job_to_write = Arc::new(aggregation_job_to_write);
         let accumulator = Arc::new(accumulator);
@@ -647,11 +660,8 @@ impl AggregationJobDriver {
                         try_join_all(report_aggregations_to_write.iter().map(
                             |report_aggregation| tx.update_report_aggregation(report_aggregation),
                         ));
-                    let aggregation_job_future = try_join_all(
-                        aggregation_job_to_write
-                            .iter()
-                            .map(|aggregation_job| tx.update_aggregation_job(aggregation_job)),
-                    );
+                    let aggregation_job_future =
+                        tx.update_aggregation_job(&aggregation_job_to_write);
                     let batch_aggregations_future = accumulator.flush_to_datastore(tx, &vdaf);
 
                     try_join!(
@@ -839,10 +849,10 @@ mod tests {
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
-        AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, Duration,
-        Extension, ExtensionType, HpkeConfig, InputShareAad, Interval, PartialBatchSelector,
-        PlaintextInputShare, PrepareStep, PrepareStepResult, ReportIdChecksum, ReportMetadata,
-        ReportShare, ReportShareError, Role, TaskId, Time,
+        AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
+        AggregationJobRound, Duration, Extension, ExtensionType, HpkeConfig, InputShareAad,
+        Interval, PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult,
+        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
     };
     use opentelemetry::global::meter;
     use prio::{
@@ -931,6 +941,7 @@ mod tests {
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
                     AggregationJobState::InProgress,
+                    AggregationJobRound::from(0),
                 ))
                 .await?;
                 tx.put_report_aggregation(
@@ -1042,6 +1053,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
+                AggregationJobRound::from(1),
             );
         let want_report_aggregation = ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
             *task.id(),
@@ -1170,6 +1182,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -1293,6 +1306,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::InProgress,
+                AggregationJobRound::from(1),
             );
         let leader_prep_state = transcript.leader_prep_state(0).clone();
         let prep_msg = transcript.prepare_messages[0].clone();
@@ -1446,6 +1460,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -1557,6 +1572,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::InProgress,
+                AggregationJobRound::from(1),
             );
         let want_report_aggregation = ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
             *task.id(),
@@ -1682,6 +1698,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(1),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -1715,10 +1732,13 @@ mod tests {
         // (This is fragile in that it expects the leader request to be deterministically encoded.
         // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
         // verification -- but mockito does not expose this functionality at time of writing.)
-        let leader_request = AggregationJobContinueReq::new(Vec::from([PrepareStep::new(
-            *report.metadata().id(),
-            PrepareStepResult::Continued(prep_msg.get_encoded()),
-        )]));
+        let leader_request = AggregationJobContinueReq::new(
+            AggregationJobRound::from(1),
+            Vec::from([PrepareStep::new(
+                *report.metadata().id(),
+                PrepareStepResult::Continued(prep_msg.get_encoded()),
+            )]),
+        );
         let helper_response = AggregationJobResp::new(Vec::from([PrepareStep::new(
             *report.metadata().id(),
             PrepareStepResult::Finished,
@@ -1787,6 +1807,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
+                AggregationJobRound::from(1),
             );
         let want_report_aggregation = ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
             *task.id(),
@@ -1969,6 +1990,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(1),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -2002,10 +2024,13 @@ mod tests {
         // (This is fragile in that it expects the leader request to be deterministically encoded.
         // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
         // verification -- but mockito does not expose this functionality at time of writing.)
-        let leader_request = AggregationJobContinueReq::new(Vec::from([PrepareStep::new(
-            *report.metadata().id(),
-            PrepareStepResult::Continued(prep_msg.get_encoded()),
-        )]));
+        let leader_request = AggregationJobContinueReq::new(
+            AggregationJobRound::from(1),
+            Vec::from([PrepareStep::new(
+                *report.metadata().id(),
+                PrepareStepResult::Continued(prep_msg.get_encoded()),
+            )]),
+        );
         let helper_response = AggregationJobResp::new(Vec::from([PrepareStep::new(
             *report.metadata().id(),
             PrepareStepResult::Finished,
@@ -2074,6 +2099,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
+                AggregationJobRound::from(1),
             );
         let leader_output_share = transcript.output_share(Role::Leader);
         let want_report_aggregation = ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
@@ -2207,6 +2233,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::InProgress,
+                AggregationJobRound::from(0),
             );
         let report_aggregation = ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
             *task.id(),
@@ -2405,6 +2432,7 @@ mod tests {
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
                     AggregationJobState::InProgress,
+                    AggregationJobRound::from(0),
                 ))
                 .await?;
 
@@ -2538,6 +2566,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Abandoned,
+                AggregationJobRound::from(0),
             ),
         );
     }

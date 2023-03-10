@@ -27,7 +27,7 @@ use opentelemetry::{
 };
 use prio::{
     codec::{Decode, Encode},
-    vdaf::{self},
+    vdaf,
 };
 use reqwest::Method;
 use std::{sync::Arc, time::Duration};
@@ -483,8 +483,8 @@ mod tests {
         Runtime,
     };
     use janus_messages::{
-        query_type::TimeInterval, AggregateShare, AggregateShareReq, BatchSelector, Duration,
-        HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum, Role,
+        query_type::TimeInterval, AggregateShare, AggregateShareReq, AggregationJobRound,
+        BatchSelector, Duration, HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum, Role,
     };
     use opentelemetry::global::meter;
     use prio::codec::{Decode, Encode};
@@ -545,6 +545,7 @@ mod tests {
                             (),
                             Interval::from_time(&report_timestamp).unwrap(),
                             AggregationJobState::Finished,
+                            AggregationJobRound::from(1),
                         ),
                     )
                     .await?;
@@ -672,6 +673,7 @@ mod tests {
                             (),
                             Interval::from_time(&report_timestamp).unwrap(),
                             AggregationJobState::Finished,
+                            AggregationJobRound::from(1),
                         ),
                     )
                     .await?;

@@ -20,6 +20,7 @@ use serde::{
 use std::{
     fmt::{self, Debug, Display, Formatter},
     io::{Cursor, Read},
+    num::TryFromIntError,
     str::FromStr,
 };
 
@@ -2077,9 +2078,63 @@ impl<Q: QueryType> Decode for AggregationJobInitializeReq<Q> {
     }
 }
 
+/// Type representing the round of an aggregation job.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct AggregationJobRound(u16);
+
+impl AggregationJobRound {
+    /// Construct a new [`AggregationJobRound`] representing the round after this one.
+    pub fn increment(&self) -> Self {
+        Self(self.0 + 1)
+    }
+}
+
+impl Display for AggregationJobRound {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Encode for AggregationJobRound {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.0.encode(bytes)
+    }
+}
+
+impl Decode for AggregationJobRound {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        Ok(Self(u16::decode(bytes)?))
+    }
+}
+
+impl From<u16> for AggregationJobRound {
+    fn from(value: u16) -> Self {
+        Self(value)
+    }
+}
+
+impl From<AggregationJobRound> for u16 {
+    fn from(value: AggregationJobRound) -> Self {
+        value.0
+    }
+}
+
+impl TryFrom<i32> for AggregationJobRound {
+    // This implementation is convenient for converting from the representation of a round in
+    // PostgreSQL, where the smallest type that can store a u16 is `integer`, which is represented
+    // as i32 in Rust.
+
+    type Error = TryFromIntError;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        Ok(AggregationJobRound(u16::try_from(value)?))
+    }
+}
+
 /// DAP protocol message representing a request to continue an aggregation job.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregationJobContinueReq {
+    round: AggregationJobRound,
     prepare_steps: Vec<PrepareStep>,
 }
 
@@ -2088,8 +2143,16 @@ impl AggregationJobContinueReq {
     pub const MEDIA_TYPE: &'static str = "application/dap-aggregation-job-continue-req";
 
     /// Constructs a new aggregate continuation response from its components.
-    pub fn new(prepare_steps: Vec<PrepareStep>) -> Self {
-        Self { prepare_steps }
+    pub fn new(round: AggregationJobRound, prepare_steps: Vec<PrepareStep>) -> Self {
+        Self {
+            round,
+            prepare_steps,
+        }
+    }
+
+    /// Gets the round of VDAF preparation this aggregation job is on.
+    pub fn round(&self) -> AggregationJobRound {
+        self.round
     }
 
     /// Gets the prepare steps associated with this aggregate continuation response.
@@ -2100,14 +2163,16 @@ impl AggregationJobContinueReq {
 
 impl Encode for AggregationJobContinueReq {
     fn encode(&self, bytes: &mut Vec<u8>) {
+        self.round.encode(bytes);
         encode_u32_items(bytes, &(), &self.prepare_steps);
     }
 }
 
 impl Decode for AggregationJobContinueReq {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let round = AggregationJobRound::decode(bytes)?;
         let prepare_steps = decode_u32_items(&(), bytes)?;
-        Ok(Self { prepare_steps })
+        Ok(Self::new(round, prepare_steps))
     }
 }
 
@@ -2333,12 +2398,13 @@ impl Decode for AggregateShare {
 mod tests {
     use crate::{
         query_type, AggregateShare, AggregateShareAad, AggregateShareReq,
-        AggregationJobInitializeReq, AggregationJobResp, BatchId, BatchSelector, Collection,
-        CollectionReq, Duration, Extension, ExtensionType, FixedSize, FixedSizeQuery, HpkeAeadId,
-        HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
-        InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare, PrepareStep,
-        PrepareStepResult, Query, Report, ReportId, ReportIdChecksum, ReportMetadata, ReportShare,
-        ReportShareError, Role, TaskId, Time, TimeInterval,
+        AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
+        AggregationJobRound, BatchId, BatchSelector, Collection, CollectionReq, Duration,
+        Extension, ExtensionType, FixedSize, FixedSizeQuery, HpkeAeadId, HpkeCiphertext,
+        HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, InputShareAad, Interval,
+        PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult, Query, Report,
+        ReportId, ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId,
+        Time, TimeInterval,
     };
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode, Encode};
@@ -3609,6 +3675,49 @@ mod tests {
                             ),
                         ),
                     ),
+                ),
+            ),
+        )])
+    }
+
+    #[test]
+    fn roundtrip_aggregation_job_continue_req() {
+        roundtrip_encoding(&[(
+            AggregationJobContinueReq {
+                round: AggregationJobRound(42405),
+                prepare_steps: Vec::from([
+                    PrepareStep {
+                        report_id: ReportId::from([
+                            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                        ]),
+                        result: PrepareStepResult::Continued(Vec::from("012345")),
+                    },
+                    PrepareStep {
+                        report_id: ReportId::from([
+                            16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
+                        ]),
+                        result: PrepareStepResult::Finished,
+                    },
+                ]),
+            },
+            concat!(
+                "A5A5", // round
+                concat!(
+                    // prepare_steps
+                    "0000002C", // length
+                    concat!(
+                        "0102030405060708090A0B0C0D0E0F10", // report_id
+                        "00",                               // prepare_step_result
+                        concat!(
+                            // payload
+                            "00000006",     // length
+                            "303132333435", // opaque data
+                        ),
+                    ),
+                    concat!(
+                        "100F0E0D0C0B0A090807060504030201", // report_id
+                        "01",                               // prepare_step_result
+                    )
                 ),
             ),
         )])

@@ -43,11 +43,11 @@ use janus_messages::{
     problem_type::DapProblemType,
     query_type::{FixedSize, TimeInterval},
     AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
-    AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, BatchSelector, Collection,
-    CollectionJobId, CollectionReq, Duration, HpkeCiphertext, HpkeConfigId, HpkeConfigList,
-    InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare, PrepareStep,
-    PrepareStepResult, Report, ReportId, ReportIdChecksum, ReportShare, ReportShareError, Role,
-    TaskId, Time,
+    AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobRound,
+    BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, HpkeCiphertext,
+    HpkeConfigId, HpkeConfigList, InputShareAad, Interval, PartialBatchSelector,
+    PlaintextInputShare, PrepareStep, PrepareStepResult, Report, ReportId, ReportIdChecksum,
+    ReportShare, ReportShareError, Role, TaskId, Time,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -71,7 +71,6 @@ use std::{
     convert::Infallible,
     fmt::{self, Debug, Display, Formatter},
     future::Future,
-    io::Cursor,
     net::SocketAddr,
     num::TryFromIntError,
     sync::Arc,
@@ -118,6 +117,14 @@ pub enum Error {
     /// Corresponds to `unrecognizedMessage`, §3.2
     #[error("task {0:?}: unrecognized message: {1}")]
     UnrecognizedMessage(Option<TaskId>, &'static str),
+    /// Corresponds to `roundMismatch`
+    #[error("task {task_id}: unexpected round in aggregation job {aggregation_job_id} (expected {expected_round}, got {got_round})")]
+    RoundMismatch {
+        task_id: TaskId,
+        aggregation_job_id: AggregationJobId,
+        expected_round: AggregationJobRound,
+        got_round: AggregationJobRound,
+    },
     /// Corresponds to `unrecognizedTask`, §3.2
     #[error("task {0}: unrecognized task")]
     UnrecognizedTask(TaskId),
@@ -209,6 +216,7 @@ impl Error {
             Error::ReportRejected(_, _, _) => "report_rejected",
             Error::ReportTooEarly(_, _, _) => "report_too_early",
             Error::UnrecognizedMessage(_, _) => "unrecognized_message",
+            Error::RoundMismatch { .. } => "round_mismatch",
             Error::UnrecognizedTask(_) => "unrecognized_task",
             Error::MissingTaskId => "missing_task_id",
             Error::UnrecognizedAggregationJob(_, _) => "unrecognized_aggregation_job",
@@ -1611,6 +1619,7 @@ impl VdafOps {
             } else {
                 AggregationJobState::Finished
             },
+            AggregationJobRound::from(0),
         ));
 
         let prep_steps = datastore
@@ -1763,7 +1772,7 @@ impl VdafOps {
         task: Arc<Task>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
-        req: Arc<AggregationJobContinueReq>,
+        leader_aggregation_job: Arc<AggregationJobContinueReq>,
     ) -> Result<AggregationJobResp, Error>
     where
         A: 'static + Send + Sync,
@@ -1778,12 +1787,23 @@ impl VdafOps {
         // TODO(#224): don't do O(n) network round-trips (where n is the number of prepare steps)
         Ok(datastore
             .run_tx_with_name("aggregate_continue", |tx| {
-                let (vdaf, aggregate_step_failure_counter, task, aggregation_job_id, req) =
-                    (Arc::clone(&vdaf), aggregate_step_failure_counter.clone(), Arc::clone(&task), *aggregation_job_id, Arc::clone(&req));
+                let (
+                    vdaf,
+                    aggregate_step_failure_counter,
+                    task,
+                    aggregation_job_id,
+                    leader_aggregation_job,
+                ) = (
+                    Arc::clone(&vdaf),
+                    aggregate_step_failure_counter.clone(),
+                    Arc::clone(&task),
+                    *aggregation_job_id,
+                    Arc::clone(&leader_aggregation_job),
+                );
 
                 Box::pin(async move {
                     // Read existing state.
-                    let (aggregation_job, report_aggregations) = try_join!(
+                    let (helper_aggregation_job, report_aggregations) = try_join!(
                         tx.get_aggregation_job::<L, Q, A>(task.id(), &aggregation_job_id),
                         tx.get_report_aggregations_for_aggregation_job(
                             vdaf.as_ref(),
@@ -1792,144 +1812,51 @@ impl VdafOps {
                             &aggregation_job_id,
                         ),
                     )?;
-                    let aggregation_job = aggregation_job.ok_or_else(|| datastore::Error::User(Error::UnrecognizedAggregationJob(*task.id(), aggregation_job_id).into()))?;
 
-                    // Handle each transition in the request.
-                    let mut report_aggregations = report_aggregations.into_iter();
-                    let (mut saw_continue, mut saw_finish) = (false, false);
-                    let mut response_prep_steps = Vec::new();
-                    let mut accumulator = Accumulator::<L, Q, A>::new(Arc::clone(&task), batch_aggregation_shard_count, aggregation_job.aggregation_parameter().clone());
+                    let helper_aggregation_job = helper_aggregation_job.ok_or_else(|| {
+                        datastore::Error::User(
+                            Error::UnrecognizedAggregationJob(*task.id(), aggregation_job_id)
+                                .into(),
+                        )
+                    })?;
 
-                    for prep_step in req.prepare_steps().iter() {
-                        // Match preparation step received from leader to stored report aggregation,
-                        // and extract the stored preparation step.
-                        let report_aggregation = loop {
-                            let report_agg = report_aggregations.next().ok_or_else(|| {
-                                datastore::Error::User(Error::UnrecognizedMessage(
-                                    Some(*task.id()),
-                                    "leader sent unexpected, duplicate, or out-of-order prepare steps",
-                                ).into())
-                            })?;
-                            if report_agg.report_id() != prep_step.report_id() {
-                                // This report was omitted by the leader because of a prior failure.
-                                // Note that the report was dropped (if it's not already in an error
-                                // state) and continue.
-                                if matches!(report_agg.state(), ReportAggregationState::Waiting(_, _)) {
-                                    tx.update_report_aggregation(&report_agg.with_state(ReportAggregationState::Failed(ReportShareError::ReportDropped))).await?;
-                                }
-                                continue;
+                    // If the leader's request is on the same round as our stored aggregation job,
+                    // then we probably have already received this message and computed this round,
+                    // but the leader never got our response and so retried stepping the job.
+                    // TODO(issue #1087): measure how often this happens with a Prometheus metric
+                    if helper_aggregation_job.round() == leader_aggregation_job.round() {
+                        return Self::replay_aggregation_job_round::<C, L, Q, A>(
+                            report_aggregations,
+                        );
+                    } else if helper_aggregation_job.round().increment()
+                        != leader_aggregation_job.round()
+                    {
+                        // If this is not a replay, the leader should be advancing our state to the next
+                        // round and no further.
+                        return Err(datastore::Error::User(
+                            Error::RoundMismatch {
+                                task_id: *task.id(),
+                                aggregation_job_id,
+                                expected_round: helper_aggregation_job.round().increment(),
+                                got_round: leader_aggregation_job.round(),
                             }
-                            break report_agg;
-                        };
-
-                        // Make sure this report isn't in an interval that has already started
-                        // collection.
-                        let conflicting_aggregate_share_jobs = tx.get_aggregate_share_jobs_including_time::<L, A>(&vdaf, task.id(), report_aggregation.time()).await?;
-                        if !conflicting_aggregate_share_jobs.is_empty() {
-                            response_prep_steps.push(PrepareStep::new(
-                                *prep_step.report_id(),
-                                PrepareStepResult::Failed(ReportShareError::BatchCollected),
-                            ));
-                            tx.update_report_aggregation(&report_aggregation.with_state(ReportAggregationState::Failed(ReportShareError::BatchCollected))).await?;
-                            continue;
-                        }
-
-                        let prep_state =
-                            match report_aggregation.state() {
-                                ReportAggregationState::Waiting(prep_state, _) => prep_state,
-                                _ => {
-                                    return Err(datastore::Error::User(
-                                        Error::UnrecognizedMessage(
-                                            Some(*task.id()),
-                                            "leader sent prepare step for non-WAITING report aggregation",
-                                        ).into()
-                                    ));
-                                },
-                            };
-
-                        // Parse preparation message out of prepare step received from leader.
-                        let prep_msg = match prep_step.result() {
-                            PrepareStepResult::Continued(payload) => {
-                                A::PrepareMessage::decode_with_param(
-                                    prep_state,
-                                    &mut Cursor::new(payload.as_ref()),
-                                )?
-                            }
-                            _ => {
-                                return Err(datastore::Error::User(
-                                    Error::UnrecognizedMessage(
-                                        Some(*task.id()),
-                                        "leader sent non-Continued prepare step",
-                                    ).into()
-                                ));
-                            }
-                        };
-
-                        // Compute the next transition, prepare to respond & update DB.
-                        let next_state = match vdaf.prepare_step(prep_state.clone(), prep_msg) {
-                            Ok(PrepareTransition::Continue(prep_state, prep_share))=> {
-                                saw_continue = true;
-                                response_prep_steps.push(PrepareStep::new(
-                                    *prep_step.report_id(),
-                                    PrepareStepResult::Continued(prep_share.get_encoded()),
-                                ));
-                                ReportAggregationState::Waiting(prep_state, PrepareMessageOrShare::Helper(prep_share))
-                            }
-
-                            Ok(PrepareTransition::Finish(output_share)) => {
-                                saw_finish = true;
-                                accumulator.update(
-                                    aggregation_job.partial_batch_identifier(),
-                                    prep_step.report_id(),
-                                    report_aggregation.time(),
-                                    &output_share,
-                                )?;
-                                response_prep_steps.push(PrepareStep::new(
-                                    *prep_step.report_id(),
-                                    PrepareStepResult::Finished,
-                                ));
-                                ReportAggregationState::Finished(output_share)
-                            }
-
-                            Err(error) => {
-                                info!(task_id = %task.id(), job_id = %aggregation_job_id, report_id = %prep_step.report_id(), ?error, "Prepare step failed");
-                                aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "prepare_step_failure")]);
-                                response_prep_steps.push(PrepareStep::new(
-                                    *prep_step.report_id(),
-                                    PrepareStepResult::Failed(ReportShareError::VdafPrepError),
-                                ));
-                                ReportAggregationState::Failed(ReportShareError::VdafPrepError)
-                            }
-                        };
-
-                        tx.update_report_aggregation(&report_aggregation.with_state(next_state)).await?;
+                            .into(),
+                        ));
                     }
 
-                    for report_agg in report_aggregations {
-                        // This report was omitted by the leader because of a prior failure.
-                        // Note that the report was dropped (if it's not already in an error state)
-                        // and continue.
-                        if matches!(report_agg.state(), ReportAggregationState::Waiting(_, _)) {
-                            tx.update_report_aggregation(&report_agg.with_state(ReportAggregationState::Failed(ReportShareError::ReportDropped))).await?;
-                        }
-                    }
-
-                    let aggregation_job = aggregation_job.with_state(match (saw_continue, saw_finish) {
-                        (false, false) => AggregationJobState::Finished, // everything failed, or there were no reports
-                        (true, false) => AggregationJobState::InProgress,
-                        (false, true) => AggregationJobState::Finished,
-                        (true, true) => {
-                            return Err(datastore::Error::User(Error::Internal(
-                                "VDAF took an inconsistent number of rounds to reach Finish state"
-                                    .to_string(),
-                            ).into()))
-                        }
-                    });
-                    tx.update_aggregation_job(&aggregation_job).await?;
-
-                    accumulator.flush_to_datastore(tx, &vdaf).await?;
-
-                    Ok(AggregationJobResp::new(response_prep_steps))
+                    // The leader is advancing us to the next round. Step the aggregation job to
+                    // compute the next round of prepare messages and state.
+                    Self::step_aggregation_job(
+                        tx,
+                        &task,
+                        &vdaf,
+                        batch_aggregation_shard_count,
+                        helper_aggregation_job,
+                        report_aggregations,
+                        &leader_aggregation_job,
+                        &aggregate_step_failure_counter,
+                    )
+                    .await
                 })
             })
             .await?)
@@ -2638,6 +2565,10 @@ where
                             DapProblemType::UnrecognizedMessage,
                             *task_id,
                         ),
+                        Error::RoundMismatch { task_id, .. } => build_problem_details_response(
+                            DapProblemType::RoundMismatch,
+                            Some(*task_id),
+                        ),
                         Error::UnrecognizedTask(task_id) => {
                             // TODO(#237): ensure that a helper returns HTTP 404 or 403 when this happens.
                             build_problem_details_response(
@@ -3272,11 +3203,11 @@ mod tests {
         query_type::TimeInterval,
         AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq,
         AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq,
-        AggregationJobResp, BatchSelector, Collection, CollectionJobId, CollectionReq, Duration,
-        Extension, ExtensionType, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeConfigList,
-        InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare, PrepareStep,
-        PrepareStepResult, Query, Report, ReportId, ReportIdChecksum, ReportMetadata, ReportShare,
-        ReportShareError, Role, TaskId, Time,
+        AggregationJobResp, AggregationJobRound, BatchSelector, Collection, CollectionJobId,
+        CollectionReq, Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfig,
+        HpkeConfigId, HpkeConfigList, InputShareAad, Interval, PartialBatchSelector,
+        PlaintextInputShare, PrepareStep, PrepareStepResult, Query, Report, ReportId,
+        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
     };
     use opentelemetry::global::meter;
     use prio::{
@@ -3301,7 +3232,7 @@ mod tests {
 
     const DUMMY_VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
 
-    fn default_aggregator_config() -> Config {
+    pub(crate) fn default_aggregator_config() -> Config {
         // Enable upload write batching & batch aggregation sharding by default, in hopes that we
         // can shake out any bugs.
         Config {
@@ -4633,6 +4564,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     );
                     tx.put_aggregation_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &conflicting_aggregation_job,
@@ -4662,6 +4594,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     );
                     tx.put_aggregation_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &non_conflicting_aggregation_job,
@@ -5232,6 +5165,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     ))
                     .await?;
 
@@ -5298,16 +5232,19 @@ mod tests {
             .await
             .unwrap();
 
-        let request = AggregationJobContinueReq::new(Vec::from([
-            PrepareStep::new(
-                *report_metadata_0.id(),
-                PrepareStepResult::Continued(prep_msg_0.get_encoded()),
-            ),
-            PrepareStep::new(
-                *report_metadata_2.id(),
-                PrepareStepResult::Continued(prep_msg_2.get_encoded()),
-            ),
-        ]));
+        let request = AggregationJobContinueReq::new(
+            AggregationJobRound::from(1),
+            Vec::from([
+                PrepareStep::new(
+                    *report_metadata_0.id(),
+                    PrepareStepResult::Continued(prep_msg_0.get_encoded()),
+                ),
+                PrepareStep::new(
+                    *report_metadata_2.id(),
+                    PrepareStepResult::Continued(prep_msg_2.get_encoded()),
+                ),
+            ]),
+        );
 
         // Create aggregator filter, send request, and parse response.
         let filter =
@@ -5363,6 +5300,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
+                AggregationJobRound::from(1),
             ))
         );
         assert_eq!(
@@ -5550,6 +5488,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     ))
                     .await?;
 
@@ -5605,20 +5544,23 @@ mod tests {
             .await
             .unwrap();
 
-        let request = AggregationJobContinueReq::new(Vec::from([
-            PrepareStep::new(
-                *report_metadata_0.id(),
-                PrepareStepResult::Continued(prep_msg_0.get_encoded()),
-            ),
-            PrepareStep::new(
-                *report_metadata_1.id(),
-                PrepareStepResult::Continued(prep_msg_1.get_encoded()),
-            ),
-            PrepareStep::new(
-                *report_metadata_2.id(),
-                PrepareStepResult::Continued(prep_msg_2.get_encoded()),
-            ),
-        ]));
+        let request = AggregationJobContinueReq::new(
+            AggregationJobRound::from(1),
+            Vec::from([
+                PrepareStep::new(
+                    *report_metadata_0.id(),
+                    PrepareStepResult::Continued(prep_msg_0.get_encoded()),
+                ),
+                PrepareStep::new(
+                    *report_metadata_1.id(),
+                    PrepareStepResult::Continued(prep_msg_1.get_encoded()),
+                ),
+                PrepareStep::new(
+                    *report_metadata_2.id(),
+                    PrepareStepResult::Continued(prep_msg_2.get_encoded()),
+                ),
+            ]),
+        );
 
         // Create aggregator filter, send request, and parse response.
         let filter = aggregator_filter(
@@ -5846,6 +5788,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     ))
                     .await?;
 
@@ -5901,20 +5844,23 @@ mod tests {
             .await
             .unwrap();
 
-        let request = AggregationJobContinueReq::new(Vec::from([
-            PrepareStep::new(
-                *report_metadata_3.id(),
-                PrepareStepResult::Continued(prep_msg_3.get_encoded()),
-            ),
-            PrepareStep::new(
-                *report_metadata_4.id(),
-                PrepareStepResult::Continued(prep_msg_4.get_encoded()),
-            ),
-            PrepareStep::new(
-                *report_metadata_5.id(),
-                PrepareStepResult::Continued(prep_msg_5.get_encoded()),
-            ),
-        ]));
+        let request = AggregationJobContinueReq::new(
+            AggregationJobRound::from(1),
+            Vec::from([
+                PrepareStep::new(
+                    *report_metadata_3.id(),
+                    PrepareStepResult::Continued(prep_msg_3.get_encoded()),
+                ),
+                PrepareStep::new(
+                    *report_metadata_4.id(),
+                    PrepareStepResult::Continued(prep_msg_4.get_encoded()),
+                ),
+                PrepareStep::new(
+                    *report_metadata_5.id(),
+                    PrepareStepResult::Continued(prep_msg_5.get_encoded()),
+                ),
+            ]),
+        );
 
         // Create aggregator filter, send request, and parse response.
         let filter = aggregator_filter(
@@ -6088,6 +6034,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -6111,10 +6058,13 @@ mod tests {
             .unwrap();
 
         // Make request.
-        let request = AggregationJobContinueReq::new(Vec::from([PrepareStep::new(
-            *report_metadata.id(),
-            PrepareStepResult::Finished,
-        )]));
+        let request = AggregationJobContinueReq::new(
+            AggregationJobRound::from(1),
+            Vec::from([PrepareStep::new(
+                *report_metadata.id(),
+                PrepareStepResult::Finished,
+            )]),
+        );
 
         let filter =
             aggregator_filter(datastore.clone(), clock, default_aggregator_config()).unwrap();
@@ -6184,6 +6134,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -6207,10 +6158,13 @@ mod tests {
             .unwrap();
 
         // Make request.
-        let request = AggregationJobContinueReq::new(Vec::from([PrepareStep::new(
-            *report_metadata.id(),
-            PrepareStepResult::Continued(Vec::new()),
-        )]));
+        let request = AggregationJobContinueReq::new(
+            AggregationJobRound::from(1),
+            Vec::from([PrepareStep::new(
+                *report_metadata.id(),
+                PrepareStepResult::Continued(Vec::new()),
+            )]),
+        );
 
         let filter =
             aggregator_filter(datastore.clone(), clock, default_aggregator_config()).unwrap();
@@ -6261,6 +6215,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
+                AggregationJobRound::from(1),
             ))
         );
         assert_eq!(
@@ -6325,6 +6280,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -6348,12 +6304,15 @@ mod tests {
             .unwrap();
 
         // Make request.
-        let request = AggregationJobContinueReq::new(Vec::from([PrepareStep::new(
-            ReportId::from(
-                [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1], // not the same as above
-            ),
-            PrepareStepResult::Continued(Vec::new()),
-        )]));
+        let request = AggregationJobContinueReq::new(
+            AggregationJobRound::from(1),
+            Vec::from([PrepareStep::new(
+                ReportId::from(
+                    [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1], // not the same as above
+                ),
+                PrepareStepResult::Continued(Vec::new()),
+            )]),
+        );
 
         let filter =
             aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
@@ -6443,6 +6402,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     ))
                     .await?;
 
@@ -6482,17 +6442,20 @@ mod tests {
             .unwrap();
 
         // Make request.
-        let request = AggregationJobContinueReq::new(Vec::from([
-            // Report IDs are in opposite order to what was stored in the datastore.
-            PrepareStep::new(
-                *report_metadata_1.id(),
-                PrepareStepResult::Continued(Vec::new()),
-            ),
-            PrepareStep::new(
-                *report_metadata_0.id(),
-                PrepareStepResult::Continued(Vec::new()),
-            ),
-        ]));
+        let request = AggregationJobContinueReq::new(
+            AggregationJobRound::from(1),
+            Vec::from([
+                // Report IDs are in opposite order to what was stored in the datastore.
+                PrepareStep::new(
+                    *report_metadata_1.id(),
+                    PrepareStepResult::Continued(Vec::new()),
+                ),
+                PrepareStep::new(
+                    *report_metadata_0.id(),
+                    PrepareStepResult::Continued(Vec::new()),
+                ),
+            ]),
+        );
 
         let filter =
             aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
@@ -6558,6 +6521,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -6578,10 +6542,13 @@ mod tests {
             .unwrap();
 
         // Make request.
-        let request = AggregationJobContinueReq::new(Vec::from([PrepareStep::new(
-            ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-            PrepareStepResult::Continued(Vec::new()),
-        )]));
+        let request = AggregationJobContinueReq::new(
+            AggregationJobRound::from(1),
+            Vec::from([PrepareStep::new(
+                ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                PrepareStepResult::Continued(Vec::new()),
+            )]),
+        );
 
         let filter =
             aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
@@ -6989,6 +6956,7 @@ mod tests {
                                 (),
                                 spanned_interval,
                                 AggregationJobState::Finished,
+                                AggregationJobRound::from(1),
                             ),
                         )
                         .await

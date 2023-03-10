@@ -23,8 +23,8 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::{FixedSize, QueryType as QueryTypeTrait, TimeInterval},
-    AggregateShareAad, BatchId, BatchSelector, Collection, CollectionJobId, CollectionReq,
-    Duration, FixedSizeQuery, Interval, Query, ReportIdChecksum, Role, Time,
+    AggregateShareAad, AggregationJobRound, BatchId, BatchSelector, Collection, CollectionJobId,
+    CollectionReq, Duration, FixedSizeQuery, Interval, Query, ReportIdChecksum, Role, Time,
 };
 use prio::codec::{Decode, Encode};
 use rand::random;
@@ -183,6 +183,7 @@ async fn setup_fixed_size_current_batch_collection_job_test_case() -> (
                         batch_id,
                         interval,
                         AggregationJobState::Finished,
+                        AggregationJobRound::from(1),
                     ))
                     .await
                     .unwrap();
