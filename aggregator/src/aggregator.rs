@@ -702,6 +702,12 @@ impl<C: Clock> TaskAggregator<C> {
                 VdafOps::Prio3Sum(Arc::new(vdaf), verify_key)
             }
 
+            VdafInstance::Prio3SumVec { bits, length } => {
+                let vdaf = Prio3::new_sum_vec_multithreaded(2, *bits, *length)?;
+                let verify_key = task.primary_vdaf_verify_key()?;
+                VdafOps::Prio3SumVec(Arc::new(vdaf), verify_key)
+            }
+
             VdafInstance::Prio3Histogram { buckets } => {
                 let vdaf = Prio3::new_histogram(2, buckets)?;
                 let verify_key = task.primary_vdaf_verify_key()?;
@@ -898,6 +904,10 @@ enum VdafOps {
         VerifyKey<PRIO3_VERIFY_KEY_LENGTH>,
     ),
     Prio3Sum(Arc<Prio3Sum>, VerifyKey<PRIO3_VERIFY_KEY_LENGTH>),
+    Prio3SumVec(
+        Arc<Prio3SumVecMultithreaded>,
+        VerifyKey<PRIO3_VERIFY_KEY_LENGTH>,
+    ),
     Prio3Histogram(Arc<Prio3Histogram>, VerifyKey<PRIO3_VERIFY_KEY_LENGTH>),
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3FixedPoint16BitBoundedL2VecSum(
@@ -947,6 +957,14 @@ macro_rules! vdaf_ops_dispatch {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Sum;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
+                $body
+            }
+
+            crate::aggregator::VdafOps::Prio3SumVec(vdaf, verify_key) => {
+                let $vdaf = vdaf;
+                let $verify_key = verify_key;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }

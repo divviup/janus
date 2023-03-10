@@ -39,6 +39,7 @@ VDAF Algorithm and Parameters:
           - count:                          Prio3Count
           - countvec:                       Prio3CountVec
           - sum:                            Prio3Sum
+          - sumvec:                         Prio3SumVec
           - histogram:                      Prio3Histogram
           - fixedpoint16bitboundedl2vecsum: Prio3FixedPoint16BitBoundedL2VecSum
           - fixedpoint32bitboundedl2vecsum: Prio3FixedPoint32BitBoundedL2VecSum

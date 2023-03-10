@@ -327,6 +327,24 @@ async fn handle_collect_start(
             .await?
         }
 
+        (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3SumVec { bits, length }) => {
+            let vdaf = Prio3::new_sum_vec_multithreaded(2, bits, length)
+                .context("failed to construct Prio3SumVec VDAF")?;
+            handle_collect_generic(
+                http_client,
+                collector_params,
+                Query::new_time_interval(batch_interval),
+                vdaf,
+                &agg_param,
+                |_| None,
+                |result| {
+                    let converted = result.iter().cloned().map(NumberAsString).collect();
+                    AggregationResult::NumberVec(converted)
+                },
+            )
+            .await?
+        }
+
         (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3Histogram { buckets }) => {
             let vdaf = Prio3::new_histogram(2, &buckets)
                 .context("failed to construct Prio3Histogram VDAF")?;
@@ -525,6 +543,24 @@ async fn handle_collect_start(
                 &agg_param,
                 |selector| Some(*selector.batch_id()),
                 |result| AggregationResult::Number(NumberAsString(*result)),
+            )
+            .await?
+        }
+
+        (ParsedQuery::FixedSize(fixed_size_query), VdafInstance::Prio3SumVec { bits, length }) => {
+            let vdaf = Prio3::new_sum_vec_multithreaded(2, bits, length)
+                .context("failed to construct Prio3SumVec VDAF")?;
+            handle_collect_generic(
+                http_client,
+                collector_params,
+                Query::new_fixed_size(fixed_size_query),
+                vdaf,
+                &agg_param,
+                |selector| Some(*selector.batch_id()),
+                |result| {
+                    let converted = result.iter().cloned().map(NumberAsString).collect();
+                    AggregationResult::NumberVec(converted)
+                },
             )
             .await?
         }

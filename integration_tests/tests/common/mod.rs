@@ -288,6 +288,46 @@ pub async fn submit_measurements_and_verify_aggregate(
             )
             .await;
         }
+        VdafInstance::Prio3SumVec { bits, length } => {
+            let vdaf = Prio3::new_sum_vec_multithreaded(2, *bits, *length).unwrap();
+
+            let measurements = iter::repeat_with(|| {
+                iter::repeat_with(|| (random::<u128>()) >> (128 - bits))
+                    .take(*length)
+                    .collect::<Vec<_>>()
+            })
+            .take(total_measurements)
+            .collect::<Vec<_>>();
+            let aggregate_result =
+                measurements
+                    .iter()
+                    .fold(vec![0u128; *length], |mut accumulator, measurement| {
+                        for (sum, elem) in accumulator.iter_mut().zip(measurement.iter()) {
+                            *sum += *elem;
+                        }
+                        accumulator
+                    });
+            let test_case = AggregationTestCase {
+                measurements,
+                aggregation_parameter: (),
+                aggregate_result,
+            };
+
+            let client_implementation = client_backend
+                .build(leader_task, aggregator_endpoints.clone(), vdaf.clone())
+                .await
+                .unwrap();
+
+            submit_measurements_and_verify_aggregate_generic(
+                vdaf,
+                aggregator_endpoints,
+                leader_task,
+                collector_private_key,
+                &test_case,
+                &client_implementation,
+            )
+            .await;
+        }
         VdafInstance::Prio3Histogram { buckets } => {
             let vdaf = Prio3::new_histogram(2, buckets).unwrap();
 
@@ -328,7 +368,7 @@ pub async fn submit_measurements_and_verify_aggregate(
             .await;
         }
         VdafInstance::Prio3CountVec { length } => {
-            let vdaf = Prio3::new_sum_vec(2, 1, *length).unwrap();
+            let vdaf = Prio3::new_sum_vec_multithreaded(2, 1, *length).unwrap();
 
             let measurements = iter::repeat_with(|| {
                 iter::repeat_with(|| random::<bool>() as u128)

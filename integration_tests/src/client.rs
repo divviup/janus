@@ -9,7 +9,7 @@ use prio::{
     codec::Encode,
     vdaf::{
         self,
-        prio3::{Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec},
+        prio3::{Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVecMultithreaded},
     },
 };
 use rand::random;
@@ -42,7 +42,7 @@ impl InteropClientEncoding for Prio3Histogram {
     }
 }
 
-impl InteropClientEncoding for Prio3SumVec {
+impl InteropClientEncoding for Prio3SumVecMultithreaded {
     fn json_encode_measurement(&self, measurement: &Self::Measurement) -> Value {
         Value::Array(
             measurement
@@ -65,6 +65,11 @@ fn json_encode_vdaf(vdaf: &VdafInstance) -> Value {
         VdafInstance::Prio3Sum { bits } => json!({
             "type": "Prio3Sum",
             "bits": format!("{bits}"),
+        }),
+        VdafInstance::Prio3SumVec { bits, length } => json!({
+            "type": "Prio3SumVec",
+            "bits": format!("{bits}"),
+            "length": format!("{length}"),
         }),
         VdafInstance::Prio3Histogram { buckets } => {
             let buckets = Value::Array(
