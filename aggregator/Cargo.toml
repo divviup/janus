@@ -53,7 +53,7 @@ git-version = "0.3.5"
 hex = { version = "0.4.3", features = ["serde"], optional = true }
 http = "0.2.9"
 http-api-problem = "0.56.0"
-hyper = "0.14.24"
+hyper = "0.14.25"
 janus_aggregator_core.workspace = true
 janus_core.workspace = true
 janus_messages.workspace = true
@@ -94,7 +94,7 @@ warp = { version = "0.3", features = ["tls"] }
 
 [dev-dependencies]
 assert_matches = "1"
-hyper = "0.14.24"
+hyper = "0.14.25"
 itertools = "0.10.5"
 # Enable `kube`'s `openssl-tls` feature (which takes precedence over the
 # `rustls-tls` feature when creating a default client) to work around rustls's
