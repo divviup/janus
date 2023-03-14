@@ -44,7 +44,7 @@ pub fn test_http_request_exponential_backoff() -> ExponentialBackoff {
         initial_interval: Duration::from_nanos(1),
         max_interval: Duration::from_nanos(30),
         multiplier: 2.0,
-        max_elapsed_time: Some(Duration::from_millis(10)),
+        max_elapsed_time: Some(Duration::from_millis(100)),
         ..Default::default()
     }
 }
