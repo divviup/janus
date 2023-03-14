@@ -29,7 +29,7 @@ use prio::{
     codec::Encode,
     vdaf::{
         self,
-        prio3::{Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVecMultithreaded},
+        prio3::{Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec, Prio3SumVecMultithreaded},
     },
 };
 use rand::{random, thread_rng, Rng};
@@ -248,6 +248,11 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     .await
             }
 
+            (task::QueryType::TimeInterval, VdafInstance::Prio3SumVec { .. }) => {
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3SumVec>(task)
+                    .await
+            }
+
             (task::QueryType::TimeInterval, VdafInstance::Prio3Histogram { .. }) => {
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Histogram>(task)
                     .await
@@ -289,6 +294,14 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let max_batch_size = *max_batch_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Sum>(task, max_batch_size)
                     .await
+            }
+
+            (task::QueryType::FixedSize { max_batch_size }, VdafInstance::Prio3SumVec { .. }) => {
+                let max_batch_size = *max_batch_size;
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<
+                    PRIO3_VERIFY_KEY_LENGTH,
+                    Prio3SumVec,
+                >(task, max_batch_size).await
             }
 
             (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Histogram { .. }) => {

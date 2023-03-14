@@ -23,6 +23,8 @@ pub enum VdafInstance {
     Prio3CountVec { length: usize },
     /// A `Prio3` sum.
     Prio3Sum { bits: u32 },
+    /// A vector of `Prio3` sums.
+    Prio3SumVec { bits: usize, length: usize },
     /// A `Prio3` histogram.
     Prio3Histogram { buckets: Vec<u64> },
     /// A `Prio3` 16-bit fixed point vector sum with bounded L2 norm.
@@ -91,6 +93,12 @@ macro_rules! vdaf_dispatch_impl_base {
                 $body
             }
 
+            ::janus_core::task::VdafInstance::Prio3SumVec { bits, length } => {
+                type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
+                $body
+            }
+
             ::janus_core::task::VdafInstance::Prio3Histogram { buckets } => {
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Histogram;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
@@ -112,6 +120,7 @@ macro_rules! vdaf_dispatch_impl_base {
             }
 
             ::janus_core::task::VdafInstance::Prio3CountVec { length } => {
+                // Prio3CountVec is implemented as a 1-bit sum vec
                 let $vdaf = ::prio::vdaf::prio3::Prio3::new_sum_vec_multithreaded(2, 1, *length)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
@@ -121,6 +130,14 @@ macro_rules! vdaf_dispatch_impl_base {
             ::janus_core::task::VdafInstance::Prio3Sum { bits } => {
                 let $vdaf = ::prio::vdaf::prio3::Prio3::new_sum(2, *bits)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Sum;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
+                $body
+            }
+
+            ::janus_core::task::VdafInstance::Prio3SumVec { bits, length } => {
+                let $vdaf =
+                    ::prio::vdaf::prio3::Prio3::new_sum_vec_multithreaded(2, *bits, *length)?;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
@@ -299,6 +316,7 @@ macro_rules! vdaf_dispatch_impl {
             ::janus_core::task::VdafInstance::Prio3Count
             | ::janus_core::task::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::task::VdafInstance::Prio3Sum { .. }
+            | ::janus_core::task::VdafInstance::Prio3SumVec { .. }
             | ::janus_core::task::VdafInstance::Prio3Histogram { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, (_, $Vdaf, $VERIFY_KEY_LENGTH) => $body)
             }
@@ -325,6 +343,7 @@ macro_rules! vdaf_dispatch_impl {
             ::janus_core::task::VdafInstance::Prio3Count
             | ::janus_core::task::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::task::VdafInstance::Prio3Sum { .. }
+            | ::janus_core::task::VdafInstance::Prio3SumVec { .. }
             | ::janus_core::task::VdafInstance::Prio3Histogram { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LENGTH) => $body)
             }
@@ -356,6 +375,7 @@ macro_rules! vdaf_dispatch_impl {
             ::janus_core::task::VdafInstance::Prio3Count
             | ::janus_core::task::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::task::VdafInstance::Prio3Sum { .. }
+            | ::janus_core::task::VdafInstance::Prio3SumVec { .. }
             | ::janus_core::task::VdafInstance::Prio3Histogram { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, (_, $Vdaf, $VERIFY_KEY_LENGTH) => $body)
             }
@@ -376,6 +396,7 @@ macro_rules! vdaf_dispatch_impl {
             ::janus_core::task::VdafInstance::Prio3Count
             | ::janus_core::task::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::task::VdafInstance::Prio3Sum { .. }
+            | ::janus_core::task::VdafInstance::Prio3SumVec { .. }
             | ::janus_core::task::VdafInstance::Prio3Histogram { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LENGTH) => $body)
             }
@@ -401,6 +422,7 @@ macro_rules! vdaf_dispatch_impl {
             ::janus_core::task::VdafInstance::Prio3Count
             | ::janus_core::task::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::task::VdafInstance::Prio3Sum { .. }
+            | ::janus_core::task::VdafInstance::Prio3SumVec { .. }
             | ::janus_core::task::VdafInstance::Prio3Histogram { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, (_, $Vdaf, $VERIFY_KEY_LENGTH) => $body)
             }
@@ -421,6 +443,7 @@ macro_rules! vdaf_dispatch_impl {
             ::janus_core::task::VdafInstance::Prio3Count
             | ::janus_core::task::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::task::VdafInstance::Prio3Sum { .. }
+            | ::janus_core::task::VdafInstance::Prio3SumVec { .. }
             | ::janus_core::task::VdafInstance::Prio3Histogram { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LENGTH) => $body)
             }
@@ -446,6 +469,7 @@ macro_rules! vdaf_dispatch_impl {
             ::janus_core::task::VdafInstance::Prio3Count
             | ::janus_core::task::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::task::VdafInstance::Prio3Sum { .. }
+            | ::janus_core::task::VdafInstance::Prio3SumVec { .. }
             | ::janus_core::task::VdafInstance::Prio3Histogram { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, (_, $Vdaf, $VERIFY_KEY_LENGTH) => $body)
             }
@@ -460,6 +484,7 @@ macro_rules! vdaf_dispatch_impl {
             ::janus_core::task::VdafInstance::Prio3Count
             | ::janus_core::task::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::task::VdafInstance::Prio3Sum { .. }
+            | ::janus_core::task::VdafInstance::Prio3SumVec { .. }
             | ::janus_core::task::VdafInstance::Prio3Histogram { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LENGTH) => $body)
             }

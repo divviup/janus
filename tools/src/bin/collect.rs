@@ -59,6 +59,8 @@ enum VdafType {
     CountVec,
     /// Prio3Sum
     Sum,
+    /// Prio3SumVec
+    SumVec,
     /// Prio3Histogram
     Histogram,
     #[cfg(feature = "fpvec_bounded_l2")]

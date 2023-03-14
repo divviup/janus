@@ -602,6 +602,25 @@ async fn e2e_prio3_sum() {
 }
 
 #[tokio::test]
+async fn e2e_prio3_sum_vec() {
+    let result = run(
+        QueryKind::TimeInterval,
+        json!({"type": "Prio3SumVec", "bits": "64", "length": "4"}),
+        &[
+            json!(["0", "0", "0", "10"]),
+            json!(["0", "0", "10", "0"]),
+            json!(["0", "10", "0", "0"]),
+            json!(["10", "0", "0", "0"]),
+        ],
+        b"",
+    )
+    .await;
+    for element in result.as_array().expect("SumVec result should be an array") {
+        assert!(element.is_string());
+    }
+}
+
+#[tokio::test]
 async fn e2e_prio3_histogram() {
     let result = run(
         QueryKind::TimeInterval,

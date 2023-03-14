@@ -108,6 +108,10 @@ pub enum VdafObject {
     Prio3Sum {
         bits: NumberAsString<u32>,
     },
+    Prio3SumVec {
+        bits: NumberAsString<usize>,
+        length: NumberAsString<usize>,
+    },
     Prio3Histogram {
         buckets: Vec<NumberAsString<u64>>,
     },
@@ -136,6 +140,11 @@ impl From<VdafInstance> for VdafObject {
 
             VdafInstance::Prio3Sum { bits } => VdafObject::Prio3Sum {
                 bits: NumberAsString(bits),
+            },
+
+            VdafInstance::Prio3SumVec { bits, length } => VdafObject::Prio3SumVec {
+                bits: NumberAsString(bits),
+                length: NumberAsString(length),
             },
 
             VdafInstance::Prio3Histogram { buckets } => VdafObject::Prio3Histogram {
@@ -177,6 +186,11 @@ impl From<VdafObject> for VdafInstance {
             }
 
             VdafObject::Prio3Sum { bits } => VdafInstance::Prio3Sum { bits: bits.0 },
+
+            VdafObject::Prio3SumVec { bits, length } => VdafInstance::Prio3SumVec {
+                bits: bits.0,
+                length: length.0,
+            },
 
             VdafObject::Prio3Histogram { buckets } => VdafInstance::Prio3Histogram {
                 buckets: buckets.iter().map(|value| value.0).collect(),

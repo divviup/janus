@@ -163,6 +163,13 @@ async fn handle_upload(
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
 
+        VdafInstance::Prio3SumVec { bits, length } => {
+            let measurement = parse_vector_measurement::<u128>(request.measurement.clone())?;
+            let vdaf_client = Prio3::new_sum_vec_multithreaded(2, bits, length)
+                .context("failed to construct Prio3SumVec VDAF")?;
+            handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
+        }
+
         VdafInstance::Prio3Histogram { ref buckets } => {
             let measurement = parse_primitive_measurement::<u128>(request.measurement.clone())?;
             let vdaf_client = Prio3::new_histogram(2, buckets)
