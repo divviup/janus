@@ -17,7 +17,7 @@ homepage = "https://divviup.org"
 license = "MPL-2.0"
 repository = "https://github.com/divviup/janus"
 rust-version = "1.65.0"
-version = "0.2.11"
+version = "0.2.12"
 
 [workspace.dependencies]
 k8s-openapi = { version = "0.16.0", features = ["v1_20"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
