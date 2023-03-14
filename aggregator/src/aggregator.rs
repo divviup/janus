@@ -8138,7 +8138,9 @@ mod tests {
                         .await;
 
                     // Serve the response via mockito, and run it through post_to_helper's error handling.
-                    let mut server = mockito::Server::new_async().await;
+                    // Workaround: use `new_with_port_async` to skip Mockito's server pool, which
+                    // has a bug in 1.0.0.
+                    let mut server = mockito::Server::new_with_port_async(0).await;
                     let error_mock = server
                         .mock("POST", "/")
                         .with_status(response.status().as_u16().into())
