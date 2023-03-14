@@ -165,9 +165,9 @@ pub trait ReportWriter<C: Clock>: Debug + Send + Sync {
 }
 
 #[derive(Debug)]
-pub struct WritableReport<const L: usize, Q, A>
+pub struct WritableReport<const SEED_SIZE: usize, Q, A>
 where
-    A: vdaf::Aggregator<L, 16> + Send + Sync + 'static,
+    A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
     A::InputShare: PartialEq + Send + Sync,
     A::PublicShare: PartialEq + Send + Sync,
     A::AggregationParam: Send + Sync,
@@ -175,20 +175,20 @@ where
     Q: UploadableQueryType,
 {
     vdaf: Arc<A>,
-    report: LeaderStoredReport<L, A>,
+    report: LeaderStoredReport<SEED_SIZE, A>,
     _phantom_q: PhantomData<Q>,
 }
 
-impl<const L: usize, Q, A> WritableReport<L, Q, A>
+impl<const SEED_SIZE: usize, Q, A> WritableReport<SEED_SIZE, Q, A>
 where
-    A: vdaf::Aggregator<L, 16> + Send + Sync + 'static,
+    A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
     A::InputShare: PartialEq + Send + Sync,
     A::PublicShare: PartialEq + Send + Sync,
     A::AggregationParam: Send + Sync,
     A::AggregateShare: Send + Sync,
     Q: UploadableQueryType,
 {
-    pub fn new(vdaf: Arc<A>, report: LeaderStoredReport<L, A>) -> Self {
+    pub fn new(vdaf: Arc<A>, report: LeaderStoredReport<SEED_SIZE, A>) -> Self {
         Self {
             vdaf,
             report,
@@ -198,9 +198,9 @@ where
 }
 
 #[async_trait]
-impl<const L: usize, C, Q, A> ReportWriter<C> for WritableReport<L, Q, A>
+impl<const SEED_SIZE: usize, C, Q, A> ReportWriter<C> for WritableReport<SEED_SIZE, Q, A>
 where
-    A: vdaf::Aggregator<L, 16> + Send + Sync + 'static,
+    A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
     A::InputShare: PartialEq + Send + Sync,
     A::PublicShare: PartialEq + Send + Sync,
     A::AggregationParam: Send + Sync,
@@ -212,7 +212,10 @@ where
         Q::validate_uploaded_report(tx, self.vdaf.as_ref(), &self.report).await?;
 
         // Store the report.
-        match tx.put_client_report::<L, A>(&self.vdaf, &self.report).await {
+        match tx
+            .put_client_report::<SEED_SIZE, A>(&self.vdaf, &self.report)
+            .await
+        {
             Ok(()) => Ok(()),
 
             // Reject reports whose report IDs have been seen before.

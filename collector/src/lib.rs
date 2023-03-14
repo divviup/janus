@@ -719,8 +719,8 @@ mod tests {
         ))
     }
 
-    fn build_collect_response_time<const L: usize, V: vdaf::Aggregator<L, 16>>(
-        transcript: &VdafTranscript<L, V>,
+    fn build_collect_response_time<const SEED_SIZE: usize, V: vdaf::Aggregator<SEED_SIZE, 16>>(
+        transcript: &VdafTranscript<SEED_SIZE, V>,
         parameters: &CollectorParameters,
         batch_interval: Interval,
     ) -> CollectionMessage<TimeInterval> {
@@ -759,8 +759,8 @@ mod tests {
         )
     }
 
-    fn build_collect_response_fixed<const L: usize, V: vdaf::Aggregator<L, 16>>(
-        transcript: &VdafTranscript<L, V>,
+    fn build_collect_response_fixed<const SEED_SIZE: usize, V: vdaf::Aggregator<SEED_SIZE, 16>>(
+        transcript: &VdafTranscript<SEED_SIZE, V>,
         parameters: &CollectorParameters,
         batch_id: BatchId,
     ) -> CollectionMessage<FixedSize> {

@@ -12,12 +12,12 @@ use prio::vdaf::{self, Aggregatable};
 /// included batches.
 #[tracing::instrument(skip(task), fields(task_id = ?task.id()), err)]
 pub(crate) async fn compute_aggregate_share<
-    const L: usize,
+    const SEED_SIZE: usize,
     Q: QueryType,
-    A: vdaf::Aggregator<L, 16>,
+    A: vdaf::Aggregator<SEED_SIZE, 16>,
 >(
     task: &Task,
-    batch_aggregations: &[BatchAggregation<L, Q, A>],
+    batch_aggregations: &[BatchAggregation<SEED_SIZE, Q, A>],
 ) -> Result<(A::AggregateShare, u64, ReportIdChecksum), Error> {
     // At the moment we construct an aggregate share (either handling AggregateShareReq in the
     // helper or driving a collection job in the leader), there could be some incomplete aggregation
