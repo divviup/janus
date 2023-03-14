@@ -97,10 +97,10 @@ impl CollectionJobDriver {
 
     #[tracing::instrument(skip(self, datastore), err)]
     async fn step_collection_job_generic<
-        const L: usize,
+        const SEED_SIZE: usize,
         C: Clock,
         Q: CollectableQueryType,
-        A: vdaf::Aggregator<L, 16> + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -129,7 +129,7 @@ impl CollectionJobDriver {
                         })?;
 
                     let collection_job = tx
-                        .get_collection_job::<L, Q, A>(
+                        .get_collection_job::<SEED_SIZE, Q, A>(
                             vdaf.as_ref(),
                             lease.leased().collection_job_id(),
                         )
@@ -166,7 +166,7 @@ impl CollectionJobDriver {
         }
 
         let (leader_aggregate_share, report_count, checksum) =
-            compute_aggregate_share::<L, Q, A>(&task, &batch_aggregations)
+            compute_aggregate_share::<SEED_SIZE, Q, A>(&task, &batch_aggregations)
                 .await
                 .map_err(|e| datastore::Error::User(e.into()))?;
 
@@ -207,7 +207,7 @@ impl CollectionJobDriver {
 
                 Box::pin(async move {
                     let maybe_updated_collection_job = tx
-                        .get_collection_job::<L, Q, A>(vdaf.as_ref(), collection_job.collection_job_id())
+                        .get_collection_job::<SEED_SIZE, Q, A>(vdaf.as_ref(), collection_job.collection_job_id())
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -217,7 +217,7 @@ impl CollectionJobDriver {
 
                     match maybe_updated_collection_job.state() {
                         CollectionJobState::Start => {
-                            tx.update_collection_job::<L, Q, A>(&collection_job).await?;
+                            tx.update_collection_job::<SEED_SIZE, Q, A>(&collection_job).await?;
                             tx.release_collection_job(&lease).await?;
                             metrics.jobs_finished_counter.add(&Context::current(), 1, &[]);
                         }
@@ -284,10 +284,10 @@ impl CollectionJobDriver {
     }
 
     async fn abandon_collection_job_generic<
-        const L: usize,
+        const SEED_SIZE: usize,
         C: Clock,
         Q: QueryType,
-        A: vdaf::Aggregator<L, 16> + Send + Sync + 'static,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -304,7 +304,10 @@ impl CollectionJobDriver {
                 let (vdaf, lease) = (Arc::clone(&vdaf), Arc::clone(&lease));
                 Box::pin(async move {
                     let collection_job = tx
-                        .get_collection_job::<L, Q, A>(&vdaf, lease.leased().collection_job_id())
+                        .get_collection_job::<SEED_SIZE, Q, A>(
+                            &vdaf,
+                            lease.leased().collection_job_id(),
+                        )
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::DbState(format!(

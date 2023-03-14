@@ -480,9 +480,9 @@ macro_rules! vdaf_dispatch_impl {
 ///
 /// ```
 /// # use janus_core::vdaf_dispatch;
-/// # fn handle_request_generic<A, const L: usize>(_vdaf: &A) -> Result<(), prio::vdaf::VdafError>
+/// # fn handle_request_generic<A, const SEED_SIZE: usize>(_vdaf: &A) -> Result<(), prio::vdaf::VdafError>
 /// # where
-/// #     A: prio::vdaf::Aggregator<L, 16>,
+/// #     A: prio::vdaf::Aggregator<SEED_SIZE, 16>,
 /// # {
 /// #     Ok(())
 /// # }

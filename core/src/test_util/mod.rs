@@ -14,14 +14,14 @@ pub mod testcontainers;
 /// A transcript of a VDAF run. All fields are indexed by natural role index (i.e., index 0 =
 /// leader, index 1 = helper).
 #[derive(Clone, Debug)]
-pub struct VdafTranscript<const L: usize, V: vdaf::Aggregator<L, 16>> {
+pub struct VdafTranscript<const SEED_SIZE: usize, V: vdaf::Aggregator<SEED_SIZE, 16>> {
     /// The public share, from the sharding algorithm.
     pub public_share: V::PublicShare,
     /// The measurement's input shares, from the sharding algorithm.
     pub input_shares: Vec<V::InputShare>,
     /// Prepare transitions sent throughout the protocol run. The outer `Vec` is indexed by
     /// aggregator, and the inner `Vec`s are indexed by VDAF round.
-    prepare_transitions: Vec<Vec<PrepareTransition<V, L, 16>>>,
+    prepare_transitions: Vec<Vec<PrepareTransition<V, SEED_SIZE, 16>>>,
     /// The prepare messages broadcast to all aggregators prior to each continuation round of the
     /// VDAF.
     pub prepare_messages: Vec<V::PrepareMessage>,
@@ -31,12 +31,12 @@ pub struct VdafTranscript<const L: usize, V: vdaf::Aggregator<L, 16>> {
     pub aggregate_shares: Vec<V::AggregateShare>,
 }
 
-impl<const L: usize, V: vdaf::Aggregator<L, 16>> VdafTranscript<L, V> {
+impl<const SEED_SIZE: usize, V: vdaf::Aggregator<SEED_SIZE, 16>> VdafTranscript<SEED_SIZE, V> {
     /// Get the leader's preparation state at the requested round.
     pub fn leader_prep_state(&self, round: usize) -> &V::PrepareState {
         assert_matches!(
             &self.prepare_transitions[Role::Leader.index().unwrap()][round],
-            PrepareTransition::<V, L, 16>::Continue(prep_state, _) => prep_state
+            PrepareTransition::<V, SEED_SIZE, 16>::Continue(prep_state, _) => prep_state
         )
     }
 
@@ -44,7 +44,7 @@ impl<const L: usize, V: vdaf::Aggregator<L, 16>> VdafTranscript<L, V> {
     pub fn helper_prep_state(&self, round: usize) -> (&V::PrepareState, &V::PrepareShare) {
         assert_matches!(
             &self.prepare_transitions[Role::Helper.index().unwrap()][round],
-            PrepareTransition::<V, L, 16>::Continue(prep_state, prep_share) => (prep_state, prep_share)
+            PrepareTransition::<V, SEED_SIZE, 16>::Continue(prep_state, prep_share) => (prep_state, prep_share)
         )
     }
 
@@ -56,16 +56,16 @@ impl<const L: usize, V: vdaf::Aggregator<L, 16>> VdafTranscript<L, V> {
 
 /// run_vdaf runs a VDAF state machine from sharding through to generating an output share,
 /// returning a "transcript" of all states & messages.
-pub fn run_vdaf<const L: usize, V: vdaf::Aggregator<L, 16> + vdaf::Client<16>>(
+pub fn run_vdaf<const SEED_SIZE: usize, V: vdaf::Aggregator<SEED_SIZE, 16> + vdaf::Client<16>>(
     vdaf: &V,
-    verify_key: &[u8; L],
+    verify_key: &[u8; SEED_SIZE],
     aggregation_param: &V::AggregationParam,
     report_id: &ReportId,
     measurement: &V::Measurement,
-) -> VdafTranscript<L, V> {
+) -> VdafTranscript<SEED_SIZE, V> {
     // Shard inputs into input shares, and initialize the initial PrepareTransitions.
     let (public_share, input_shares) = vdaf.shard(measurement, report_id.as_ref()).unwrap();
-    let mut prep_trans: Vec<Vec<PrepareTransition<V, L, 16>>> = input_shares
+    let mut prep_trans: Vec<Vec<PrepareTransition<V, SEED_SIZE, 16>>> = input_shares
         .iter()
         .enumerate()
         .map(|(agg_id, input_share)| {
@@ -81,7 +81,7 @@ pub fn run_vdaf<const L: usize, V: vdaf::Aggregator<L, 16> + vdaf::Client<16>>(
                 prep_state, prep_share,
             )]))
         })
-        .collect::<Result<Vec<Vec<PrepareTransition<V, L, 16>>>, VdafError>>()
+        .collect::<Result<Vec<Vec<PrepareTransition<V, SEED_SIZE, 16>>>, VdafError>>()
         .unwrap();
     let mut prep_msgs = Vec::new();
 
@@ -94,7 +94,7 @@ pub fn run_vdaf<const L: usize, V: vdaf::Aggregator<L, 16> + vdaf::Client<16>>(
         let mut output_shares = Vec::new();
         for pts in &prep_trans {
             match pts.last().unwrap() {
-                PrepareTransition::<V, L, 16>::Continue(_, prep_share) => {
+                PrepareTransition::<V, SEED_SIZE, 16>::Continue(_, prep_share) => {
                     prep_shares.push(prep_share.clone())
                 }
                 PrepareTransition::Finish(output_share) => {
@@ -123,7 +123,7 @@ pub fn run_vdaf<const L: usize, V: vdaf::Aggregator<L, 16> + vdaf::Client<16>>(
         for pts in &mut prep_trans {
             let prep_state = assert_matches!(
                 pts.last().unwrap(),
-                PrepareTransition::<V, L, 16>::Continue(prep_state, _) => prep_state
+                PrepareTransition::<V, SEED_SIZE, 16>::Continue(prep_state, _) => prep_state
             )
             .clone();
             pts.push(vdaf.prepare_step(prep_state, prep_msg.clone()).unwrap());

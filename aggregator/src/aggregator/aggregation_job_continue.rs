@@ -29,13 +29,13 @@ impl VdafOps {
     /// Step the helper's aggregation job to the next round of VDAF preparation using the round `n`
     /// prepare state in `report_aggregations` with the round `n+1` broadcast prepare messages in
     /// `leader_aggregation_job`.
-    pub(super) async fn step_aggregation_job<const L: usize, C, Q, A>(
+    pub(super) async fn step_aggregation_job<const SEED_SIZE: usize, C, Q, A>(
         tx: &Transaction<'_, C>,
         task: &Arc<Task>,
         vdaf: &Arc<A>,
         batch_aggregation_shard_count: u64,
-        helper_aggregation_job: AggregationJob<L, Q, A>,
-        report_aggregations: Vec<ReportAggregation<L, A>>,
+        helper_aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
+        report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
         leader_aggregation_job: &Arc<AggregationJobContinueReq>,
         request_hash: [u8; 32],
         aggregate_step_failure_counter: &Counter<u64>,
@@ -43,14 +43,14 @@ impl VdafOps {
     where
         C: Clock,
         Q: AccumulableQueryType,
-        A: vdaf::Aggregator<L, 16> + 'static + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
         for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
     {
         // Handle each transition in the request.
         let mut report_aggregations = report_aggregations.into_iter();
         let (mut saw_continue, mut saw_finish) = (false, false);
         let mut response_prep_steps = Vec::new();
-        let mut accumulator = Accumulator::<L, Q, A>::new(
+        let mut accumulator = Accumulator::<SEED_SIZE, Q, A>::new(
             Arc::clone(task),
             batch_aggregation_shard_count,
             helper_aggregation_job.aggregation_parameter().clone(),
@@ -85,7 +85,7 @@ impl VdafOps {
 
             // Make sure this report isn't in an interval that has already started collection.
             let conflicting_aggregate_share_jobs = tx
-                .get_aggregate_share_jobs_including_time::<L, A>(
+                .get_aggregate_share_jobs_including_time::<SEED_SIZE, A>(
                     vdaf,
                     task.id(),
                     report_aggregation.time(),
@@ -223,13 +223,13 @@ impl VdafOps {
     }
 
     /// Fetch previously-computed prepare message shares and replay them back to the leader.
-    pub(super) fn replay_aggregation_job_round<C, const L: usize, Q, A>(
-        report_aggregations: Vec<ReportAggregation<L, A>>,
+    pub(super) fn replay_aggregation_job_round<C, const SEED_SIZE: usize, Q, A>(
+        report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
     ) -> Result<AggregationJobResp, datastore::Error>
     where
         C: Clock,
         Q: AccumulableQueryType,
-        A: vdaf::Aggregator<L, 16> + 'static + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
         for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
     {
         let response_prep_steps = report_aggregations

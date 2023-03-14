@@ -50,23 +50,23 @@ pub enum QueryType {
 
 /// A verification key for a VDAF, with a fixed length. It must be kept secret from clients to
 /// maintain robustness, and it must be shared between aggregators.
-pub struct VerifyKey<const L: usize>([u8; L]);
+pub struct VerifyKey<const SEED_SIZE: usize>([u8; SEED_SIZE]);
 
-impl<const L: usize> VerifyKey<L> {
-    pub fn new(array: [u8; L]) -> VerifyKey<L> {
+impl<const SEED_SIZE: usize> VerifyKey<SEED_SIZE> {
+    pub fn new(array: [u8; SEED_SIZE]) -> VerifyKey<SEED_SIZE> {
         VerifyKey(array)
     }
 
-    pub fn as_bytes(&self) -> &[u8; L] {
+    pub fn as_bytes(&self) -> &[u8; SEED_SIZE] {
         &self.0
     }
 }
 
-impl<const L: usize> TryFrom<&SecretBytes> for VerifyKey<L> {
+impl<const SEED_SIZE: usize> TryFrom<&SecretBytes> for VerifyKey<SEED_SIZE> {
     type Error = TryFromSliceError;
 
-    fn try_from(value: &SecretBytes) -> Result<VerifyKey<L>, TryFromSliceError> {
-        let array = <[u8; L] as TryFrom<&[u8]>>::try_from(&value.0)?;
+    fn try_from(value: &SecretBytes) -> Result<VerifyKey<SEED_SIZE>, TryFromSliceError> {
+        let array = <[u8; SEED_SIZE] as TryFrom<&[u8]>>::try_from(&value.0)?;
         Ok(VerifyKey::new(array))
     }
 }
@@ -346,7 +346,9 @@ impl Task {
     ///
     /// If the verify key is not the correct length as required by the VDAF, an error will be
     /// returned.
-    pub fn primary_vdaf_verify_key<const L: usize>(&self) -> Result<VerifyKey<L>, Error> {
+    pub fn primary_vdaf_verify_key<const SEED_SIZE: usize>(
+        &self,
+    ) -> Result<VerifyKey<SEED_SIZE>, Error> {
         // We can safely unwrap this because we maintain an invariant that this vector is
         // non-empty.
         let secret_bytes = self.vdaf_verify_keys.first().unwrap();

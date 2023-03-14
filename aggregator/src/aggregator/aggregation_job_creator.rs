@@ -327,8 +327,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
     #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     async fn create_aggregation_jobs_for_time_interval_task_no_param<
-        const L: usize,
-        A: vdaf::Aggregator<L, 16, AggregationParam = ()>,
+        const SEED_SIZE: usize,
+        A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()>,
     >(
         self: Arc<Self>,
         task: Arc<Task>,
@@ -385,7 +385,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 .add(&DurationMsg::from_seconds(1))?,
                         )?;
 
-                        agg_jobs.push(AggregationJob::<L, TimeInterval, A>::new(
+                        agg_jobs.push(AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
                             *task.id(),
                             aggregation_job_id,
                             (),
@@ -396,7 +396,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         ));
 
                         for (ord, (report_id, time)) in agg_job_reports.iter().enumerate() {
-                            report_aggs.push(ReportAggregation::<L, A>::new(
+                            report_aggs.push(ReportAggregation::<SEED_SIZE, A>::new(
                                 *task.id(),
                                 aggregation_job_id,
                                 *report_id,
@@ -429,8 +429,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
     #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     async fn create_aggregation_jobs_for_fixed_size_task_no_param<
-        const L: usize,
-        A: vdaf::Aggregator<L, 16, AggregationParam = ()>,
+        const SEED_SIZE: usize,
+        A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()>,
     >(
         self: Arc<Self>,
         task: Arc<Task>,
@@ -477,8 +477,9 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     // Main loop: repeatedly consume some of the unaggregated report IDs to generate
                     // an aggregation job, assigning it to an existing batch which has need of
                     // reports, or a new batch if no existing batch needs reports.
-                    let mut aggregation_jobs = Vec::<AggregationJob<L, FixedSize, A>>::new();
-                    let mut report_aggregations = Vec::<ReportAggregation<L, A>>::new();
+                    let mut aggregation_jobs =
+                        Vec::<AggregationJob<SEED_SIZE, FixedSize, A>>::new();
+                    let mut report_aggregations = Vec::<ReportAggregation<SEED_SIZE, A>>::new();
                     let mut new_batches = Vec::new();
                     let (mut is_batch_new, mut batch) = batch_iter.next().unwrap(); // unwrap safety: infinite iterator
                     let mut batch_max_size = *batch.size().end();
@@ -630,12 +631,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     // This is only used in tests thus far.
     #[cfg(test)]
     #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
-    async fn create_aggregation_jobs_for_task_with_param<const L: usize, A>(
+    async fn create_aggregation_jobs_for_task_with_param<const SEED_SIZE: usize, A>(
         self: Arc<Self>,
         task: Arc<Task>,
     ) -> anyhow::Result<bool>
     where
-        A: vdaf::Aggregator<L, 16> + janus_aggregator_core::VdafHasAggregationParameter,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + janus_aggregator_core::VdafHasAggregationParameter,
         A::PrepareMessage: Send + Sync,
         A::PrepareShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
@@ -653,7 +654,9 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     // Find some client reports that are covered by a collect request, but haven't
                     // been aggregated yet, and group them by their batch.
                     let result_vec = tx
-                        .get_unaggregated_client_report_ids_by_collect_for_task::<L, A>(task.id())
+                        .get_unaggregated_client_report_ids_by_collect_for_task::<SEED_SIZE, A>(
+                            task.id(),
+                        )
                         .await?;
                     let report_count = result_vec.len();
                     let result_map = result_vec
@@ -699,7 +702,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                     .add(&DurationMsg::from_seconds(1))?,
                             )?;
 
-                            agg_jobs.push(AggregationJob::<L, TimeInterval, A>::new(
+                            agg_jobs.push(AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
                                 *task.id(),
                                 aggregation_job_id,
                                 aggregation_param.clone(),
@@ -710,7 +713,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             ));
 
                             for (ord, (report_id, time)) in agg_job_reports.iter().enumerate() {
-                                report_aggs.push(ReportAggregation::<L, A>::new(
+                                report_aggs.push(ReportAggregation::<SEED_SIZE, A>::new(
                                     *task.id(),
                                     aggregation_job_id,
                                     *report_id,
@@ -1467,7 +1470,7 @@ mod tests {
     /// up to the caller; ordered containers will store report IDs in the order they are included in
     /// the aggregate job.
     async fn read_aggregate_jobs_for_task_generic<
-        const L: usize,
+        const SEED_SIZE: usize,
         Q: AccumulableQueryType,
         A,
         T,
@@ -1476,14 +1479,14 @@ mod tests {
         tx: &Transaction<'_, C>,
         task_id: &TaskId,
         vdaf: &A,
-    ) -> impl Iterator<Item = (AggregationJob<L, Q, A>, T)>
+    ) -> impl Iterator<Item = (AggregationJob<SEED_SIZE, Q, A>, T)>
     where
         T: FromIterator<(Time, ReportId)>,
-        A: Aggregator<L, 16>,
-        <A as Aggregator<L, 16>>::PrepareState: for<'a> ParameterizedDecode<(&'a A, usize)>,
+        A: Aggregator<SEED_SIZE, 16>,
+        <A as Aggregator<SEED_SIZE, 16>>::PrepareState: for<'a> ParameterizedDecode<(&'a A, usize)>,
     {
         try_join_all(
-            tx.get_aggregation_jobs_for_task::<L, Q, A>(task_id)
+            tx.get_aggregation_jobs_for_task::<SEED_SIZE, Q, A>(task_id)
                 .await
                 .unwrap()
                 .into_iter()

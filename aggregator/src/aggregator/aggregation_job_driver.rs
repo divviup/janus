@@ -99,10 +99,10 @@ impl AggregationJobDriver {
     }
 
     async fn step_aggregation_job_generic<
-        const L: usize,
+        const SEED_SIZE: usize,
         C: Clock,
         Q: AccumulableQueryType,
-        A: vdaf::Aggregator<L, 16>,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -140,7 +140,7 @@ impl AggregationJobDriver {
                         )
                     })?;
 
-                    let aggregation_job_future = tx.get_aggregation_job::<L, Q, A>(
+                    let aggregation_job_future = tx.get_aggregation_job::<SEED_SIZE, Q, A>(
                         lease.leased().task_id(),
                         lease.leased().aggregation_job_id(),
                     );
@@ -237,20 +237,20 @@ impl AggregationJobDriver {
 
     #[allow(clippy::too_many_arguments)]
     async fn step_aggregation_job_aggregate_init<
-        const L: usize,
+        const SEED_SIZE: usize,
         C: Clock,
         Q: AccumulableQueryType,
-        A: vdaf::Aggregator<L, 16> + Send + Sync + 'static,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
     >(
         &self,
         datastore: &Datastore<C>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: Arc<Task>,
-        aggregation_job: AggregationJob<L, Q, A>,
-        report_aggregations: Vec<ReportAggregation<L, A>>,
-        client_reports: Vec<LeaderStoredReport<L, A>>,
-        verify_key: VerifyKey<L>,
+        aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
+        report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
+        client_reports: Vec<LeaderStoredReport<SEED_SIZE, A>>,
+        verify_key: VerifyKey<SEED_SIZE>,
     ) -> Result<()>
     where
         A: 'static,
@@ -380,18 +380,18 @@ impl AggregationJobDriver {
     }
 
     async fn step_aggregation_job_aggregate_continue<
-        const L: usize,
+        const SEED_SIZE: usize,
         C: Clock,
         Q: AccumulableQueryType,
-        A: vdaf::Aggregator<L, 16> + Send + Sync + 'static,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
     >(
         &self,
         datastore: &Datastore<C>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: Arc<Task>,
-        aggregation_job: AggregationJob<L, Q, A>,
-        report_aggregations: Vec<ReportAggregation<L, A>>,
+        aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
+        report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
     ) -> Result<()>
     where
         A: 'static,
@@ -477,19 +477,19 @@ impl AggregationJobDriver {
 
     #[allow(clippy::too_many_arguments)]
     async fn process_response_from_helper<
-        const L: usize,
+        const SEED_SIZE: usize,
         C: Clock,
         Q: AccumulableQueryType,
-        A: vdaf::Aggregator<L, 16> + Send + Sync + 'static,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
     >(
         &self,
         datastore: &Datastore<C>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: Arc<Task>,
-        leader_aggregation_job: AggregationJob<L, Q, A>,
-        stepped_aggregations: &[SteppedAggregation<L, A>],
-        mut report_aggregations_to_write: Vec<ReportAggregation<L, A>>,
+        leader_aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
+        stepped_aggregations: &[SteppedAggregation<SEED_SIZE, A>],
+        mut report_aggregations_to_write: Vec<ReportAggregation<SEED_SIZE, A>>,
         helper_prep_steps: &[PrepareStep],
     ) -> Result<()>
     where
@@ -507,7 +507,7 @@ impl AggregationJobDriver {
                 "missing, duplicate, out-of-order, or unexpected prepare steps in response"
             ));
         }
-        let mut accumulator = Accumulator::<L, Q, A>::new(
+        let mut accumulator = Accumulator::<SEED_SIZE, Q, A>::new(
             Arc::clone(&task),
             self.batch_aggregation_shard_count,
             leader_aggregation_job.aggregation_parameter().clone(),
@@ -709,10 +709,10 @@ impl AggregationJobDriver {
     }
 
     async fn cancel_aggregation_job_generic<
-        const L: usize,
+        const SEED_SIZE: usize,
         C: Clock,
         Q: AccumulableQueryType,
-        A: vdaf::Aggregator<L, 16>,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -728,7 +728,7 @@ impl AggregationJobDriver {
                 let lease = Arc::clone(&lease);
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<L, Q, A>(
+                        .get_aggregation_job::<SEED_SIZE, Q, A>(
                             lease.leased().task_id(),
                             lease.leased().aggregation_job_id(),
                         )
@@ -812,9 +812,9 @@ impl AggregationJobDriver {
 
 /// SteppedAggregation represents a report aggregation along with the associated preparation-state
 /// transition representing the next step for the leader.
-struct SteppedAggregation<const L: usize, A: vdaf::Aggregator<L, 16>> {
-    report_aggregation: ReportAggregation<L, A>,
-    leader_transition: PrepareTransition<A, L, 16>,
+struct SteppedAggregation<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
+    report_aggregation: ReportAggregation<SEED_SIZE, A>,
+    leader_transition: PrepareTransition<A, SEED_SIZE, 16>,
 }
 
 #[cfg(test)]
@@ -2322,16 +2322,16 @@ mod tests {
 
     /// Returns a [`LeaderStoredReport`] with the given task ID & metadata values and encrypted
     /// input shares corresponding to the given HPKE configs & input shares.
-    fn generate_report<const L: usize, A>(
+    fn generate_report<const SEED_SIZE: usize, A>(
         task_id: TaskId,
         report_metadata: ReportMetadata,
         helper_hpke_config: &HpkeConfig,
         public_share: A::PublicShare,
         extensions: Vec<Extension>,
         input_shares: Vec<A::InputShare>,
-    ) -> LeaderStoredReport<L, A>
+    ) -> LeaderStoredReport<SEED_SIZE, A>
     where
-        A: vdaf::Aggregator<L, 16>,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
         A::InputShare: PartialEq,
         A::PublicShare: PartialEq,
     {
