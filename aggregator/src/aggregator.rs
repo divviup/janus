@@ -1503,7 +1503,7 @@ impl VdafOps {
                 let plaintext_input_share = PlaintextInputShare::get_decoded(&plaintext).map_err(|error| {
                     info!(task_id = %task.id(), metadata = ?report_share.metadata(), ?error, "Couldn't decode helper's plaintext input share");
                     aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "plaintext_input_share_decode_failure")]);
-                    ReportShareError::VdafPrepError
+                    ReportShareError::UnrecognizedMessage
                 })?;
                 // Check for repeated extensions.
                 let mut extension_types = HashSet::new();
@@ -1518,24 +1518,19 @@ impl VdafOps {
                 Ok(plaintext_input_share)
             });
 
-            // `vdaf-prep-error` probably isn't the right code, but there is no better one & we
-            // don't want to fail the entire aggregation job with an UnrecognizedMessage error
-            // because a single client sent bad data.
-            // TODO(https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/255): agree on/standardize
-            // an error code for "client report data can't be decoded" & use it here.
             let input_share = plaintext_input_share.and_then(|plaintext_input_share| {
                 A::InputShare::get_decoded_with_param(&(vdaf, Role::Helper.index().unwrap()), plaintext_input_share.payload())
                     .map_err(|error| {
                         info!(task_id = %task.id(), metadata = ?report_share.metadata(), ?error, "Couldn't decode helper's input share");
                         aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "input_share_decode_failure")]);
-                        ReportShareError::VdafPrepError
+                        ReportShareError::UnrecognizedMessage
                     })
             });
 
             let public_share = A::PublicShare::get_decoded_with_param(vdaf, report_share.public_share()).map_err(|error|{
                 info!(task_id = %task.id(), metadata = ?report_share.metadata(), ?error, "Couldn't decode public share");
                 aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "public_share_decode_failure")]);
-                ReportShareError::VdafPrepError
+                ReportShareError::UnrecognizedMessage
             });
 
             let shares = input_share.and_then(|input_share| Ok((public_share?, input_share)));
@@ -4719,7 +4714,7 @@ mod tests {
             assert_eq!(prepare_step_2.report_id(), report_share_2.metadata().id());
             assert_matches!(
                 prepare_step_2.result(),
-                &PrepareStepResult::Failed(ReportShareError::VdafPrepError)
+                &PrepareStepResult::Failed(ReportShareError::UnrecognizedMessage)
             );
 
             let prepare_step_3 = aggregate_resp.prepare_steps().get(3).unwrap();
@@ -4747,7 +4742,7 @@ mod tests {
             assert_eq!(prepare_step_6.report_id(), report_share_6.metadata().id());
             assert_eq!(
                 prepare_step_6.result(),
-                &PrepareStepResult::Failed(ReportShareError::VdafPrepError),
+                &PrepareStepResult::Failed(ReportShareError::UnrecognizedMessage),
             );
 
             let prepare_step_7 = aggregate_resp.prepare_steps().get(7).unwrap();
