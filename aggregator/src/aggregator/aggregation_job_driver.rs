@@ -995,7 +995,7 @@ mod tests {
                     )
                     .match_header(
                         "DAP-Auth-Token",
-                        str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+                        str::from_utf8(agg_auth_token.as_ref()).unwrap(),
                     )
                     .match_header(CONTENT_TYPE.as_str(), req_content_type)
                     .with_status(200)
@@ -1260,7 +1260,7 @@ mod tests {
             )
             .match_header(
                 "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+                str::from_utf8(agg_auth_token.as_ref()).unwrap(),
             )
             .match_header(
                 CONTENT_TYPE.as_str(),
@@ -1526,7 +1526,7 @@ mod tests {
             )
             .match_header(
                 "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+                str::from_utf8(agg_auth_token.as_ref()).unwrap(),
             )
             .match_header(
                 CONTENT_TYPE.as_str(),
@@ -1764,7 +1764,7 @@ mod tests {
             )
             .match_header(
                 "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+                str::from_utf8(agg_auth_token.as_ref()).unwrap(),
             )
             .match_header(CONTENT_TYPE.as_str(), AggregationJobContinueReq::MEDIA_TYPE)
             .match_body(leader_request.get_encoded())
@@ -2056,7 +2056,7 @@ mod tests {
             )
             .match_header(
                 "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+                str::from_utf8(agg_auth_token.as_ref()).unwrap(),
             )
             .match_header(CONTENT_TYPE.as_str(), AggregationJobContinueReq::MEDIA_TYPE)
             .match_body(leader_request.get_encoded())
@@ -2487,7 +2487,7 @@ mod tests {
             )
             .match_header(
                 "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+                str::from_utf8(agg_auth_token.as_ref()).unwrap(),
             )
             .match_header(
                 CONTENT_TYPE.as_str(),
@@ -2509,7 +2509,7 @@ mod tests {
             )
             .match_header(
                 "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+                str::from_utf8(agg_auth_token.as_ref()).unwrap(),
             )
             .match_header(
                 CONTENT_TYPE.as_str(),

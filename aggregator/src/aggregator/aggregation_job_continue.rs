@@ -287,7 +287,7 @@ pub mod test_util {
             .path(task.aggregation_job_uri(aggregation_job_id).unwrap().path())
             .header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
+                task.primary_aggregator_auth_token().as_ref(),
             )
             .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
             .body(request.get_encoded())

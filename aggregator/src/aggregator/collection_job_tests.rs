@@ -58,7 +58,7 @@ impl<R: Reply + 'static> CollectionJobTestCase<R> {
                 .path(),
         );
         if let Some(token) = auth_token {
-            builder = builder.header("DAP-Auth-Token", token.as_bytes())
+            builder = builder.header("DAP-Auth-Token", token.as_ref())
         }
 
         builder
@@ -95,7 +95,7 @@ impl<R: Reply + 'static> CollectionJobTestCase<R> {
                 .path(),
         );
         if let Some(token) = auth_token {
-            builder = builder.header("DAP-Auth-Token", token.as_bytes())
+            builder = builder.header("DAP-Auth-Token", token.as_ref())
         }
         builder.filter(&self.filter).await.unwrap().into_response()
     }

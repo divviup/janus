@@ -371,7 +371,7 @@ impl<C: Clock> Transaction<'_, C> {
                 "task_aggregator_auth_tokens",
                 &row_id,
                 "token",
-                token.as_bytes(),
+                token.as_ref(),
             )?;
 
             aggregator_auth_token_ords.push(ord);
@@ -403,7 +403,7 @@ impl<C: Clock> Transaction<'_, C> {
                 "task_collector_auth_tokens",
                 &row_id,
                 "token",
-                token.as_bytes(),
+                token.as_ref(),
             )?;
 
             collector_auth_token_ords.push(ord);
@@ -488,57 +488,17 @@ impl<C: Clock> Transaction<'_, C> {
         Ok(())
     }
 
-    /// Deletes a task from the datastore. Fails if there is any data related to the task, such as
-    /// client reports, aggregations, etc.
+    /// Deletes a task from the datastore, along with all related data (client reports,
+    /// aggregations, etc).
     #[tracing::instrument(skip(self))]
     pub async fn delete_task(&self, task_id: &TaskId) -> Result<(), Error> {
-        let params: &[&(dyn ToSql + Sync)] = &[&task_id.as_ref()];
-
-        // Clean up dependent tables first.
-        let stmt = self
-            .prepare_cached(
-                "DELETE FROM task_aggregator_auth_tokens
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
-            )
-            .await?;
-        let task_aggregator_auth_tokens_future = self.execute(&stmt, params);
-
-        let stmt = self
-            .prepare_cached(
-                "DELETE FROM task_collector_auth_tokens
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
-            )
-            .await?;
-        let task_collector_auth_tokens_future = self.execute(&stmt, params);
-
-        let stmt = self
-            .prepare_cached(
-                "DELETE FROM task_hpke_keys
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
-            )
-            .await?;
-        let task_hpke_keys_future = self.execute(&stmt, params);
-
-        let stmt = self
-            .prepare_cached(
-                "DELETE FROM task_vdaf_verify_keys
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
-            )
-            .await?;
-        let task_vdaf_verify_keys_future = self.execute(&stmt, params);
-
-        try_join!(
-            task_aggregator_auth_tokens_future,
-            task_collector_auth_tokens_future,
-            task_hpke_keys_future,
-            task_vdaf_verify_keys_future,
-        )?;
-
-        // Then clean up tasks table itself.
         let stmt = self
             .prepare_cached("DELETE FROM tasks WHERE task_id = $1")
             .await?;
-        check_single_row_mutation(self.execute(&stmt, params).await?)?;
+        check_single_row_mutation(
+            self.execute(&stmt, &[/* task_id */ &task_id.as_ref()])
+                .await?,
+        )?;
         Ok(())
     }
 
@@ -857,6 +817,58 @@ impl<C: Clock> Transaction<'_, C> {
             collector_auth_tokens,
             hpke_keypairs,
         )?)
+    }
+
+    /// Retrieves report & report aggregation metrics for a given task: either a tuple
+    /// `Some((report_count, report_aggregation_count))`, or None if the task does not exist.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn get_task_metrics(&self, task_id: TaskId) -> Result<Option<(u64, u64)>, Error> {
+        let stmt = self
+            .prepare_cached(
+                "SELECT
+                    (SELECT COUNT(*) FROM tasks WHERE task_id = $1) AS task_count,
+                    (SELECT COUNT(*) FROM client_reports
+                     WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)) AS report_count,
+                    (SELECT COUNT(*) FROM aggregation_jobs
+                     RIGHT JOIN report_aggregations ON report_aggregations.aggregation_job_id = aggregation_jobs.id
+                     WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)) AS report_aggregation_count",
+            )
+            .await?;
+        let row = self
+            .query_one(&stmt, &[/* task_id */ &task_id.as_ref()])
+            .await?;
+
+        let task_count: u64 = row.get_bigint_and_convert("task_count")?;
+        if task_count == 0 {
+            return Ok(None);
+        }
+
+        Ok(Some((
+            row.get_bigint_and_convert("report_count")?,
+            row.get_bigint_and_convert("report_aggregation_count")?,
+        )))
+    }
+
+    /// Retrieves task IDs, optionally after some specified lower bound. This method returns tasks
+    /// IDs in lexicographic order, but may not retrieve the IDs of all tasks in a single call. To
+    /// retrieve additional task IDs, make additional calls to this method while specifying the
+    /// `lower_bound` parameter to be the last task ID retrieved from the previous call.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn get_task_ids(&self, lower_bound: Option<TaskId>) -> Result<Vec<TaskId>, Error> {
+        let lower_bound = lower_bound.map(|task_id| task_id.as_ref().to_vec());
+        let stmt = self
+            .prepare_cached(
+                "SELECT task_id FROM tasks
+                WHERE task_id > $1 OR $1 IS NULL
+                ORDER BY task_id
+                LIMIT 5000",
+            )
+            .await?;
+        self.query(&stmt, &[/* task_id */ &lower_bound])
+            .await?
+            .into_iter()
+            .map(|row| Ok(TaskId::get_decoded(row.get("task_id"))?))
+            .collect()
     }
 
     /// get_client_report retrieves a client report by ID.
@@ -5460,6 +5472,179 @@ mod tests {
             .map(|task| (*task.id(), task))
             .collect();
         assert_eq!(want_tasks, got_tasks);
+    }
+
+    #[tokio::test]
+    async fn get_task_metrics() {
+        install_test_trace_subscriber();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
+
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                let task = TaskBuilder::new(
+                    task::QueryType::TimeInterval,
+                    VdafInstance::Fake,
+                    Role::Leader,
+                )
+                .build();
+                let other_task = TaskBuilder::new(
+                    task::QueryType::TimeInterval,
+                    VdafInstance::Fake,
+                    Role::Leader,
+                )
+                .build();
+
+                const REPORT_COUNT: usize = 5;
+                const REPORT_AGGREGATION_COUNT: usize = 2;
+
+                let reports: Vec<_> = iter::repeat_with(|| {
+                    LeaderStoredReport::new_dummy(*task.id(), Time::from_seconds_since_epoch(0))
+                })
+                .take(REPORT_COUNT)
+                .collect();
+                let other_reports: Vec<_> = iter::repeat_with(|| {
+                    LeaderStoredReport::new_dummy(
+                        *other_task.id(),
+                        Time::from_seconds_since_epoch(0),
+                    )
+                })
+                .take(22)
+                .collect();
+
+                let aggregation_job = AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                    *task.id(),
+                    random(),
+                    AggregationParam(0),
+                    (),
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                        .unwrap(),
+                    AggregationJobState::InProgress,
+                    AggregationJobRound::from(0),
+                );
+                let other_aggregation_job =
+                    AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                        *other_task.id(),
+                        random(),
+                        AggregationParam(0),
+                        (),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
+                        AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
+                    );
+
+                let report_aggregations: Vec<_> = reports
+                    .iter()
+                    .take(REPORT_AGGREGATION_COUNT)
+                    .enumerate()
+                    .map(|(ord, report)| {
+                        ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            *aggregation_job.id(),
+                            *report.metadata().id(),
+                            *report.metadata().time(),
+                            ord.try_into().unwrap(),
+                            ReportAggregationState::Start,
+                        )
+                    })
+                    .collect();
+                let other_report_aggregations: Vec<_> = other_reports
+                    .iter()
+                    .take(13)
+                    .enumerate()
+                    .map(|(ord, report)| {
+                        ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                            *other_task.id(),
+                            *other_aggregation_job.id(),
+                            *report.metadata().id(),
+                            *report.metadata().time(),
+                            ord.try_into().unwrap(),
+                            ReportAggregationState::Start,
+                        )
+                    })
+                    .collect();
+
+                tx.put_task(&task).await?;
+                tx.put_task(&other_task).await?;
+                try_join_all(
+                    reports
+                        .iter()
+                        .chain(other_reports.iter())
+                        .map(|report| async move {
+                            tx.put_client_report(&dummy_vdaf::Vdaf::new(), report).await
+                        }),
+                )
+                .await?;
+                tx.put_aggregation_job(&aggregation_job).await?;
+                tx.put_aggregation_job(&other_aggregation_job).await?;
+                try_join_all(
+                    report_aggregations
+                        .iter()
+                        .chain(other_report_aggregations.iter())
+                        .map(|report_aggregation| async move {
+                            tx.put_report_aggregation(report_aggregation).await
+                        }),
+                )
+                .await?;
+
+                // Verify we get the correct results when we check metrics on our target task.
+                assert_eq!(
+                    tx.get_task_metrics(*task.id()).await.unwrap(),
+                    Some((
+                        REPORT_COUNT.try_into().unwrap(),
+                        REPORT_AGGREGATION_COUNT.try_into().unwrap()
+                    ))
+                );
+
+                // Verify that we get None if we ask about a task that doesn't exist.
+                assert_eq!(tx.get_task_metrics(random()).await.unwrap(), None);
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_task_ids() {
+        install_test_trace_subscriber();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
+
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                const TOTAL_TASK_ID_COUNT: usize = 20;
+                let tasks: Vec<_> = iter::repeat_with(|| {
+                    TaskBuilder::new(
+                        task::QueryType::TimeInterval,
+                        VdafInstance::Fake,
+                        Role::Leader,
+                    )
+                    .build()
+                })
+                .take(TOTAL_TASK_ID_COUNT)
+                .collect();
+
+                let mut task_ids: Vec<_> = tasks.iter().map(Task::id).cloned().collect();
+                task_ids.sort();
+
+                try_join_all(tasks.iter().map(|task| tx.put_task(task))).await?;
+
+                for (i, lower_bound) in iter::once(None)
+                    .chain(task_ids.iter().cloned().map(Some))
+                    .enumerate()
+                {
+                    let got_task_ids = tx.get_task_ids(lower_bound).await?;
+                    assert_eq!(&got_task_ids, &task_ids[i..]);
+                }
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

@@ -9,6 +9,7 @@ WORKDIR /src
 COPY Cargo.toml /src/Cargo.toml
 COPY Cargo.lock /src/Cargo.lock
 COPY aggregator /src/aggregator
+COPY aggregator_api /src/aggregator_api
 COPY aggregator_core /src/aggregator_core
 COPY build_script_utils /src/build_script_utils
 COPY client /src/client
