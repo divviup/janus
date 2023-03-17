@@ -15,6 +15,7 @@ use janus_aggregator_core::{
 use janus_core::time::{Clock, RealClock};
 use k8s_openapi::api::core::v1::Secret;
 use kube::api::{ObjectMeta, PostParams};
+use once_cell::sync::OnceCell;
 use rand::{distributions::Standard, thread_rng, Rng};
 use ring::aead::AES_128_GCM;
 use serde::{Deserialize, Serialize};
@@ -87,6 +88,7 @@ impl Command {
         // Note: to keep this function reasonably-readable, individual command handlers should
         // generally create the command's dependencies based on options/config, then call another
         // function with the main command logic.
+        let kube_client = LazyKubeClient::new();
         match self {
             Command::WriteSchema => {
                 let pool = database_pool(
@@ -106,14 +108,11 @@ impl Command {
                 generate_missing_parameters,
                 echo_tasks,
             } => {
-                let kube_client = kube::Client::try_default()
-                    .await
-                    .context("couldn't connect to Kubernetes environment")?;
                 let datastore = datastore_from_opts(
                     kubernetes_secret_options,
                     command_line_options,
                     config_file,
-                    Some(&kube_client),
+                    &kube_client,
                 )
                 .await?;
 
@@ -137,9 +136,6 @@ impl Command {
             Command::CreateDatastoreKey {
                 kubernetes_secret_options,
             } => {
-                let kube_client = kube::Client::try_default()
-                    .await
-                    .context("couldn't connect to Kubernetes environment")?;
                 let k8s_namespace = kubernetes_secret_options
                     .secrets_k8s_namespace
                     .as_deref()
@@ -246,7 +242,7 @@ async fn provision_tasks<C: Clock>(
 }
 
 async fn fetch_datastore_keys(
-    kube_client: &kube::Client,
+    kube_client: &LazyKubeClient,
     namespace: &str,
     secret_name: &str,
     secret_data_key: &str,
@@ -256,7 +252,8 @@ async fn fetch_datastore_keys(
         secret_data_key, namespace, secret_name,
     );
 
-    let secrets_api: kube::Api<Secret> = kube::Api::namespaced(kube_client.clone(), namespace);
+    let secrets_api: kube::Api<Secret> =
+        kube::Api::namespaced(kube_client.get().await?.clone(), namespace);
 
     let secret = secrets_api
         .get(secret_name)
@@ -275,7 +272,7 @@ async fn fetch_datastore_keys(
 
 async fn create_datastore_key(
     dry_run: bool,
-    kube_client: &kube::Client,
+    kube_client: &LazyKubeClient,
     k8s_namespace: &str,
     k8s_secret_name: &str,
     k8s_secret_data_key: &str,
@@ -286,7 +283,8 @@ async fn create_datastore_key(
         secret_data_key = k8s_secret_data_key,
         "Creating datastore key"
     );
-    let secrets_api: kube::Api<Secret> = kube::Api::namespaced(kube_client.clone(), k8s_namespace);
+    let secrets_api: kube::Api<Secret> =
+        kube::Api::namespaced(kube_client.get().await?.clone(), k8s_namespace);
 
     // Generate a random datastore key & encode it into unpadded base64 as will be expected by
     // consumers of the secret we are about to write.
@@ -325,7 +323,7 @@ async fn datastore_from_opts(
     kubernetes_secret_options: &KubernetesSecretOptions,
     command_line_options: &CommandLineOptions,
     config_file: &ConfigFile,
-    kube_client: Option<&kube::Client>,
+    kube_client: &LazyKubeClient,
 ) -> Result<Datastore<RealClock>> {
     let pool = database_pool(
         &config_file.common_config.database,
@@ -404,11 +402,9 @@ impl KubernetesSecretOptions {
     async fn datastore_keys(
         &self,
         options: &CommonBinaryOptions,
-        kube_client: Option<&kube::Client>,
+        kube_client: &LazyKubeClient,
     ) -> Result<Vec<String>> {
-        if let (Some(ref secrets_namespace), Some(kube_client)) =
-            (&self.secrets_k8s_namespace, kube_client)
-        {
+        if let Some(ref secrets_namespace) = &self.secrets_k8s_namespace {
             fetch_datastore_keys(
                 kube_client,
                 secrets_namespace,
@@ -443,10 +439,46 @@ impl BinaryConfig for ConfigFile {
     }
 }
 
+/// A wrapper around [`kube::Client`] adding lazy initialization.
+struct LazyKubeClient {
+    cell: OnceCell<kube::Client>,
+}
+
+impl LazyKubeClient {
+    fn new() -> Self {
+        Self {
+            cell: OnceCell::new(),
+        }
+    }
+
+    /// Return a reference to a client, constructing a client from the default inferred
+    /// configuration if it has not been done yet. This will use the local kubeconfig file if
+    /// present, use in-cluster environment variables if present, or fail.
+    async fn get(&self) -> Result<&kube::Client> {
+        if let Some(client) = self.cell.get() {
+            return Ok(client);
+        }
+        let _ = self.cell.set(
+            kube::Client::try_default()
+                .await
+                .context("couldn't load Kubernetes configuration")?,
+        );
+        Ok(self.cell.get().unwrap())
+    }
+}
+
+impl From<kube::Client> for LazyKubeClient {
+    fn from(value: kube::Client) -> Self {
+        Self {
+            cell: OnceCell::from(value),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{fetch_datastore_keys, CommandLineOptions, ConfigFile, KubernetesSecretOptions};
-    use crate::STANDARD_NO_PAD;
+    use crate::{LazyKubeClient, STANDARD_NO_PAD};
     use base64::Engine;
     use clap::CommandFactory;
     use janus_aggregator::{
@@ -484,7 +516,7 @@ mod tests {
     async fn options_datastore_keys() {
         // Prep: create a Kubernetes cluster and put a secret in it
         let k8s_cluster = kubernetes::EphemeralCluster::create();
-        let kube_client = k8s_cluster.cluster().client().await;
+        let kube_client = k8s_cluster.cluster().client().await.into();
         super::create_datastore_key(
             false,
             &kube_client,
@@ -507,14 +539,17 @@ mod tests {
             datastore_keys_secret_data_key: "secret-data-key".to_string(),
             secrets_k8s_namespace: None,
         };
+        let empty_kube_client = LazyKubeClient::new();
 
         assert_eq!(
             kubernetes_secret_options
-                .datastore_keys(&common_options, Some(&kube_client))
+                .datastore_keys(&common_options, &empty_kube_client)
                 .await
                 .unwrap(),
             expected_datastore_keys
         );
+        // Shouldn't have set up a kube Client for this, since no namespace was given.
+        assert!(empty_kube_client.cell.get().is_none());
 
         // Keys not provided at command line, present in k8s
         let common_options = CommonBinaryOptions::default();
@@ -526,7 +561,7 @@ mod tests {
 
         assert_eq!(
             kubernetes_secret_options
-                .datastore_keys(&common_options, Some(&kube_client))
+                .datastore_keys(&common_options, &kube_client)
                 .await
                 .unwrap()
                 .len(),
@@ -542,7 +577,7 @@ mod tests {
         };
 
         kubernetes_secret_options
-            .datastore_keys(&common_options, Some(&kube_client))
+            .datastore_keys(&common_options, &kube_client)
             .await
             .unwrap_err();
     }
@@ -848,7 +883,7 @@ mod tests {
     #[tokio::test]
     async fn create_datastore_key() {
         let k8s_cluster = kubernetes::EphemeralCluster::create();
-        let kube_client = k8s_cluster.cluster().client().await;
+        let kube_client = k8s_cluster.cluster().client().await.into();
 
         // Create a datastore key.
         const NAMESPACE: &str = "default";
@@ -879,7 +914,7 @@ mod tests {
     #[tokio::test]
     async fn create_datastore_key_dry_run() {
         let k8s_cluster = kubernetes::EphemeralCluster::create();
-        let kube_client = k8s_cluster.cluster().client().await;
+        let kube_client = k8s_cluster.cluster().client().await.into();
 
         const NAMESPACE: &str = "default";
         const SECRET_NAME: &str = "secret-name";
