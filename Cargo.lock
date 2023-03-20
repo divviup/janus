@@ -3515,6 +3515,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_path_to_error"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db0969fff533976baadd92e08b1d102c5a3d8a8049eadfd69d4d1e3c5b2ed189"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_spanned"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4389,14 +4398,18 @@ dependencies = [
 
 [[package]]
 name = "trillium-api"
-version = "0.1.0"
+version = "0.2.0-rc.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82b43854c11d5cb8de23e7ca11d738d1a7d76a1ab29a569852204f3963429221"
+checksum = "ca25de1243325a6ca367d4fa1736fe6589c5a11c8414271c1ce0dafaa7eec6e8"
 dependencies = [
+ "log",
  "mime",
  "serde",
  "serde_json",
+ "serde_path_to_error",
+ "thiserror",
  "trillium",
+ "trillium-http",
 ]
 
 [[package]]
