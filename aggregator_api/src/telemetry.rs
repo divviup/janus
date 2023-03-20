@@ -3,21 +3,21 @@ use opentelemetry::{
     metrics::{Histogram, Unit},
     Context, KeyValue,
 };
-use std::{sync::Arc, time::Instant};
+use std::time::Instant;
 use trillium::{async_trait, Conn, Handler, Status};
 use trillium_router::RouterConnExt;
 
-pub struct Telemetry(Arc<Histogram<u64>>);
+pub struct Telemetry(Histogram<u64>);
 
 impl Telemetry {
     pub fn new() -> Self {
-        Self(Arc::new(
+        Self(
             meter("janus_aggregator_api")
                 .u64_histogram("http.server.duration")
                 .with_description("Elapsed time handling incoming requests, by endpoint & status.")
                 .with_unit(Unit::new("ms"))
                 .init(),
-        ))
+        )
     }
 }
 
@@ -28,7 +28,7 @@ impl Handler for Telemetry {
     }
 
     async fn before_send(&self, mut conn: Conn) -> Conn {
-        let meter = Arc::clone(&self.0);
+        let meter = self.0.clone();
         let status = (conn.status().unwrap_or(Status::NotFound) as u16).to_string();
         let route = conn
             .route()
