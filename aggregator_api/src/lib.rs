@@ -1,6 +1,5 @@
 //! This crate implements the Janus aggregator API.
-
-use crate::models::{GetTaskIdsResp, PostTaskReq};
+mod telemetry;
 use janus_aggregator_core::{
     datastore::{Datastore, Error},
     task::Task,
@@ -8,339 +7,220 @@ use janus_aggregator_core::{
 };
 use janus_core::{hpke::generate_hpke_config_and_private_key, time::Clock};
 use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, TaskId, Time};
+use models::{GetTaskIdsResp, PostTaskReq};
 use models::{GetTaskMetricsResp, TaskResp};
-use opentelemetry::{
-    global::meter,
-    metrics::{Histogram, Unit},
-    Context, KeyValue,
-};
 use querystring::querify;
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use ring::constant_time;
-use std::{future::Future, str::FromStr, sync::Arc, time::Instant};
-use tracing::{info_span, warn, Instrument};
-use trillium::{conn_try, conn_unwrap, Body, Conn, Handler, State, Status};
+use std::{str::FromStr, sync::Arc};
+use telemetry::Telemetry;
+use trillium::{conn_try, conn_unwrap, Conn, Handler, KnownHeaderName, State, Status};
 use trillium_api::ApiConnExt;
 use trillium_router::{Router, RouterConnExt};
+use trillium_tracing::Tracer;
 
 /// Represents the configuration for an instance of the Aggregator API.
-#[derive(Clone)]
 pub struct Config {
     pub auth_tokens: Vec<SecretBytes>,
+}
+
+fn datastore<C: Clock>(conn: &Conn) -> &Datastore<C> {
+    conn.state::<Arc<Datastore<C>>>().unwrap()
+}
+
+fn config(conn: &Conn) -> &Config {
+    conn.state::<Arc<Config>>().unwrap()
 }
 
 /// Returns a new handler for an instance of the aggregator API, backed by the given datastore,
 /// according to the given configuration.
 pub fn aggregator_api_handler<C: Clock>(ds: Datastore<C>, cfg: Config) -> impl Handler {
-    let response_time_histogram = meter("janus_aggregator_api")
-        .f64_histogram("janus_aggregator_api_response_time")
-        .with_description("Elapsed time handling incoming requests, by endpoint & status.")
-        .with_unit(Unit::new("seconds"))
-        .init();
-
     (
-        // State (used by endpoint_handler).
-        State::new(Arc::new(AggregatorApi {
-            ds,
-            cfg,
-            response_time_histogram,
-        })),
-        // Main functionality router.
+        State::new(Arc::new(cfg)),
+        State::new(Arc::new(ds)),
+        Tracer::new(),
+        Telemetry::new(),
+        check_auth,
         Router::new()
-            .get("/task_ids", {
-                const ENDPOINT_NAME: &str = "get_task_ids";
-                |conn: Conn| {
-                    async move {
-                        endpoint_handler::<C, _>(
-                            conn,
-                            ENDPOINT_NAME,
-                            |aggregator_api, conn| async move {
-                                aggregator_api.handle_get_task_ids(conn).await
-                            },
-                        )
-                        .await
-                    }
-                    .instrument(info_span!(ENDPOINT_NAME))
-                }
-            })
-            .post("/tasks", {
-                const ENDPOINT_NAME: &str = "post_task";
-                |conn: Conn| {
-                    async move {
-                        endpoint_handler::<C, _>(
-                            conn,
-                            ENDPOINT_NAME,
-                            |aggregator_api, conn| async move {
-                                aggregator_api.handle_post_task(conn).await
-                            },
-                        )
-                        .await
-                    }
-                    .instrument(info_span!(ENDPOINT_NAME))
-                }
-            })
-            .get("/tasks/:task_id", {
-                const ENDPOINT_NAME: &str = "get_task";
-                |conn: Conn| {
-                    async move {
-                        endpoint_handler::<C, _>(
-                            conn,
-                            ENDPOINT_NAME,
-                            |aggregator_api, conn| async move {
-                                aggregator_api.handle_get_task(conn).await
-                            },
-                        )
-                        .await
-                    }
-                    .instrument(info_span!(ENDPOINT_NAME))
-                }
-            })
-            .delete("/tasks/:task_id", {
-                const ENDPOINT_NAME: &str = "delete_task";
-                |conn: Conn| {
-                    async move {
-                        endpoint_handler::<C, _>(
-                            conn,
-                            ENDPOINT_NAME,
-                            |aggregator_api, conn| async move {
-                                aggregator_api.handle_delete_task(conn).await
-                            },
-                        )
-                        .await
-                    }
-                    .instrument(info_span!(ENDPOINT_NAME))
-                }
-            })
-            .get("/tasks/:task_id/metrics", {
-                const ENDPOINT_NAME: &str = "get_task_metrics";
-                |conn: Conn| {
-                    async move {
-                        endpoint_handler::<C, _>(
-                            conn,
-                            ENDPOINT_NAME,
-                            |aggregator_api, conn| async move {
-                                aggregator_api.handle_get_task_metrics(conn).await
-                            },
-                        )
-                        .await
-                    }
-                    .instrument(info_span!(ENDPOINT_NAME))
-                }
-            }),
+            .get("/task_ids", get_task_ids::<C>)
+            .post("/tasks", post_task::<C>)
+            .get("/tasks/:task_id", get_task::<C>)
+            .delete("/tasks/:task_id", delete_task::<C>)
+            .get("/tasks/:task_id/metrics", get_task_metrics::<C>),
     )
 }
 
-async fn endpoint_handler<C: Clock, Fut>(
-    mut conn: Conn,
-    endpoint_name: impl Into<String>,
-    handler: impl Fn(Arc<AggregatorApi<C>>, Conn) -> Fut,
-) -> Conn
-where
-    Fut: Future<Output = Conn>,
-{
-    let start_instant = Instant::now();
-    let aggregator_api: Arc<AggregatorApi<C>> =
-        Arc::clone(conn.state().expect("No AggregatorApi in connection state"));
-
-    conn = aggregator_api.check_auth(conn);
-    if !conn.is_halted() {
-        conn = handler(Arc::clone(&aggregator_api), conn).await;
-    }
-
-    let status: u16 = match conn.status() {
-        Some(status) => status.into(),
-        None => {
-            warn!(path = conn.path(), "No status set on connection");
-            return conn;
-        }
-    };
-
-    aggregator_api.response_time_histogram.record(
-        &Context::current(),
-        start_instant.elapsed().as_secs_f64(),
-        &[
-            KeyValue::new("endpoint", endpoint_name.into()),
-            KeyValue::new("status", status.to_string()),
-        ],
-    );
-    conn
-}
-
-struct AggregatorApi<C: Clock> {
-    ds: Datastore<C>,
-    cfg: Config,
-    response_time_histogram: Histogram<f64>,
-}
-
-impl<C: Clock> AggregatorApi<C> {
-    fn check_auth(&self, conn: Conn) -> Conn {
-        if let Some(authorization_value) = conn.headers().get("authorization") {
-            if let Some(received_token) = authorization_value.as_ref().strip_prefix(b"Basic ") {
-                if self.cfg.auth_tokens.iter().any(|key| {
-                    constant_time::verify_slices_are_equal(received_token, key.as_ref()).is_ok()
-                }) {
-                    // Authorization succeeds.
-                    return conn;
-                }
+async fn check_auth(conn: Conn) -> Conn {
+    let config = config(&conn);
+    if let Some(authorization_value) = conn.headers().get(KnownHeaderName::Authorization) {
+        if let Some(received_token) = authorization_value.as_ref().strip_prefix(b"Basic ") {
+            if config.auth_tokens.iter().any(|key| {
+                constant_time::verify_slices_are_equal(received_token, key.as_ref()).is_ok()
+            }) {
+                // Authorization succeeds.
+                return conn;
             }
         }
-
-        // Authorization fails.
-        conn.with_status(Status::Unauthorized).halt()
     }
 
-    async fn handle_get_task_ids(&self, conn: Conn) -> Conn {
-        const PAGINATION_TOKEN_KEY: &str = "pagination_token";
-        let lower_bound = querify(conn.querystring())
-            .into_iter()
-            .find(|&(k, _)| k == PAGINATION_TOKEN_KEY)
-            .map(|(_, v)| TaskId::from_str(v))
-            .transpose();
-        let lower_bound = match lower_bound {
-            Ok(task_id_param) => task_id_param,
-            Err(_) => return conn.with_status(Status::BadRequest).halt(),
-        };
+    // Authorization fails.
+    conn.with_status(Status::Unauthorized).halt()
+}
 
-        let task_ids = conn_try!(
-            self.ds
-                .run_tx_with_name("get_task_ids", |tx| Box::pin(async move {
-                    tx.get_task_ids(lower_bound).await
-                }))
-                .await,
-            conn
-        );
-        let pagination_token = task_ids.last().cloned();
+async fn get_task_ids<C: Clock>(conn: Conn) -> Conn {
+    const PAGINATION_TOKEN_KEY: &str = "pagination_token";
+    let ds = datastore::<C>(&conn);
 
-        conn.with_json(&GetTaskIdsResp {
-            task_ids,
-            pagination_token,
+    let lower_bound = querify(conn.querystring())
+        .into_iter()
+        .find(|&(k, _)| k == PAGINATION_TOKEN_KEY)
+        .map(|(_, v)| TaskId::from_str(v))
+        .transpose();
+    let lower_bound = match lower_bound {
+        Ok(task_id_param) => task_id_param,
+        Err(_) => return conn.with_status(Status::BadRequest).halt(),
+    };
+
+    let task_ids = conn_try!(
+        ds.run_tx_with_name("get_task_ids", |tx| Box::pin(async move {
+            tx.get_task_ids(lower_bound).await
+        }))
+        .await,
+        conn
+    );
+    let pagination_token = task_ids.last().cloned();
+
+    conn.with_json(&GetTaskIdsResp {
+        task_ids,
+        pagination_token,
+    })
+}
+
+async fn post_task<C: Clock>(mut conn: Conn) -> Conn {
+    let req: PostTaskReq = match conn.deserialize().await {
+        Ok(req) => req,
+        Err(_) => return conn.with_status(Status::BadRequest).halt(),
+    };
+
+    let vdaf_verify_keys = Vec::from([SecretBytes::new(
+        thread_rng()
+            .sample_iter(Standard)
+            .take(req.vdaf.verify_key_length())
+            .collect(),
+    )]);
+    let task_expiration = Time::from_seconds_since_epoch(req.task_expiration);
+    let time_precision = Duration::from_seconds(req.time_precision);
+    let hpke_keys = Vec::from([generate_hpke_config_and_private_key(
+        random(),
+        HpkeKemId::X25519HkdfSha256,
+        HpkeKdfId::HkdfSha256,
+        HpkeAeadId::Aes128Gcm,
+    )]);
+
+    let task = Task::new(
+        /* task_id */ random(),
+        /* aggregator_endpoints */ req.aggregator_endpoints,
+        /* query_type */ req.query_type,
+        /* vdaf */ req.vdaf,
+        /* role */ req.role,
+        /* vdaf_verify_keys */ vdaf_verify_keys,
+        /* max_batch_query_count */ req.max_batch_query_count,
+        /* task_expiration */ task_expiration,
+        /* report_expiry_age */
+        Some(Duration::from_seconds(3600 * 24 * 7 * 2)), // 2 weeks
+        /* min_batch_size */ req.min_batch_size,
+        /* time_precision */ time_precision,
+        /* tolerable_clock_skew */
+        Duration::from_seconds(60), // 1 minute,
+        /* collector_hpke_config */ req.collector_hpke_config,
+        /* aggregator_auth_tokens */ Vec::from([random()]),
+        /* collector_auth_tokens */ Vec::from([random()]),
+        /* hpke_keys */ hpke_keys,
+    );
+    let task = match task {
+        Ok(task) => Arc::new(task),
+        Err(_) => return conn.with_status(Status::BadRequest).halt(),
+    };
+
+    let ds = datastore::<C>(&conn);
+
+    conn_try!(
+        ds.run_tx_with_name("post_task", |tx| {
+            let task = Arc::clone(&task);
+            Box::pin(async move { tx.put_task(&task).await })
         })
+        .await,
+        conn
+    );
+
+    conn.with_json(&TaskResp::from(task.as_ref()))
+}
+
+async fn get_task<C: Clock>(conn: Conn) -> Conn {
+    let ds = datastore::<C>(&conn);
+    let task_id = TaskId::from_str(conn_unwrap!(conn.param("task_id"), conn));
+    let task_id = match task_id {
+        Ok(task_id) => task_id,
+        Err(_) => return conn.with_status(Status::BadRequest).halt(),
+    };
+
+    let task = conn_try!(
+        ds.run_tx_with_name("get_task", |tx| {
+            Box::pin(async move { tx.get_task(&task_id).await })
+        })
+        .await,
+        conn
+    );
+    let task = match task {
+        Some(task) => task,
+        None => return conn.with_status(Status::NotFound).halt(),
+    };
+
+    conn.with_json(&TaskResp::from(&task))
+}
+
+async fn delete_task<C: Clock>(conn: Conn) -> Conn {
+    let ds = datastore::<C>(&conn);
+    let task_id = TaskId::from_str(conn_unwrap!(conn.param("task_id"), conn));
+    let task_id = match task_id {
+        Ok(task_id) => task_id,
+        Err(_) => return conn.with_status(Status::BadRequest).halt(),
+    };
+
+    let rslt = ds
+        .run_tx_with_name("delete_task", |tx| {
+            Box::pin(async move { tx.delete_task(&task_id).await })
+        })
+        .await;
+    match rslt {
+        Ok(()) => conn.with_status(Status::Ok).halt(),
+        Err(Error::MutationTargetNotFound) => conn.with_status(Status::NotFound).halt(),
+        Err(_) => conn.with_status(Status::InternalServerError).halt(),
     }
+}
 
-    async fn handle_post_task(&self, mut conn: Conn) -> Conn {
-        let req: PostTaskReq = match conn.deserialize().await {
-            Ok(req) => req,
-            Err(_) => return conn.with_status(Status::BadRequest).halt(),
-        };
+async fn get_task_metrics<C: Clock>(conn: Conn) -> Conn {
+    let ds = datastore::<C>(&conn);
 
-        let vdaf_verify_keys = Vec::from([SecretBytes::new(
-            thread_rng()
-                .sample_iter(Standard)
-                .take(req.vdaf.verify_key_length())
-                .collect(),
-        )]);
-        let task_expiration = Time::from_seconds_since_epoch(req.task_expiration);
-        let time_precision = Duration::from_seconds(req.time_precision);
-        let hpke_keys = Vec::from([generate_hpke_config_and_private_key(
-            random(),
-            HpkeKemId::X25519HkdfSha256,
-            HpkeKdfId::HkdfSha256,
-            HpkeAeadId::Aes128Gcm,
-        )]);
+    let task_id = TaskId::from_str(conn_unwrap!(conn.param("task_id"), conn));
+    let task_id = match task_id {
+        Ok(task_id) => task_id,
+        Err(_) => return conn.with_status(Status::BadRequest).halt(),
+    };
 
-        let task = Task::new(
-            /* task_id */ random(),
-            /* aggregator_endpoints */ req.aggregator_endpoints,
-            /* query_type */ req.query_type,
-            /* vdaf */ req.vdaf,
-            /* role */ req.role,
-            /* vdaf_verify_keys */ vdaf_verify_keys,
-            /* max_batch_query_count */ req.max_batch_query_count,
-            /* task_expiration */ task_expiration,
-            /* report_expiry_age */
-            Some(Duration::from_seconds(3600 * 24 * 7 * 2)), // 2 weeks
-            /* min_batch_size */ req.min_batch_size,
-            /* time_precision */ time_precision,
-            /* tolerable_clock_skew */
-            Duration::from_seconds(60), // 1 minute,
-            /* collector_hpke_config */ req.collector_hpke_config,
-            /* aggregator_auth_tokens */ Vec::from([random()]),
-            /* collector_auth_tokens */ Vec::from([random()]),
-            /* hpke_keys */ hpke_keys,
-        );
-        let task = match task {
-            Ok(task) => Arc::new(task),
-            Err(_) => return conn.with_status(Status::BadRequest).halt(),
-        };
-
-        conn_try!(
-            self.ds
-                .run_tx_with_name("post_task", |tx| {
-                    let task = Arc::clone(&task);
-                    Box::pin(async move { tx.put_task(&task).await })
-                })
-                .await,
-            conn
-        );
-
-        conn.with_json(&TaskResp::from(task.as_ref()))
-    }
-
-    async fn handle_get_task(&self, conn: Conn) -> Conn {
-        let task_id = TaskId::from_str(conn_unwrap!(conn.param("task_id"), conn));
-        let task_id = match task_id {
-            Ok(task_id) => task_id,
-            Err(_) => return conn.with_status(Status::BadRequest).halt(),
-        };
-
-        let task = conn_try!(
-            self.ds
-                .run_tx_with_name("get_task", |tx| {
-                    Box::pin(async move { tx.get_task(&task_id).await })
-                })
-                .await,
-            conn
-        );
-        let task = match task {
-            Some(task) => task,
-            None => return conn.with_status(Status::NotFound).halt(),
-        };
-
-        conn.with_json(&TaskResp::from(&task))
-    }
-
-    async fn handle_delete_task(&self, conn: Conn) -> Conn {
-        let task_id = TaskId::from_str(conn_unwrap!(conn.param("task_id"), conn));
-        let task_id = match task_id {
-            Ok(task_id) => task_id,
-            Err(_) => return conn.with_status(Status::BadRequest).halt(),
-        };
-
-        let rslt = self
-            .ds
-            .run_tx_with_name("delete_task", |tx| {
-                Box::pin(async move { tx.delete_task(&task_id).await })
-            })
-            .await;
-        match rslt {
-            Ok(()) => conn.ok(Body::default()),
-            Err(Error::MutationTargetNotFound) => conn.with_status(Status::NotFound).halt(),
-            Err(_) => conn.with_status(Status::InternalServerError).halt(),
-        }
-    }
-
-    async fn handle_get_task_metrics(&self, conn: Conn) -> Conn {
-        let task_id = TaskId::from_str(conn_unwrap!(conn.param("task_id"), conn));
-        let task_id = match task_id {
-            Ok(task_id) => task_id,
-            Err(_) => return conn.with_status(Status::BadRequest).halt(),
-        };
-
-        let metrics = conn_try!(
-            self.ds
-                .run_tx_with_name("get_task_metrics", |tx| {
-                    Box::pin(async move { tx.get_task_metrics(task_id).await })
-                })
-                .await,
-            conn
-        );
-        match metrics {
-            Some((reports, report_aggregations)) => conn.with_json(&GetTaskMetricsResp {
-                reports,
-                report_aggregations,
-            }),
-            None => conn.with_status(Status::NotFound).halt(),
-        }
+    let metrics = conn_try!(
+        ds.run_tx_with_name("get_task_metrics", |tx| {
+            Box::pin(async move { tx.get_task_metrics(task_id).await })
+        })
+        .await,
+        conn
+    );
+    match metrics {
+        Some((reports, report_aggregations)) => conn.with_json(&GetTaskMetricsResp {
+            reports,
+            report_aggregations,
+        }),
+        None => conn.with_status(Status::NotFound).halt(),
     }
 }
 
