@@ -304,7 +304,7 @@ struct Options {
     length: Option<usize>,
     /// Bit length of measurements, for use with --vdaf=sum
     #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
-    bits: Option<u32>,
+    bits: Option<usize>,
     /// Comma-separated list of bucket boundaries, for use with --vdaf=histogram
     #[clap(
         long,

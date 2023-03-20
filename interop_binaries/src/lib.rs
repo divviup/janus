@@ -106,7 +106,7 @@ pub enum VdafObject {
         length: NumberAsString<usize>,
     },
     Prio3Sum {
-        bits: NumberAsString<u32>,
+        bits: NumberAsString<usize>,
     },
     Prio3SumVec {
         bits: NumberAsString<usize>,
