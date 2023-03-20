@@ -1927,6 +1927,7 @@ dependencies = [
  "prio",
  "rand",
  "reqwest",
+ "serde_yaml 0.9.19",
  "tokio",
  "tracing",
  "tracing-log",

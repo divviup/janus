@@ -6,6 +6,7 @@ fn cli_tests() {
     let test_cases = TestCases::new();
 
     test_cases.case("tests/cmd/dap_decode.trycmd");
+    test_cases.case("tests/cmd/hpke_keygen.trycmd");
 
     cfg_if! {
         if #[cfg(feature = "fpvec_bounded_l2")] {
