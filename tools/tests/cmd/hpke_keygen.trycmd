@@ -1,0 +1,69 @@
+```
+$ hpke_keygen --help
+DAP-compatible HPKE keypair generator
+
+Usage: hpke_keygen [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+          Numeric identifier of the HPKE configuration
+
+Options:
+      --kem <KEM>
+          HPKE Key Encapsulation Mechanism algorithm
+          
+          [default: x25519]
+
+          Possible values:
+          - p-256:  DHKEM(P-256, HKDF-SHA256)
+          - x25519: DHKEM(X25519, HKDF-SHA256)
+
+      --kdf <KDF>
+          HPKE Key Derivation Function algorithm
+          
+          [default: hkdf-sha256]
+
+          Possible values:
+          - hkdf-sha256: HKDF-SHA256
+          - hkdf-sha384: HKDF-SHA384
+          - hkdf-sha512: HKDF-SHA512
+
+      --aead <AEAD>
+          HPKE Authenticated Encryption with Associated Data algorithm
+          
+          [default: aes-128-gcm]
+
+          Possible values:
+          - aes-128-gcm:      AES-128-GCM
+          - aes-256-gcm:      AES-256-GCM
+          - chacha20poly1305: ChaCha20Poly1305
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+```
+
+```
+$ hpke_keygen 5
+# HPKE configuration, Janus format
+id: 5
+kem_id: X25519HkdfSha256
+kdf_id: HkdfSha256
+aead_id: Aes128Gcm
+public_key: [..]
+---
+# HPKE private key, in base64url
+[..]
+---
+# HPKE keypair, Janus format
+config:
+  id: 5
+  kem_id: X25519HkdfSha256
+  kdf_id: HkdfSha256
+  aead_id: Aes128Gcm
+  public_key: [..]
+private_key: [..]
+---
+# HPKE configuration, DAP encoded, in base64url
+BQAgAAEAAQAg[..]
+```

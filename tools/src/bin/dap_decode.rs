@@ -133,7 +133,7 @@ enum MediaType {
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "dap-decode",
+    name = "dap_decode",
     about = "Distributed Aggregation Protocol message decoder",
     version,
     rename_all = "kebab-case"
@@ -145,4 +145,15 @@ struct Options {
     /// Media type of the message to decode.
     #[arg(long, short = 't', required = true)]
     media_type: MediaType,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Options;
+    use clap::CommandFactory;
+
+    #[test]
+    fn verify_clap_app() {
+        Options::command().debug_assert();
+    }
 }
