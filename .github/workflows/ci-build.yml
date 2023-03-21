@@ -56,7 +56,7 @@ jobs:
         username: "oauth2accesstoken"
         password: ${{ steps.gcp-auth.outputs.access_token }}
     - name: Setup Go toolchain
-      uses: actions/setup-go@v3
+      uses: actions/setup-go@v4
     - name: Install Kind
       # We should always make sure that the `kind` CLI we install is from the
       # same release as the node image version used by
