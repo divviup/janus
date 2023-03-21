@@ -49,8 +49,8 @@ where
         let mut receiver = labeled_runtime.inner.sender.subscribe();
         while *receiver.borrow_and_update() < target_count {
             receiver.changed().await.expect(
-                "The channel sender should not be dropped before waits have \
-                finished, this likely indicates an issue with a test.",
+                "The channel sender should not be dropped before waits have finished, this likely \
+                 indicates an issue with a test.",
             );
         }
     }

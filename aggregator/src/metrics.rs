@@ -184,9 +184,8 @@ pub fn install_metrics_exporter(
         }
         #[cfg(not(feature = "prometheus"))]
         Some(MetricsExporterConfiguration::Prometheus { .. }) => Err(Error::Other(
-            "The OpenTelemetry Prometheus metrics exporter was enabled in the \
-            configuration file, but support was not enabled at compile time. \
-            Rebuild with `--features prometheus`.",
+            "The OpenTelemetry Prometheus metrics exporter was enabled in the configuration file, \
+             but support was not enabled at compile time. Rebuild with `--features prometheus`.",
         )),
 
         #[cfg(feature = "otlp")]
@@ -218,9 +217,8 @@ pub fn install_metrics_exporter(
         }
         #[cfg(not(feature = "otlp"))]
         Some(MetricsExporterConfiguration::Otlp(_)) => Err(Error::Other(
-            "The OpenTelemetry OTLP metrics exporter was enabled in the \
-            configuration file, but support was not enabled at compile time. \
-            Rebuild with `--features otlp`.",
+            "The OpenTelemetry OTLP metrics exporter was enabled in the configuration file, but \
+             support was not enabled at compile time. Rebuild with `--features otlp`.",
         )),
 
         // If neither exporter is configured, leave the default NoopMeterProvider in place.

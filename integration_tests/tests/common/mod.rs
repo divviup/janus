@@ -192,7 +192,8 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
                     Err(e) => {
                         if requests >= 15 {
                             panic!(
-                                "timed out waiting for a current batch query to succeed, error: {e}"
+                                "timed out waiting for a current batch query to succeed, error: \
+                                 {e}"
                             );
                         }
                         sleep(StdDuration::from_secs(1)).await;

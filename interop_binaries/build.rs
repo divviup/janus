@@ -65,7 +65,10 @@ fn main() {
                         "Docker build of interop client failed:\n{}",
                         String::from_utf8_lossy(&client_build_output.stderr)
                     );
-                    String::from_utf8(client_build_output.stdout).unwrap().trim().to_string()
+                    String::from_utf8(client_build_output.stdout)
+                        .unwrap()
+                        .trim()
+                        .to_string()
                 };
 
                 let aggregator_image_id = {
@@ -86,7 +89,10 @@ fn main() {
                         "Docker build of interop aggregator failed:\n{}",
                         String::from_utf8_lossy(&aggregator_build_output.stderr)
                     );
-                    String::from_utf8(aggregator_build_output.stdout).unwrap().trim().to_string()
+                    String::from_utf8(aggregator_build_output.stdout)
+                        .unwrap()
+                        .trim()
+                        .to_string()
                 };
 
                 let collector_image_id = {
@@ -97,7 +103,7 @@ fn main() {
                             "--file=Dockerfile.interop",
                             "--build-arg=PROFILE=small",
                             "--build-arg=BINARY=janus_interop_collector",
-                            "."
+                            ".",
                         ])
                         .current_dir("..")
                         .env("DOCKER_BUILDKIT", "1")
@@ -108,7 +114,10 @@ fn main() {
                         "Docker build of interop collector failed:\n{}",
                         String::from_utf8_lossy(&collector_build_output.stderr)
                     );
-                    String::from_utf8(collector_build_output.stdout).unwrap().trim().to_string()
+                    String::from_utf8(collector_build_output.stdout)
+                        .unwrap()
+                        .trim()
+                        .to_string()
                 };
 
                 // Save off containers to disk.
@@ -147,7 +156,13 @@ fn main() {
 
                 // Make a best-effort attempt to clean up Docker's post-build state.
                 Command::new("docker")
-                    .args(["image", "rm", &client_image_id, &aggregator_image_id, &collector_image_id])
+                    .args([
+                        "image",
+                        "rm",
+                        &client_image_id,
+                        &aggregator_image_id,
+                        &collector_image_id,
+                    ])
                     .status()
                     .expect("Failed to execute `docker image remove`");
             }
@@ -165,11 +180,16 @@ fn main() {
                         env::var("OUT_DIR").unwrap()
                     ))
                     .expect("Couldn't create empty image file");
-                    image_file.sync_all().expect("Couldn't write empty image file");
+                    image_file
+                        .sync_all()
+                        .expect("Couldn't write empty image file");
                 }
             }
 
-            _ => panic!("Unexpected JANUS_INTEROP_CONTAINER value {container_strategy:?} (valid values are \"build\" & \"skip\")")
+            _ => panic!(
+                "Unexpected JANUS_INTEROP_CONTAINER value {container_strategy:?} (valid values \
+                 are \"build\" & \"skip\")"
+            ),
         }
     }
 }

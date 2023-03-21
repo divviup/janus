@@ -371,7 +371,7 @@ struct KubernetesSecretOptions {
         env = "SECRETS_K8S_NAMESPACE",
         num_args = 1,
         long_help = "Kubernetes namespace where the datastore key is stored. Required if \
-        --datastore-keys is not set or if command is create-datastore-key."
+                     --datastore-keys is not set or if command is create-datastore-key."
     )]
     secrets_k8s_namespace: Option<String>,
 

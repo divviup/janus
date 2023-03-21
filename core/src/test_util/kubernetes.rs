@@ -138,7 +138,8 @@ impl EphemeralCluster {
                 "--name",
                 &kind_cluster_name,
                 "--image",
-                "kindest/node:v1.24.7@sha256:577c630ce8e509131eab1aea12c022190978dd2f745aac5eb1fe65c0807eb315",
+                "kindest/node:v1.24.7@sha256:\
+                 577c630ce8e509131eab1aea12c022190978dd2f745aac5eb1fe65c0807eb315",
             ])
             .stdin(Stdio::null())
             .stdout(Stdio::null())

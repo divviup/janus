@@ -377,9 +377,11 @@ impl<C: Clock> Transaction<'_, C> {
             aggregator_auth_token_ords.push(ord);
             aggregator_auth_tokens.push(encrypted_aggregator_auth_token);
         }
-        let stmt = self.prepare_cached(
+        let stmt = self
+            .prepare_cached(
                 "INSERT INTO task_aggregator_auth_tokens (task_id, ord, token)
-                SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::BIGINT[], $3::BYTEA[])"
+                SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::BIGINT[], \
+                 $3::BYTEA[])",
             )
             .await?;
         let aggregator_auth_tokens_params: &[&(dyn ToSql + Sync)] = &[
@@ -409,10 +411,13 @@ impl<C: Clock> Transaction<'_, C> {
             collector_auth_token_ords.push(ord);
             collector_auth_tokens.push(encrypted_collector_auth_token);
         }
-        let stmt = self.prepare_cached(
-            "INSERT INTO task_collector_auth_tokens (task_id, ord, token)
-            SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::BIGINT[], $3::BYTEA[])"
-        ).await?;
+        let stmt = self
+            .prepare_cached(
+                "INSERT INTO task_collector_auth_tokens (task_id, ord, token)
+            SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::BIGINT[], \
+                 $3::BYTEA[])",
+            )
+            .await?;
         let collector_auth_tokens_params: &[&(dyn ToSql + Sync)] = &[
             /* task_id */ &task.id().as_ref(),
             /* ords */ &collector_auth_token_ords,
@@ -444,7 +449,8 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "INSERT INTO task_hpke_keys (task_id, config_id, config, private_key)
-                SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::SMALLINT[], $3::BYTEA[], $4::BYTEA[])",
+                SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::SMALLINT[], \
+                 $3::BYTEA[], $4::BYTEA[])",
             )
             .await?;
         let hpke_configs_params: &[&(dyn ToSql + Sync)] = &[
@@ -630,7 +636,8 @@ impl<C: Clock> Transaction<'_, C> {
 
         let stmt = self
             .prepare_cached(
-                "SELECT (SELECT tasks.task_id FROM tasks WHERE tasks.id = task_aggregator_auth_tokens.task_id),
+                "SELECT (SELECT tasks.task_id FROM tasks WHERE tasks.id = \
+                 task_aggregator_auth_tokens.task_id),
                 ord, token FROM task_aggregator_auth_tokens ORDER BY ord ASC",
             )
             .await?;
@@ -638,7 +645,8 @@ impl<C: Clock> Transaction<'_, C> {
 
         let stmt = self
             .prepare_cached(
-                "SELECT (SELECT tasks.task_id FROM tasks WHERE tasks.id = task_collector_auth_tokens.task_id),
+                "SELECT (SELECT tasks.task_id FROM tasks WHERE tasks.id = \
+                 task_collector_auth_tokens.task_id),
                 ord, token FROM task_collector_auth_tokens ORDER BY ord ASC",
             )
             .await?;
@@ -652,10 +660,13 @@ impl<C: Clock> Transaction<'_, C> {
             .await?;
         let hpke_config_rows = self.query(&stmt, &[]);
 
-        let stmt = self.prepare_cached(
-            "SELECT (SELECT tasks.task_id FROM tasks WHERE tasks.id = task_vdaf_verify_keys.task_id),
-            vdaf_verify_key FROM task_vdaf_verify_keys"
-        ).await?;
+        let stmt = self
+            .prepare_cached(
+                "SELECT (SELECT tasks.task_id FROM tasks WHERE tasks.id = \
+                 task_vdaf_verify_keys.task_id),
+            vdaf_verify_key FROM task_vdaf_verify_keys",
+            )
+            .await?;
         let vdaf_verify_key_rows = self.query(&stmt, &[]);
 
         let (
@@ -1092,7 +1103,8 @@ impl<C: Clock> Transaction<'_, C> {
                     FROM unaggregated_client_report_ids
                     WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
                       AND client_reports.report_id = unaggregated_client_report_ids.report_id
-                      AND client_reports.client_timestamp = unaggregated_client_report_ids.client_timestamp
+                      AND client_reports.client_timestamp = \
+                 unaggregated_client_report_ids.client_timestamp
                 )
                 SELECT report_id, client_timestamp, aggregation_param
                 FROM unaggregated_client_report_ids",
@@ -1187,7 +1199,8 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT COUNT(DISTINCT report_aggregations.client_report_id) AS count
                 FROM report_aggregations
-                JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                JOIN aggregation_jobs ON aggregation_jobs.id = \
+                 report_aggregations.aggregation_job_id
                 WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
                   AND aggregation_jobs.batch_id = $2",
             )
@@ -1530,7 +1543,8 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<(), Error> {
         let stmt = self
             .prepare_cached(
-                "UPDATE aggregation_jobs SET lease_expiry = TIMESTAMP '-infinity', lease_token = NULL, lease_attempts = 0
+                "UPDATE aggregation_jobs SET lease_expiry = TIMESTAMP '-infinity', lease_token = \
+                 NULL, lease_attempts = 0
                 FROM tasks
                 WHERE tasks.id = aggregation_jobs.task_id
                   AND tasks.task_id = $1
@@ -1658,16 +1672,18 @@ impl<C: Clock> Transaction<'_, C> {
     where
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     {
-        let stmt = self.prepare_cached(
-            "SELECT 1 FROM report_aggregations
+        let stmt = self
+            .prepare_cached(
+                "SELECT 1 FROM report_aggregations
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
-                JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                JOIN aggregation_jobs ON aggregation_jobs.id = \
+                 report_aggregations.aggregation_job_id
                 WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
                     AND client_reports.report_id = $2
                     AND aggregation_jobs.aggregation_param = $3
-                    AND aggregation_jobs.aggregation_job_id != $4"
+                    AND aggregation_jobs.aggregation_job_id != $4",
             )
-        .await?;
+            .await?;
         Ok(self
             .query_opt(
                 &stmt,
@@ -1706,7 +1722,8 @@ impl<C: Clock> Transaction<'_, C> {
                 report_aggregations.error_code, aggregation_jobs.aggregation_param
                 FROM report_aggregations
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
-                JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                JOIN aggregation_jobs ON aggregation_jobs.id = \
+                 report_aggregations.aggregation_job_id
                 WHERE aggregation_jobs.aggregation_job_id = $1
                   AND client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $2)
                   AND client_reports.report_id = $3",
@@ -1758,7 +1775,8 @@ impl<C: Clock> Transaction<'_, C> {
                 report_aggregations.error_code, aggregation_jobs.aggregation_param
                 FROM report_aggregations
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
-                JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                JOIN aggregation_jobs ON aggregation_jobs.id = \
+                 report_aggregations.aggregation_job_id
                 WHERE aggregation_jobs.aggregation_job_id = $1
                   AND client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $2)
                 ORDER BY report_aggregations.ord ASC",
@@ -1811,7 +1829,8 @@ impl<C: Clock> Transaction<'_, C> {
                     report_aggregations.error_code, aggregation_jobs.aggregation_param
                 FROM report_aggregations
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
-                JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                JOIN aggregation_jobs ON aggregation_jobs.id = \
+                 report_aggregations.aggregation_job_id
                 WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             )
             .await?;
@@ -1941,15 +1960,18 @@ impl<C: Clock> Transaction<'_, C> {
     {
         let encoded_state_values = report_aggregation.state().encoded_values_from_state();
 
-        let stmt = self.prepare_cached(
-            "INSERT INTO report_aggregations
-            (aggregation_job_id, client_report_id, ord, state, prep_state, prep_msg, out_share, error_code)
+        let stmt = self
+            .prepare_cached(
+                "INSERT INTO report_aggregations
+            (aggregation_job_id, client_report_id, ord, state, prep_state, prep_msg, out_share, \
+                 error_code)
             VALUES ((SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1),
                     (SELECT id FROM client_reports
                      WHERE task_id = (SELECT id FROM tasks WHERE task_id = $2)
                      AND report_id = $3),
-                    $4, $5, $6, $7, $8, $9)"
-        ).await?;
+                    $4, $5, $6, $7, $8, $9)",
+            )
+            .await?;
         self.execute(
             &stmt,
             &[
@@ -1986,10 +2008,12 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "UPDATE report_aggregations SET ord = $1, state = $2, prep_state = $3,
                 prep_msg = $4, out_share = $5, error_code = $6
-                WHERE aggregation_job_id = (SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $7)
+                WHERE aggregation_job_id = (SELECT id FROM aggregation_jobs WHERE \
+                 aggregation_job_id = $7)
                 AND client_report_id = (SELECT id FROM client_reports
                     WHERE task_id = (SELECT id FROM tasks WHERE task_id = $8)
-                    AND report_id = $9)")
+                    AND report_id = $9)",
+            )
             .await?;
         check_single_row_mutation(
             self.execute(
@@ -2277,7 +2301,8 @@ impl<C: Clock> Transaction<'_, C> {
                     &(vdaf, &aggregation_param),
                     &leader_aggregate_share_bytes.ok_or_else(|| {
                         Error::DbState(
-                            "collection job is in state FINISHED but leader_aggregate_share is NULL"
+                            "collection job is in state FINISHED but leader_aggregate_share is \
+                             NULL"
                                 .to_string(),
                         )
                     })?,
@@ -2322,7 +2347,8 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "INSERT INTO collection_jobs
-                    (collection_job_id, task_id, batch_identifier, batch_interval, aggregation_param,
+                    (collection_job_id, task_id, batch_identifier, batch_interval, \
+                 aggregation_param,
                     state)
                 VALUES ($1, (SELECT id FROM tasks WHERE task_id = $2), $3, $4, $5, $6)",
             )
@@ -2361,7 +2387,8 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "
 WITH updated as (
-    UPDATE collection_jobs SET lease_expiry = $1, lease_token = gen_random_bytes(16), lease_attempts = lease_attempts + 1
+    UPDATE collection_jobs SET lease_expiry = $1, lease_token = gen_random_bytes(16), \
+                 lease_attempts = lease_attempts + 1
     FROM tasks
     WHERE collection_jobs.id IN (
         SELECT collection_jobs.id FROM collection_jobs
@@ -2440,7 +2467,8 @@ ORDER BY id DESC
             .prepare_cached(
                 "
 WITH updated as (
-    UPDATE collection_jobs SET lease_expiry = $1, lease_token = gen_random_bytes(16), lease_attempts = lease_attempts + 1
+    UPDATE collection_jobs SET lease_expiry = $1, lease_token = gen_random_bytes(16), \
+                 lease_attempts = lease_attempts + 1
     FROM tasks
     WHERE collection_jobs.id IN (
         SELECT collection_jobs.id FROM collection_jobs
@@ -2510,7 +2538,8 @@ ORDER BY id DESC
     ) -> Result<(), Error> {
         let stmt = self
             .prepare_cached(
-                "UPDATE collection_jobs SET lease_expiry = TIMESTAMP '-infinity', lease_token = NULL, lease_attempts = 0
+                "UPDATE collection_jobs SET lease_expiry = TIMESTAMP '-infinity', lease_token = \
+                 NULL, lease_attempts = 0
                 FROM tasks
                 WHERE tasks.id = collection_jobs.task_id
                   AND tasks.task_id = $1
@@ -2782,7 +2811,8 @@ ORDER BY id DESC
                 "INSERT INTO batch_aggregations (
                     task_id, batch_identifier, batch_interval, aggregation_param, ord,
                     aggregate_share, report_count, client_timestamp_interval, checksum
-                ) VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8, $9)
+                ) VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8, \
+                 $9)
                 ON CONFLICT DO NOTHING",
             )
             .await?;
@@ -3219,7 +3249,8 @@ ORDER BY id DESC
             .prepare_cached(
                 "WITH batch_report_aggregation_statuses AS
                     (SELECT report_aggregations.state, COUNT(*) AS count FROM report_aggregations
-                     JOIN aggregation_jobs ON report_aggregations.aggregation_job_id = aggregation_jobs.id
+                     JOIN aggregation_jobs ON report_aggregations.aggregation_job_id = \
+                 aggregation_jobs.id
                      WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
                      AND aggregation_jobs.batch_id = $2
                      GROUP BY report_aggregations.state)
@@ -3227,7 +3258,7 @@ ORDER BY id DESC
                     (SELECT SUM(count)::BIGINT FROM batch_report_aggregation_statuses
                      WHERE state IN ('FINISHED')) AS min_size,
                     (SELECT SUM(count)::BIGINT FROM batch_report_aggregation_statuses
-                     WHERE state IN ('START', 'WAITING', 'FINISHED')) AS max_size"
+                     WHERE state IN ('START', 'WAITING', 'FINISHED')) AS max_size",
             )
             .await?;
 
@@ -3366,12 +3397,14 @@ ORDER BY id DESC
                           SELECT id FROM collection_jobs
                           WHERE aggregation_jobs.task_id = collection_jobs.task_id
                             AND (aggregation_jobs.batch_id = collection_jobs.batch_identifier
-                              OR aggregation_jobs.client_timestamp_interval && collection_jobs.batch_interval))
+                              OR aggregation_jobs.client_timestamp_interval && \
+                 collection_jobs.batch_interval))
                       AND NOT EXISTS (
                           SELECT id FROM aggregate_share_jobs
                           WHERE aggregation_jobs.task_id = aggregate_share_jobs.task_id
                             AND (aggregation_jobs.batch_id = aggregate_share_jobs.batch_identifier
-                              OR aggregation_jobs.client_timestamp_interval && aggregate_share_jobs.batch_interval)
+                              OR aggregation_jobs.client_timestamp_interval && \
+                 aggregate_share_jobs.batch_interval)
                       )
                       AND NOT EXISTS (
                           SELECT id FROM outstanding_batches
@@ -3392,21 +3425,27 @@ ORDER BY id DESC
                             AND NOT EXISTS (
                                 SELECT id FROM collection_jobs
                                 WHERE batch_aggregations.task_id = collection_jobs.task_id
-                                    AND (batch_aggregations.batch_identifier = collection_jobs.batch_identifier
-                                      OR batch_aggregations.batch_interval <@ collection_jobs.batch_interval))
+                                    AND (batch_aggregations.batch_identifier = \
+                 collection_jobs.batch_identifier
+                                      OR batch_aggregations.batch_interval <@ \
+                 collection_jobs.batch_interval))
                             AND NOT EXISTS (
                                 SELECT id FROM aggregate_share_jobs
                                 WHERE batch_aggregations.task_id = aggregate_share_jobs.task_id
-                                    AND (batch_aggregations.batch_identifier = aggregate_share_jobs.batch_identifier
-                                    OR batch_aggregations.batch_interval <@ aggregate_share_jobs.batch_interval)
+                                    AND (batch_aggregations.batch_identifier = \
+                 aggregate_share_jobs.batch_identifier
+                                    OR batch_aggregations.batch_interval <@ \
+                 aggregate_share_jobs.batch_interval)
                             )
                             AND NOT EXISTS (
                                 SELECT id FROM outstanding_batches
                                 WHERE batch_aggregations.task_id = outstanding_batches.task_id
-                                    AND batch_aggregations.batch_identifier = outstanding_batches.batch_id)
+                                    AND batch_aggregations.batch_identifier = \
+                 outstanding_batches.batch_id)
                         ) OR batch_aggregations.batch_identifier IN (
                             SELECT batch_id FROM aggregation_jobs
-                            WHERE aggregation_jobs.id IN (SELECT id FROM aggregation_jobs_to_delete)
+                            WHERE aggregation_jobs.id IN (SELECT id FROM \
+                 aggregation_jobs_to_delete)
                         )
                 )
                 DELETE FROM aggregation_jobs
@@ -3449,7 +3488,8 @@ ORDER BY id DESC
                         JOIN aggregation_jobs
                             ON aggregation_jobs.task_id = collection_jobs.task_id
                             AND (aggregation_jobs.batch_id = collection_jobs.batch_identifier
-                              OR aggregation_jobs.client_timestamp_interval && collection_jobs.batch_interval)
+                              OR aggregation_jobs.client_timestamp_interval && \
+                 collection_jobs.batch_interval)
                         GROUP BY collection_jobs.id
                     ) report_max_timestamps
                         ON report_max_timestamps.collection_job_id = collection_jobs.id
@@ -3466,7 +3506,8 @@ ORDER BY id DESC
                         JOIN aggregation_jobs
                             ON aggregation_jobs.task_id = aggregate_share_jobs.task_id
                             AND (aggregation_jobs.batch_id = aggregate_share_jobs.batch_identifier
-                              OR aggregation_jobs.client_timestamp_interval && aggregate_share_jobs.batch_interval)
+                              OR aggregation_jobs.client_timestamp_interval && \
+                 aggregate_share_jobs.batch_interval)
                         GROUP BY aggregate_share_jobs.id
                     ) report_max_timestamps
                         ON report_max_timestamps.aggregate_share_job_id = aggregate_share_jobs.id
@@ -5210,44 +5251,57 @@ pub mod models {
             raw: &'a [u8],
         ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
             match range_from_sql(raw)? {
-            Range::Empty => Err("Interval cannot represent an empty timestamp range".into()),
-            Range::Nonempty(RangeBound::Inclusive(None), _)
-            | Range::Nonempty(RangeBound::Exclusive(None), _)
-            | Range::Nonempty(_, RangeBound::Inclusive(None))
-            | Range::Nonempty(_, RangeBound::Exclusive(None)) => {
-                Err("Interval cannot represent a timestamp range with a null bound".into())
-            }
-            Range::Nonempty(RangeBound::Unbounded, _) | Range::Nonempty(_, RangeBound::Unbounded) => {
-                Err("Interval cannot represent an unbounded timestamp range".into())
-            }
-            Range::Nonempty(RangeBound::Exclusive(_), _) | Range::Nonempty(_, RangeBound::Inclusive(_)) => {
-                Err("Interval can only represent timestamp ranges that are closed at the start and open at the end".into())
-            }
-            Range::Nonempty(RangeBound::Inclusive(Some(start_raw)), RangeBound::Exclusive(Some(end_raw))) => {
-                // These timestamps represent the number of microseconds before (if negative) or
-                // after (if positive) midnight, 1/1/2000.
-                let start_timestamp = timestamp_from_sql(start_raw)?;
-                let end_timestamp = timestamp_from_sql(end_raw)?;
-
-                // Convert from SQL timestamp representation to the internal representation.
-                let negative = start_timestamp < 0;
-                let abs_start_us = start_timestamp.unsigned_abs();
-                let abs_start_duration = Duration::from_microseconds(abs_start_us);
-                let time = if negative {
-                    SQL_EPOCH_TIME.sub(&abs_start_duration).map_err(|_| "Interval cannot represent timestamp ranges starting before the Unix epoch")?
-                } else {
-                    SQL_EPOCH_TIME.add(&abs_start_duration).map_err(|_| "overflow when converting to Interval")?
-                };
-
-                if end_timestamp < start_timestamp {
-                    return Err("timestamp range ends before it starts".into());
+                Range::Empty => Err("Interval cannot represent an empty timestamp range".into()),
+                Range::Nonempty(RangeBound::Inclusive(None), _)
+                | Range::Nonempty(RangeBound::Exclusive(None), _)
+                | Range::Nonempty(_, RangeBound::Inclusive(None))
+                | Range::Nonempty(_, RangeBound::Exclusive(None)) => {
+                    Err("Interval cannot represent a timestamp range with a null bound".into())
                 }
-                let duration_us = end_timestamp.abs_diff(start_timestamp);
-                let duration = Duration::from_microseconds(duration_us);
+                Range::Nonempty(RangeBound::Unbounded, _)
+                | Range::Nonempty(_, RangeBound::Unbounded) => {
+                    Err("Interval cannot represent an unbounded timestamp range".into())
+                }
+                Range::Nonempty(RangeBound::Exclusive(_), _)
+                | Range::Nonempty(_, RangeBound::Inclusive(_)) => Err("Interval can only \
+                                                                       represent timestamp \
+                                                                       ranges that are closed at \
+                                                                       the start and open at the \
+                                                                       end"
+                .into()),
+                Range::Nonempty(
+                    RangeBound::Inclusive(Some(start_raw)),
+                    RangeBound::Exclusive(Some(end_raw)),
+                ) => {
+                    // These timestamps represent the number of microseconds before (if negative) or
+                    // after (if positive) midnight, 1/1/2000.
+                    let start_timestamp = timestamp_from_sql(start_raw)?;
+                    let end_timestamp = timestamp_from_sql(end_raw)?;
 
-                Ok(SqlInterval(Interval::new(time, duration)?))
+                    // Convert from SQL timestamp representation to the internal representation.
+                    let negative = start_timestamp < 0;
+                    let abs_start_us = start_timestamp.unsigned_abs();
+                    let abs_start_duration = Duration::from_microseconds(abs_start_us);
+                    let time = if negative {
+                        SQL_EPOCH_TIME.sub(&abs_start_duration).map_err(|_| {
+                            "Interval cannot represent timestamp ranges starting before the Unix \
+                             epoch"
+                        })?
+                    } else {
+                        SQL_EPOCH_TIME
+                            .add(&abs_start_duration)
+                            .map_err(|_| "overflow when converting to Interval")?
+                    };
+
+                    if end_timestamp < start_timestamp {
+                        return Err("timestamp range ends before it starts".into());
+                    }
+                    let duration_us = end_timestamp.abs_diff(start_timestamp);
+                    let duration = Duration::from_microseconds(duration_us);
+
+                    Ok(SqlInterval(Interval::new(time, duration)?))
+                }
             }
-        }
         }
 
         accepts!(TS_RANGE);

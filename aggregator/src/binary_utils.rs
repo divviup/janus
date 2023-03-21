@@ -233,7 +233,8 @@ fn parse_metadata_entry(input: &str) -> Result<(String, String)> {
         Ok((key.to_string(), value.to_string()))
     } else {
         Err(anyhow!(
-            "`--otlp-tracing-metadata` and `--otlp-metrics-metadata` must be provided a key and value, joined with an `=`"
+            "`--otlp-tracing-metadata` and `--otlp-metrics-metadata` must be provided a key and \
+             value, joined with an `=`"
         ))
     }
 }

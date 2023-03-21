@@ -115,8 +115,12 @@ impl InteropClient {
             }
         } else {
             InteropClient {
-                name: "us-west2-docker.pkg.dev/divviup-artifacts-public/divviup-ts/divviup_ts_interop_client".to_string(),
-                tag: "dap-draft-04@sha256:ad6fa3f6fa6f732ccf8291692e250ffa0cc50acd31bb393d98ebaec0f1d2f48c".to_string(),
+                name: "us-west2-docker.pkg.dev/divviup-artifacts-public/divviup-ts/\
+                       divviup_ts_interop_client"
+                    .to_string(),
+                tag: "dap-draft-04@sha256:\
+                      ad6fa3f6fa6f732ccf8291692e250ffa0cc50acd31bb393d98ebaec0f1d2f48c"
+                    .to_string(),
             }
         }
     }
