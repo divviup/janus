@@ -63,7 +63,7 @@ assert_matches = "1"
 hyper = "0.14.25"
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
 janus_core = { workspace = true, features = ["test-util"] }
-serde_test = "1.0.155"
+serde_test = "1.0.158"
 tempfile = "3.4.0"
 tokio = { version = "1", features = ["test-util"] }  # ensure this remains compatible with the non-dev dependency
 
