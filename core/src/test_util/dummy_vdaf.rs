@@ -156,6 +156,10 @@ impl Encode for InputShare {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.0.encode(bytes)
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        self.0.encoded_len()
+    }
 }
 
 impl Decode for InputShare {
@@ -170,6 +174,10 @@ pub struct AggregationParam(pub u8);
 impl Encode for AggregationParam {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.0.encode(bytes);
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        self.0.encoded_len()
     }
 }
 
@@ -190,6 +198,10 @@ impl Decode for OutputShare {
 
 impl Encode for OutputShare {
     fn encode(&self, _: &mut Vec<u8>) {}
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(0)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -198,6 +210,10 @@ pub struct PrepareState(pub u8);
 impl Encode for PrepareState {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.0.encode(bytes);
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        self.0.encoded_len()
     }
 }
 
@@ -240,5 +256,9 @@ impl Decode for AggregateShare {
 impl Encode for AggregateShare {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.0.encode(bytes)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        self.0.encoded_len()
     }
 }

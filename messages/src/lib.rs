@@ -62,6 +62,10 @@ impl Encode for Duration {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.0.encode(bytes);
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        self.0.encoded_len()
+    }
 }
 
 impl Decode for Duration {
@@ -112,6 +116,10 @@ impl Encode for Time {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.0.encode(bytes);
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        self.0.encoded_len()
+    }
 }
 
 impl Decode for Time {
@@ -157,6 +165,10 @@ impl Encode for Interval {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.start.encode(bytes);
         self.duration.encode(bytes);
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(self.start.encoded_len()? + self.duration.encoded_len()?)
     }
 }
 
@@ -226,6 +238,10 @@ impl Encode for BatchId {
     fn encode(&self, bytes: &mut Vec<u8>) {
         bytes.extend_from_slice(&self.0)
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(Self::LEN)
+    }
 }
 
 impl Decode for BatchId {
@@ -292,6 +308,10 @@ impl Display for ReportId {
 impl Encode for ReportId {
     fn encode(&self, bytes: &mut Vec<u8>) {
         bytes.extend_from_slice(&self.0)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(Self::LEN)
     }
 }
 
@@ -365,6 +385,10 @@ impl Display for ReportIdChecksum {
 impl Encode for ReportIdChecksum {
     fn encode(&self, bytes: &mut Vec<u8>) {
         bytes.extend_from_slice(&self.0)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(Self::LEN)
     }
 }
 
@@ -444,6 +468,10 @@ impl Encode for Role {
     fn encode(&self, bytes: &mut Vec<u8>) {
         (*self as u8).encode(bytes);
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(1)
+    }
 }
 
 impl Decode for Role {
@@ -473,6 +501,10 @@ impl Display for HpkeConfigId {
 impl Encode for HpkeConfigId {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.0.encode(bytes);
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        self.0.encoded_len()
     }
 }
 
@@ -528,6 +560,10 @@ impl Display for TaskId {
 impl Encode for TaskId {
     fn encode(&self, bytes: &mut Vec<u8>) {
         bytes.extend_from_slice(&self.0)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(Self::LEN)
     }
 }
 
@@ -638,6 +674,10 @@ impl Encode for HpkeKemId {
     fn encode(&self, bytes: &mut Vec<u8>) {
         (*self as u16).encode(bytes);
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(2)
+    }
 }
 
 impl Decode for HpkeKemId {
@@ -665,6 +705,10 @@ impl Encode for HpkeKdfId {
     fn encode(&self, bytes: &mut Vec<u8>) {
         (*self as u16).encode(bytes);
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(2)
+    }
 }
 
 impl Decode for HpkeKdfId {
@@ -691,6 +735,10 @@ pub enum HpkeAeadId {
 impl Encode for HpkeAeadId {
     fn encode(&self, bytes: &mut Vec<u8>) {
         (*self as u16).encode(bytes);
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(2)
     }
 }
 
@@ -735,6 +783,11 @@ impl Encode for Extension {
         self.extension_type.encode(bytes);
         encode_u16_items(bytes, &(), &self.extension_data);
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        // Type, length prefix, and extension data.
+        Some(self.extension_type.encoded_len()? + 2 + self.extension_data.len())
+    }
 }
 
 impl Decode for Extension {
@@ -759,6 +812,10 @@ pub enum ExtensionType {
 impl Encode for ExtensionType {
     fn encode(&self, bytes: &mut Vec<u8>) {
         (*self as u16).encode(bytes);
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(2)
     }
 }
 
@@ -821,6 +878,16 @@ impl Encode for HpkeCiphertext {
         encode_u16_items(bytes, &(), &self.encapsulated_key);
         encode_u32_items(bytes, &(), &self.payload);
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(
+            self.config_id.encoded_len()?
+                + 2
+                + self.encapsulated_key.len()
+                + 4
+                + self.payload.len(),
+        )
+    }
 }
 
 impl Decode for HpkeCiphertext {
@@ -857,6 +924,10 @@ impl AsRef<[u8]> for HpkePublicKey {
 impl Encode for HpkePublicKey {
     fn encode(&self, bytes: &mut Vec<u8>) {
         encode_u16_items(bytes, &(), &self.0);
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(2 + self.0.len())
     }
 }
 
@@ -978,6 +1049,16 @@ impl Encode for HpkeConfig {
         self.aead_id.encode(bytes);
         self.public_key.encode(bytes);
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(
+            self.id.encoded_len()?
+                + self.kem_id.encoded_len()?
+                + self.kdf_id.encoded_len()?
+                + self.aead_id.encoded_len()?
+                + self.public_key.encoded_len()?,
+        )
+    }
 }
 
 impl Decode for HpkeConfig {
@@ -1020,6 +1101,14 @@ impl Encode for HpkeConfigList {
     fn encode(&self, bytes: &mut Vec<u8>) {
         encode_u16_items(bytes, &(), &self.0);
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        let mut length = 2;
+        for hpke_config in self.0.iter() {
+            length += hpke_config.encoded_len()?;
+        }
+        Some(length)
+    }
 }
 
 impl Decode for HpkeConfigList {
@@ -1056,6 +1145,10 @@ impl Encode for ReportMetadata {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.report_id.encode(bytes);
         self.time.encode(bytes);
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(self.report_id.encoded_len()? + self.time.encoded_len()?)
     }
 }
 
@@ -1099,6 +1192,16 @@ impl Encode for PlaintextInputShare {
     fn encode(&self, bytes: &mut Vec<u8>) {
         encode_u16_items(bytes, &(), &self.extensions);
         encode_u32_items(bytes, &(), &self.payload);
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        let mut length = 2;
+        for extension in self.extensions.iter() {
+            length += extension.encoded_len()?;
+        }
+        length += 4;
+        length += self.payload.len();
+        Some(length)
     }
 }
 
@@ -1160,6 +1263,17 @@ impl Encode for Report {
         encode_u32_items(bytes, &(), &self.public_share);
         encode_u32_items(bytes, &(), &self.encrypted_input_shares);
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        let mut length = self.metadata.encoded_len()?;
+        length += 4;
+        length += self.public_share.len();
+        length += 4;
+        for encrypted_input_share in self.encrypted_input_shares.iter() {
+            length += encrypted_input_share.encoded_len()?;
+        }
+        Some(length)
+    }
 }
 
 impl Decode for Report {
@@ -1191,6 +1305,13 @@ impl Encode for FixedSizeQuery {
                 batch_id.encode(bytes);
             }
             FixedSizeQuery::CurrentBatch => 1u8.encode(bytes),
+        }
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        match self {
+            FixedSizeQuery::ByBatchId { batch_id } => Some(1 + batch_id.encoded_len()?),
+            FixedSizeQuery::CurrentBatch => Some(1),
         }
     }
 }
@@ -1267,6 +1388,10 @@ impl<Q: QueryType> Encode for Query<Q> {
         Q::CODE.encode(bytes);
         self.query_body.encode(bytes);
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(1 + self.query_body.encoded_len()?)
+    }
 }
 
 impl<Q: QueryType> Decode for Query<Q> {
@@ -1315,6 +1440,10 @@ impl<Q: QueryType> Encode for CollectionReq<Q> {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.query.encode(bytes);
         encode_u32_items(bytes, &(), &self.aggregation_parameter);
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(self.query.encoded_len()? + 4 + self.aggregation_parameter.len())
     }
 }
 
@@ -1379,6 +1508,10 @@ impl<Q: QueryType> Encode for PartialBatchSelector<Q> {
     fn encode(&self, bytes: &mut Vec<u8>) {
         Q::CODE.encode(bytes);
         self.batch_identifier.encode(bytes);
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(1 + self.batch_identifier.encoded_len()?)
     }
 }
 
@@ -1506,6 +1639,17 @@ impl<Q: QueryType> Encode for Collection<Q> {
         self.interval.encode(bytes);
         encode_u32_items(bytes, &(), &self.encrypted_aggregate_shares);
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        let mut length = self.partial_batch_selector.encoded_len()?
+            + self.report_count.encoded_len()?
+            + self.interval.encoded_len()?;
+        length += 4;
+        for encrypted_aggregate_share in self.encrypted_aggregate_shares.iter() {
+            length += encrypted_aggregate_share.encoded_len()?;
+        }
+        Some(length)
+    }
 }
 
 impl<Q: QueryType> Decode for Collection<Q> {
@@ -1564,6 +1708,15 @@ impl Encode for InputShareAad {
         self.metadata.encode(bytes);
         encode_u32_items(bytes, &(), &self.public_share);
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(
+            self.task_id.encoded_len()?
+                + self.metadata.encoded_len()?
+                + 4
+                + self.public_share.len(),
+        )
+    }
 }
 
 impl Decode for InputShareAad {
@@ -1612,6 +1765,10 @@ impl<Q: QueryType> Encode for AggregateShareAad<Q> {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.task_id.encode(bytes);
         self.batch_selector.encode(bytes);
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(self.task_id.encoded_len()? + self.batch_selector.encoded_len()?)
     }
 }
 
@@ -1763,6 +1920,10 @@ pub mod query_type {
         fn encode(&self, bytes: &mut Vec<u8>) {
             (*self as u8).encode(bytes);
         }
+
+        fn encoded_len(&self) -> Option<usize> {
+            Some(1)
+        }
     }
 
     impl Decode for Code {
@@ -1821,6 +1982,15 @@ impl Encode for ReportShare {
         encode_u32_items(bytes, &(), &self.public_share);
         self.encrypted_input_share.encode(bytes);
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(
+            self.metadata.encoded_len()?
+                + 4
+                + self.public_share.len()
+                + self.encrypted_input_share.encoded_len()?,
+        )
+    }
 }
 
 impl Decode for ReportShare {
@@ -1866,6 +2036,10 @@ impl Encode for PrepareStep {
         self.report_id.encode(bytes);
         self.result.encode(bytes);
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(self.report_id.encoded_len()? + self.result.encoded_len()?)
+    }
 }
 
 impl Decode for PrepareStep {
@@ -1903,6 +2077,14 @@ impl Encode for PrepareStepResult {
             }
         }
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        match self {
+            PrepareStepResult::Continued(vdaf_msg) => Some(1 + 4 + vdaf_msg.len()),
+            PrepareStepResult::Finished => Some(1),
+            PrepareStepResult::Failed(error) => Some(1 + error.encoded_len()?),
+        }
+    }
 }
 
 impl Decode for PrepareStepResult {
@@ -1935,6 +2117,10 @@ pub enum ReportShareError {
 impl Encode for ReportShareError {
     fn encode(&self, bytes: &mut Vec<u8>) {
         (*self as u8).encode(bytes);
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(1)
     }
 }
 
@@ -2062,6 +2248,16 @@ impl<Q: QueryType> Encode for AggregationJobInitializeReq<Q> {
         self.partial_batch_selector.encode(bytes);
         encode_u32_items(bytes, &(), &self.report_shares);
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        let mut length = 4 + self.aggregation_parameter.len();
+        length += self.partial_batch_selector.encoded_len()?;
+        length += 4;
+        for report_share in self.report_shares.iter() {
+            length += report_share.encoded_len()?;
+        }
+        Some(length)
+    }
 }
 
 impl<Q: QueryType> Decode for AggregationJobInitializeReq<Q> {
@@ -2098,6 +2294,10 @@ impl Display for AggregationJobRound {
 impl Encode for AggregationJobRound {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.0.encode(bytes)
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        self.0.encoded_len()
     }
 }
 
@@ -2166,6 +2366,15 @@ impl Encode for AggregationJobContinueReq {
         self.round.encode(bytes);
         encode_u32_items(bytes, &(), &self.prepare_steps);
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        let mut length = self.round.encoded_len()?;
+        length += 4;
+        for prepare_step in self.prepare_steps.iter() {
+            length += prepare_step.encoded_len()?;
+        }
+        Some(length)
+    }
 }
 
 impl Decode for AggregationJobContinueReq {
@@ -2201,6 +2410,14 @@ impl AggregationJobResp {
 impl Encode for AggregationJobResp {
     fn encode(&self, bytes: &mut Vec<u8>) {
         encode_u32_items(bytes, &(), &self.prepare_steps);
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        let mut length = 4;
+        for prepare_step in self.prepare_steps.iter() {
+            length += prepare_step.encoded_len()?;
+        }
+        Some(length)
     }
 }
 
@@ -2265,6 +2482,10 @@ impl<Q: QueryType> Encode for BatchSelector<Q> {
     fn encode(&self, bytes: &mut Vec<u8>) {
         Q::CODE.encode(bytes);
         self.batch_identifier.encode(bytes);
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(1 + self.batch_identifier.encoded_len()?)
     }
 }
 
@@ -2336,6 +2557,16 @@ impl<Q: QueryType> Encode for AggregateShareReq<Q> {
         self.report_count.encode(bytes);
         self.checksum.encode(bytes);
     }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(
+            self.batch_selector.encoded_len()?
+                + 4
+                + self.aggregation_parameter.len()
+                + self.report_count.encoded_len()?
+                + self.checksum.encoded_len()?,
+        )
+    }
 }
 
 impl<Q: QueryType> Decode for AggregateShareReq<Q> {
@@ -2381,6 +2612,10 @@ impl AggregateShare {
 impl Encode for AggregateShare {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.encrypted_aggregate_share.encode(bytes);
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        self.encrypted_aggregate_share.encoded_len()
     }
 }
 
@@ -2428,6 +2663,11 @@ mod tests {
                 val, &decoded_val,
                 "Couldn't roundtrip (decoded value differs): {val:?}"
             );
+            assert_eq!(
+                encoded_val.len(),
+                val.encoded_len().expect("No encoded length hint"),
+                "Encoded length hint is incorrect: {val:?}"
+            )
         }
     }
 
