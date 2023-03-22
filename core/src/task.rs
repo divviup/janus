@@ -22,7 +22,7 @@ pub enum VdafInstance {
     /// A vector of `Prio3` counters.
     Prio3CountVec { length: usize },
     /// A `Prio3` sum.
-    Prio3Sum { bits: u32 },
+    Prio3Sum { bits: usize },
     /// A vector of `Prio3` sums.
     Prio3SumVec { bits: usize, length: usize },
     /// A `Prio3` histogram.
@@ -617,7 +617,7 @@ mod tests {
                     len: 1,
                 },
                 Token::Str("bits"),
-                Token::U32(64),
+                Token::U64(64),
                 Token::StructVariantEnd,
             ],
         );
