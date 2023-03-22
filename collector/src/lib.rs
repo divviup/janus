@@ -1265,19 +1265,19 @@ mod tests {
 
         mock_server_error_details.assert_async().await;
 
-        let mock_bad_request = server.mock("PUT", matcher)
+        let mock_bad_request = server
+            .mock("PUT", matcher)
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectionReq::<TimeInterval>::MEDIA_TYPE,
             )
             .with_status(400)
             .with_header("Content-Type", "application/problem+json")
-            .with_body(
-                concat!(
-                    "{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedMessage\", ",
-                    "\"detail\": \"The message type for a response was incorrect or the payload was malformed.\"}"
-                )
-            )
+            .with_body(concat!(
+                "{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedMessage\", ",
+                "\"detail\": \"The message type for a response was incorrect or the payload was \
+                 malformed.\"}"
+            ))
             .expect_at_least(1)
             .create_async()
             .await;
@@ -1359,12 +1359,14 @@ mod tests {
             .assert_async()
             .await;
 
-        let mock_collection_job_bad_request = server.mock("POST", job.collection_job_url.path())
+        let mock_collection_job_bad_request = server
+            .mock("POST", job.collection_job_url.path())
             .with_status(400)
             .with_header("Content-Type", "application/problem+json")
             .with_body(concat!(
                 "{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedMessage\", ",
-                "\"detail\": \"The message type for a response was incorrect or the payload was malformed.\"}"
+                "\"detail\": \"The message type for a response was incorrect or the payload was \
+                 malformed.\"}"
             ))
             .expect_at_least(1)
             .create_async()

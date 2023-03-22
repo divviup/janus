@@ -119,7 +119,10 @@ pub enum Error {
     #[error("task {0:?}: unrecognized message: {1}")]
     UnrecognizedMessage(Option<TaskId>, &'static str),
     /// Corresponds to `roundMismatch`
-    #[error("task {task_id}: unexpected round in aggregation job {aggregation_job_id} (expected {expected_round}, got {got_round})")]
+    #[error(
+        "task {task_id}: unexpected round in aggregation job {aggregation_job_id} (expected \
+         {expected_round}, got {got_round})"
+    )]
     RoundMismatch {
         task_id: TaskId,
         aggregation_job_id: AggregationJobId,
@@ -281,8 +284,8 @@ impl Display for BatchMismatch {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
-            "task {0}: batch misalignment (own checksum = {1:?}, own report count = \
-{2}, peer checksum = {3:?}, peer report count = {4})",
+            "task {0}: batch misalignment (own checksum = {1:?}, own report count = {2}, peer \
+             checksum = {3:?}, peer report count = {4})",
             self.task_id,
             self.own_checksum,
             self.own_report_count,
@@ -1857,16 +1860,25 @@ impl VdafOps {
                     if helper_aggregation_job.round() == leader_aggregation_job.round() {
                         match helper_aggregation_job.last_continue_request_hash() {
                             None => {
-                                return Err(datastore::Error::User(Error::Internal(format!(
-                                    "aggregation job {aggregation_job_id} is in round {} but has no last request hash",
-                                    helper_aggregation_job.round(),
-                                )).into()));
-                            },
-                            Some(previous_hash) => if request_hash != previous_hash {
-                                return Err(datastore::Error::User(Error::ForbiddenMutation {
-                                    resource_type: "aggregation job continuation",
-                                    identifier: aggregation_job_id.to_string(),
-                                }.into()));
+                                return Err(datastore::Error::User(
+                                    Error::Internal(format!(
+                                        "aggregation job {aggregation_job_id} is in round {} but \
+                                         has no last request hash",
+                                        helper_aggregation_job.round(),
+                                    ))
+                                    .into(),
+                                ));
+                            }
+                            Some(previous_hash) => {
+                                if request_hash != previous_hash {
+                                    return Err(datastore::Error::User(
+                                        Error::ForbiddenMutation {
+                                            resource_type: "aggregation job continuation",
+                                            identifier: aggregation_job_id.to_string(),
+                                        }
+                                        .into(),
+                                    ));
+                                }
                             }
                         }
                         return Self::replay_aggregation_job_round::<C, SEED_SIZE, Q, A>(
@@ -2159,12 +2171,16 @@ impl VdafOps {
                 leader_aggregate_share,
             } => {
                 let spanned_interval = spanned_interval
-                        .ok_or_else(|| {
-                            datastore::Error::User(
-                                Error::Internal(format!("collection job {collection_job_id} is finished but spans no time interval")).into(),
-                            )
-                        })?
-                        .align_to_time_precision(task.time_precision())?;
+                    .ok_or_else(|| {
+                        datastore::Error::User(
+                            Error::Internal(format!(
+                                "collection job {collection_job_id} is finished but spans no time \
+                                 interval"
+                            ))
+                            .into(),
+                        )
+                    })?
+                    .align_to_time_precision(task.time_precision())?;
 
                 // §4.4.4.3: HPKE encrypt aggregate share to the collector. We store the leader
                 // aggregate share *unencrypted* in the datastore so that we can encrypt cached

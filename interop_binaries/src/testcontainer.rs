@@ -84,7 +84,10 @@ impl Default for Aggregator {
         // One-time initialization step: load compiled image into docker, recording its image tag,
         // so that we can launch it later.
         if INTEROP_AGGREGATOR_IMAGE_BYTES.is_empty() {
-            panic!("Cannot create interop aggregator image. (Compiled with JANUS_INTEROP_CONTAINER=skip?)");
+            panic!(
+                "Cannot create interop aggregator image. (Compiled with \
+                 JANUS_INTEROP_CONTAINER=skip?)"
+            );
         }
         let mut image_hash = INTEROP_AGGREGATOR_IMAGE_HASH.lock().unwrap();
         if image_hash.is_none() {
@@ -136,7 +139,8 @@ impl Default for Collector {
         // so that we can launch it later.
         if INTEROP_COLLECTOR_IMAGE_BYTES.is_empty() {
             panic!(
-                "Cannot create interop collector image. (Compiled with JANUS_INTEROP_CONTAINER=skip?)"
+                "Cannot create interop collector image. (Compiled with \
+                 JANUS_INTEROP_CONTAINER=skip?)"
             );
         }
         let mut image_hash = INTEROP_COLLECTOR_IMAGE_HASH.lock().unwrap();

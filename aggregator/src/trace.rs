@@ -168,10 +168,9 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
     #[cfg(not(feature = "tokio-console"))]
     if config.tokio_console_config.enabled {
         return Err(Error::Other(
-            "The tokio-console subscriber was enabled in the \
-            configuration file, but support was not enabled at compile \
-            time. Rebuild with `RUSTFLAGS=\"--cfg tokio_unstable\"` and \
-            `--features tokio-console`.",
+            "The tokio-console subscriber was enabled in the configuration file, but support was \
+             not enabled at compile time. Rebuild with `RUSTFLAGS=\"--cfg tokio_unstable\"` and \
+             `--features tokio-console`.",
         ));
     }
 
@@ -189,9 +188,8 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
     #[cfg(not(feature = "jaeger"))]
     if let Some(OpenTelemetryTraceConfiguration::Jaeger) = &config.open_telemetry_config {
         return Err(Error::Other(
-            "The OpenTelemetry Jaeger subscriber was enabled in the \
-            configuration file, but support was not enabled at compile time. \
-            Rebuild with `--features jaeger`.",
+            "The OpenTelemetry Jaeger subscriber was enabled in the configuration file, but \
+             support was not enabled at compile time. Rebuild with `--features jaeger`.",
         ));
     }
 
@@ -234,9 +232,8 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
     #[cfg(not(feature = "otlp"))]
     if let Some(OpenTelemetryTraceConfiguration::Otlp(_)) = &config.open_telemetry_config {
         return Err(Error::Other(
-            "The OpenTelemetry OTLP subscriber was enabled in the \
-            configuration file, but support was not enabled at compile time. \
-            Rebuild with `--features otlp`.",
+            "The OpenTelemetry OTLP subscriber was enabled in the configuration file, but support \
+             was not enabled at compile time. Rebuild with `--features otlp`.",
         ));
     }
 

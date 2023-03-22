@@ -416,18 +416,22 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let client = setup_client(&mut server, Prio3::new_count(2).unwrap());
 
-        let mocked_upload = server.mock("PUT", format!("/tasks/{}/reports", client.parameters.task_id).as_str())
+        let mocked_upload = server
+            .mock(
+                "PUT",
+                format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
+            )
             .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
             .with_status(400)
             .with_header("Content-Type", "application/problem+json")
-            .with_body(
-                concat!(
-                    "{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedMessage\", ",
-                    "\"detail\": \"The message type for a response was incorrect or the payload was malformed.\"}",
-                )
-            )
+            .with_body(concat!(
+                "{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedMessage\", ",
+                "\"detail\": \"The message type for a response was incorrect or the payload was \
+                 malformed.\"}",
+            ))
             .expect(1)
-            .create_async().await;
+            .create_async()
+            .await;
 
         assert_matches!(
             client.upload(&1).await,

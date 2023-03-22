@@ -135,7 +135,8 @@ impl<'a> Daphne<'a> {
                             .as_str()
                             .unwrap_or_else(|| {
                                 panic!(
-                                    "Daphne test image metadata image_name field was not a string: {}",
+                                    "Daphne test image metadata image_name field was not a \
+                                     string: {}",
                                     metadata["image_name"]
                                 )
                             })
@@ -144,14 +145,18 @@ impl<'a> Daphne<'a> {
                             .as_str()
                             .unwrap_or_else(|| {
                                 panic!(
-                                    "Daphne test image metadata image_tag field was not a string: {}",
+                                    "Daphne test image metadata image_tag field was not a string: \
+                                     {}",
                                     metadata["image_tag"]
                                 )
                             })
                             .to_string(),
                     ),
 
-                    "skip" => panic!("No Daphne test image available (compiled with DAPHNE_INTEROP_CONTAINER=skip)"),
+                    "skip" => panic!(
+                        "No Daphne test image available (compiled with \
+                         DAPHNE_INTEROP_CONTAINER=skip)"
+                    ),
 
                     _ => panic!("Unknown Daphne test image build strategy: {strategy:?}"),
                 });

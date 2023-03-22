@@ -224,14 +224,40 @@ impl AggregationJobDriver {
         }
         match (saw_start, saw_waiting, saw_finished) {
             // Only saw report aggregations in state "start" (or failed or invalid).
-            (true, false, false) => self.step_aggregation_job_aggregate_init(
-                &datastore, vdaf, lease, task, aggregation_job, report_aggregations, client_reports, verify_key).await,
+            (true, false, false) => {
+                self.step_aggregation_job_aggregate_init(
+                    &datastore,
+                    vdaf,
+                    lease,
+                    task,
+                    aggregation_job,
+                    report_aggregations,
+                    client_reports,
+                    verify_key,
+                )
+                .await
+            }
 
             // Only saw report aggregations in state "waiting" (or failed or invalid).
-            (false, true, false) => self.step_aggregation_job_aggregate_continue(
-                &datastore, vdaf, lease, task, aggregation_job, report_aggregations).await,
+            (false, true, false) => {
+                self.step_aggregation_job_aggregate_continue(
+                    &datastore,
+                    vdaf,
+                    lease,
+                    task,
+                    aggregation_job,
+                    report_aggregations,
+                )
+                .await
+            }
 
-            _ => Err(anyhow!("unexpected combination of report aggregation states (saw_start = {}, saw_waiting = {}, saw_finished = {})", saw_start, saw_waiting, saw_finished)),
+            _ => Err(anyhow!(
+                "unexpected combination of report aggregation states (saw_start = {}, saw_waiting \
+                 = {}, saw_finished = {})",
+                saw_start,
+                saw_waiting,
+                saw_finished
+            )),
         }
     }
 
@@ -540,7 +566,10 @@ impl AggregationJobDriver {
                                 .context("couldn't decode helper's prepare message");
                         let prep_msg = helper_prep_share.and_then(|helper_prep_share| {
                             vdaf.prepare_preprocess([leader_prep_share.clone(), helper_prep_share])
-                                .context("couldn't preprocess leader & helper prepare shares into prepare message")
+                                .context(
+                                    "couldn't preprocess leader & helper prepare shares into \
+                                     prepare message",
+                                )
                         });
                         match prep_msg {
                             Ok(prep_msg) => ReportAggregationState::Waiting(

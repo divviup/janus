@@ -426,7 +426,8 @@ impl CollectionJobDriverMetrics {
         let jobs_already_finished_counter = meter
             .u64_counter("janus_collection_jobs_already_finished")
             .with_description(
-                "Count of collection jobs for which a lease was acquired but were already finished.",
+                "Count of collection jobs for which a lease was acquired but were already \
+                 finished.",
             )
             .init();
         jobs_already_finished_counter.add(&Context::current(), 0, &[]);
@@ -434,14 +435,19 @@ impl CollectionJobDriverMetrics {
         let deleted_jobs_encountered_counter = meter
             .u64_counter("janus_collect_deleted_jobs_encountered")
             .with_description(
-                "Count of collection jobs that were run to completion but found to have been deleted.",
+                "Count of collection jobs that were run to completion but found to have been \
+                 deleted.",
             )
             .init();
         deleted_jobs_encountered_counter.add(&Context::current(), 0, &[]);
 
         let unexpected_job_state_counter = meter
             .u64_counter("janus_collect_unexpected_job_state")
-            .with_description("Count of collection jobs that were run to completion but found in an unexpected state.").init();
+            .with_description(
+                "Count of collection jobs that were run to completion but found in an unexpected \
+                 state.",
+            )
+            .init();
         unexpected_job_state_counter.add(&Context::current(), 0, &[]);
 
         Self {

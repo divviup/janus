@@ -171,7 +171,10 @@ fn main() {
                 .expect("Couldn't write metadata file");
             drop(metadata_file);
         } else {
-            panic!("Unexpected DAPHNE_INTEROP_CONTAINER value {container_strategy:?} (valid values are \"build\", \"prebuilt=image_name:image_tag\", & \"skip\")")
+            panic!(
+                "Unexpected DAPHNE_INTEROP_CONTAINER value {container_strategy:?} (valid values \
+                 are \"build\", \"prebuilt=image_name:image_tag\", & \"skip\")"
+            )
         }
     }
 }
