@@ -1,5 +1,4 @@
 //! This crate implements the Janus aggregator API.
-mod telemetry;
 use janus_aggregator_core::{
     datastore::{Datastore as JanusDatastore, Error},
     task::Task,
@@ -13,7 +12,7 @@ use querystring::querify;
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use ring::constant_time;
 use std::{ops::Deref, str::FromStr, sync::Arc};
-use telemetry::Telemetry;
+use trillium_opentelemetry::metrics;
 use trillium::{Conn, Handler, KnownHeaderName, Status};
 use trillium_api::{api, Halt, Json, State};
 use trillium_router::{Router, RouterConnExt};
@@ -30,6 +29,12 @@ struct TaskIdParam(TaskId);
 impl trillium_api::FromConn for TaskIdParam {
     async fn from_conn(conn: &mut Conn) -> Option<Self> {
         TaskId::from_str(conn.param("task_id")?).ok().map(Self)
+    }
+}
+impl Deref for TaskIdParam {
+    type Target = TaskId;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -57,7 +62,7 @@ pub fn aggregator_api_handler<C: Clock>(ds: JanusDatastore<C>, cfg: Config) -> i
         State(cfg),
         State::new(Datastore(Arc::new(ds))),
         Tracer::new(),
-        Telemetry::new(),
+        metrics("janus_aggregator_api").with_route(|conn| conn.route().map(ToString::to_string)),
         api(check_auth),
         Router::new()
             .get("/task_ids", api(get_task_ids::<C>))
