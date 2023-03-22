@@ -102,7 +102,7 @@ itertools = "0.10.5"
 # lack of support for connecting to servers by IP addresses, which affects many
 # Kubernetes clusters. Enable the `test-util` feature for various utilities
 # used in unit tests.
-janus_aggregator = { workspace = true, features = ["fpvec_bounded_l2", "kube-openssl", "test-util"] }
+janus_aggregator = { path = ".", features = ["fpvec_bounded_l2", "kube-openssl", "test-util"] }
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
 mockito = "1.0.0"
 tempfile = "3.4.0"

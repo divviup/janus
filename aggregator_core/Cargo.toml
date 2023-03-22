@@ -61,7 +61,7 @@ uuid = { version = "1.3.0", features = ["v4"] }
 [dev-dependencies]
 assert_matches = "1"
 hyper = "0.14.25"
-janus_aggregator_core = { workspace = true, features = ["test-util"] }
+janus_aggregator_core = { path = ".", features = ["test-util"] }
 janus_core = { workspace = true, features = ["test-util"] }
 serde_test = "1.0.158"
 tempfile = "3.4.0"
