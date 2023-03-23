@@ -172,13 +172,16 @@ pub struct CollectorParameters {
     /// The authentication information needed to communicate with the leader aggregator.
     authentication: Authentication,
     /// HPKE configuration and public key used for encryption of aggregate shares.
+    #[derivative(Debug = "ignore")]
     hpke_config: HpkeConfig,
     /// HPKE private key used to decrypt aggregate shares.
     #[derivative(Debug = "ignore")]
     hpke_private_key: HpkePrivateKey,
     /// Parameters to use when retrying HTTP requests.
+    #[derivative(Debug = "ignore")]
     http_request_retry_parameters: ExponentialBackoff,
     /// Parameters to use when waiting for a collection job to be processed.
+    #[derivative(Debug = "ignore")]
     collect_poll_wait_parameters: ExponentialBackoff,
 }
 
@@ -249,6 +252,7 @@ where
 {
     /// The URL provided by the leader aggregator, where the collect response will be available
     /// upon completion.
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
     collection_job_url: Url,
     /// The collect request's query.
     query: Query<Q>,
@@ -366,10 +370,12 @@ where
 }
 
 /// A DAP collector.
-#[derive(Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct Collector<V: vdaf::Collector> {
     parameters: CollectorParameters,
     vdaf_collector: V,
+    #[derivative(Debug = "ignore")]
     http_client: reqwest::Client,
 }
 
