@@ -1774,6 +1774,8 @@ dependencies = [
 name = "janus_aggregator_api"
 version = "0.3.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "base64 0.21.0",
  "futures",
  "janus_aggregator_core",
@@ -1790,6 +1792,7 @@ dependencies = [
  "trillium",
  "trillium-api",
  "trillium-http",
+ "trillium-opentelemetry",
  "trillium-router",
  "trillium-testing",
  "url",
@@ -3475,6 +3478,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_path_to_error"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7f05c1d5476066defcdfacce1f52fc3cae3af1d3089727100c02ae92e5abbe0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_spanned"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4344,21 +4356,25 @@ dependencies = [
 
 [[package]]
 name = "trillium-api"
-version = "0.1.0"
+version = "0.2.0-rc.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82b43854c11d5cb8de23e7ca11d738d1a7d76a1ab29a569852204f3963429221"
+checksum = "ca25de1243325a6ca367d4fa1736fe6589c5a11c8414271c1ce0dafaa7eec6e8"
 dependencies = [
+ "log",
  "mime",
  "serde",
  "serde_json",
+ "serde_path_to_error",
+ "thiserror",
  "trillium",
+ "trillium-http",
 ]
 
 [[package]]
 name = "trillium-http"
-version = "0.2.11"
+version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17a0d2c2ac37537f8029ec79eb0ec346e83789e90d9a3f4d34764c710f1a24f5"
+checksum = "66cdadc7099cb2ab839310c3dd9292c4907acf2dbeebd9a1e3aff3956de93651"
 dependencies = [
  "encoding_rs",
  "futures-lite",
@@ -4376,10 +4392,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "trillium-router"
-version = "0.3.4"
+name = "trillium-opentelemetry"
+version = "0.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83c99c71c690a3cb8b54fda9f784d89c773e60b853190a7672e73fa590beabe7"
+checksum = "058ce68d79872eb606079571cf0212633ae1095541a9c6afa0a363de3de4301b"
+dependencies = [
+ "opentelemetry",
+ "trillium",
+]
+
+[[package]]
+name = "trillium-router"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a93cacd817bbd4e8308e5ca8223009e6de60198580d66a7fede1c022ceb16cd7"
 dependencies = [
  "log",
  "routefinder",

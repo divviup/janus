@@ -1,26 +1,23 @@
-//! This crate implements the Janus aggregator API.
+//! This crate implements the Janus Aggregator API.
 
 use crate::models::{GetTaskIdsResp, PostTaskReq};
+use async_trait::async_trait;
 use janus_aggregator_core::{
-    datastore::{Datastore, Error},
+    datastore::{self, Datastore},
     task::Task,
     SecretBytes,
 };
 use janus_core::{hpke::generate_hpke_config_and_private_key, time::Clock};
-use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, TaskId, Time};
+use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, Role, TaskId, Time};
 use models::{GetTaskMetricsResp, TaskResp};
-use opentelemetry::{
-    global::meter,
-    metrics::{Histogram, Unit},
-    Context, KeyValue,
-};
 use querystring::querify;
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use ring::constant_time;
-use std::{future::Future, str::FromStr, sync::Arc, time::Instant};
-use tracing::{info_span, warn, Instrument};
-use trillium::{conn_try, conn_unwrap, Body, Conn, Handler, State, Status};
-use trillium_api::ApiConnExt;
+use std::{str::FromStr, sync::Arc};
+use tracing::{error, info_span, warn, Instrument};
+use trillium::{Conn, Handler, Status};
+use trillium_api::{api, Halt, Json, State};
+use trillium_opentelemetry::metrics;
 use trillium_router::{Router, RouterConnExt};
 
 /// Represents the configuration for an instance of the Aggregator API.
@@ -32,213 +29,103 @@ pub struct Config {
 /// Returns a new handler for an instance of the aggregator API, backed by the given datastore,
 /// according to the given configuration.
 pub fn aggregator_api_handler<C: Clock>(ds: Datastore<C>, cfg: Config) -> impl Handler {
-    let response_time_histogram = meter("janus_aggregator_api")
-        .f64_histogram("janus_aggregator_api_response_time")
-        .with_description("Elapsed time handling incoming requests, by endpoint & status.")
-        .with_unit(Unit::new("seconds"))
-        .init();
-
     (
-        // State (used by endpoint_handler).
-        State::new(Arc::new(AggregatorApi {
-            ds,
-            cfg,
-            response_time_histogram,
-        })),
+        // State used by endpoint handlers.
+        State(Arc::new(ds)),
+        State(Arc::new(cfg)),
+        // Metrics.
+        metrics("janus_aggregator_api").with_route(|conn| conn.route().map(ToString::to_string)),
+        // Authorization check.
+        api(auth_check),
         // Main functionality router.
         Router::new()
-            .get("/task_ids", {
-                const ENDPOINT_NAME: &str = "get_task_ids";
-                |conn: Conn| {
-                    async move {
-                        endpoint_handler::<C, _>(
-                            conn,
-                            ENDPOINT_NAME,
-                            |aggregator_api, conn| async move {
-                                aggregator_api.handle_get_task_ids(conn).await
-                            },
-                        )
-                        .await
-                    }
-                    .instrument(info_span!(ENDPOINT_NAME))
-                }
-            })
-            .post("/tasks", {
-                const ENDPOINT_NAME: &str = "post_task";
-                |conn: Conn| {
-                    async move {
-                        endpoint_handler::<C, _>(
-                            conn,
-                            ENDPOINT_NAME,
-                            |aggregator_api, conn| async move {
-                                aggregator_api.handle_post_task(conn).await
-                            },
-                        )
-                        .await
-                    }
-                    .instrument(info_span!(ENDPOINT_NAME))
-                }
-            })
-            .get("/tasks/:task_id", {
-                const ENDPOINT_NAME: &str = "get_task";
-                |conn: Conn| {
-                    async move {
-                        endpoint_handler::<C, _>(
-                            conn,
-                            ENDPOINT_NAME,
-                            |aggregator_api, conn| async move {
-                                aggregator_api.handle_get_task(conn).await
-                            },
-                        )
-                        .await
-                    }
-                    .instrument(info_span!(ENDPOINT_NAME))
-                }
-            })
-            .delete("/tasks/:task_id", {
-                const ENDPOINT_NAME: &str = "delete_task";
-                |conn: Conn| {
-                    async move {
-                        endpoint_handler::<C, _>(
-                            conn,
-                            ENDPOINT_NAME,
-                            |aggregator_api, conn| async move {
-                                aggregator_api.handle_delete_task(conn).await
-                            },
-                        )
-                        .await
-                    }
-                    .instrument(info_span!(ENDPOINT_NAME))
-                }
-            })
-            .get("/tasks/:task_id/metrics", {
-                const ENDPOINT_NAME: &str = "get_task_metrics";
-                |conn: Conn| {
-                    async move {
-                        endpoint_handler::<C, _>(
-                            conn,
-                            ENDPOINT_NAME,
-                            |aggregator_api, conn| async move {
-                                aggregator_api.handle_get_task_metrics(conn).await
-                            },
-                        )
-                        .await
-                    }
-                    .instrument(info_span!(ENDPOINT_NAME))
-                }
-            }),
+            .get("/task_ids", instrumented(api(get_task_ids::<C>)))
+            .post("/tasks", instrumented(api(post_task::<C>)))
+            .get("/tasks/:task_id", instrumented(api(get_task::<C>)))
+            .delete("/tasks/:task_id", instrumented(api(delete_task::<C>)))
+            .get(
+                "/tasks/:task_id/metrics",
+                instrumented(api(get_task_metrics::<C>)),
+            ),
     )
 }
 
-async fn endpoint_handler<C: Clock, Fut>(
-    mut conn: Conn,
-    endpoint_name: impl Into<String>,
-    handler: impl Fn(Arc<AggregatorApi<C>>, Conn) -> Fut,
-) -> Conn
-where
-    Fut: Future<Output = Conn>,
-{
-    let start_instant = Instant::now();
-    let aggregator_api: Arc<AggregatorApi<C>> =
-        Arc::clone(conn.state().expect("No AggregatorApi in connection state"));
-
-    conn = aggregator_api.check_auth(conn);
-    if !conn.is_halted() {
-        conn = handler(Arc::clone(&aggregator_api), conn).await;
-    }
-
-    let status: u16 = match conn.status() {
-        Some(status) => status.into(),
-        None => {
-            warn!(path = conn.path(), "No status set on connection");
-            return conn;
-        }
-    };
-
-    aggregator_api.response_time_histogram.record(
-        &Context::current(),
-        start_instant.elapsed().as_secs_f64(),
-        &[
-            KeyValue::new("endpoint", endpoint_name.into()),
-            KeyValue::new("status", status.to_string()),
-        ],
-    );
-    conn
-}
-
-struct AggregatorApi<C: Clock> {
-    ds: Datastore<C>,
-    cfg: Config,
-    response_time_histogram: Histogram<f64>,
-}
-
-impl<C: Clock> AggregatorApi<C> {
-    fn check_auth(&self, conn: Conn) -> Conn {
-        if let Some(authorization_value) = conn.headers().get("authorization") {
-            if let Some(received_token) = authorization_value.as_ref().strip_prefix(b"Basic ") {
-                if self.cfg.auth_tokens.iter().any(|key| {
-                    constant_time::verify_slices_are_equal(received_token, key.as_ref()).is_ok()
-                }) {
-                    // Authorization succeeds.
-                    return conn;
-                }
+async fn auth_check(conn: &mut Conn, State(cfg): State<Arc<Config>>) -> impl Handler {
+    if let Some(authorization_value) = conn.headers().get("authorization") {
+        if let Some(received_token) = authorization_value.as_ref().strip_prefix(b"Bearer ") {
+            if cfg.auth_tokens.iter().any(|key| {
+                constant_time::verify_slices_are_equal(received_token, key.as_ref()).is_ok()
+            }) {
+                // Authorization succeeds.
+                return None;
             }
         }
-
-        // Authorization fails.
-        conn.with_status(Status::Unauthorized).halt()
     }
 
-    async fn handle_get_task_ids(&self, conn: Conn) -> Conn {
-        const PAGINATION_TOKEN_KEY: &str = "pagination_token";
-        let lower_bound = querify(conn.querystring())
-            .into_iter()
-            .find(|&(k, _)| k == PAGINATION_TOKEN_KEY)
-            .map(|(_, v)| TaskId::from_str(v))
-            .transpose();
-        let lower_bound = match lower_bound {
-            Ok(task_id_param) => task_id_param,
-            Err(_) => return conn.with_status(Status::BadRequest).halt(),
-        };
+    // Authorization fails.
+    Some((Status::Unauthorized, Halt))
+}
 
-        let task_ids = conn_try!(
-            self.ds
-                .run_tx_with_name("get_task_ids", |tx| Box::pin(async move {
-                    tx.get_task_ids(lower_bound).await
-                }))
-                .await,
-            conn
-        );
-        let pagination_token = task_ids.last().cloned();
+async fn get_task_ids<C: Clock>(
+    conn: &mut Conn,
+    State(ds): State<Arc<Datastore<C>>>,
+) -> Result<impl Handler, Status> {
+    const PAGINATION_TOKEN_KEY: &str = "pagination_token";
+    let lower_bound = querify(conn.querystring())
+        .into_iter()
+        .find(|&(k, _)| k == PAGINATION_TOKEN_KEY)
+        .map(|(_, v)| TaskId::from_str(v))
+        .transpose()
+        .map_err(|err| {
+            warn!(err = %err, "Couldn't parse pagination_token");
+            Status::BadRequest
+        })?;
 
-        conn.with_json(&GetTaskIdsResp {
+    let task_ids = ds
+        .run_tx_with_name("get_task_ids", |tx| {
+            Box::pin(async move { tx.get_task_ids(lower_bound).await })
+        })
+        .await
+        .map_err(|err| {
+            error!(err = %err, "Database transaction error");
+            Status::InternalServerError
+        })?;
+    let pagination_token = task_ids.last().cloned();
+
+    Ok((
+        Json(GetTaskIdsResp {
             task_ids,
             pagination_token,
-        })
-    }
+        }),
+        Halt,
+    ))
+}
 
-    async fn handle_post_task(&self, mut conn: Conn) -> Conn {
-        let req: PostTaskReq = match conn.deserialize().await {
-            Ok(req) => req,
-            Err(_) => return conn.with_status(Status::BadRequest).halt(),
-        };
+async fn post_task<C: Clock>(
+    _: &mut Conn,
+    (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PostTaskReq>),
+) -> Result<impl Handler, Status> {
+    let vdaf_verify_keys = Vec::from([SecretBytes::new(
+        thread_rng()
+            .sample_iter(Standard)
+            .take(req.vdaf.verify_key_length())
+            .collect(),
+    )]);
+    let task_expiration = Time::from_seconds_since_epoch(req.task_expiration);
+    let time_precision = Duration::from_seconds(req.time_precision);
+    let collector_auth_tokens = match req.role {
+        Role::Leader => Vec::from([random()]),
+        _ => Vec::new(),
+    };
+    let hpke_keys = Vec::from([generate_hpke_config_and_private_key(
+        random(),
+        HpkeKemId::X25519HkdfSha256,
+        HpkeKdfId::HkdfSha256,
+        HpkeAeadId::Aes128Gcm,
+    )]);
 
-        let vdaf_verify_keys = Vec::from([SecretBytes::new(
-            thread_rng()
-                .sample_iter(Standard)
-                .take(req.vdaf.verify_key_length())
-                .collect(),
-        )]);
-        let task_expiration = Time::from_seconds_since_epoch(req.task_expiration);
-        let time_precision = Duration::from_seconds(req.time_precision);
-        let hpke_keys = Vec::from([generate_hpke_config_and_private_key(
-            random(),
-            HpkeKemId::X25519HkdfSha256,
-            HpkeKdfId::HkdfSha256,
-            HpkeAeadId::Aes128Gcm,
-        )]);
-
-        let task = Task::new(
+    let task = Arc::new(
+        Task::new(
             /* task_id */ random(),
             /* aggregator_endpoints */ req.aggregator_endpoints,
             /* query_type */ req.query_type,
@@ -255,103 +142,99 @@ impl<C: Clock> AggregatorApi<C> {
             Duration::from_seconds(60), // 1 minute,
             /* collector_hpke_config */ req.collector_hpke_config,
             /* aggregator_auth_tokens */ Vec::from([random()]),
-            /* collector_auth_tokens */ Vec::from([random()]),
+            /* collector_auth_tokens */ collector_auth_tokens,
             /* hpke_keys */ hpke_keys,
-        );
-        let task = match task {
-            Ok(task) => Arc::new(task),
-            Err(_) => return conn.with_status(Status::BadRequest).halt(),
-        };
+        )
+        .map_err(|_| Status::BadRequest)?,
+    );
 
-        conn_try!(
-            self.ds
-                .run_tx_with_name("post_task", |tx| {
-                    let task = Arc::clone(&task);
-                    Box::pin(async move { tx.put_task(&task).await })
-                })
-                .await,
-            conn
-        );
+    ds.run_tx_with_name("post_task", |tx| {
+        let task = Arc::clone(&task);
+        Box::pin(async move { tx.put_task(&task).await })
+    })
+    .await
+    .map_err(|err| {
+        error!(err = %err, "Database transaction error");
+        Status::InternalServerError
+    })?;
 
-        conn.with_json(&TaskResp::from(task.as_ref()))
-    }
+    Ok((Json(TaskResp::from(task.as_ref())), Halt))
+}
 
-    async fn handle_get_task(&self, conn: Conn) -> Conn {
-        let task_id = TaskId::from_str(conn_unwrap!(conn.param("task_id"), conn));
-        let task_id = match task_id {
-            Ok(task_id) => task_id,
-            Err(_) => return conn.with_status(Status::BadRequest).halt(),
-        };
+async fn get_task<C: Clock>(
+    conn: &mut Conn,
+    State(ds): State<Arc<Datastore<C>>>,
+) -> Result<impl Handler, Status> {
+    let task_id = conn.task_id_param()?;
 
-        let task = conn_try!(
-            self.ds
-                .run_tx_with_name("get_task", |tx| {
-                    Box::pin(async move { tx.get_task(&task_id).await })
-                })
-                .await,
-            conn
-        );
-        let task = match task {
-            Some(task) => task,
-            None => return conn.with_status(Status::NotFound).halt(),
-        };
+    let task = ds
+        .run_tx_with_name("get_task", |tx| {
+            Box::pin(async move { tx.get_task(&task_id).await })
+        })
+        .await
+        .map_err(|err| {
+            error!(err = %err, "Database transaction error");
+            Status::InternalServerError
+        })?
+        .ok_or(Status::NotFound)?;
 
-        conn.with_json(&TaskResp::from(&task))
-    }
+    Ok((Json(TaskResp::from(&task)), Halt))
+}
 
-    async fn handle_delete_task(&self, conn: Conn) -> Conn {
-        let task_id = TaskId::from_str(conn_unwrap!(conn.param("task_id"), conn));
-        let task_id = match task_id {
-            Ok(task_id) => task_id,
-            Err(_) => return conn.with_status(Status::BadRequest).halt(),
-        };
+async fn delete_task<C: Clock>(
+    conn: &mut Conn,
+    State(ds): State<Arc<Datastore<C>>>,
+) -> Result<impl Handler, Status> {
+    let task_id = conn.task_id_param()?;
 
-        let rslt = self
-            .ds
-            .run_tx_with_name("delete_task", |tx| {
-                Box::pin(async move { tx.delete_task(&task_id).await })
-            })
-            .await;
-        match rslt {
-            Ok(()) => conn.ok(Body::default()),
-            Err(Error::MutationTargetNotFound) => conn.with_status(Status::NotFound).halt(),
-            Err(_) => conn.with_status(Status::InternalServerError).halt(),
+    ds.run_tx_with_name("delete_task", |tx| {
+        Box::pin(async move { tx.delete_task(&task_id).await })
+    })
+    .await
+    .map_err(|err| match err {
+        datastore::Error::MutationTargetNotFound => Status::NotFound,
+        _ => {
+            error!(err = %err, "Database transaction error");
+            Status::InternalServerError
         }
-    }
+    })?;
 
-    async fn handle_get_task_metrics(&self, conn: Conn) -> Conn {
-        let task_id = TaskId::from_str(conn_unwrap!(conn.param("task_id"), conn));
-        let task_id = match task_id {
-            Ok(task_id) => task_id,
-            Err(_) => return conn.with_status(Status::BadRequest).halt(),
-        };
+    Ok((Status::NoContent, Halt))
+}
 
-        let metrics = conn_try!(
-            self.ds
-                .run_tx_with_name("get_task_metrics", |tx| {
-                    Box::pin(async move { tx.get_task_metrics(task_id).await })
-                })
-                .await,
-            conn
-        );
-        match metrics {
-            Some((reports, report_aggregations)) => conn.with_json(&GetTaskMetricsResp {
-                reports,
-                report_aggregations,
-            }),
-            None => conn.with_status(Status::NotFound).halt(),
-        }
-    }
+async fn get_task_metrics<C: Clock>(
+    conn: &mut Conn,
+    State(ds): State<Arc<Datastore<C>>>,
+) -> Result<impl Handler, Status> {
+    let task_id = conn.task_id_param()?;
+
+    let (reports, report_aggregations) = ds
+        .run_tx_with_name("get_task_metrics", |tx| {
+            Box::pin(async move { tx.get_task_metrics(task_id).await })
+        })
+        .await
+        .map_err(|err| {
+            error!(err = %err, "Database transaction error");
+            Status::InternalServerError
+        })?
+        .ok_or(Status::NotFound)?;
+
+    Ok((
+        Json(GetTaskMetricsResp {
+            reports,
+            report_aggregations,
+        }),
+        Halt,
+    ))
 }
 
 mod models {
-    use std::collections::HashMap;
-
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use janus_aggregator_core::task::{QueryType, Task};
     use janus_core::task::VdafInstance;
     use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId, Time};
     use serde::{Deserialize, Serialize};
+    use std::collections::HashMap;
     use url::Url;
 
     #[derive(Serialize)]
@@ -442,6 +325,40 @@ mod models {
     pub(crate) struct GetTaskMetricsResp {
         pub(crate) reports: u64,
         pub(crate) report_aggregations: u64,
+    }
+}
+
+trait ConnExt {
+    fn task_id_param(&self) -> Result<TaskId, Status>;
+}
+
+impl ConnExt for Conn {
+    fn task_id_param(&self) -> Result<TaskId, Status> {
+        TaskId::from_str(self.param("task_id").ok_or_else(|| {
+            error!("No task_id parameter");
+            Status::InternalServerError
+        })?)
+        .map_err(|err| {
+            warn!(err = %err, "Couldn't parse task_id parameter");
+            Status::BadRequest
+        })
+    }
+}
+
+fn instrumented<H: Handler>(handler: H) -> InstrumentedHandler<H> {
+    InstrumentedHandler(handler)
+}
+
+struct InstrumentedHandler<H>(H);
+
+#[async_trait]
+impl<H: Handler> Handler for InstrumentedHandler<H> {
+    async fn run(&self, conn: Conn) -> Conn {
+        let route = conn.route().expect("no route in conn").to_string();
+        self.0
+            .run(conn)
+            .instrument(info_span!("janus_aggregator_api.endpoint", route = route))
+            .await
     }
 }
 
@@ -536,7 +453,7 @@ mod tests {
         // Verify: we can get the task IDs we wrote back from the API.
         assert_response!(
             get("/task_ids")
-                .with_request_header("Authorization", format!("Basic {}", AUTH_TOKEN))
+                .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
                 .run_async(&handler)
                 .await,
             Status::Ok,
@@ -549,7 +466,7 @@ mod tests {
                 "/task_ids?pagination_token={}",
                 task_ids.first().unwrap()
             ))
-            .with_request_header("Authorization", format!("Basic {}", AUTH_TOKEN))
+            .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
             .run_async(&handler)
             .await,
             Status::Ok,
@@ -563,7 +480,7 @@ mod tests {
                 "/task_ids?pagination_token={}",
                 task_ids.last().unwrap()
             ))
-            .with_request_header("Authorization", format!("Basic {}", AUTH_TOKEN))
+            .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
             .run_async(&handler)
             .await,
             Status::Ok,
@@ -608,7 +525,7 @@ mod tests {
         };
         let mut conn = post("/tasks")
             .with_request_body(serde_json::to_vec(&req).unwrap())
-            .with_request_header("Authorization", format!("Basic {}", AUTH_TOKEN))
+            .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
             .run_async(&handler)
             .await;
         assert_status!(conn, Status::Ok);
@@ -684,7 +601,7 @@ mod tests {
         // Verify: getting the task returns the expected result.
         let want_task_resp = TaskResp::from(&task);
         let mut conn = get(&format!("/tasks/{}", task.id()))
-            .with_request_header("Authorization", format!("Basic {}", AUTH_TOKEN))
+            .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
             .run_async(&handler)
             .await;
         assert_status!(conn, Status::Ok);
@@ -702,7 +619,7 @@ mod tests {
         // Verify: getting a nonexistent task returns NotFound.
         assert_response!(
             get(&format!("/tasks/{}", random::<TaskId>()))
-                .with_request_header("Authorization", format!("Basic {}", AUTH_TOKEN))
+                .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
                 .run_async(&handler)
                 .await,
             Status::NotFound,
@@ -743,10 +660,10 @@ mod tests {
         // Verify: deleting a task succeeds (and actually deletes the task).
         assert_response!(
             delete(&format!("/tasks/{}", &task_id))
-                .with_request_header("Authorization", format!("Basic {}", AUTH_TOKEN))
+                .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
                 .run_async(&handler)
                 .await,
-            Status::Ok,
+            Status::NoContent,
             "",
         );
 
@@ -762,7 +679,7 @@ mod tests {
         // Verify: deleting a task twice returns NotFound.
         assert_response!(
             delete(&format!("/tasks/{}", &task_id))
-                .with_request_header("Authorization", format!("Basic {}", AUTH_TOKEN))
+                .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
                 .run_async(&handler)
                 .await,
             Status::NotFound,
@@ -772,7 +689,7 @@ mod tests {
         // Verify: deleting an arbitrary nonexistent task ID returns NotFound.
         assert_response!(
             delete(&format!("/tasks/{}", &random::<TaskId>()))
-                .with_request_header("Authorization", format!("Basic {}", AUTH_TOKEN))
+                .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
                 .run_async(&handler)
                 .await,
             Status::NotFound,
@@ -864,7 +781,7 @@ mod tests {
         // Verify: requesting metrics on a task returns the correct result.
         assert_response!(
             get(&format!("/tasks/{}/metrics", &task_id))
-                .with_request_header("Authorization", format!("Basic {}", AUTH_TOKEN))
+                .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
                 .run_async(&handler)
                 .await,
             Status::Ok,
@@ -878,7 +795,7 @@ mod tests {
         // Verify: requesting metrics on a nonexistent task returns NotFound.
         assert_response!(
             delete(&format!("/tasks/{}", &random::<TaskId>()))
-                .with_request_header("Authorization", format!("Basic {}", AUTH_TOKEN))
+                .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
                 .run_async(&handler)
                 .await,
             Status::NotFound,
