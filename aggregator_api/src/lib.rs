@@ -13,9 +13,9 @@ use models::{GetTaskMetricsResp, TaskResp};
 use querystring::querify;
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use ring::constant_time;
-use std::{str::FromStr, sync::Arc};
+use std::{borrow::Cow, str::FromStr, sync::Arc};
 use tracing::{error, info_span, warn, Instrument};
-use trillium::{Conn, Handler, Status};
+use trillium::{Conn, Handler, Info, Status, Upgrade};
 use trillium_api::{api, Halt, Json, State};
 use trillium_opentelemetry::metrics;
 use trillium_router::{Router, RouterConnExt};
@@ -158,7 +158,7 @@ async fn post_task<C: Clock>(
         Status::InternalServerError
     })?;
 
-    Ok((Json(TaskResp::from(task.as_ref())), Halt))
+    Ok(Json(TaskResp::from(task.as_ref())))
 }
 
 async fn get_task<C: Clock>(
@@ -178,7 +178,7 @@ async fn get_task<C: Clock>(
         })?
         .ok_or(Status::NotFound)?;
 
-    Ok((Json(TaskResp::from(&task)), Halt))
+    Ok(Json(TaskResp::from(&task)))
 }
 
 async fn delete_task<C: Clock>(
@@ -199,7 +199,7 @@ async fn delete_task<C: Clock>(
         }
     })?;
 
-    Ok((Status::NoContent, Halt))
+    Ok(Status::NoContent)
 }
 
 async fn get_task_metrics<C: Clock>(
@@ -219,13 +219,10 @@ async fn get_task_metrics<C: Clock>(
         })?
         .ok_or(Status::NotFound)?;
 
-    Ok((
-        Json(GetTaskMetricsResp {
-            reports,
-            report_aggregations,
-        }),
-        Halt,
-    ))
+    Ok(Json(GetTaskMetricsResp {
+        reports,
+        report_aggregations,
+    }))
 }
 
 mod models {
@@ -359,6 +356,26 @@ impl<H: Handler> Handler for InstrumentedHandler<H> {
             .run(conn)
             .instrument(info_span!("janus_aggregator_api.endpoint", route = route))
             .await
+    }
+
+    async fn init(&mut self, info: &mut Info) {
+        self.0.init(info).await
+    }
+
+    async fn before_send(&self, conn: Conn) -> Conn {
+        self.0.before_send(conn).await
+    }
+
+    fn has_upgrade(&self, upgrade: &Upgrade) -> bool {
+        self.0.has_upgrade(upgrade)
+    }
+
+    async fn upgrade(&self, upgrade: Upgrade) {
+        self.0.upgrade(upgrade).await
+    }
+
+    fn name(&self) -> Cow<'static, str> {
+        self.0.name()
     }
 }
 
