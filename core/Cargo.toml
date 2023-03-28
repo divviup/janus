@@ -38,7 +38,7 @@ kube = { workspace = true, optional = true, features = ["rustls-tls"] }
 k8s-openapi = { workspace = true, optional = true }
 prio = { version = "0.10.0", features = ["multithreaded"] }
 rand = "0.8"
-reqwest = { version = "0.11.15", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.11.16", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.16.20"
 serde = { version = "1.0.158", features = ["derive"] }
 thiserror = "1.0"
