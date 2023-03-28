@@ -104,7 +104,7 @@ itertools = "0.10.5"
 # used in unit tests.
 janus_aggregator = { path = ".", features = ["fpvec_bounded_l2", "kube-openssl", "test-util"] }
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
-mockito = "1.0.0"
+mockito = "1.0.1"
 tempfile = "3.4.0"
 tokio = { version = "1", features = ["test-util"] }  # ensure this remains compatible with the non-dev dependency
 trycmd = "0.14.15"
