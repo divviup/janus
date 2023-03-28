@@ -1693,7 +1693,7 @@ dependencies = [
  "lazy_static",
  "mockito",
  "once_cell",
- "opentelemetry",
+ "opentelemetry 0.19.0",
  "opentelemetry-jaeger",
  "opentelemetry-otlp",
  "opentelemetry-prometheus",
@@ -1755,7 +1755,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "lazy_static",
- "opentelemetry",
+ "opentelemetry 0.19.0",
  "postgres-protocol",
  "postgres-types",
  "prio",
@@ -1925,7 +1925,7 @@ dependencies = [
  "janus_interop_binaries",
  "janus_messages",
  "lazy_static",
- "opentelemetry",
+ "opentelemetry 0.19.0",
  "prio",
  "rand",
  "regex",
@@ -2441,8 +2441,18 @@ version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69d6c3d7288a106c0a363e4b0e8d308058d56902adefb16f4936f417ffef086e"
 dependencies = [
- "opentelemetry_api",
- "opentelemetry_sdk",
+ "opentelemetry_api 0.18.0",
+ "opentelemetry_sdk 0.18.0",
+]
+
+[[package]]
+name = "opentelemetry"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f4b8347cc26099d3aeee044065ecc3ae11469796b4d65d065a23a584ed92a6f"
+dependencies = [
+ "opentelemetry_api 0.19.0",
+ "opentelemetry_sdk 0.19.0",
 ]
 
 [[package]]
@@ -2455,7 +2465,7 @@ dependencies = [
  "futures",
  "futures-executor",
  "once_cell",
- "opentelemetry",
+ "opentelemetry 0.18.0",
  "opentelemetry-semantic-conventions",
  "thiserror",
  "thrift",
@@ -2472,7 +2482,7 @@ dependencies = [
  "futures",
  "futures-util",
  "http",
- "opentelemetry",
+ "opentelemetry 0.18.0",
  "opentelemetry-proto",
  "prost",
  "thiserror",
@@ -2486,7 +2496,7 @@ version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06c3d833835a53cf91331d2cfb27e9121f5a95261f31f08a1f79ab31688b8da8"
 dependencies = [
- "opentelemetry",
+ "opentelemetry 0.18.0",
  "prometheus",
  "protobuf",
 ]
@@ -2499,7 +2509,7 @@ checksum = "d61a2f56df5574508dd86aaca016c917489e589ece4141df1b5e349af8d66c28"
 dependencies = [
  "futures",
  "futures-util",
- "opentelemetry",
+ "opentelemetry 0.18.0",
  "prost",
  "tonic",
  "tonic-build",
@@ -2511,7 +2521,7 @@ version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b02e0230abb0ab6636d18e2ba8fa02903ea63772281340ccac18e0af3ec9eeb"
 dependencies = [
- "opentelemetry",
+ "opentelemetry 0.18.0",
 ]
 
 [[package]]
@@ -2531,6 +2541,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "opentelemetry_api"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed41783a5bf567688eb38372f2b7a8530f5a607a4b49d38dd7573236c23ca7e2"
+dependencies = [
+ "fnv",
+ "futures-channel",
+ "futures-util",
+ "indexmap",
+ "once_cell",
+ "pin-project-lite",
+ "thiserror",
+ "urlencoding",
+]
+
+[[package]]
 name = "opentelemetry_sdk"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2544,7 +2570,29 @@ dependencies = [
  "futures-executor",
  "futures-util",
  "once_cell",
- "opentelemetry_api",
+ "opentelemetry_api 0.18.0",
+ "percent-encoding",
+ "rand",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
+name = "opentelemetry_sdk"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b3a2a91fdbfdd4d212c0dcc2ab540de2c2bcbbd90be17de7a7daf8822d010c1"
+dependencies = [
+ "async-trait",
+ "crossbeam-channel",
+ "dashmap",
+ "fnv",
+ "futures-channel",
+ "futures-executor",
+ "futures-util",
+ "once_cell",
+ "opentelemetry_api 0.19.0",
  "percent-encoding",
  "rand",
  "thiserror",
@@ -4150,7 +4198,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "21ebb87a95ea13271332df069020513ab70bdb5637ca42d6e492dc3bbbad48de"
 dependencies = [
  "once_cell",
- "opentelemetry",
+ "opentelemetry 0.18.0",
  "tracing",
  "tracing-core",
  "tracing-log",
@@ -4334,6 +4382,12 @@ dependencies = [
  "percent-encoding",
  "serde",
 ]
+
+[[package]]
+name = "urlencoding"
+version = "2.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8db7427f936968176eaa7cdf81b7f98b980b18495ec28f1b5791ac3bfe3eea9"
 
 [[package]]
 name = "utf-8"
