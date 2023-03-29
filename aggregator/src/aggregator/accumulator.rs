@@ -40,7 +40,7 @@ pub struct Accumulator<
     aggregations: HashMap<Q::BatchIdentifier, BatchData<SEED_SIZE, Q, A>>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct BatchData<
     const SEED_SIZE: usize,
     Q: AccumulableQueryType,

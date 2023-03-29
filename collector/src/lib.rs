@@ -705,14 +705,14 @@ mod tests {
             hpke::seal(
                 &parameters.hpke_config,
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
-                &transcript.aggregate_shares[0].get_encoded(),
+                &transcript.leader_aggregate_share.get_encoded(),
                 &associated_data.get_encoded(),
             )
             .unwrap(),
             hpke::seal(
                 &parameters.hpke_config,
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
-                &transcript.aggregate_shares[1].get_encoded(),
+                &transcript.helper_aggregate_share.get_encoded(),
                 &associated_data.get_encoded(),
             )
             .unwrap(),
@@ -733,14 +733,14 @@ mod tests {
             hpke::seal(
                 &parameters.hpke_config,
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
-                &transcript.aggregate_shares[0].get_encoded(),
+                &transcript.leader_aggregate_share.get_encoded(),
                 &associated_data.get_encoded(),
             )
             .unwrap(),
             hpke::seal(
                 &parameters.hpke_config,
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
-                &transcript.aggregate_shares[1].get_encoded(),
+                &transcript.helper_aggregate_share.get_encoded(),
                 &associated_data.get_encoded(),
             )
             .unwrap(),

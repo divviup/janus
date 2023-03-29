@@ -34,12 +34,18 @@ use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     AggregateShareAad, AggregationJobId, AggregationJobRound, BatchId, BatchSelector,
     CollectionJobId, Duration, Extension, ExtensionType, FixedSizeQuery, HpkeCiphertext,
-    HpkeConfigId, Interval, PrepareStep, PrepareStepResult, Query, ReportId, ReportIdChecksum,
-    ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
+    HpkeConfigId, Interval, PrepareError, PrepareResp, PrepareStepResult, Query, ReportId,
+    ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time,
 };
 use prio::{
     codec::{Decode, Encode},
-    vdaf::prio3::{Prio3, Prio3Count},
+    idpf::IdpfInput,
+    topology::ping_pong::PingPongMessage,
+    vdaf::{
+        poplar1::{Poplar1, Poplar1AggregationParam},
+        prio3::Prio3Count,
+        xof::XofShake128,
+    },
 };
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use std::{
@@ -1876,20 +1882,49 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
     let report_id = random();
-    let vdaf = Arc::new(Prio3::new_count(2).unwrap());
+    let vdaf = Arc::new(Poplar1::new_shake128(1));
     let verify_key: [u8; VERIFY_KEY_LENGTH] = random();
-    let vdaf_transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), &report_id, &0);
-    let leader_prep_state = vdaf_transcript.leader_prep_state(0);
+    let aggregation_param =
+        Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[false])]))
+            .unwrap();
+    let vdaf_transcript = run_vdaf(
+        vdaf.as_ref(),
+        &verify_key,
+        &aggregation_param,
+        &report_id,
+        &IdpfInput::from_bools(&[false]),
+    );
 
-    for (ord, state) in [
-        ReportAggregationState::<VERIFY_KEY_LENGTH, Prio3Count>::Start,
-        ReportAggregationState::Waiting(
-            leader_prep_state.clone(),
-            Some(vdaf_transcript.prepare_messages[0].clone()),
+    for (ord, (role, state)) in [
+        (Role::Leader, ReportAggregationState::Start),
+        (Role::Helper, ReportAggregationState::Start),
+        (
+            Role::Leader,
+            ReportAggregationState::WaitingLeader(
+                vdaf_transcript.leader_prepare_transitions[1]
+                    .transition
+                    .clone()
+                    .unwrap(),
+            ),
         ),
-        ReportAggregationState::Waiting(leader_prep_state.clone(), None),
-        ReportAggregationState::Finished,
-        ReportAggregationState::Failed(ReportShareError::VdafPrepError),
+        (
+            Role::Helper,
+            ReportAggregationState::WaitingHelper(
+                vdaf_transcript.helper_prepare_transitions[0]
+                    .prepare_state()
+                    .clone(),
+            ),
+        ),
+        (Role::Leader, ReportAggregationState::Finished),
+        (Role::Helper, ReportAggregationState::Finished),
+        (
+            Role::Leader,
+            ReportAggregationState::Failed(PrepareError::VdafPrepError),
+        ),
+        (
+            Role::Helper,
+            ReportAggregationState::Failed(PrepareError::VdafPrepError),
+        ),
     ]
     .into_iter()
     .enumerate()
@@ -1899,8 +1934,8 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
-            Role::Leader,
+            VdafInstance::Poplar1 { bits: 1 },
+            role,
         )
         .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
         .build();
@@ -1909,17 +1944,18 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
 
         let want_report_aggregation = ds
             .run_tx(|tx| {
-                let (task, state) = (task.clone(), state.clone());
+                let (task, state, aggregation_param) =
+                    (task.clone(), state.clone(), aggregation_param.clone());
                 Box::pin(async move {
                     tx.put_task(&task).await?;
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Prio3Count,
+                        Poplar1<XofShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        (),
+                        aggregation_param,
                         (),
                         Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
                             .unwrap(),
@@ -1947,9 +1983,14 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
                         report_id,
                         OLDEST_ALLOWED_REPORT_TIMESTAMP,
                         ord.try_into().unwrap(),
-                        Some(PrepareStep::new(
+                        Some(PrepareResp::new(
                             report_id,
-                            PrepareStepResult::Continued(format!("prep_msg_{ord}").into()),
+                            PrepareStepResult::Continue {
+                                message: PingPongMessage::Continue {
+                                    prep_msg: format!("prep_msg_{ord}").into(),
+                                    prep_share: format!("prep_share_{ord}").into(),
+                                },
+                            },
                         )),
                         state,
                     );
@@ -1965,13 +2006,15 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
 
         let got_report_aggregation = ds
             .run_tx(|tx| {
-                let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
+                let (vdaf, task, aggregation_param) =
+                    (Arc::clone(&vdaf), task.clone(), aggregation_param.clone());
                 Box::pin(async move {
                     tx.get_report_aggregation(
                         vdaf.as_ref(),
-                        &Role::Leader,
+                        &role,
                         task.id(),
                         &aggregation_job_id,
+                        &aggregation_param,
                         &report_id,
                     )
                     .await
@@ -1989,9 +2032,14 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
             *want_report_aggregation.report_id(),
             *want_report_aggregation.time(),
             want_report_aggregation.ord(),
-            Some(PrepareStep::new(
+            Some(PrepareResp::new(
                 report_id,
-                PrepareStepResult::Continued(format!("updated_prep_msg_{ord}").into()),
+                PrepareStepResult::Continue {
+                    message: PingPongMessage::Continue {
+                        prep_msg: format!("updated_prep_msg_{ord}").into(),
+                        prep_share: format!("updated_prep_share_{ord}").into(),
+                    },
+                },
             )),
             want_report_aggregation.state().clone(),
         );
@@ -2005,13 +2053,15 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
 
         let got_report_aggregation = ds
             .run_tx(|tx| {
-                let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
+                let (vdaf, task, aggregation_param) =
+                    (Arc::clone(&vdaf), task.clone(), aggregation_param.clone());
                 Box::pin(async move {
                     tx.get_report_aggregation(
                         vdaf.as_ref(),
-                        &Role::Leader,
+                        &role,
                         task.id(),
                         &aggregation_job_id,
+                        &aggregation_param,
                         &report_id,
                     )
                     .await
@@ -2026,13 +2076,15 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
 
         let got_report_aggregation = ds
             .run_tx(|tx| {
-                let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
+                let (vdaf, task, aggregation_param) =
+                    (Arc::clone(&vdaf), task.clone(), aggregation_param.clone());
                 Box::pin(async move {
                     tx.get_report_aggregation(
                         vdaf.as_ref(),
-                        &Role::Leader,
+                        &role,
                         task.id(),
                         &aggregation_job_id,
+                        &aggregation_param,
                         &report_id,
                     )
                     .await
@@ -2214,6 +2266,7 @@ async fn report_aggregation_not_found(ephemeral_datastore: EphemeralDatastore) {
                     &Role::Leader,
                     &random(),
                     &random(),
+                    &dummy_vdaf::AggregationParam::default(),
                     &ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 )
                 .await
@@ -2233,7 +2286,7 @@ async fn report_aggregation_not_found(ephemeral_datastore: EphemeralDatastore) {
                     Time::from_seconds_since_epoch(12345),
                     0,
                     None,
-                    ReportAggregationState::Failed(ReportShareError::VdafPrepError),
+                    ReportAggregationState::Failed(PrepareError::VdafPrepError),
                 ))
                 .await
             })
@@ -2251,14 +2304,24 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let report_id = random();
-    let vdaf = Arc::new(Prio3::new_count(2).unwrap());
+    let vdaf = Arc::new(Poplar1::new_shake128(1));
     let verify_key: [u8; VERIFY_KEY_LENGTH] = random();
-    let vdaf_transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), &report_id, &0);
+    let aggregation_param =
+        Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[false])]))
+            .unwrap();
+
+    let vdaf_transcript = run_vdaf(
+        vdaf.as_ref(),
+        &verify_key,
+        &aggregation_param,
+        &report_id,
+        &IdpfInput::from_bools(&[false]),
+    );
 
     let task = TaskBuilder::new(
         task::QueryType::TimeInterval,
-        VdafInstance::Prio3Count,
-        Role::Leader,
+        VdafInstance::Poplar1 { bits: 1 },
+        Role::Helper,
     )
     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
     .build();
@@ -2266,35 +2329,41 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
 
     let want_report_aggregations = ds
         .run_tx(|tx| {
-            let (task, prep_msg, prep_state) = (
+            let (task, vdaf_transcript, aggregation_param) = (
                 task.clone(),
-                vdaf_transcript.prepare_messages[0].clone(),
-                vdaf_transcript.leader_prep_state(0).clone(),
+                vdaf_transcript.clone(),
+                aggregation_param.clone(),
             );
             Box::pin(async move {
-                tx.put_task(&task).await?;
+                tx.put_task(&task).await.unwrap();
+
                 tx.put_aggregation_job(&AggregationJob::<
                     VERIFY_KEY_LENGTH,
                     TimeInterval,
-                    Prio3Count,
+                    Poplar1<XofShake128, 16>,
                 >::new(
                     *task.id(),
                     aggregation_job_id,
-                    (),
+                    aggregation_param,
                     (),
                     Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
                         .unwrap(),
                     AggregationJobState::InProgress,
                     AggregationJobRound::from(0),
                 ))
-                .await?;
+                .await
+                .unwrap();
 
                 let mut want_report_aggregations = Vec::new();
                 for (ord, state) in [
-                    ReportAggregationState::<VERIFY_KEY_LENGTH, Prio3Count>::Start,
-                    ReportAggregationState::Waiting(prep_state.clone(), Some(prep_msg)),
+                    ReportAggregationState::Start,
+                    ReportAggregationState::WaitingHelper(
+                        vdaf_transcript.helper_prepare_transitions[0]
+                            .prepare_state()
+                            .clone(),
+                    ),
                     ReportAggregationState::Finished,
-                    ReportAggregationState::Failed(ReportShareError::VdafPrepError),
+                    ReportAggregationState::Failed(PrepareError::VdafPrepError),
                 ]
                 .iter()
                 .enumerate()
@@ -2312,7 +2381,8 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                             ),
                         ),
                     )
-                    .await?;
+                    .await
+                    .unwrap();
 
                     let report_aggregation = ReportAggregation::new(
                         *task.id(),
@@ -2320,10 +2390,12 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                         report_id,
                         OLDEST_ALLOWED_REPORT_TIMESTAMP,
                         ord.try_into().unwrap(),
-                        Some(PrepareStep::new(report_id, PrepareStepResult::Finished)),
+                        Some(PrepareResp::new(report_id, PrepareStepResult::Finished)),
                         state.clone(),
                     );
-                    tx.put_report_aggregation(&report_aggregation).await?;
+                    tx.put_report_aggregation(&report_aggregation)
+                        .await
+                        .unwrap();
                     want_report_aggregations.push(report_aggregation);
                 }
                 Ok(want_report_aggregations)
@@ -2341,7 +2413,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
             Box::pin(async move {
                 tx.get_report_aggregations_for_aggregation_job(
                     vdaf.as_ref(),
-                    &Role::Leader,
+                    &Role::Helper,
                     task.id(),
                     &aggregation_job_id,
                 )
@@ -2361,7 +2433,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
             Box::pin(async move {
                 tx.get_report_aggregations_for_aggregation_job(
                     vdaf.as_ref(),
-                    &Role::Leader,
+                    &Role::Helper,
                     task.id(),
                     &aggregation_job_id,
                 )
@@ -2836,7 +2908,6 @@ async fn setup_collection_job_acquire_test_case<Q: TestQueryTypeExt>(
                 tx.put_client_report(&dummy_vdaf::Vdaf::new(), report)
                     .await?;
             }
-
             for aggregation_job in &test_case.aggregation_jobs {
                 tx.put_aggregation_job(aggregation_job).await?;
             }
@@ -4766,14 +4837,27 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     None,
                     ReportAggregationState::Start, // Counted among max_size.
                 );
+
+                let report_id_0_1 = random();
+                let transcript = run_vdaf(
+                    &dummy_vdaf::Vdaf::new(),
+                    task_1.primary_vdaf_verify_key().unwrap().as_bytes(),
+                    &dummy_vdaf::AggregationParam(0),
+                    &report_id_0_1,
+                    &(),
+                );
+
                 let report_aggregation_0_1 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                     *task_1.id(),
                     *aggregation_job_0.id(),
-                    random(),
+                    report_id_0_1,
                     clock.now(),
                     1,
                     None,
-                    ReportAggregationState::Waiting(dummy_vdaf::PrepareState::default(), Some(())), // Counted among max_size.
+                    // Counted among max_size.
+                    ReportAggregationState::WaitingLeader(
+                        transcript.helper_prepare_transitions[0].transition.clone(),
+                    ),
                 );
                 let report_aggregation_0_2 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                     *task_1.id(),
@@ -4782,7 +4866,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     clock.now(),
                     2,
                     None,
-                    ReportAggregationState::Failed(ReportShareError::VdafPrepError), // Not counted among min_size or max_size.
+                    ReportAggregationState::Failed(PrepareError::VdafPrepError), // Not counted among min_size or max_size.
                 );
 
                 let aggregation_job_1 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
@@ -4820,7 +4904,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     clock.now(),
                     2,
                     None,
-                    ReportAggregationState::Failed(ReportShareError::VdafPrepError), // Not counted among min_size or max_size.
+                    ReportAggregationState::Failed(PrepareError::VdafPrepError), // Not counted among min_size or max_size.
                 );
 
                 let aggregation_job_2 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(

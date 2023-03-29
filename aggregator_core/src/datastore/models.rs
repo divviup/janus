@@ -13,8 +13,8 @@ use janus_core::{
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     AggregationJobId, AggregationJobRound, BatchId, CollectionJobId, Duration, Extension,
-    HpkeCiphertext, Interval, PrepareStep, Query, ReportId, ReportIdChecksum, ReportMetadata,
-    ReportShareError, Role, TaskId, Time,
+    HpkeCiphertext, Interval, PrepareError, PrepareResp, Query, ReportId, ReportIdChecksum,
+    ReportMetadata, Role, TaskId, Time,
 };
 use postgres_protocol::types::{
     range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql, Range, RangeBound,
@@ -22,6 +22,7 @@ use postgres_protocol::types::{
 use postgres_types::{accepts, to_sql_checked, FromSql, ToSql};
 use prio::{
     codec::Encode,
+    topology::ping_pong::PingPongTransition,
     vdaf::{self, Aggregatable},
 };
 use rand::{distributions::Standard, prelude::Distribution};
@@ -588,7 +589,7 @@ pub struct ReportAggregation<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SI
     report_id: ReportId,
     time: Time,
     ord: u64,
-    last_prep_step: Option<PrepareStep>,
+    last_prep_resp: Option<PrepareResp>,
     state: ReportAggregationState<SEED_SIZE, A>,
 }
 
@@ -600,7 +601,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> ReportAggregati
         report_id: ReportId,
         time: Time,
         ord: u64,
-        last_prep_step: Option<PrepareStep>,
+        last_prep_resp: Option<PrepareResp>,
         state: ReportAggregationState<SEED_SIZE, A>,
     ) -> Self {
         Self {
@@ -609,7 +610,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> ReportAggregati
             report_id,
             time,
             ord,
-            last_prep_step,
+            last_prep_resp,
             state,
         }
     }
@@ -644,16 +645,16 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> ReportAggregati
         self.ord
     }
 
-    /// Returns the last preparation step returned by the Helper, if any.
-    pub fn last_prep_step(&self) -> Option<&PrepareStep> {
-        self.last_prep_step.as_ref()
+    /// Returns the last preparation response returned by the Helper, if any.
+    pub fn last_prep_resp(&self) -> Option<&PrepareResp> {
+        self.last_prep_resp.as_ref()
     }
 
     /// Returns a new [`ReportAggregation`] corresponding to this report aggregation updated to
-    /// have the given last preparation step.
-    pub fn with_last_prep_step(self, last_prep_step: Option<PrepareStep>) -> Self {
+    /// have the given last preparation response.
+    pub fn with_last_prep_resp(self, last_prep_resp: Option<PrepareResp>) -> Self {
         Self {
-            last_prep_step,
+            last_prep_resp,
             ..self
         }
     }
@@ -688,7 +689,7 @@ where
             && self.report_id == other.report_id
             && self.time == other.time
             && self.ord == other.ord
-            && self.last_prep_step == other.last_prep_step
+            && self.last_prep_resp == other.last_prep_resp
             && self.state == other.state
     }
 }
@@ -709,16 +710,19 @@ where
 
 /// ReportAggregationState represents the state of a single report aggregation. It corresponds
 /// to the REPORT_AGGREGATION_STATE enum in the schema, along with the state-specific data.
-#[derive(Clone, Derivative)]
-#[derivative(Debug)]
+#[derive(Clone, Debug, Derivative)]
 pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
     Start,
-    Waiting(
-        #[derivative(Debug = "ignore")] A::PrepareState,
-        #[derivative(Debug = "ignore")] Option<A::PrepareMessage>,
+    WaitingLeader(
+        /// Most recent transition for this report aggregation.
+        PingPongTransition<SEED_SIZE, 16, A>,
+    ),
+    WaitingHelper(
+        /// Helper's current preparation state
+        A::PrepareState,
     ),
     Finished,
-    Failed(ReportShareError),
+    Failed(PrepareError),
 }
 
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
@@ -727,7 +731,9 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     pub fn state_code(&self) -> ReportAggregationStateCode {
         match self {
             ReportAggregationState::Start => ReportAggregationStateCode::Start,
-            ReportAggregationState::Waiting(_, _) => ReportAggregationStateCode::Waiting,
+            ReportAggregationState::WaitingLeader(_) | ReportAggregationState::WaitingHelper(_) => {
+                ReportAggregationStateCode::Waiting
+            }
             ReportAggregationState::Finished => ReportAggregationStateCode::Finished,
             ReportAggregationState::Failed(_) => ReportAggregationStateCode::Failed,
         }
@@ -742,29 +748,32 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     {
         match self {
             ReportAggregationState::Start => EncodedReportAggregationStateValues::default(),
-            ReportAggregationState::Waiting(prep_state, prep_msg) => {
+            ReportAggregationState::WaitingLeader(transition) => {
                 EncodedReportAggregationStateValues {
-                    prep_state: Some(prep_state.get_encoded()),
-                    prep_msg: prep_msg.as_ref().map(Encode::get_encoded),
+                    leader_prep_transition: Some(transition.get_encoded()),
+                    ..Default::default()
+                }
+            }
+            ReportAggregationState::WaitingHelper(prepare_state) => {
+                EncodedReportAggregationStateValues {
+                    helper_prep_state: Some(prepare_state.get_encoded()),
                     ..Default::default()
                 }
             }
             ReportAggregationState::Finished => EncodedReportAggregationStateValues::default(),
-            ReportAggregationState::Failed(report_share_err) => {
-                EncodedReportAggregationStateValues {
-                    report_share_err: Some(*report_share_err as i16),
-                    ..Default::default()
-                }
-            }
+            ReportAggregationState::Failed(prepare_err) => EncodedReportAggregationStateValues {
+                prepare_err: Some(*prepare_err as i16),
+                ..Default::default()
+            },
         }
     }
 }
 
 #[derive(Default)]
 pub(super) struct EncodedReportAggregationStateValues {
-    pub(super) prep_state: Option<Vec<u8>>,
-    pub(super) prep_msg: Option<Vec<u8>>,
-    pub(super) report_share_err: Option<i16>,
+    pub(super) leader_prep_transition: Option<Vec<u8>>,
+    pub(super) helper_prep_state: Option<Vec<u8>>,
+    pub(super) prepare_err: Option<i16>,
 }
 
 // The private ReportAggregationStateCode exists alongside the public ReportAggregationState
@@ -791,19 +800,19 @@ pub enum ReportAggregationStateCode {
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
     for ReportAggregationState<SEED_SIZE, A>
 where
-    A::PrepareState: PartialEq,
-    A::PrepareMessage: PartialEq,
     A::PrepareShare: PartialEq,
     A::OutputShare: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (
-                Self::Waiting(lhs_prep_state, lhs_prep_msg),
-                Self::Waiting(rhs_prep_state, rhs_prep_msg),
-            ) => lhs_prep_state == rhs_prep_state && lhs_prep_msg == rhs_prep_msg,
-            (Self::Failed(lhs_report_share_err), Self::Failed(rhs_report_share_err)) => {
-                lhs_report_share_err == rhs_report_share_err
+            (Self::WaitingLeader(lhs_transition), Self::WaitingLeader(rhs_transition)) => {
+                lhs_transition == rhs_transition
+            }
+            (Self::WaitingHelper(lhs_state), Self::WaitingHelper(rhs_state)) => {
+                lhs_state == rhs_state
+            }
+            (Self::Failed(lhs_prepare_err), Self::Failed(rhs_prepare_err)) => {
+                lhs_prepare_err == rhs_prepare_err
             }
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }

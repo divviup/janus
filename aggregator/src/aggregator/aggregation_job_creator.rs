@@ -673,7 +673,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 #[cfg(test)]
 mod tests {
     use super::AggregationJobCreator;
-    use futures::{future::try_join_all, TryFutureExt};
+    use futures::future::try_join_all;
     use janus_aggregator_core::{
         datastore::{
             models::{AggregationJob, AggregationJobState, Batch, BatchState, LeaderStoredReport},
@@ -690,6 +690,7 @@ mod tests {
         time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
     };
     use janus_messages::{
+        codec::ParameterizedDecode,
         query_type::{FixedSize, TimeInterval},
         AggregationJobRound, Interval, ReportId, Role, TaskId, Time,
     };
@@ -775,13 +776,14 @@ mod tests {
                 .run_tx(|tx| {
                     let (leader_task, helper_task) = (leader_task.clone(), helper_task.clone());
                     Box::pin(async move {
+                        let vdaf = Prio3Count::new_count(2).unwrap();
                         let (leader_aggregations, leader_batches) =
                             read_aggregate_info_for_task::<
                                 VERIFY_KEY_LENGTH,
                                 TimeInterval,
                                 Prio3Count,
                                 _,
-                            >(tx, leader_task.id())
+                            >(tx, &vdaf, leader_task.id())
                             .await;
                         let (helper_aggregations, helper_batches) =
                             read_aggregate_info_for_task::<
@@ -789,7 +791,7 @@ mod tests {
                                 TimeInterval,
                                 Prio3Count,
                                 _,
-                            >(tx, helper_task.id())
+                            >(tx, &vdaf, helper_task.id())
                             .await;
                         Ok((
                             leader_aggregations,
@@ -888,23 +890,24 @@ mod tests {
             .unwrap();
 
         // Verify.
-        let (agg_jobs, batches) =
-            job_creator
-                .datastore
-                .run_tx(|tx| {
-                    let task = task.clone();
-                    Box::pin(async move {
-                        Ok(read_aggregate_info_for_task::<
+        let (agg_jobs, batches) = job_creator
+            .datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move {
+                    Ok(
+                        read_aggregate_info_for_task::<
                             VERIFY_KEY_LENGTH,
                             TimeInterval,
                             Prio3Count,
                             _,
-                        >(tx, task.id())
-                        .await)
-                    })
+                        >(tx, &Prio3Count::new_count(2).unwrap(), task.id())
+                        .await,
+                    )
                 })
-                .await
-                .unwrap();
+            })
+            .await
+            .unwrap();
         let mut seen_report_ids = HashSet::new();
         for (agg_job, report_ids) in &agg_jobs {
             // Jobs are created in round 0
@@ -986,23 +989,24 @@ mod tests {
             .unwrap();
 
         // Verify -- we haven't received enough reports yet, so we don't create anything.
-        let (agg_jobs, batches) =
-            job_creator
-                .datastore
-                .run_tx(|tx| {
-                    let task = Arc::clone(&task);
-                    Box::pin(async move {
-                        Ok(read_aggregate_info_for_task::<
+        let (agg_jobs, batches) = job_creator
+            .datastore
+            .run_tx(|tx| {
+                let task = Arc::clone(&task);
+                Box::pin(async move {
+                    Ok(
+                        read_aggregate_info_for_task::<
                             VERIFY_KEY_LENGTH,
                             TimeInterval,
                             Prio3Count,
                             _,
-                        >(tx, task.id())
-                        .await)
-                    })
+                        >(tx, &Prio3Count::new_count(2).unwrap(), task.id())
+                        .await,
+                    )
                 })
-                .await
-                .unwrap();
+            })
+            .await
+            .unwrap();
         assert!(agg_jobs.is_empty());
         assert!(batches.is_empty());
 
@@ -1026,23 +1030,24 @@ mod tests {
             .unwrap();
 
         // Verify -- the additional report we wrote allows an aggregation job to be created.
-        let (agg_jobs, batches) =
-            job_creator
-                .datastore
-                .run_tx(|tx| {
-                    let task = Arc::clone(&task);
-                    Box::pin(async move {
-                        Ok(read_aggregate_info_for_task::<
+        let (agg_jobs, batches) = job_creator
+            .datastore
+            .run_tx(|tx| {
+                let task = Arc::clone(&task);
+                Box::pin(async move {
+                    Ok(
+                        read_aggregate_info_for_task::<
                             VERIFY_KEY_LENGTH,
                             TimeInterval,
                             Prio3Count,
                             _,
-                        >(tx, task.id())
-                        .await)
-                    })
+                        >(tx, &Prio3Count::new_count(2).unwrap(), task.id())
+                        .await,
+                    )
                 })
-                .await
-                .unwrap();
+            })
+            .await
+            .unwrap();
         assert_eq!(agg_jobs.len(), 1);
         let report_ids: HashSet<_> = agg_jobs.into_iter().next().unwrap().1.into_iter().collect();
         assert_eq!(
@@ -1135,23 +1140,24 @@ mod tests {
             .unwrap();
 
         // Verify.
-        let (agg_jobs, batches) =
-            job_creator
-                .datastore
-                .run_tx(|tx| {
-                    let task = task.clone();
-                    Box::pin(async move {
-                        Ok(read_aggregate_info_for_task::<
+        let (agg_jobs, batches) = job_creator
+            .datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move {
+                    Ok(
+                        read_aggregate_info_for_task::<
                             VERIFY_KEY_LENGTH,
                             TimeInterval,
                             Prio3Count,
                             _,
-                        >(tx, task.id())
-                        .await)
-                    })
+                        >(tx, &Prio3Count::new_count(2).unwrap(), task.id())
+                        .await,
+                    )
                 })
-                .await
-                .unwrap();
+            })
+            .await
+            .unwrap();
         let mut seen_report_ids = HashSet::new();
         for (agg_job, report_ids) in &agg_jobs {
             // Job immediately finished since all reports are in a closed batch.
@@ -1271,7 +1277,9 @@ mod tests {
                                 FixedSize,
                                 Prio3Count,
                                 _,
-                            >(tx, task.id())
+                            >(
+                                tx, &Prio3Count::new_count(2).unwrap(), task.id()
+                            )
                             .await,
                         ))
                     })
@@ -1432,7 +1440,9 @@ mod tests {
                                 FixedSize,
                                 Prio3Count,
                                 _,
-                            >(tx, task.id())
+                            >(
+                                tx, &Prio3Count::new_count(2).unwrap(), task.id()
+                            )
                             .await,
                         ))
                     })
@@ -1548,7 +1558,9 @@ mod tests {
                                 FixedSize,
                                 Prio3Count,
                                 _,
-                            >(tx, task.id())
+                            >(
+                                tx, &Prio3Count::new_count(2).unwrap(), task.id()
+                            )
                             .await,
                         ))
                     })
@@ -1605,7 +1617,9 @@ mod tests {
                                 FixedSize,
                                 Prio3Count,
                                 _,
-                            >(tx, task.id())
+                            >(
+                                tx, &Prio3Count::new_count(2).unwrap(), task.id()
+                            )
                             .await,
                         ))
                     })
@@ -1729,7 +1743,9 @@ mod tests {
                                 FixedSize,
                                 Prio3Count,
                                 _,
-                            >(tx, task.id())
+                            >(
+                                tx, &Prio3Count::new_count(2).unwrap(), task.id()
+                            )
                             .await,
                         ))
                     })
@@ -1793,7 +1809,9 @@ mod tests {
                                 FixedSize,
                                 Prio3Count,
                                 _,
-                            >(tx, task.id())
+                            >(
+                                tx, &Prio3Count::new_count(2).unwrap(), task.id()
+                            )
                             .await,
                         ))
                     })
@@ -1932,7 +1950,9 @@ mod tests {
                                 FixedSize,
                                 Prio3Count,
                                 _,
-                            >(tx, task.id())
+                            >(
+                                tx, &Prio3Count::new_count(2).unwrap(), task.id()
+                            )
                             .await,
                         ))
                     })
@@ -2060,18 +2080,20 @@ mod tests {
     /// Test helper function that reads all aggregation jobs & batches for a given task ID,
     /// returning the aggregation jobs, the report IDs included in the aggregation job, and the
     /// batches. Report IDs are returned in the order they are included in the aggregation job.
-    async fn read_aggregate_info_for_task<
-        const SEED_SIZE: usize,
-        Q: AccumulableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
-        C: Clock,
-    >(
+    async fn read_aggregate_info_for_task<const SEED_SIZE: usize, Q, A, C>(
         tx: &Transaction<'_, C>,
+        vdaf: &A,
         task_id: &TaskId,
     ) -> (
         Vec<(AggregationJob<SEED_SIZE, Q, A>, Vec<ReportId>)>,
         Vec<Batch<SEED_SIZE, Q, A>>,
-    ) {
+    )
+    where
+        Q: AccumulableQueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        C: Clock,
+        for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
+    {
         try_join!(
             try_join_all(
                 tx.get_aggregation_jobs_for_task(task_id)
@@ -2081,18 +2103,18 @@ mod tests {
                     .map(|agg_job| async {
                         let agg_job_id = *agg_job.id();
                         tx.get_report_aggregations_for_aggregation_job(
-                            &dummy_vdaf::Vdaf::new(),
+                            vdaf,
                             &Role::Leader,
                             task_id,
                             &agg_job_id,
                         )
-                        .map_ok(move |report_aggs| {
+                        .await
+                        .map(|report_aggs| {
                             (
                                 agg_job,
                                 report_aggs.into_iter().map(|ra| *ra.report_id()).collect(),
                             )
                         })
-                        .await
                     }),
             ),
             tx.get_batches_for_task(task_id),

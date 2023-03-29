@@ -2,13 +2,15 @@ use http_api_problem::HttpApiProblem;
 use janus_aggregator_core::{datastore, task};
 use janus_messages::{
     problem_type::DapProblemType, AggregationJobId, AggregationJobRound, CollectionJobId,
-    HpkeConfigId, Interval, ReportId, ReportIdChecksum, Role, TaskId, Time,
+    HpkeConfigId, Interval, PrepareError, ReportId, ReportIdChecksum, Role, TaskId, Time,
 };
-use prio::vdaf::VdafError;
+use opentelemetry::{metrics::Counter, KeyValue};
+use prio::{topology::ping_pong::PingPongError, vdaf::VdafError};
 use std::{
     fmt::{self, Display, Formatter},
     num::TryFromIntError,
 };
+use tracing::info;
 
 /// Errors returned by functions and methods in this module
 #[derive(Debug, thiserror::Error)]
@@ -231,4 +233,69 @@ impl Display for BatchMismatch {
             self.peer_report_count
         )
     }
+}
+
+/// Inspect the provided `ping_pong_error`, log it, increment the [`Counter`] with appropriate
+/// labels, and return a suitable [`PrepareError`].
+pub(crate) fn handle_ping_pong_error(
+    task_id: &TaskId,
+    role: Role,
+    report_id: &ReportId,
+    ping_pong_error: PingPongError,
+    aggregate_step_failure_counter: &Counter<u64>,
+) -> PrepareError {
+    let peer_role = match role {
+        Role::Leader => Role::Helper,
+        Role::Helper => Role::Leader,
+        // panic safety: role should be passed to this function as a literal, so passing a role that
+        // isn't an aggregator is a straightforward programmer error and we want to fail noisily.
+        _ => panic!("invalid role"),
+    };
+    let (error_desc, value) = match ping_pong_error {
+        PingPongError::VdafPrepareInit(_) => (
+            "Couldn't helper_initialize report share".to_string(),
+            "prepare_init_failure".to_string(),
+        ),
+        PingPongError::VdafPrepareSharesToPrepareMessage(_) => (
+            "Couldn't compute prepare message".to_string(),
+            "prepare_message_failure".to_string(),
+        ),
+        PingPongError::VdafPrepareNext(_) => (
+            "Prepare next failed".to_string(),
+            "prepare_next_failure".to_string(),
+        ),
+        PingPongError::CodecPrepShare(_) => (
+            format!("Couldn't decode {peer_role} prepare share"),
+            format!("{peer_role}_prep_share_decode_failure"),
+        ),
+        PingPongError::CodecPrepMessage(_) => (
+            format!("Couldn't decode {peer_role} prepare message"),
+            format!("{peer_role}_prep_message_decode_failure"),
+        ),
+        ref error @ PingPongError::HostStateMismatch { .. } => (
+            format!("{error}"),
+            format!("{role}_ping_pong_host_state_mismatch"),
+        ),
+        ref error @ PingPongError::PeerMessageMismatch { .. } => (
+            format!("{error}"),
+            format!("{peer_role}_ping_pong_message_mismatch"),
+        ),
+        PingPongError::InternalError(desc) => (
+            desc.to_string(),
+            "vdaf_ping_pong_internal_error".to_string(),
+        ),
+    };
+
+    info!(
+        task_id = %task_id,
+        report_id = %report_id,
+        ?ping_pong_error,
+        error_desc,
+    );
+
+    aggregate_step_failure_counter.add(1, &[KeyValue::new("type", value)]);
+
+    // Per DAP, any occurrence of state Rejected() from a ping-pong routime is translated to
+    // VdafPrepError
+    PrepareError::VdafPrepError
 }
