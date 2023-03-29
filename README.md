@@ -29,10 +29,6 @@ branch.
 [`docker`](https://www.docker.com) must be installed at build time, and the
 `docker` daemon must be running. To build Janus, execute `cargo build`.
 
-Building Janus with `janus_aggregator`'s `otlp` feature enabled currently
-requires the Protocol Buffers compiler, `protoc`, be installed on the machine
-performing the build.
-
 ### Container image
 
 To build container images, run the following commands.

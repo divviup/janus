@@ -38,7 +38,7 @@ janus_messages.workspace = true
 k8s-openapi.workspace = true
 kube.workspace = true
 lazy_static = { version = "1", optional = true }
-opentelemetry = { version = "0.19", features = ["metrics", "rt-tokio"] }
+opentelemetry = { workspace = true, features = ["metrics", "rt-tokio"] }
 postgres-protocol = "0.6.4"
 postgres-types = { version = "0.2.4", features = ["derive", "array-impls"] }
 prio = { workspace = true, features = ["experimental"] }

@@ -2,7 +2,7 @@ ARG PROFILE=release
 
 FROM rust:1.68.1-alpine as builder
 ARG PROFILE
-RUN apk add libc-dev protobuf-dev protoc
+RUN apk add libc-dev
 WORKDIR /src
 COPY Cargo.toml /src/Cargo.toml
 COPY Cargo.lock /src/Cargo.lock
