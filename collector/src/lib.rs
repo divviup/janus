@@ -113,8 +113,6 @@ pub enum Error {
     Codec(#[from] prio::codec::CodecError),
     #[error("aggregate share decoding error")]
     AggregateShareDecode,
-    #[error("expected two aggregate shares, got {0}")]
-    AggregateShareCount(usize),
     #[error("VDAF error: {0}")]
     Vdaf(#[from] prio::vdaf::VdafError),
     #[error("HPKE error: {0}")]
@@ -512,41 +510,40 @@ impl<V: vdaf::Collector> Collector<V> {
         }
 
         let collect_response = CollectionMessage::<Q>::get_decoded(&response.bytes().await?)?;
-        if collect_response.encrypted_aggregate_shares().len() != 2 {
-            return Err(Error::AggregateShareCount(
-                collect_response.encrypted_aggregate_shares().len(),
-            ));
-        }
 
-        let aggregate_shares_bytes = collect_response
-            .encrypted_aggregate_shares()
-            .iter()
-            .zip(&[Role::Leader, Role::Helper])
-            .map(|(encrypted_aggregate_share, role)| {
-                hpke::open(
-                    &self.parameters.hpke_config,
-                    &self.parameters.hpke_private_key,
-                    &HpkeApplicationInfo::new(&hpke::Label::AggregateShare, role, &Role::Collector),
-                    encrypted_aggregate_share,
-                    &AggregateShareAad::new(
-                        self.parameters.task_id,
-                        BatchSelector::<Q>::new(Q::batch_identifier_for_collection(
-                            &job.query,
-                            &collect_response,
-                        )),
-                    )
-                    .get_encoded(),
+        let aggregate_shares = [
+            (
+                Role::Leader,
+                collect_response.leader_encrypted_aggregate_share(),
+            ),
+            (
+                Role::Helper,
+                collect_response.helper_encrypted_aggregate_share(),
+            ),
+        ]
+        .into_iter()
+        .map(|(role, encrypted_aggregate_share)| {
+            let bytes = hpke::open(
+                &self.parameters.hpke_config,
+                &self.parameters.hpke_private_key,
+                &HpkeApplicationInfo::new(&hpke::Label::AggregateShare, &role, &Role::Collector),
+                encrypted_aggregate_share,
+                &AggregateShareAad::new(
+                    self.parameters.task_id,
+                    BatchSelector::<Q>::new(Q::batch_identifier_for_collection(
+                        &job.query,
+                        &collect_response,
+                    )),
                 )
-            });
-        let aggregate_shares = aggregate_shares_bytes
-            .map(|bytes| {
-                V::AggregateShare::get_decoded_with_param(
-                    &(&self.vdaf_collector, &job.aggregation_parameter),
-                    &bytes?,
-                )
-                .map_err(|_err| Error::AggregateShareDecode)
-            })
-            .collect::<Result<Vec<_>, Error>>()?;
+                .get_encoded(),
+            )?;
+            V::AggregateShare::get_decoded_with_param(
+                &(&self.vdaf_collector, &job.aggregation_parameter),
+                &bytes,
+            )
+            .map_err(|_err| Error::AggregateShareDecode)
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
 
         let report_count = collect_response
             .report_count()
@@ -738,30 +735,20 @@ mod tests {
             PartialBatchSelector::new_time_interval(),
             1,
             batch_interval,
-            Vec::<HpkeCiphertext>::from([
-                hpke::seal(
-                    &parameters.hpke_config,
-                    &HpkeApplicationInfo::new(
-                        &Label::AggregateShare,
-                        &Role::Leader,
-                        &Role::Collector,
-                    ),
-                    &transcript.aggregate_shares[0].get_encoded(),
-                    &associated_data.get_encoded(),
-                )
-                .unwrap(),
-                hpke::seal(
-                    &parameters.hpke_config,
-                    &HpkeApplicationInfo::new(
-                        &Label::AggregateShare,
-                        &Role::Helper,
-                        &Role::Collector,
-                    ),
-                    &transcript.aggregate_shares[1].get_encoded(),
-                    &associated_data.get_encoded(),
-                )
-                .unwrap(),
-            ]),
+            hpke::seal(
+                &parameters.hpke_config,
+                &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
+                &transcript.aggregate_shares[0].get_encoded(),
+                &associated_data.get_encoded(),
+            )
+            .unwrap(),
+            hpke::seal(
+                &parameters.hpke_config,
+                &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
+                &transcript.aggregate_shares[1].get_encoded(),
+                &associated_data.get_encoded(),
+            )
+            .unwrap(),
         )
     }
 
@@ -776,30 +763,20 @@ mod tests {
             PartialBatchSelector::new_fixed_size(batch_id),
             1,
             Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
-            Vec::<HpkeCiphertext>::from([
-                hpke::seal(
-                    &parameters.hpke_config,
-                    &HpkeApplicationInfo::new(
-                        &Label::AggregateShare,
-                        &Role::Leader,
-                        &Role::Collector,
-                    ),
-                    &transcript.aggregate_shares[0].get_encoded(),
-                    &associated_data.get_encoded(),
-                )
-                .unwrap(),
-                hpke::seal(
-                    &parameters.hpke_config,
-                    &HpkeApplicationInfo::new(
-                        &Label::AggregateShare,
-                        &Role::Helper,
-                        &Role::Collector,
-                    ),
-                    &transcript.aggregate_shares[1].get_encoded(),
-                    &associated_data.get_encoded(),
-                )
-                .unwrap(),
-            ]),
+            hpke::seal(
+                &parameters.hpke_config,
+                &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
+                &transcript.aggregate_shares[0].get_encoded(),
+                &associated_data.get_encoded(),
+            )
+            .unwrap(),
+            hpke::seal(
+                &parameters.hpke_config,
+                &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
+                &transcript.aggregate_shares[1].get_encoded(),
+                &associated_data.get_encoded(),
+            )
+            .unwrap(),
         )
     }
 
@@ -1405,31 +1382,6 @@ mod tests {
 
         mock_collection_job_bad_message_bytes.assert_async().await;
 
-        let mock_collection_job_bad_share_count = server
-            .mock("POST", job.collection_job_url.path())
-            .with_status(200)
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionMessage::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_body(
-                CollectionMessage::new(
-                    PartialBatchSelector::new_time_interval(),
-                    0,
-                    batch_interval,
-                    Vec::new(),
-                )
-                .get_encoded(),
-            )
-            .expect_at_least(1)
-            .create_async()
-            .await;
-
-        let error = collector.poll_once(&job).await.unwrap_err();
-        assert_matches!(error, Error::AggregateShareCount(0));
-
-        mock_collection_job_bad_share_count.assert_async().await;
-
         let mock_collection_job_bad_ciphertext = server
             .mock("POST", job.collection_job_url.path())
             .with_status(200)
@@ -1442,18 +1394,16 @@ mod tests {
                     PartialBatchSelector::new_time_interval(),
                     1,
                     batch_interval,
-                    Vec::from([
-                        HpkeCiphertext::new(
-                            *collector.parameters.hpke_config.id(),
-                            Vec::new(),
-                            Vec::new(),
-                        ),
-                        HpkeCiphertext::new(
-                            *collector.parameters.hpke_config.id(),
-                            Vec::new(),
-                            Vec::new(),
-                        ),
-                    ]),
+                    HpkeCiphertext::new(
+                        *collector.parameters.hpke_config.id(),
+                        Vec::new(),
+                        Vec::new(),
+                    ),
+                    HpkeCiphertext::new(
+                        *collector.parameters.hpke_config.id(),
+                        Vec::new(),
+                        Vec::new(),
+                    ),
                 )
                 .get_encoded(),
             )
@@ -1474,30 +1424,20 @@ mod tests {
             PartialBatchSelector::new_time_interval(),
             1,
             batch_interval,
-            Vec::from([
-                hpke::seal(
-                    &collector.parameters.hpke_config,
-                    &HpkeApplicationInfo::new(
-                        &Label::AggregateShare,
-                        &Role::Leader,
-                        &Role::Collector,
-                    ),
-                    b"bad",
-                    &associated_data.get_encoded(),
-                )
-                .unwrap(),
-                hpke::seal(
-                    &collector.parameters.hpke_config,
-                    &HpkeApplicationInfo::new(
-                        &Label::AggregateShare,
-                        &Role::Helper,
-                        &Role::Collector,
-                    ),
-                    b"bad",
-                    &associated_data.get_encoded(),
-                )
-                .unwrap(),
-            ]),
+            hpke::seal(
+                &collector.parameters.hpke_config,
+                &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
+                b"bad",
+                &associated_data.get_encoded(),
+            )
+            .unwrap(),
+            hpke::seal(
+                &collector.parameters.hpke_config,
+                &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
+                b"bad",
+                &associated_data.get_encoded(),
+            )
+            .unwrap(),
         );
         let mock_collection_job_bad_shares = server
             .mock("POST", job.collection_job_url.path())
@@ -1520,35 +1460,25 @@ mod tests {
             PartialBatchSelector::new_time_interval(),
             1,
             batch_interval,
-            Vec::from([
-                hpke::seal(
-                    &collector.parameters.hpke_config,
-                    &HpkeApplicationInfo::new(
-                        &Label::AggregateShare,
-                        &Role::Leader,
-                        &Role::Collector,
-                    ),
-                    &AggregateShare::from(OutputShare::from(Vec::from([Field64::from(0)])))
-                        .get_encoded(),
-                    &associated_data.get_encoded(),
-                )
-                .unwrap(),
-                hpke::seal(
-                    &collector.parameters.hpke_config,
-                    &HpkeApplicationInfo::new(
-                        &Label::AggregateShare,
-                        &Role::Helper,
-                        &Role::Collector,
-                    ),
-                    &AggregateShare::from(OutputShare::from(Vec::from([
-                        Field64::from(0),
-                        Field64::from(0),
-                    ])))
+            hpke::seal(
+                &collector.parameters.hpke_config,
+                &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
+                &AggregateShare::from(OutputShare::from(Vec::from([Field64::from(0)])))
                     .get_encoded(),
-                    &associated_data.get_encoded(),
-                )
-                .unwrap(),
-            ]),
+                &associated_data.get_encoded(),
+            )
+            .unwrap(),
+            hpke::seal(
+                &collector.parameters.hpke_config,
+                &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
+                &AggregateShare::from(OutputShare::from(Vec::from([
+                    Field64::from(0),
+                    Field64::from(0),
+                ])))
+                .get_encoded(),
+                &associated_data.get_encoded(),
+            )
+            .unwrap(),
         );
         let mock_collection_job_wrong_length = server
             .mock("POST", job.collection_job_url.path())

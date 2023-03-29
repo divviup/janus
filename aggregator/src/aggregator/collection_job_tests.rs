@@ -346,13 +346,12 @@ async fn collection_job_success_fixed_size() {
                 .align_to_time_precision(test_case.task.time_precision())
                 .unwrap(),
         );
-        assert_eq!(collect_resp.encrypted_aggregate_shares().len(), 2);
 
         let decrypted_leader_aggregate_share = hpke::open(
             test_case.task.collector_hpke_config(),
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
-            &collect_resp.encrypted_aggregate_shares()[0],
+            collect_resp.leader_encrypted_aggregate_share(),
             &AggregateShareAad::new(
                 *test_case.task.id(),
                 BatchSelector::new_fixed_size(batch_id),
@@ -370,7 +369,7 @@ async fn collection_job_success_fixed_size() {
             test_case.task.collector_hpke_config(),
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
-            &collect_resp.encrypted_aggregate_shares()[1],
+            collect_resp.helper_encrypted_aggregate_share(),
             &AggregateShareAad::new(
                 *test_case.task.id(),
                 BatchSelector::new_fixed_size(batch_id),

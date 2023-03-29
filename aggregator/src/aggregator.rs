@@ -44,10 +44,10 @@ use janus_messages::{
     query_type::{FixedSize, TimeInterval},
     AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobRound,
-    BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, HpkeCiphertext,
-    HpkeConfigId, HpkeConfigList, InputShareAad, Interval, PartialBatchSelector,
-    PlaintextInputShare, PrepareStep, PrepareStepResult, Report, ReportId, ReportIdChecksum,
-    ReportShare, ReportShareError, Role, TaskId, Time,
+    BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, HpkeConfigId,
+    HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
+    PrepareStep, PrepareStepResult, Report, ReportId, ReportIdChecksum, ReportShare,
+    ReportShareError, Role, TaskId, Time,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -2208,10 +2208,8 @@ impl VdafOps {
                         ),
                         *report_count,
                         spanned_interval,
-                        Vec::<HpkeCiphertext>::from([
-                            encrypted_leader_aggregate_share,
-                            encrypted_helper_aggregate_share.clone(),
-                        ]),
+                        encrypted_leader_aggregate_share,
+                        encrypted_helper_aggregate_share.clone(),
                     )
                     .get_encoded(),
                 ))
@@ -7057,13 +7055,12 @@ mod tests {
             )
             .unwrap()
         );
-        assert_eq!(collect_resp.encrypted_aggregate_shares().len(), 2);
 
         let decrypted_leader_aggregate_share = hpke::open(
             test_case.task.collector_hpke_config(),
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
-            &collect_resp.encrypted_aggregate_shares()[0],
+            collect_resp.leader_encrypted_aggregate_share(),
             &AggregateShareAad::new(
                 *test_case.task.id(),
                 BatchSelector::new_time_interval(batch_interval),
@@ -7081,7 +7078,7 @@ mod tests {
             test_case.task.collector_hpke_config(),
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
-            &collect_resp.encrypted_aggregate_shares()[1],
+            collect_resp.helper_encrypted_aggregate_share(),
             &AggregateShareAad::new(
                 *test_case.task.id(),
                 BatchSelector::new_time_interval(batch_interval),

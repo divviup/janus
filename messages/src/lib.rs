@@ -1600,7 +1600,8 @@ pub struct Collection<Q: QueryType> {
     partial_batch_selector: PartialBatchSelector<Q>,
     report_count: u64,
     interval: Interval,
-    encrypted_aggregate_shares: Vec<HpkeCiphertext>,
+    leader_encrypted_agg_share: HpkeCiphertext,
+    helper_encrypted_agg_share: HpkeCiphertext,
 }
 
 impl<Q: QueryType> Collection<Q> {
@@ -1612,34 +1613,41 @@ impl<Q: QueryType> Collection<Q> {
         partial_batch_selector: PartialBatchSelector<Q>,
         report_count: u64,
         interval: Interval,
-        encrypted_aggregate_shares: Vec<HpkeCiphertext>,
+        leader_encrypted_agg_share: HpkeCiphertext,
+        helper_encrypted_agg_share: HpkeCiphertext,
     ) -> Self {
         Self {
             partial_batch_selector,
             report_count,
             interval,
-            encrypted_aggregate_shares,
+            leader_encrypted_agg_share,
+            helper_encrypted_agg_share,
         }
     }
 
-    /// Gets the batch selector associated with this collection.
+    /// Retrieves the batch selector associated with this collection.
     pub fn partial_batch_selector(&self) -> &PartialBatchSelector<Q> {
         &self.partial_batch_selector
     }
 
-    /// Gets the number of reports that were aggregated into this collection.
+    /// Retrieves the number of reports that were aggregated into this collection.
     pub fn report_count(&self) -> u64 {
         self.report_count
     }
 
-    /// Gets the interval spanned by the reports aggregated into this collection.
+    /// Retrieves the interval spanned by the reports aggregated into this collection.
     pub fn interval(&self) -> &Interval {
         &self.interval
     }
 
-    /// Gets the encrypted aggregate shares associated with this collection.
-    pub fn encrypted_aggregate_shares(&self) -> &[HpkeCiphertext] {
-        &self.encrypted_aggregate_shares
+    /// Retrieves the leader encrypted aggregate share associated with this collection.
+    pub fn leader_encrypted_aggregate_share(&self) -> &HpkeCiphertext {
+        &self.leader_encrypted_agg_share
+    }
+
+    /// Retrieves the helper encrypted aggregate share associated with this collection.
+    pub fn helper_encrypted_aggregate_share(&self) -> &HpkeCiphertext {
+        &self.helper_encrypted_agg_share
     }
 }
 
@@ -1648,18 +1656,18 @@ impl<Q: QueryType> Encode for Collection<Q> {
         self.partial_batch_selector.encode(bytes);
         self.report_count.encode(bytes);
         self.interval.encode(bytes);
-        encode_u32_items(bytes, &(), &self.encrypted_aggregate_shares);
+        self.leader_encrypted_agg_share.encode(bytes);
+        self.helper_encrypted_agg_share.encode(bytes);
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        let mut length = self.partial_batch_selector.encoded_len()?
-            + self.report_count.encoded_len()?
-            + self.interval.encoded_len()?;
-        length += 4;
-        for encrypted_aggregate_share in self.encrypted_aggregate_shares.iter() {
-            length += encrypted_aggregate_share.encoded_len()?;
-        }
-        Some(length)
+        Some(
+            self.partial_batch_selector.encoded_len()?
+                + self.report_count.encoded_len()?
+                + self.interval.encoded_len()?
+                + self.leader_encrypted_agg_share.encoded_len()?
+                + self.helper_encrypted_agg_share.encoded_len()?,
+        )
     }
 }
 
@@ -1668,13 +1676,15 @@ impl<Q: QueryType> Decode for Collection<Q> {
         let partial_batch_selector = PartialBatchSelector::decode(bytes)?;
         let report_count = u64::decode(bytes)?;
         let interval = Interval::decode(bytes)?;
-        let encrypted_aggregate_shares = decode_u32_items(&(), bytes)?;
+        let leader_encrypted_agg_share = HpkeCiphertext::decode(bytes)?;
+        let helper_encrypted_agg_share = HpkeCiphertext::decode(bytes)?;
 
         Ok(Self {
             partial_batch_selector,
             report_count,
             interval,
-            encrypted_aggregate_shares,
+            leader_encrypted_agg_share,
+            helper_encrypted_agg_share,
         })
     }
 }
@@ -2664,6 +2674,9 @@ mod tests {
         for (val, hex_encoding) in vals_and_encodings {
             let mut encoded_val = Vec::new();
             val.encode(&mut encoded_val);
+            if let Some(want_encoded_len) = val.encoded_len() {
+                assert_eq!(want_encoded_len, encoded_val.len());
+            }
             let encoding = hex::decode(hex_encoding).unwrap();
             assert_eq!(
                 encoding, encoded_val,
@@ -3508,7 +3521,16 @@ mod tests {
                     partial_batch_selector: PartialBatchSelector::new_time_interval(),
                     report_count: 0,
                     interval,
-                    encrypted_aggregate_shares: Vec::new(),
+                    leader_encrypted_agg_share: HpkeCiphertext::new(
+                        HpkeConfigId::from(10),
+                        Vec::from("0123"),
+                        Vec::from("4567"),
+                    ),
+                    helper_encrypted_agg_share: HpkeCiphertext::new(
+                        HpkeConfigId::from(12),
+                        Vec::from("01234"),
+                        Vec::from("567"),
+                    ),
                 },
                 concat!(
                     concat!(
@@ -3522,8 +3544,32 @@ mod tests {
                         "0000000000003039", // duration
                     ),
                     concat!(
-                        // encrypted_aggregate_shares
-                        "00000000", // length
+                        // leader_encrypted_agg_share
+                        "0A", // config_id
+                        concat!(
+                            // encapsulated_context
+                            "0004",     // length
+                            "30313233", // opaque data
+                        ),
+                        concat!(
+                            // payload
+                            "00000004", // length
+                            "34353637", // opaque data
+                        ),
+                    ),
+                    concat!(
+                        // helper_encrypted_agg_share
+                        "0C", // config_id
+                        concat!(
+                            // encapsulated_context
+                            "0005",       // length
+                            "3031323334", // opaque data
+                        ),
+                        concat!(
+                            // payload
+                            "00000003", // length
+                            "353637",   // opaque data
+                        ),
                     )
                 ),
             ),
@@ -3532,18 +3578,16 @@ mod tests {
                     partial_batch_selector: PartialBatchSelector::new_time_interval(),
                     report_count: 23,
                     interval,
-                    encrypted_aggregate_shares: Vec::from([
-                        HpkeCiphertext::new(
-                            HpkeConfigId::from(10),
-                            Vec::from("0123"),
-                            Vec::from("4567"),
-                        ),
-                        HpkeCiphertext::new(
-                            HpkeConfigId::from(12),
-                            Vec::from("01234"),
-                            Vec::from("567"),
-                        ),
-                    ]),
+                    leader_encrypted_agg_share: HpkeCiphertext::new(
+                        HpkeConfigId::from(10),
+                        Vec::from("0123"),
+                        Vec::from("4567"),
+                    ),
+                    helper_encrypted_agg_share: HpkeCiphertext::new(
+                        HpkeConfigId::from(12),
+                        Vec::from("01234"),
+                        Vec::from("567"),
+                    ),
                 },
                 concat!(
                     concat!(
@@ -3557,34 +3601,32 @@ mod tests {
                         "0000000000003039", // duration
                     ),
                     concat!(
-                        // encrypted_aggregate_shares
-                        "0000001E", // length
+                        // leader_encrypted_agg_share
+                        "0A", // config_id
                         concat!(
-                            "0A", // config_id
-                            concat!(
-                                // encapsulated_context
-                                "0004",     // length
-                                "30313233", // opaque data
-                            ),
-                            concat!(
-                                // payload
-                                "00000004", // length
-                                "34353637", // opaque data
-                            ),
+                            // encapsulated_context
+                            "0004",     // length
+                            "30313233", // opaque data
                         ),
                         concat!(
-                            "0C", // config_id
-                            concat!(
-                                // encapsulated_context
-                                "0005",       // length
-                                "3031323334", // opaque data
-                            ),
-                            concat!(
-                                // payload
-                                "00000003", // length
-                                "353637",   // opaque data
-                            ),
-                        )
+                            // payload
+                            "00000004", // length
+                            "34353637", // opaque data
+                        ),
+                    ),
+                    concat!(
+                        // helper_encrypted_agg_share
+                        "0C", // config_id
+                        concat!(
+                            // encapsulated_context
+                            "0005",       // length
+                            "3031323334", // opaque data
+                        ),
+                        concat!(
+                            // payload
+                            "00000003", // length
+                            "353637",   // opaque data
+                        ),
                     )
                 ),
             ),
@@ -3599,7 +3641,16 @@ mod tests {
                     )),
                     report_count: 0,
                     interval,
-                    encrypted_aggregate_shares: Vec::new(),
+                    leader_encrypted_agg_share: HpkeCiphertext::new(
+                        HpkeConfigId::from(10),
+                        Vec::from("0123"),
+                        Vec::from("4567"),
+                    ),
+                    helper_encrypted_agg_share: HpkeCiphertext::new(
+                        HpkeConfigId::from(12),
+                        Vec::from("01234"),
+                        Vec::from("567"),
+                    ),
                 },
                 concat!(
                     concat!(
@@ -3614,8 +3665,32 @@ mod tests {
                         "0000000000003039", // duration
                     ),
                     concat!(
-                        // encrypted_aggregate_shares
-                        "00000000", // length
+                        // leader_encrypted_agg_share
+                        "0A", // config_id
+                        concat!(
+                            // encapsulated_context
+                            "0004",     // length
+                            "30313233", // opaque data
+                        ),
+                        concat!(
+                            // payload
+                            "00000004", // length
+                            "34353637", // opaque data
+                        ),
+                    ),
+                    concat!(
+                        // helper_encrypted_agg_share
+                        "0C", // config_id
+                        concat!(
+                            // encapsulated_context
+                            "0005",       // length
+                            "3031323334", // opaque data
+                        ),
+                        concat!(
+                            // payload
+                            "00000003", // length
+                            "353637",   // opaque data
+                        ),
                     )
                 ),
             ),
@@ -3626,18 +3701,16 @@ mod tests {
                     )),
                     report_count: 23,
                     interval,
-                    encrypted_aggregate_shares: Vec::from([
-                        HpkeCiphertext::new(
-                            HpkeConfigId::from(10),
-                            Vec::from("0123"),
-                            Vec::from("4567"),
-                        ),
-                        HpkeCiphertext::new(
-                            HpkeConfigId::from(12),
-                            Vec::from("01234"),
-                            Vec::from("567"),
-                        ),
-                    ]),
+                    leader_encrypted_agg_share: HpkeCiphertext::new(
+                        HpkeConfigId::from(10),
+                        Vec::from("0123"),
+                        Vec::from("4567"),
+                    ),
+                    helper_encrypted_agg_share: HpkeCiphertext::new(
+                        HpkeConfigId::from(12),
+                        Vec::from("01234"),
+                        Vec::from("567"),
+                    ),
                 },
                 concat!(
                     concat!(
@@ -3652,34 +3725,32 @@ mod tests {
                         "0000000000003039", // duration
                     ),
                     concat!(
-                        // encrypted_aggregate_shares
-                        "0000001E", // length
+                        // leader_encrypted_agg_share
+                        "0A", // config_id
                         concat!(
-                            "0A", // config_id
-                            concat!(
-                                // encapsulated_context
-                                "0004",     // length
-                                "30313233", // opaque data
-                            ),
-                            concat!(
-                                // payload
-                                "00000004", // length
-                                "34353637", // opaque data
-                            ),
+                            // encapsulated_context
+                            "0004",     // length
+                            "30313233", // opaque data
                         ),
                         concat!(
-                            "0C", // config_id
-                            concat!(
-                                // encapsulated_context
-                                "0005",       // length
-                                "3031323334", // opaque data
-                            ),
-                            concat!(
-                                // payload
-                                "00000003", // length
-                                "353637",   // opaque data
-                            ),
-                        )
+                            // payload
+                            "00000004", // length
+                            "34353637", // opaque data
+                        ),
+                    ),
+                    concat!(
+                        // helper_encrypted_agg_share
+                        "0C", // config_id
+                        concat!(
+                            // encapsulated_context
+                            "0005",       // length
+                            "3031323334", // opaque data
+                        ),
+                        concat!(
+                            // payload
+                            "00000003", // length
+                            "353637",   // opaque data
+                        ),
                     )
                 ),
             ),
