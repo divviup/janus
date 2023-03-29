@@ -1171,24 +1171,16 @@ impl VdafOps {
         C: Clock,
         Q: UploadableQueryType,
     {
-        // The leader's report is the first one.
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
-        if report.encrypted_input_shares().len() != 2 {
-            return Err(Arc::new(Error::UnrecognizedMessage(
-                Some(*task.id()),
-                "unexpected number of encrypted shares in report",
-            )));
-        }
-        let leader_encrypted_input_share =
-            &report.encrypted_input_shares()[Role::Leader.index().unwrap()];
-
         // Verify that the report's HPKE config ID is known.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
         let hpke_keypair = task
             .hpke_keys()
-            .get(leader_encrypted_input_share.config_id())
+            .get(report.leader_encrypted_input_share().config_id())
             .ok_or_else(|| {
-                Error::OutdatedHpkeConfig(*task.id(), *leader_encrypted_input_share.config_id())
+                Error::OutdatedHpkeConfig(
+                    *task.id(),
+                    *report.leader_encrypted_input_share().config_id(),
+                )
             })?;
 
         let report_deadline = clock
@@ -1256,7 +1248,7 @@ impl VdafOps {
             hpke_keypair.config(),
             hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, task.role()),
-            leader_encrypted_input_share,
+            report.leader_encrypted_input_share(),
             &InputShareAad::new(
                 *task.id(),
                 report.metadata().clone(),
@@ -1298,16 +1290,13 @@ impl VdafOps {
             }
         };
 
-        let helper_encrypted_input_share =
-            &report.encrypted_input_shares()[Role::Helper.index().unwrap()];
-
         let report = LeaderStoredReport::new(
             *task.id(),
             report.metadata().clone(),
             public_share,
             Vec::from(leader_plaintext_input_share.extensions()),
             leader_input_share,
-            helper_encrypted_input_share.clone(),
+            report.helper_encrypted_input_share().clone(),
         );
 
         report_writer
@@ -3516,7 +3505,8 @@ mod tests {
         Report::new(
             report_metadata,
             public_share.get_encoded(),
-            Vec::from([leader_ciphertext, helper_ciphertext]),
+            leader_ciphertext,
+            helper_ciphertext,
         )
     }
 
@@ -3638,7 +3628,8 @@ mod tests {
                     .unwrap(),
             ),
             report.public_share().to_vec(),
-            report.encrypted_input_shares().to_vec(),
+            report.leader_encrypted_input_share().clone(),
+            report.helper_encrypted_input_share().clone(),
         );
         let mut response = drive_filter(
             Method::PUT,
@@ -3657,29 +3648,6 @@ mod tests {
         )
         .await;
 
-        // should reject a report with only one share with the unrecognizedMessage type.
-        let bad_report = Report::new(
-            report.metadata().clone(),
-            report.public_share().to_vec(),
-            Vec::from([report.encrypted_input_shares()[0].clone()]),
-        );
-        let mut response = drive_filter(
-            Method::PUT,
-            task.report_upload_uri().unwrap().path(),
-            &bad_report.get_encoded(),
-            &filter,
-        )
-        .await
-        .unwrap();
-        check_response(
-            &mut response,
-            StatusCode::BAD_REQUEST,
-            "unrecognizedMessage",
-            "The message type for a response was incorrect or the payload was malformed.",
-            task.id(),
-        )
-        .await;
-
         // should reject a report using the wrong HPKE config for the leader, and reply with
         // the error type outdatedConfig.
         let unused_hpke_config_id = (0..)
@@ -3689,16 +3657,15 @@ mod tests {
         let bad_report = Report::new(
             report.metadata().clone(),
             report.public_share().to_vec(),
-            Vec::from([
-                HpkeCiphertext::new(
-                    unused_hpke_config_id,
-                    report.encrypted_input_shares()[0]
-                        .encapsulated_key()
-                        .to_vec(),
-                    report.encrypted_input_shares()[0].payload().to_vec(),
-                ),
-                report.encrypted_input_shares()[1].clone(),
-            ]),
+            HpkeCiphertext::new(
+                unused_hpke_config_id,
+                report
+                    .leader_encrypted_input_share()
+                    .encapsulated_key()
+                    .to_vec(),
+                report.leader_encrypted_input_share().payload().to_vec(),
+            ),
+            report.helper_encrypted_input_share().clone(),
         );
         let mut response = drive_filter(
             Method::PUT,
@@ -3727,7 +3694,8 @@ mod tests {
         let bad_report = Report::new(
             ReportMetadata::new(*report.metadata().id(), bad_report_time),
             report.public_share().to_vec(),
-            report.encrypted_input_shares().to_vec(),
+            report.leader_encrypted_input_share().clone(),
+            report.helper_encrypted_input_share().clone(),
         );
         let mut response = drive_filter(
             Method::PUT,
@@ -3816,7 +3784,8 @@ mod tests {
                             .unwrap(),
                     ),
                     report.public_share().to_vec(),
-                    report.encrypted_input_shares().to_vec(),
+                    report.leader_encrypted_input_share().clone(),
+                    report.helper_encrypted_input_share().clone(),
                 )
                 .get_encoded(),
             )
@@ -4024,29 +3993,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upload_wrong_number_of_encrypted_shares() {
-        install_test_trace_subscriber();
-
-        let (_, aggregator, clock, task, _, _ephemeral_datastore) =
-            setup_upload_test(default_aggregator_config()).await;
-        let report = create_report(&task, clock.now());
-        let report = Report::new(
-            report.metadata().clone(),
-            report.public_share().to_vec(),
-            Vec::from([report.encrypted_input_shares()[0].clone()]),
-        );
-
-        assert_matches!(
-            aggregator
-                .handle_upload(task.id(), &report.get_encoded())
-                .await
-                .unwrap_err()
-                .as_ref(),
-            Error::UnrecognizedMessage(_, _)
-        );
-    }
-
-    #[tokio::test]
     async fn upload_wrong_hpke_config_id() {
         install_test_trace_subscriber();
 
@@ -4062,16 +4008,15 @@ mod tests {
         let report = Report::new(
             report.metadata().clone(),
             report.public_share().to_vec(),
-            Vec::from([
-                HpkeCiphertext::new(
-                    unused_hpke_config_id,
-                    report.encrypted_input_shares()[0]
-                        .encapsulated_key()
-                        .to_vec(),
-                    report.encrypted_input_shares()[0].payload().to_vec(),
-                ),
-                report.encrypted_input_shares()[1].clone(),
-            ]),
+            HpkeCiphertext::new(
+                unused_hpke_config_id,
+                report
+                    .leader_encrypted_input_share()
+                    .encapsulated_key()
+                    .to_vec(),
+                report.leader_encrypted_input_share().payload().to_vec(),
+            ),
+            report.helper_encrypted_input_share().clone(),
         );
 
         assert_matches!(aggregator.handle_upload(task.id(), &report.get_encoded()).await.unwrap_err().as_ref(), Error::OutdatedHpkeConfig(task_id, config_id) => {

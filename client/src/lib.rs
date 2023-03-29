@@ -4,6 +4,7 @@ use backoff::ExponentialBackoff;
 use derivative::Derivative;
 use http::header::CONTENT_TYPE;
 use http_api_problem::HttpApiProblem;
+use itertools::Itertools;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
     http::response_to_problem_details,
@@ -12,8 +13,8 @@ use janus_core::{
     time::{Clock, TimeExt},
 };
 use janus_messages::{
-    Duration, HpkeCiphertext, HpkeConfig, HpkeConfigList, InputShareAad, PlaintextInputShare,
-    Report, ReportId, ReportMetadata, Role, TaskId,
+    Duration, HpkeConfig, HpkeConfigList, InputShareAad, PlaintextInputShare, Report, ReportId,
+    ReportMetadata, Role, TaskId,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -228,14 +229,14 @@ impl<V: vdaf::Client<16>, C: Clock> Client<V, C> {
         let report_metadata = ReportMetadata::new(report_id, time);
         let encoded_public_share = public_share.get_encoded();
 
-        let encrypted_input_shares: Vec<HpkeCiphertext> = [
+        let (leader_encrypted_input_share, helper_encrypted_input_share) = [
             (&self.leader_hpke_config, &Role::Leader),
             (&self.helper_hpke_config, &Role::Helper),
         ]
         .into_iter()
         .zip(input_shares)
         .map(|((hpke_config, receiver_role), input_share)| {
-            Ok(hpke::seal(
+            hpke::seal(
                 hpke_config,
                 &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, receiver_role),
                 &PlaintextInputShare::new(
@@ -249,14 +250,16 @@ impl<V: vdaf::Client<16>, C: Clock> Client<V, C> {
                     encoded_public_share.clone(),
                 )
                 .get_encoded(),
-            )?)
+            )
         })
-        .collect::<Result<_, Error>>()?;
+        .collect_tuple()
+        .expect("iterator to yield two items"); // expect safety: iterator contains two items.
 
         Ok(Report::new(
             report_metadata,
             encoded_public_share,
-            encrypted_input_shares,
+            leader_encrypted_input_share?,
+            helper_encrypted_input_share?,
         ))
     }
 

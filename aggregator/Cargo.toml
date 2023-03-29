@@ -96,7 +96,7 @@ warp = { version = "0.3", features = ["tls"] }
 [dev-dependencies]
 assert_matches = "1"
 hyper = "0.14.25"
-itertools = "0.10.5"
+itertools.workspace = true
 # Enable `kube`'s `openssl-tls` feature (which takes precedence over the
 # `rustls-tls` feature when creating a default client) to work around rustls's
 # lack of support for connecting to servers by IP addresses, which affects many

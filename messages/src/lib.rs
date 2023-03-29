@@ -427,6 +427,7 @@ impl Role {
     /// If this [`Role`] is one of the aggregators, returns the index at which
     /// that aggregator's message or data can be found in various lists, or
     /// `None` if the role is not an aggregator.
+    // XXX: can this be removed once all messages are updated to have explicit leader/helper fields?
     pub fn index(&self) -> Option<usize> {
         match self {
             // draft-gpew-priv-ppm §4.2: the leader's endpoint MUST be the first
@@ -1222,7 +1223,8 @@ impl Decode for PlaintextInputShare {
 pub struct Report {
     metadata: ReportMetadata,
     public_share: Vec<u8>,
-    encrypted_input_shares: Vec<HpkeCiphertext>,
+    leader_encrypted_input_share: HpkeCiphertext,
+    helper_encrypted_input_share: HpkeCiphertext,
 }
 
 impl Report {
@@ -1233,12 +1235,14 @@ impl Report {
     pub fn new(
         metadata: ReportMetadata,
         public_share: Vec<u8>,
-        encrypted_input_shares: Vec<HpkeCiphertext>,
+        leader_encrypted_input_share: HpkeCiphertext,
+        helper_encrypted_input_share: HpkeCiphertext,
     ) -> Self {
         Self {
             metadata,
             public_share,
-            encrypted_input_shares,
+            leader_encrypted_input_share,
+            helper_encrypted_input_share,
         }
     }
 
@@ -1247,13 +1251,19 @@ impl Report {
         &self.metadata
     }
 
+    /// Retrieve the public share from this report.
     pub fn public_share(&self) -> &[u8] {
         &self.public_share
     }
 
-    /// Get this report's encrypted input shares.
-    pub fn encrypted_input_shares(&self) -> &[HpkeCiphertext] {
-        &self.encrypted_input_shares
+    /// Retrieve the encrypted leader input share from this report.
+    pub fn leader_encrypted_input_share(&self) -> &HpkeCiphertext {
+        &self.leader_encrypted_input_share
+    }
+
+    /// Retrieve the encrypted helper input share from this report.
+    pub fn helper_encrypted_input_share(&self) -> &HpkeCiphertext {
+        &self.helper_encrypted_input_share
     }
 }
 
@@ -1261,17 +1271,16 @@ impl Encode for Report {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.metadata.encode(bytes);
         encode_u32_items(bytes, &(), &self.public_share);
-        encode_u32_items(bytes, &(), &self.encrypted_input_shares);
+        self.leader_encrypted_input_share.encode(bytes);
+        self.helper_encrypted_input_share.encode(bytes);
     }
 
     fn encoded_len(&self) -> Option<usize> {
         let mut length = self.metadata.encoded_len()?;
         length += 4;
         length += self.public_share.len();
-        length += 4;
-        for encrypted_input_share in self.encrypted_input_shares.iter() {
-            length += encrypted_input_share.encoded_len()?;
-        }
+        length += self.leader_encrypted_input_share.encoded_len()?;
+        length += self.helper_encrypted_input_share.encoded_len()?;
         Some(length)
     }
 }
@@ -1280,12 +1289,14 @@ impl Decode for Report {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let metadata = ReportMetadata::decode(bytes)?;
         let public_share = decode_u32_items(&(), bytes)?;
-        let encrypted_input_shares = decode_u32_items(&(), bytes)?;
+        let leader_encrypted_input_share = HpkeCiphertext::decode(bytes)?;
+        let helper_encrypted_input_share = HpkeCiphertext::decode(bytes)?;
 
         Ok(Self {
             metadata,
             public_share,
-            encrypted_input_shares,
+            leader_encrypted_input_share,
+            helper_encrypted_input_share,
         })
     }
 }
@@ -3135,7 +3146,16 @@ mod tests {
                         Time::from_seconds_since_epoch(12345),
                     ),
                     Vec::new(),
-                    Vec::new(),
+                    HpkeCiphertext::new(
+                        HpkeConfigId::from(42),
+                        Vec::from("012345"),
+                        Vec::from("543210"),
+                    ),
+                    HpkeCiphertext::new(
+                        HpkeConfigId::from(13),
+                        Vec::from("abce"),
+                        Vec::from("abfd"),
+                    ),
                 ),
                 concat!(
                     concat!(
@@ -3148,9 +3168,33 @@ mod tests {
                         "00000000", // length
                     ),
                     concat!(
-                        // encrypted_input_shares
-                        "00000000", // length
-                    )
+                        // leader_encrypted_input_share
+                        "2A", // config_id
+                        concat!(
+                            // encapsulated_context
+                            "0006",         // length
+                            "303132333435"  // opaque data
+                        ),
+                        concat!(
+                            // payload
+                            "00000006",     // length
+                            "353433323130", // opaque data
+                        ),
+                    ),
+                    concat!(
+                        // helper_encrypted_input_share
+                        "0D", // config_id
+                        concat!(
+                            // encapsulated_context
+                            "0004",     // length
+                            "61626365", // opaque data
+                        ),
+                        concat!(
+                            // payload
+                            "00000004", // length
+                            "61626664", // opaque data
+                        ),
+                    ),
                 ),
             ),
             (
@@ -3160,18 +3204,16 @@ mod tests {
                         Time::from_seconds_since_epoch(54321),
                     ),
                     Vec::from("3210"),
-                    Vec::from([
-                        HpkeCiphertext::new(
-                            HpkeConfigId::from(42),
-                            Vec::from("012345"),
-                            Vec::from("543210"),
-                        ),
-                        HpkeCiphertext::new(
-                            HpkeConfigId::from(13),
-                            Vec::from("abce"),
-                            Vec::from("abfd"),
-                        ),
-                    ]),
+                    HpkeCiphertext::new(
+                        HpkeConfigId::from(42),
+                        Vec::from("012345"),
+                        Vec::from("543210"),
+                    ),
+                    HpkeCiphertext::new(
+                        HpkeConfigId::from(13),
+                        Vec::from("abce"),
+                        Vec::from("abfd"),
+                    ),
                 ),
                 concat!(
                     concat!(
@@ -3185,33 +3227,31 @@ mod tests {
                         "33323130", // opaque data
                     ),
                     concat!(
-                        // encrypted_input_shares
-                        "00000022", // length
+                        // leader_encrypted_input_share
+                        "2A", // config_id
                         concat!(
-                            "2A", // config_id
-                            concat!(
-                                // encapsulated_context
-                                "0006",         // length
-                                "303132333435"  // opaque data
-                            ),
-                            concat!(
-                                // payload
-                                "00000006",     // length
-                                "353433323130", // opaque data
-                            ),
+                            // encapsulated_context
+                            "0006",         // length
+                            "303132333435"  // opaque data
                         ),
                         concat!(
-                            "0D", // config_id
-                            concat!(
-                                // encapsulated_context
-                                "0004",     // length
-                                "61626365", // opaque data
-                            ),
-                            concat!(
-                                // payload
-                                "00000004", // length
-                                "61626664", // opaque data
-                            ),
+                            // payload
+                            "00000006",     // length
+                            "353433323130", // opaque data
+                        ),
+                    ),
+                    concat!(
+                        // helper_encrypted_input_share
+                        "0D", // config_id
+                        concat!(
+                            // encapsulated_context
+                            "0004",     // length
+                            "61626365", // opaque data
+                        ),
+                        concat!(
+                            // payload
+                            "00000004", // length
+                            "61626664", // opaque data
                         ),
                     ),
                 ),
