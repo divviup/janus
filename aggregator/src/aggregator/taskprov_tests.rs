@@ -29,7 +29,7 @@ use janus_core::{
         self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo,
         HpkeKeypair, Label,
     },
-    task::PRIO3_VERIFY_KEY_LENGTH,
+    task::VERIFY_KEY_LEN,
     taskprov::TASKPROV_HEADER,
     test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
     time::{Clock, DurationExt, MockClock, TimeExt},
@@ -43,13 +43,16 @@ use janus_messages::{
     },
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq,
     AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
-    AggregationJobRound, BatchSelector, Duration, Interval, PartialBatchSelector, PrepareStep,
-    PrepareStepResult, ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time,
+    AggregationJobRound, BatchSelector, Duration, Interval, PartialBatchSelector, PrepareContinue,
+    PrepareInit, PrepareResp, PrepareStepResult, ReportIdChecksum, ReportMetadata, ReportShare,
+    Role, TaskId, Time,
 };
 use prio::{
     field::Field64,
     flp::types::Count,
+    idpf::IdpfInput,
     vdaf::{
+        poplar1::{Poplar1, Poplar1AggregationParam},
         prg::PrgSha3,
         prio3::{Prio3, Prio3Count},
         AggregateShare, OutputShare,
@@ -65,7 +68,7 @@ use trillium_testing::{
     prelude::{post, put},
 };
 
-type TestVdaf = Prio3<Count<Field64>, PrgSha3, 16>;
+type TestVdaf = Poplar1<PrgSha3, 16>;
 
 pub struct TaskprovTestCase {
     _ephemeral_datastore: EphemeralDatastore,
@@ -80,6 +83,7 @@ pub struct TaskprovTestCase {
     task: Task,
     task_config: TaskConfig,
     task_id: TaskId,
+    aggregation_param: Poplar1AggregationParam,
 }
 
 async fn setup_taskprov_test() -> TaskprovTestCase {
@@ -142,26 +146,34 @@ async fn setup_taskprov_test() -> TaskprovTestCase {
             TaskprovQuery::FixedSize { max_batch_size },
         ),
         task_expiration,
-        VdafConfig::new(DpConfig::new(DpMechanism::None), VdafType::Prio3Count).unwrap(),
+        VdafConfig::new(
+            DpConfig::new(DpMechanism::None),
+            VdafType::Poplar1 { bits: 1 },
+        )
+        .unwrap(),
     )
     .unwrap();
 
     let mut task_config_encoded = vec![];
     task_config.encode(&mut task_config_encoded);
 
-    // We use a real VDAF since taskprov doesn't have any allowance for a test VDAF.
-    let vdaf = Prio3Count::new_count(2).unwrap();
+    // We use a real VDAF since taskprov doesn't have any allowance for a test VDAF, and we use
+    // Poplar1 so that the VDAF wil take more than one round, so we can exercise aggregation
+    // continuation.
+    let vdaf = Poplar1::new(1);
 
     let task_id = TaskId::try_from(digest(&SHA256, &task_config_encoded).as_ref()).unwrap();
     let vdaf_instance = task_config.vdaf_config().vdaf_type().try_into().unwrap();
     let vdaf_verify_key = peer_aggregator.derive_vdaf_verify_key(&task_id, &vdaf_instance);
+    let aggregation_param =
+        Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[true])]))
+            .unwrap();
+    let measurement = IdpfInput::from_bools(&[true]);
 
     let task = janus_aggregator_core::taskprov::Task::new(
         task_id,
-        Vec::from([
-            url::Url::parse("https://leader.example.com/").unwrap(),
-            url::Url::parse("https://helper.example.com/").unwrap(),
-        ]),
+        url::Url::parse("https://leader.example.com/").unwrap(),
+        url::Url::parse("https://helper.example.com/").unwrap(),
         QueryType::FixedSize {
             max_batch_size: max_batch_size as u64,
             batch_time_window_size: None,
@@ -188,17 +200,17 @@ async fn setup_taskprov_test() -> TaskprovTestCase {
     let transcript = run_vdaf(
         &vdaf,
         vdaf_verify_key.as_ref().try_into().unwrap(),
-        &(),
+        &aggregation_param,
         report_metadata.id(),
-        &1,
+        &measurement,
     );
-    let report_share = generate_helper_report_share::<Prio3Count>(
+    let report_share = generate_helper_report_share::<TestVdaf>(
         task_id,
         report_metadata.clone(),
         global_hpke_key.config(),
         &transcript.public_share,
         Vec::new(),
-        &transcript.input_shares[1],
+        &transcript.helper_input_share,
     );
 
     TaskprovTestCase {
@@ -214,6 +226,7 @@ async fn setup_taskprov_test() -> TaskprovTestCase {
         report_metadata,
         transcript,
         report_share,
+        aggregation_param,
     }
 }
 
@@ -223,9 +236,12 @@ async fn taskprov_aggregate_init() {
 
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
-        ().get_encoded(),
+        test.aggregation_param.get_encoded(),
         PartialBatchSelector::new_fixed_size(batch_id),
-        Vec::from([test.report_share.clone()]),
+        Vec::from([PrepareInit::new(
+            test.report_share.clone(),
+            test.transcript.leader_prepare_transitions[0].1.clone(),
+        )]),
     );
 
     let aggregation_job_id: AggregationJobId = random();
@@ -289,10 +305,10 @@ async fn taskprov_aggregate_init() {
     let body_bytes = take_response_body(&mut test_conn).await;
     let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
-    assert_eq!(aggregate_resp.prepare_steps().len(), 1);
-    let prepare_step = aggregate_resp.prepare_steps().get(0).unwrap();
+    assert_eq!(aggregate_resp.prepare_resps().len(), 1);
+    let prepare_step = aggregate_resp.prepare_resps().get(0).unwrap();
     assert_eq!(prepare_step.report_id(), test.report_share.metadata().id());
-    assert_matches!(prepare_step.result(), &PrepareStepResult::Continued(..));
+    assert_matches!(prepare_step.result(), &PrepareStepResult::Continue { .. });
 
     let (aggregation_jobs, got_task) = test
         .datastore
@@ -330,7 +346,10 @@ async fn taskprov_opt_out_task_expired() {
     let request = AggregationJobInitializeReq::new(
         ().get_encoded(),
         PartialBatchSelector::new_fixed_size(batch_id),
-        Vec::from([test.report_share.clone()]),
+        Vec::from([PrepareInit::new(
+            test.report_share.clone(),
+            test.transcript.leader_prepare_transitions[0].1.clone(),
+        )]),
     );
 
     let aggregation_job_id: AggregationJobId = random();
@@ -380,7 +399,10 @@ async fn taskprov_opt_out_mismatched_task_id() {
     let request = AggregationJobInitializeReq::new(
         ().get_encoded(),
         PartialBatchSelector::new_fixed_size(batch_id),
-        Vec::from([test.report_share.clone()]),
+        Vec::from([PrepareInit::new(
+            test.report_share.clone(),
+            test.transcript.leader_prepare_transitions[0].1.clone(),
+        )]),
     );
 
     let aggregation_job_id: AggregationJobId = random();
@@ -406,7 +428,11 @@ async fn taskprov_opt_out_mismatched_task_id() {
             },
         ),
         task_expiration,
-        VdafConfig::new(DpConfig::new(DpMechanism::None), VdafType::Prio3Count).unwrap(),
+        VdafConfig::new(
+            DpConfig::new(DpMechanism::None),
+            VdafType::Poplar1 { bits: 1 },
+        )
+        .unwrap(),
     )
     .unwrap();
 
@@ -454,7 +480,10 @@ async fn taskprov_opt_out_missing_aggregator() {
     let request = AggregationJobInitializeReq::new(
         ().get_encoded(),
         PartialBatchSelector::new_fixed_size(batch_id),
-        Vec::from([test.report_share.clone()]),
+        Vec::from([PrepareInit::new(
+            test.report_share.clone(),
+            test.transcript.leader_prepare_transitions[0].1.clone(),
+        )]),
     );
 
     let aggregation_job_id: AggregationJobId = random();
@@ -477,7 +506,11 @@ async fn taskprov_opt_out_missing_aggregator() {
             },
         ),
         task_expiration,
-        VdafConfig::new(DpConfig::new(DpMechanism::None), VdafType::Prio3Count).unwrap(),
+        VdafConfig::new(
+            DpConfig::new(DpMechanism::None),
+            VdafType::Poplar1 { bits: 1 },
+        )
+        .unwrap(),
     )
     .unwrap();
     let another_task_config_encoded = another_task_config.get_encoded();
@@ -492,8 +525,7 @@ async fn taskprov_opt_out_missing_aggregator() {
         .request_authentication();
 
     let mut test_conn = put(format!(
-        "/tasks/{another_task_id
-}/aggregation_jobs/{aggregation_job_id}"
+        "/tasks/{another_task_id}/aggregation_jobs/{aggregation_job_id}"
     ))
     .with_request_header(auth.0, auth.1)
     .with_request_header(
@@ -527,7 +559,10 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
     let request = AggregationJobInitializeReq::new(
         ().get_encoded(),
         PartialBatchSelector::new_fixed_size(batch_id),
-        Vec::from([test.report_share.clone()]),
+        Vec::from([PrepareInit::new(
+            test.report_share.clone(),
+            test.transcript.leader_prepare_transitions[0].1.clone(),
+        )]),
     );
 
     let aggregation_job_id: AggregationJobId = random();
@@ -553,7 +588,11 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
             },
         ),
         task_expiration,
-        VdafConfig::new(DpConfig::new(DpMechanism::None), VdafType::Prio3Count).unwrap(),
+        VdafConfig::new(
+            DpConfig::new(DpMechanism::None),
+            VdafType::Poplar1 { bits: 1 },
+        )
+        .unwrap(),
     )
     .unwrap();
     let another_task_config_encoded = another_task_config.get_encoded();
@@ -568,8 +607,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
         .request_authentication();
 
     let mut test_conn = put(format!(
-        "/tasks/{another_task_id
-}/aggregation_jobs/{aggregation_job_id}"
+        "/tasks/{another_task_id}/aggregation_jobs/{aggregation_job_id}"
     ))
     .with_request_header(auth.0, auth.1)
     .with_request_header(
@@ -604,7 +642,10 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
     let request = AggregationJobInitializeReq::new(
         ().get_encoded(),
         PartialBatchSelector::new_fixed_size(batch_id),
-        Vec::from([test.report_share.clone()]),
+        Vec::from([PrepareInit::new(
+            test.report_share.clone(),
+            test.transcript.leader_prepare_transitions[0].1.clone(),
+        )]),
     );
 
     let aggregation_job_id: AggregationJobId = random();
@@ -630,7 +671,11 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
             },
         ),
         task_expiration,
-        VdafConfig::new(DpConfig::new(DpMechanism::None), VdafType::Prio3Count).unwrap(),
+        VdafConfig::new(
+            DpConfig::new(DpMechanism::None),
+            VdafType::Poplar1 { bits: 1 },
+        )
+        .unwrap(),
     )
     .unwrap();
     let another_task_config_encoded = another_task_config.get_encoded();
@@ -645,8 +690,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
         .request_authentication();
 
     let mut test_conn = put(format!(
-        "/tasks/{another_task_id
-}/aggregation_jobs/{aggregation_job_id}"
+        "/tasks/{another_task_id}/aggregation_jobs/{aggregation_job_id}"
     ))
     .with_request_header(auth.0, auth.1)
     .with_request_header(
@@ -680,15 +724,13 @@ async fn taskprov_aggregate_continue() {
     let aggregation_job_id = random();
     let batch_id = random();
 
-    let (prep_state, _) = test.transcript.helper_prep_state(0);
-    let prep_msg = test.transcript.prepare_messages[0].clone();
-
     test.datastore
         .run_tx(|tx| {
             let task = test.task.clone();
             let report_share = test.report_share.clone();
-            let prep_state = prep_state.clone();
             let report_metadata = test.report_metadata.clone();
+            let transcript = test.transcript.clone();
+            let aggregation_param = test.aggregation_param.clone();
 
             Box::pin(async move {
                 // Aggregate continue is only possible if the task has already been inserted.
@@ -696,41 +738,40 @@ async fn taskprov_aggregate_continue() {
 
                 tx.put_report_share(task.id(), &report_share).await?;
 
-                tx.put_aggregation_job(&AggregationJob::<
-                    PRIO3_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Count,
-                >::new(
-                    *task.id(),
-                    aggregation_job_id,
-                    (),
-                    batch_id,
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
-                    AggregationJobState::InProgress,
-                    AggregationJobRound::from(0),
-                ))
-                .await?;
-
-                tx.put_report_aggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(
-                    &ReportAggregation::new(
+                tx.put_aggregation_job(
+                    &AggregationJob::<VERIFY_KEY_LEN, FixedSize, TestVdaf>::new(
                         *task.id(),
                         aggregation_job_id,
-                        *report_metadata.id(),
-                        *report_metadata.time(),
-                        0,
-                        None,
-                        ReportAggregationState::Waiting(prep_state, None),
+                        aggregation_param.clone(),
+                        batch_id,
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
+                        AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     ),
                 )
                 .await?;
 
-                tx.put_aggregate_share_job::<PRIO3_VERIFY_KEY_LENGTH, FixedSize, Prio3Count>(
+                tx.put_report_aggregation::<VERIFY_KEY_LEN, TestVdaf>(&ReportAggregation::new(
+                    *task.id(),
+                    aggregation_job_id,
+                    *report_metadata.id(),
+                    *report_metadata.time(),
+                    0,
+                    None,
+                    ReportAggregationState::Waiting(
+                        transcript.helper_prepare_transitions[0].0.clone(),
+                        None,
+                    ),
+                ))
+                .await?;
+
+                tx.put_aggregate_share_job::<VERIFY_KEY_LEN, FixedSize, TestVdaf>(
                     &AggregateShareJob::new(
                         *task.id(),
                         batch_id,
-                        (),
-                        AggregateShare::from(OutputShare::from(Vec::from([Field64::from(7)]))),
+                        aggregation_param,
+                        transcript.helper_aggregate_share,
                         0,
                         ReportIdChecksum::default(),
                     ),
@@ -743,9 +784,9 @@ async fn taskprov_aggregate_continue() {
 
     let request = AggregationJobContinueReq::new(
         AggregationJobRound::from(1),
-        Vec::from([PrepareStep::new(
+        Vec::from([PrepareContinue::new(
             *test.report_metadata.id(),
-            PrepareStepResult::Continued(prep_msg.get_encoded()),
+            test.transcript.leader_prepare_transitions[1].1.clone(),
         )]),
     );
 
@@ -814,11 +855,11 @@ async fn taskprov_aggregate_continue() {
     let body_bytes = take_response_body(&mut test_conn).await;
     let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
-    // We'll only validate the response. Taskprov doesn't touch functionality beyond the authorization
-    // of the request.
+    // We'll only validate the response. Taskprov doesn't touch functionality beyond the
+    // authorization of the request.
     assert_eq!(
         aggregate_resp,
-        AggregationJobResp::new(Vec::from([PrepareStep::new(
+        AggregationJobResp::new(Vec::from([PrepareResp::new(
             *test.report_metadata.id(),
             PrepareStepResult::Finished
         )]))
@@ -836,6 +877,8 @@ async fn taskprov_aggregate_share() {
             let interval =
                 Interval::new(Time::from_seconds_since_epoch(6000), *task.time_precision())
                     .unwrap();
+            let aggregation_param = test.aggregation_param.clone();
+            let transcript = test.transcript.clone();
 
             Box::pin(async move {
                 tx.put_task(&task).await?;
@@ -843,7 +886,7 @@ async fn taskprov_aggregate_share() {
                 tx.put_batch(&Batch::<16, FixedSize, TestVdaf>::new(
                     *task.id(),
                     batch_id,
-                    (),
+                    aggregation_param.clone(),
                     BatchState::Closed,
                     0,
                     interval,
@@ -854,12 +897,10 @@ async fn taskprov_aggregate_share() {
                 tx.put_batch_aggregation(&BatchAggregation::<16, FixedSize, TestVdaf>::new(
                     *task.id(),
                     batch_id,
-                    (),
+                    aggregation_param,
                     0,
                     BatchAggregationState::Aggregating,
-                    Some(AggregateShare::from(OutputShare::from(Vec::from([
-                        Field64::from(7),
-                    ])))),
+                    Some(transcript.helper_aggregate_share),
                     1,
                     interval,
                     ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
@@ -874,7 +915,7 @@ async fn taskprov_aggregate_share() {
 
     let request = AggregateShareReq::new(
         BatchSelector::new_fixed_size(batch_id),
-        ().get_encoded(),
+        test.aggregation_param.get_encoded(),
         1,
         ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
     );
@@ -922,8 +963,6 @@ async fn taskprov_aggregate_share() {
         )
         .run_async(&test.handler)
         .await;
-
-    println!("{:?}", test_conn);
 
     assert_eq!(test_conn.status(), Some(Status::Ok));
     assert_headers!(

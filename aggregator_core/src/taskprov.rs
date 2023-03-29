@@ -272,7 +272,8 @@ impl Task {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         task_id: TaskId,
-        aggregator_endpoints: Vec<Url>,
+        leader_aggregator_endpoint: Url,
+        helper_aggregator_endpoint: Url,
         query_type: QueryType,
         vdaf: VdafInstance,
         role: Role,
@@ -286,7 +287,8 @@ impl Task {
     ) -> Result<Self, Error> {
         let task = Self(task::Task::new_without_validation(
             task_id,
-            aggregator_endpoints,
+            leader_aggregator_endpoint,
+            helper_aggregator_endpoint,
             query_type,
             vdaf,
             role,

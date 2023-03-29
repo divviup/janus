@@ -1999,6 +1999,7 @@ dependencies = [
  "derivative",
  "http",
  "http-api-problem",
+ "itertools",
  "janus_core",
  "janus_messages",
  "mockito",
@@ -3034,8 +3035,7 @@ checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
 [[package]]
 name = "prio"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1139097c0aa90a7e476953f358c0cc25a627ede8ac0dd47e05594a37d665273"
+source = "git+https://github.com/divviup/libprio-rs?branch=timg/ping-pong-topology#5195ff0ba3a45fb296a2a781e9bb5750cb603300"
 dependencies = [
  "aes",
  "base64 0.21.2",
@@ -3043,9 +3043,11 @@ dependencies = [
  "byteorder",
  "cmac",
  "ctr",
+ "derivative",
  "fiat-crypto",
  "fixed",
  "getrandom",
+ "rand_core 0.6.4",
  "rayon",
  "serde",
  "sha3",

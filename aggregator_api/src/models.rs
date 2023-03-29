@@ -135,11 +135,11 @@ impl TryFrom<&Task> for TaskResp {
         // https://github.com/divviup/janus/issues/1524
 
         // Return the aggregator endpoint URL for the role opposite our own
-        let peer_aggregator_endpoint = task.aggregator_endpoints()[match task.role() {
-            Role::Leader => 1,
-            Role::Helper => 0,
+        let peer_aggregator_endpoint = match task.role() {
+            Role::Leader => task.helper_aggregator_endpoint(),
+            Role::Helper => task.leader_aggregator_endpoint(),
             _ => return Err("illegal aggregator role in task"),
-        }]
+        }
         .clone();
 
         if task.vdaf_verify_keys().len() != 1 {

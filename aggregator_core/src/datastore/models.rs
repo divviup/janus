@@ -13,8 +13,8 @@ use janus_core::{
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     AggregationJobId, AggregationJobRound, BatchId, CollectionJobId, Duration, Extension,
-    HpkeCiphertext, Interval, PrepareStep, ReportId, ReportIdChecksum, ReportMetadata,
-    ReportShareError, Role, TaskId, Time,
+    HpkeCiphertext, Interval, PrepareError, PrepareResp, ReportId, ReportIdChecksum,
+    ReportMetadata, Role, TaskId, Time,
 };
 use postgres_protocol::types::{
     range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql, Range, RangeBound,
@@ -22,6 +22,7 @@ use postgres_protocol::types::{
 use postgres_types::{accepts, to_sql_checked, FromSql, ToSql};
 use prio::{
     codec::Encode,
+    topology::ping_pong,
     vdaf::{self, Aggregatable},
 };
 use rand::{distributions::Standard, prelude::Distribution};
@@ -587,7 +588,7 @@ pub struct ReportAggregation<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SI
     report_id: ReportId,
     time: Time,
     ord: u64,
-    last_prep_step: Option<PrepareStep>,
+    last_prep_step: Option<PrepareResp>,
     state: ReportAggregationState<SEED_SIZE, A>,
 }
 
@@ -599,7 +600,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> ReportAggregati
         report_id: ReportId,
         time: Time,
         ord: u64,
-        last_prep_step: Option<PrepareStep>,
+        last_prep_step: Option<PrepareResp>,
         state: ReportAggregationState<SEED_SIZE, A>,
     ) -> Self {
         Self {
@@ -644,13 +645,13 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> ReportAggregati
     }
 
     /// Returns the last preparation step returned by the Helper, if any.
-    pub fn last_prep_step(&self) -> Option<&PrepareStep> {
+    pub fn last_prep_step(&self) -> Option<&PrepareResp> {
         self.last_prep_step.as_ref()
     }
 
     /// Returns a new [`ReportAggregation`] corresponding to this report aggregation updated to
     /// have the given last preparation step.
-    pub fn with_last_prep_step(self, last_prep_step: Option<PrepareStep>) -> Self {
+    pub fn with_last_prep_step(self, last_prep_step: Option<PrepareResp>) -> Self {
         Self {
             last_prep_step,
             ..self
@@ -700,16 +701,18 @@ where
 
 /// ReportAggregationState represents the state of a single report aggregation. It corresponds
 /// to the REPORT_AGGREGATION_STATE enum in the schema, along with the state-specific data.
-#[derive(Clone, Derivative)]
-#[derivative(Debug)]
+#[derive(Clone, Debug, Derivative)]
 pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
     Start,
     Waiting(
-        #[derivative(Debug = "ignore")] A::PrepareState,
-        #[derivative(Debug = "ignore")] Option<A::PrepareMessage>,
+        /// Current state of this report aggregation, which could either be A::PrepareState (we're
+        /// awaiting another prepare message from the peer aggregator) or A::OutputShare (we have
+        /// finished, but are waiting for the peer to finish before we commit the output share).
+        ping_pong::State<A::PrepareState, A::OutputShare>,
+        Option<ping_pong::Message>,
     ),
     Finished,
-    Failed(ReportShareError),
+    Failed(PrepareError),
 }
 
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>

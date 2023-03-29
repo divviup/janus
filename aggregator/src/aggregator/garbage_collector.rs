@@ -257,6 +257,7 @@ mod tests {
                         &vdaf,
                         &Role::Leader,
                         task.id(),
+                        &AggregationParam(0),
                     )
                     .await
                     .unwrap()
@@ -446,6 +447,7 @@ mod tests {
                         &vdaf,
                         &Role::Leader,
                         task.id(),
+                        &AggregationParam(0),
                     )
                     .await
                     .unwrap()
@@ -625,6 +627,7 @@ mod tests {
                         &vdaf,
                         &Role::Leader,
                         task.id(),
+                        &AggregationParam(0),
                     )
                     .await
                     .unwrap()
@@ -823,6 +826,7 @@ mod tests {
                         &vdaf,
                         &Role::Leader,
                         task.id(),
+                        &AggregationParam(0),
                     )
                     .await
                     .unwrap()

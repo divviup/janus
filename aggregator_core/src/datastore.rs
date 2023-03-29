@@ -24,7 +24,7 @@ use janus_core::{
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     AggregationJobId, BatchId, CollectionJobId, Duration, Extension, HpkeCiphertext, HpkeConfig,
-    HpkeConfigId, Interval, PrepareStep, ReportId, ReportIdChecksum, ReportMetadata, ReportShare,
+    HpkeConfigId, Interval, PrepareResp, ReportId, ReportIdChecksum, ReportMetadata, ReportShare,
     Role, TaskId, Time,
 };
 use opentelemetry::{
@@ -34,6 +34,7 @@ use opentelemetry::{
 use postgres_types::{FromSql, Json, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
+    topology::ping_pong,
     vdaf,
 };
 use rand::random;
@@ -528,20 +529,15 @@ impl<C: Clock> Transaction<'_, C> {
     /// Writes a task into the datastore.
     #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     pub async fn put_task(&self, task: &Task) -> Result<(), Error> {
-        let endpoints: Vec<_> = task
-            .aggregator_endpoints()
-            .iter()
-            .map(Url::as_str)
-            .collect();
-
         // Main task insert.
         let stmt = self
             .prepare_cached(
                 "INSERT INTO tasks (
-                    task_id, aggregator_role, aggregator_endpoints, query_type, vdaf,
-                    max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
-                    time_precision, tolerable_clock_skew, collector_hpke_config)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    task_id, aggregator_role, leader_aggregator_endpoint,
+                    helper_aggregator_endpoint, query_type, vdaf, max_batch_query_count,
+                    task_expiration, report_expiry_age, min_batch_size, time_precision,
+                    tolerable_clock_skew, collector_hpke_config)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 ON CONFLICT DO NOTHING",
             )
             .await?;
@@ -551,7 +547,10 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* task_id */ &task.id().as_ref(),
                     /* aggregator_role */ &AggregatorRole::from_role(*task.role())?,
-                    /* aggregator_endpoints */ &endpoints,
+                    /* leader_aggregator_endpoint */
+                    &task.leader_aggregator_endpoint().as_str(),
+                    /* helper_aggregator_endpoint */
+                    &task.helper_aggregator_endpoint().as_str(),
                     /* query_type */ &Json(task.query_type()),
                     /* vdaf */ &Json(task.vdaf()),
                     /* max_batch_query_count */
@@ -748,9 +747,9 @@ impl<C: Clock> Transaction<'_, C> {
         let params: &[&(dyn ToSql + Sync)] = &[&task_id.as_ref()];
         let stmt = self
             .prepare_cached(
-                "SELECT aggregator_role, aggregator_endpoints, query_type, vdaf,
-                    max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
-                    time_precision, tolerable_clock_skew, collector_hpke_config
+                "SELECT aggregator_role, leader_aggregator_endpoint, helper_aggregator_endpoint,
+                    query_type, vdaf, max_batch_query_count, task_expiration, report_expiry_age,
+                    min_batch_size, time_precision, tolerable_clock_skew, collector_hpke_config
                 FROM tasks WHERE task_id = $1",
             )
             .await?;
@@ -820,9 +819,10 @@ impl<C: Clock> Transaction<'_, C> {
     pub async fn get_tasks(&self) -> Result<Vec<Task>, Error> {
         let stmt = self
             .prepare_cached(
-                "SELECT task_id, aggregator_role, aggregator_endpoints, query_type, vdaf,
-                    max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
-                    time_precision, tolerable_clock_skew, collector_hpke_config
+                "SELECT task_id, aggregator_role, leader_aggregator_endpoint,
+                    helper_aggregator_endpoint, query_type, vdaf, max_batch_query_count,
+                    task_expiration, report_expiry_age, min_batch_size, time_precision,
+                    tolerable_clock_skew, collector_hpke_config
                 FROM tasks",
             )
             .await?;
@@ -957,11 +957,10 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<Task, Error> {
         // Scalar task parameters.
         let aggregator_role: AggregatorRole = row.get("aggregator_role");
-        let endpoints = row
-            .get::<_, Vec<String>>("aggregator_endpoints")
-            .into_iter()
-            .map(|endpoint| Ok(Url::parse(&endpoint)?))
-            .collect::<Result<_, Error>>()?;
+        let leader_aggregator_endpoint =
+            row.get::<_, String>("leader_aggregator_endpoint").parse()?;
+        let helper_aggregator_endpoint =
+            row.get::<_, String>("helper_aggregator_endpoint").parse()?;
         let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
         let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
         let max_batch_query_count = row.get_bigint_and_convert("max_batch_query_count")?;
@@ -1058,7 +1057,8 @@ impl<C: Clock> Transaction<'_, C> {
 
         let task = Task::new_without_validation(
             *task_id,
-            endpoints,
+            leader_aggregator_endpoint,
+            helper_aggregator_endpoint,
             query_type,
             vdaf,
             aggregator_role.as_role(),
@@ -2100,6 +2100,7 @@ impl<C: Clock> Transaction<'_, C> {
         role: &Role,
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
+        aggregation_param: &A::AggregationParam,
         report_id: &ReportId,
     ) -> Result<Option<ReportAggregation<SEED_SIZE, A>>, Error>
     where
@@ -2138,6 +2139,7 @@ impl<C: Clock> Transaction<'_, C> {
                 task_id,
                 aggregation_job_id,
                 report_id,
+                aggregation_param,
                 &row,
             )
         })
@@ -2156,6 +2158,7 @@ impl<C: Clock> Transaction<'_, C> {
         role: &Role,
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
+        aggregation_param: &A::AggregationParam,
     ) -> Result<Vec<ReportAggregation<SEED_SIZE, A>>, Error>
     where
         for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
@@ -2193,6 +2196,7 @@ impl<C: Clock> Transaction<'_, C> {
                 task_id,
                 aggregation_job_id,
                 &row.get_bytea_and_convert::<ReportId>("client_report_id")?,
+                aggregation_param,
                 &row,
             )
         })
@@ -2210,6 +2214,7 @@ impl<C: Clock> Transaction<'_, C> {
         vdaf: &A,
         role: &Role,
         task_id: &TaskId,
+        aggregation_param: &A::AggregationParam,
     ) -> Result<Vec<ReportAggregation<SEED_SIZE, A>>, Error>
     where
         for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
@@ -2245,6 +2250,7 @@ impl<C: Clock> Transaction<'_, C> {
                 task_id,
                 &row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?,
                 &row.get_bytea_and_convert::<ReportId>("client_report_id")?,
+                aggregation_param,
                 &row,
             )
         })
@@ -2257,6 +2263,7 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
         report_id: &ReportId,
+        aggregation_param: &A::AggregationParam,
         row: &Row,
     ) -> Result<ReportAggregation<SEED_SIZE, A>, Error>
     where
@@ -2283,7 +2290,7 @@ impl<C: Clock> Transaction<'_, C> {
         };
 
         let last_prep_step = last_prep_step_bytes
-            .map(|bytes| PrepareStep::get_decoded(&bytes))
+            .map(|bytes| PrepareResp::get_decoded(&bytes))
             .transpose()?;
 
         let agg_state = match state {
@@ -2293,8 +2300,11 @@ impl<C: Clock> Transaction<'_, C> {
                 let agg_index = role.index().ok_or_else(|| {
                     Error::User(anyhow!("unexpected role: {}", role.as_str()).into())
                 })?;
-                let prep_state = A::PrepareState::get_decoded_with_param(
-                    &(vdaf, agg_index),
+                let ping_pong_state = ping_pong::State::get_decoded_with_param(
+                    &ping_pong::StateDecodingParam {
+                        prep_state: &(vdaf, agg_index),
+                        output_share: &(vdaf, aggregation_param),
+                    },
                     &prep_state_bytes.ok_or_else(|| {
                         Error::DbState(
                             "report aggregation in state WAITING but prep_state is NULL"
@@ -2303,10 +2313,10 @@ impl<C: Clock> Transaction<'_, C> {
                     })?,
                 )?;
                 let prep_msg = prep_msg_bytes
-                    .map(|bytes| A::PrepareMessage::get_decoded_with_param(&prep_state, &bytes))
+                    .map(|bytes| ping_pong::Message::get_decoded(&bytes))
                     .transpose()?;
 
-                ReportAggregationState::Waiting(prep_state, prep_msg)
+                ReportAggregationState::Waiting(ping_pong_state, prep_msg)
             }
 
             ReportAggregationStateCode::Finished => ReportAggregationState::Finished,
@@ -2346,7 +2356,7 @@ impl<C: Clock> Transaction<'_, C> {
         let encoded_state_values = report_aggregation.state().encoded_values_from_state();
         let encoded_last_prep_step = report_aggregation
             .last_prep_step()
-            .map(PrepareStep::get_encoded);
+            .map(PrepareResp::get_encoded);
 
         let stmt = self
             .prepare_cached(
@@ -2396,7 +2406,7 @@ impl<C: Clock> Transaction<'_, C> {
         let encoded_state_values = report_aggregation.state().encoded_values_from_state();
         let encoded_last_prep_step = report_aggregation
             .last_prep_step()
-            .map(PrepareStep::get_encoded);
+            .map(PrepareResp::get_encoded);
 
         let stmt = self
             .prepare_cached(
@@ -4414,7 +4424,7 @@ impl<C: Clock> Transaction<'_, C> {
 
         let stmt = self
             .prepare_cached(
-                "SELECT (SELECT p.id FROM taskprov_peer_aggregators AS p 
+                "SELECT (SELECT p.id FROM taskprov_peer_aggregators AS p
                     WHERE p.id = a.peer_aggregator_id) AS peer_id,
                 ord, type, token FROM taskprov_aggregator_auth_tokens AS a
                     ORDER BY ord ASC",
@@ -4424,7 +4434,7 @@ impl<C: Clock> Transaction<'_, C> {
 
         let stmt = self
             .prepare_cached(
-                "SELECT (SELECT p.id FROM taskprov_peer_aggregators AS p 
+                "SELECT (SELECT p.id FROM taskprov_peer_aggregators AS p
                     WHERE p.id = a.peer_aggregator_id) AS peer_id,
                 ord, type, token FROM taskprov_collector_auth_tokens AS a
                     ORDER BY ord ASC",

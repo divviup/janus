@@ -6,7 +6,6 @@ use janus_core::{
 };
 use janus_integration_tests::{client::ClientBackend, daphne::Daphne, janus::Janus};
 use janus_interop_binaries::test_util::generate_network_name;
-use janus_messages::Role;
 
 mod common;
 
@@ -26,9 +25,10 @@ async fn daphne_janus() {
     let [leader_task, helper_task]: [Task; 2] = [leader_task, helper_task]
         .into_iter()
         .map(|task| {
-            let mut endpoints = task.aggregator_endpoints().to_vec();
-            endpoints[Role::Leader.index().unwrap()].set_path("/v04/");
-            task.with_aggregator_endpoints(endpoints).build()
+            let mut leader_aggregator_endpoint = task.leader_aggregator_endpoint().clone();
+            leader_aggregator_endpoint.set_path("/v04/");
+            task.with_leader_aggregator_endpoint(leader_aggregator_endpoint)
+                .build()
         })
         .collect::<Vec<_>>()
         .try_into()
@@ -63,9 +63,10 @@ async fn janus_daphne() {
     let [leader_task, helper_task]: [Task; 2] = [leader_task, helper_task]
         .into_iter()
         .map(|task| {
-            let mut endpoints = task.aggregator_endpoints().to_vec();
-            endpoints[Role::Helper.index().unwrap()].set_path("/v04/");
-            task.with_aggregator_endpoints(endpoints).build()
+            let mut helper_aggregator_endpoint = task.helper_aggregator_endpoint().clone();
+            helper_aggregator_endpoint.set_path("/v04/");
+            task.with_helper_aggregator_endpoint(helper_aggregator_endpoint)
+                .build()
         })
         .collect::<Vec<_>>()
         .try_into()

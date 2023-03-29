@@ -44,19 +44,19 @@ impl EndpointFragments {
         .unwrap()
     }
 
-    pub fn port_forwarded_endpoints(&self, leader_port: u16, helper_port: u16) -> Vec<Url> {
-        Vec::from([
+    pub fn port_forwarded_endpoints(&self, leader_port: u16, helper_port: u16) -> (Url, Url) {
+        (
             self.port_forwarded_leader_endpoint(leader_port),
             Url::parse(&format!(
                 "http://127.0.0.1:{helper_port}{}",
                 self.helper_endpoint_path
             ))
             .unwrap(),
-        ])
+        )
     }
 
-    pub fn container_network_endpoints(&self) -> Vec<Url> {
-        Vec::from([
+    pub fn container_network_endpoints(&self) -> (Url, Url) {
+        (
             Url::parse(&format!(
                 "http://{}:8080{}",
                 self.leader_endpoint_host, self.leader_endpoint_path
@@ -67,6 +67,6 @@ impl EndpointFragments {
                 self.helper_endpoint_host, self.helper_endpoint_path
             ))
             .unwrap(),
-        ])
+        )
     }
 }

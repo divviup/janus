@@ -321,8 +321,8 @@ async fn post_task_helper_no_optional_fields() {
     // Verify that the task written to the datastore matches the request...
     assert_eq!(
         // The other aggregator endpoint in the datastore task is fake
-        req.peer_aggregator_endpoint,
-        got_task.aggregator_endpoints()[0]
+        &req.peer_aggregator_endpoint,
+        got_task.leader_aggregator_endpoint()
     );
     assert_eq!(&req.query_type, got_task.query_type());
     assert_eq!(&req.vdaf, got_task.vdaf());
@@ -522,8 +522,8 @@ async fn post_task_leader_all_optional_fields() {
     // Verify that the task written to the datastore matches the request...
     assert_eq!(
         // The other aggregator endpoint in the datastore task is fake
-        req.peer_aggregator_endpoint,
-        got_task.aggregator_endpoints()[1]
+        &req.peer_aggregator_endpoint,
+        got_task.helper_aggregator_endpoint()
     );
     assert_eq!(&req.query_type, got_task.query_type());
     assert_eq!(&req.vdaf, got_task.vdaf());
@@ -1731,10 +1731,8 @@ fn post_task_req_serialization() {
 fn task_resp_serialization() {
     let task = Task::new(
         TaskId::from([0u8; 32]),
-        Vec::from([
-            "https://leader.com/".parse().unwrap(),
-            "https://helper.com/".parse().unwrap(),
-        ]),
+        "https://leader.com/".parse().unwrap(),
+        "https://helper.com/".parse().unwrap(),
         QueryType::FixedSize {
             max_batch_size: 999,
             batch_time_window_size: None,

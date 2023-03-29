@@ -26,7 +26,7 @@ use std::{
 /// Accumulates output shares in memory and eventually flushes accumulations to a datastore. We
 /// accumulate output shares into a [`HashMap`] mapping the batch identifier at which the batch
 /// interval begins to the accumulated aggregate share, report count and checksum.
-#[derive(Derivative)]
+#[derive(Clone, Derivative)]
 #[derivative(Debug)]
 pub struct Accumulator<
     const SEED_SIZE: usize,
@@ -40,7 +40,7 @@ pub struct Accumulator<
     aggregations: HashMap<Q::BatchIdentifier, BatchData<SEED_SIZE, Q, A>>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct BatchData<
     const SEED_SIZE: usize,
     Q: AccumulableQueryType,

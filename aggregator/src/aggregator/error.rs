@@ -2,13 +2,15 @@ use http_api_problem::HttpApiProblem;
 use janus_aggregator_core::{datastore, task};
 use janus_messages::{
     problem_type::DapProblemType, AggregationJobId, AggregationJobRound, CollectionJobId,
-    HpkeConfigId, Interval, ReportId, ReportIdChecksum, Role, TaskId, Time,
+    HpkeConfigId, Interval, PrepareError, ReportId, ReportIdChecksum, Role, TaskId, Time,
 };
-use prio::vdaf::VdafError;
+use opentelemetry::{metrics::Counter, Context, KeyValue};
+use prio::{topology::ping_pong::PingPongError, vdaf::VdafError};
 use std::{
     fmt::{self, Display, Formatter},
     num::TryFromIntError,
 };
+use tracing::info;
 
 /// Errors returned by functions and methods in this module
 #[derive(Debug, thiserror::Error)]
@@ -231,4 +233,64 @@ impl Display for BatchMismatch {
             self.peer_report_count
         )
     }
+}
+
+/// Inspect the provided `ping_pong_error`, log it, increment the [`Counter`] with appropriate
+/// labels, and return a suitable [`PrepareError`].
+pub(crate) fn handle_ping_pong_error(
+    task_id: &TaskId,
+    peer_role: Role,
+    report_id: &ReportId,
+    ping_pong_error: PingPongError,
+    aggregate_step_failure_counter: &Counter<u64>,
+) -> PrepareError {
+    let (error_desc, value, prepare_error) = match ping_pong_error {
+        PingPongError::VdafPrepareInit(_) => (
+            "Couldn't helper_initialize report share".to_string(),
+            "prepare_init_failure".to_string(),
+            PrepareError::VdafPrepError,
+        ),
+        PingPongError::VdafPreparePreprocess(_) => (
+            "Couldn't compute prepare message".to_string(),
+            "prepare_message_failure".to_string(),
+            PrepareError::VdafPrepError,
+        ),
+        PingPongError::VdafPrepareStep(_) => (
+            "Prepare step failed".to_string(),
+            "prepare_step_failure".to_string(),
+            PrepareError::VdafPrepError,
+        ),
+        PingPongError::CodecPrepShare(_) => (
+            format!("Couldn't decode {peer_role} prepare share"),
+            format!("{peer_role}_prep_share_decode_failure"),
+            PrepareError::UnrecognizedMessage,
+        ),
+        PingPongError::CodecPrepMessage(_) => (
+            format!("Couldn't decode {peer_role} prepare message"),
+            format!("{peer_role}_prep_message_decode_failure"),
+            PrepareError::UnrecognizedMessage,
+        ),
+        ref error @ PingPongError::StateMismatch(_, _) => (
+            format!("{error}"),
+            format!("{peer_role}_ping_pong_message_state_mismatch"),
+            // TODO(timg): is this the right error if state mismatch?
+            PrepareError::VdafPrepError,
+        ),
+        PingPongError::InternalError(desc) => (
+            desc.to_string(),
+            "vdaf_ping_pong_internal_error".to_string(),
+            PrepareError::VdafPrepError,
+        ),
+    };
+
+    info!(
+        task_id = %task_id,
+        report_id = %report_id,
+        ?ping_pong_error,
+        error_desc,
+    );
+
+    aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", value)]);
+
+    prepare_error
 }

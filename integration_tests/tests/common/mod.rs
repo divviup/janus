@@ -23,6 +23,7 @@ use prio::vdaf::{self, prio3::Prio3};
 use rand::{random, thread_rng, Rng};
 use std::{iter, time::Duration as StdDuration};
 use tokio::time::{self, sleep};
+use url::Url;
 
 /// Returns a tuple of [`TaskParameters`], a task builder for the leader, and a task builder for the
 /// helper.
@@ -39,7 +40,12 @@ pub fn test_task_builders(
     };
     let collector_keypair = generate_test_hpke_config_and_private_key();
     let leader_task = TaskBuilder::new(query_type, vdaf.clone(), Role::Leader)
-        .with_aggregator_endpoints(endpoint_fragments.container_network_endpoints())
+        .with_leader_aggregator_endpoint(
+            Url::parse(&format!("http://leader-{endpoint_random_value}:8080/")).unwrap(),
+        )
+        .with_helper_aggregator_endpoint(
+            Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
+        )
         .with_min_batch_size(46)
         .with_collector_hpke_config(collector_keypair.config().clone());
     let helper_task = leader_task

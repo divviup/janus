@@ -20,7 +20,9 @@ hex = "0.4"
 num_enum = "0.7.0"
 # We can't pull prio in from the workspace because that would enable default features, and we do not
 # want prio/crypto-dependencies
-prio = { version = "0.14.0", default-features = false }
+# TODO(timg): go back to a released version of prio
+#prio = { path = "/home/timg/source/libprio-rs", default-features = false }
+prio = { git = "https://github.com/divviup/libprio-rs", branch = "timg/ping-pong-topology", default_features = false }
 rand = "0.8"
 serde.workspace = true
 thiserror.workspace = true
