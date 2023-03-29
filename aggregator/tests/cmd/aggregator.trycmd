@@ -16,8 +16,8 @@ Options:
       --otlp-metrics-metadata <KEY=value>
           additional OTLP/gRPC metadata key/value pairs for the metrics exporter [env: OTLP_METRICS_METADATA=]
   -h, --help
-          Print help information
+          Print help
   -V, --version
-          Print version information
+          Print version
 
 ```
