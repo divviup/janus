@@ -32,15 +32,15 @@ pub struct VdafTranscript<const SEED_SIZE: usize, V: vdaf::Aggregator<SEED_SIZE,
 }
 
 impl<const SEED_SIZE: usize, V: vdaf::Aggregator<SEED_SIZE, 16>> VdafTranscript<SEED_SIZE, V> {
-    /// Get the leader's preparation state at the requested round.
-    pub fn leader_prep_state(&self, round: usize) -> &V::PrepareState {
+    /// Get the Leader's preparation state and prepare share at the requested round.
+    pub fn leader_prep_state(&self, round: usize) -> (&V::PrepareState, &V::PrepareShare) {
         assert_matches!(
             &self.prepare_transitions[Role::Leader.index().unwrap()][round],
-            PrepareTransition::<V, SEED_SIZE, 16>::Continue(prep_state, _) => prep_state
+            PrepareTransition::<V, SEED_SIZE, 16>::Continue(prep_state, prep_share) => (prep_state, prep_share)
         )
     }
 
-    /// Get the helper's preparation state and prepare share at the requested round.
+    /// Get the Helper's preparation state and prepare share at the requested round.
     pub fn helper_prep_state(&self, round: usize) -> (&V::PrepareState, &V::PrepareShare) {
         assert_matches!(
             &self.prepare_transitions[Role::Helper.index().unwrap()][round],

@@ -71,9 +71,9 @@ impl CollectionJobDriver {
     ) -> Result<(), Error> {
         match lease.leased().query_type() {
             task::QueryType::TimeInterval => {
-                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LEN) => {
                     self.step_collection_job_generic::<
-                        VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LEN,
                         C,
                         TimeInterval,
                         VdafType
@@ -82,9 +82,9 @@ impl CollectionJobDriver {
                 })
             }
             task::QueryType::FixedSize { .. } => {
-                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LEN) => {
                     self.step_collection_job_generic::<
-                        VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LEN,
                         C,
                         FixedSize,
                         VdafType
@@ -261,8 +261,8 @@ impl CollectionJobDriver {
     ) -> Result<(), Error> {
         match lease.leased().query_type() {
             task::QueryType::TimeInterval => {
-                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    self.abandon_collection_job_generic::<VERIFY_KEY_LENGTH, C, TimeInterval, VdafType>(
+                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LEN) => {
+                    self.abandon_collection_job_generic::<VERIFY_KEY_LEN, C, TimeInterval, VdafType>(
                         datastore,
                         Arc::new(vdaf),
                         lease,
@@ -271,8 +271,8 @@ impl CollectionJobDriver {
                 })
             }
             task::QueryType::FixedSize { .. } => {
-                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-                    self.abandon_collection_job_generic::<VERIFY_KEY_LENGTH, C, FixedSize, VdafType>(
+                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LEN) => {
+                    self.abandon_collection_job_generic::<VERIFY_KEY_LEN, C, FixedSize, VdafType>(
                         datastore,
                         Arc::new(vdaf),
                         lease,
@@ -566,7 +566,8 @@ mod tests {
                         *report.metadata().id(),
                         *report.metadata().time(),
                         0,
-                        ReportAggregationState::Finished(OutputShare()),
+                        None,
+                        ReportAggregationState::Finished(OutputShare(0)),
                     ))
                     .await?;
 
@@ -691,7 +692,8 @@ mod tests {
                         *report.metadata().id(),
                         *report.metadata().time(),
                         0,
-                        ReportAggregationState::Finished(OutputShare()),
+                        None,
+                        ReportAggregationState::Finished(OutputShare(0)),
                     ))
                     .await?;
 

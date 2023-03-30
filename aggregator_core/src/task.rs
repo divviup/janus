@@ -586,7 +586,7 @@ pub mod test_util {
     };
     use janus_core::{
         hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair},
-        task::{AuthenticationToken, VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
+        task::{AuthenticationToken, VdafInstance, VERIFY_KEY_LEN},
         time::DurationExt,
     };
     use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId, Time};
@@ -602,7 +602,7 @@ pub mod test_util {
 
             // All "real" VDAFs use a verify key of length 16 currently. (Poplar1 may not, but it's
             // not yet done being specified, so choosing 16 bytes is fine for testing.)
-            _ => PRIO3_VERIFY_KEY_LENGTH,
+            _ => VERIFY_KEY_LEN,
         }
     }
 
@@ -801,7 +801,7 @@ mod tests {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use janus_core::{
         hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair, HpkePrivateKey},
-        task::{AuthenticationToken, PRIO3_VERIFY_KEY_LENGTH},
+        task::{AuthenticationToken, VERIFY_KEY_LEN},
         test_util::roundtrip_encoding,
         time::DurationExt,
     };
@@ -839,7 +839,7 @@ mod tests {
             QueryType::TimeInterval,
             VdafInstance::Prio3Count,
             Role::Leader,
-            Vec::from([SecretBytes::new([0; PRIO3_VERIFY_KEY_LENGTH].into())]),
+            Vec::from([SecretBytes::new([0; VERIFY_KEY_LEN].into())]),
             0,
             Time::from_seconds_since_epoch(u64::MAX),
             None,
@@ -861,7 +861,7 @@ mod tests {
             QueryType::TimeInterval,
             VdafInstance::Prio3Count,
             Role::Leader,
-            Vec::from([SecretBytes::new([0; PRIO3_VERIFY_KEY_LENGTH].into())]),
+            Vec::from([SecretBytes::new([0; VERIFY_KEY_LEN].into())]),
             0,
             Time::from_seconds_since_epoch(u64::MAX),
             None,
@@ -883,7 +883,7 @@ mod tests {
             QueryType::TimeInterval,
             VdafInstance::Prio3Count,
             Role::Helper,
-            Vec::from([SecretBytes::new([0; PRIO3_VERIFY_KEY_LENGTH].into())]),
+            Vec::from([SecretBytes::new([0; VERIFY_KEY_LEN].into())]),
             0,
             Time::from_seconds_since_epoch(u64::MAX),
             None,
@@ -905,7 +905,7 @@ mod tests {
             QueryType::TimeInterval,
             VdafInstance::Prio3Count,
             Role::Helper,
-            Vec::from([SecretBytes::new([0; PRIO3_VERIFY_KEY_LENGTH].into())]),
+            Vec::from([SecretBytes::new([0; VERIFY_KEY_LEN].into())]),
             0,
             Time::from_seconds_since_epoch(u64::MAX),
             None,
@@ -929,7 +929,7 @@ mod tests {
             QueryType::TimeInterval,
             VdafInstance::Prio3Count,
             Role::Leader,
-            Vec::from([SecretBytes::new([0; PRIO3_VERIFY_KEY_LENGTH].into())]),
+            Vec::from([SecretBytes::new([0; VERIFY_KEY_LEN].into())]),
             0,
             Time::from_seconds_since_epoch(u64::MAX),
             None,

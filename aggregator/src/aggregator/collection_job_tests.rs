@@ -200,7 +200,8 @@ async fn setup_fixed_size_current_batch_collection_job_test_case() -> (
                             *report.metadata().id(),
                             time,
                             ord,
-                            ReportAggregationState::Finished(dummy_vdaf::OutputShare()),
+                            None,
+                            ReportAggregationState::Finished(dummy_vdaf::OutputShare(0)),
                         ))
                         .await
                         .unwrap();

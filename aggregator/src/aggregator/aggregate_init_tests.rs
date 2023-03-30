@@ -1,4 +1,4 @@
-use crate::aggregator::{aggregator_filter, tests::generate_helper_report_share, Config};
+use crate::aggregator::{aggregator_filter, tests::generate_helper_report_init, Config};
 use http::{header::CONTENT_TYPE, StatusCode};
 use janus_aggregator_core::{
     datastore::{
@@ -14,87 +14,94 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::TimeInterval, AggregationJobId, AggregationJobInitializeReq, PartialBatchSelector,
-    ReportMetadata, ReportShare, Role,
+    ReportMetadata, ReportPrepInit, Role,
 };
-use prio::codec::Encode;
+use prio::{codec::Encode, vdaf};
 use rand::random;
 use std::sync::Arc;
 use warp::{filters::BoxedFilter, reply::Response, Reply};
 
-pub(super) struct ReportShareGenerator {
+pub(super) struct ReportInitGenerator<const SEED_SIZE: usize, V>
+where
+    V: vdaf::Vdaf,
+{
     clock: MockClock,
     task: Task,
-    aggregation_param: dummy_vdaf::AggregationParam,
-    vdaf: dummy_vdaf::Vdaf,
+    vdaf: V,
+    aggregation_param: V::AggregationParam,
 }
 
-impl ReportShareGenerator {
+impl<const SEED_SIZE: usize, V> ReportInitGenerator<SEED_SIZE, V>
+where
+    V: vdaf::Vdaf + vdaf::Aggregator<SEED_SIZE, 16> + vdaf::Client<16>,
+{
     pub(super) fn new(
         clock: MockClock,
         task: Task,
-        aggregation_param: dummy_vdaf::AggregationParam,
+        vdaf: V,
+        aggregation_param: V::AggregationParam,
     ) -> Self {
         Self {
             clock,
             task,
+            vdaf,
             aggregation_param,
-            vdaf: dummy_vdaf::Vdaf::new(),
         }
     }
 
-    fn with_vdaf(mut self, vdaf: dummy_vdaf::Vdaf) -> Self {
-        self.vdaf = vdaf;
-        self
-    }
-
-    pub(super) fn next(&self) -> (ReportShare, VdafTranscript<0, dummy_vdaf::Vdaf>) {
-        self.next_with_metadata(ReportMetadata::new(
-            random(),
-            self.clock
-                .now()
-                .to_batch_interval_start(self.task.time_precision())
-                .unwrap(),
-        ))
+    pub(super) fn next(
+        &self,
+        measurement: &V::Measurement,
+    ) -> (ReportPrepInit, VdafTranscript<SEED_SIZE, V>) {
+        self.next_with_metadata(
+            ReportMetadata::new(
+                random(),
+                self.clock
+                    .now()
+                    .to_batch_interval_start(self.task.time_precision())
+                    .unwrap(),
+            ),
+            measurement,
+        )
     }
 
     pub(super) fn next_with_metadata(
         &self,
         report_metadata: ReportMetadata,
-    ) -> (ReportShare, VdafTranscript<0, dummy_vdaf::Vdaf>) {
+        measurement: &V::Measurement,
+    ) -> (ReportPrepInit, VdafTranscript<SEED_SIZE, V>) {
         let transcript = run_vdaf(
             &self.vdaf,
             self.task.primary_vdaf_verify_key().unwrap().as_bytes(),
             &self.aggregation_param,
             report_metadata.id(),
-            &(),
+            measurement,
         );
-        let report_share = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+        let report_init = generate_helper_report_init::<SEED_SIZE, V>(
             *self.task.id(),
             report_metadata,
             self.task.current_hpke_key().config(),
-            &transcript.public_share,
+            &transcript,
             Vec::new(),
-            &transcript.input_shares[1],
         );
-
-        (report_share, transcript)
+        (report_init, transcript)
     }
 }
 
-pub(super) struct AggregationJobInitTestCase<R> {
+pub(super) struct AggregationJobInitTestCase<const SEED_SIZE: usize, R, V: vdaf::Vdaf> {
     pub(super) clock: MockClock,
     pub(super) task: Task,
-    pub(super) report_share_generator: ReportShareGenerator,
-    pub(super) report_shares: Vec<ReportShare>,
+    pub(super) report_init_generator: ReportInitGenerator<SEED_SIZE, V>,
+    pub(super) report_inits: Vec<ReportPrepInit>,
     pub(super) aggregation_job_id: AggregationJobId,
-    pub(super) aggregation_param: dummy_vdaf::AggregationParam,
+    pub(super) aggregation_param: V::AggregationParam,
     pub(super) filter: BoxedFilter<(R,)>,
     pub(super) datastore: Arc<Datastore<MockClock>>,
     _ephemeral_datastore: EphemeralDatastore,
 }
 
-pub(super) async fn setup_aggregate_init_test() -> AggregationJobInitTestCase<impl Reply + 'static>
-{
+pub(super) async fn setup_aggregate_init_test(
+) -> AggregationJobInitTestCase<0, impl Reply + 'static, dummy_vdaf::Vdaf> {
     install_test_trace_subscriber();
 
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
@@ -109,19 +116,23 @@ pub(super) async fn setup_aggregate_init_test() -> AggregationJobInitTestCase<im
 
     let aggregation_param = dummy_vdaf::AggregationParam(0);
 
-    let report_share_generator =
-        ReportShareGenerator::new(clock.clone(), task.clone(), aggregation_param);
+    let report_init_generator = ReportInitGenerator::new(
+        clock.clone(),
+        task.clone(),
+        dummy_vdaf::Vdaf::new(),
+        aggregation_param,
+    );
 
-    let report_shares = Vec::from([
-        report_share_generator.next().0,
-        report_share_generator.next().0,
+    let report_inits = Vec::from([
+        report_init_generator.next(&0).0,
+        report_init_generator.next(&0).0,
     ]);
 
     let aggregation_job_id = random();
     let aggregation_job_init_req = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded(),
         PartialBatchSelector::new_time_interval(),
-        report_shares.clone(),
+        report_inits.clone(),
     );
 
     let response = put_aggregation_job(
@@ -136,8 +147,8 @@ pub(super) async fn setup_aggregate_init_test() -> AggregationJobInitTestCase<im
     AggregationJobInitTestCase {
         clock,
         task,
-        report_shares,
-        report_share_generator,
+        report_inits,
+        report_init_generator,
         aggregation_job_id,
         aggregation_param,
         filter,
@@ -178,7 +189,7 @@ async fn aggregation_job_mutation_aggregation_job() {
     let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
         dummy_vdaf::AggregationParam(1).get_encoded(),
         PartialBatchSelector::new_time_interval(),
-        test_case.report_shares,
+        test_case.report_inits,
     );
 
     let response = put_aggregation_job(
@@ -197,28 +208,28 @@ async fn aggregation_job_mutation_report_shares() {
 
     // Put the aggregation job again, mutating the associated report shares' metadata such that
     // uniqueness constraints on client_reports are violated
-    for mutated_report_shares in [
+    for mutated_report_inits in [
         // Omit a report share that was included previously
-        Vec::from(&test_case.report_shares[0..test_case.report_shares.len() - 1]),
+        Vec::from(&test_case.report_inits[0..test_case.report_inits.len() - 1]),
         // Include a different report share than was included previously
         [
-            &test_case.report_shares[0..test_case.report_shares.len() - 1],
-            &[test_case.report_share_generator.next().0],
+            &test_case.report_inits[0..test_case.report_inits.len() - 1],
+            &[test_case.report_init_generator.next(&0).0],
         ]
         .concat(),
         // Include an extra report share than was included previously
         [
-            test_case.report_shares.as_slice(),
-            &[test_case.report_share_generator.next().0],
+            test_case.report_inits.as_slice(),
+            &[test_case.report_init_generator.next(&0).0],
         ]
         .concat(),
         // Reverse the order of the reports
-        test_case.report_shares.into_iter().rev().collect(),
+        test_case.report_inits.into_iter().rev().collect(),
     ] {
         let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
             test_case.aggregation_param.get_encoded(),
             PartialBatchSelector::new_time_interval(),
-            mutated_report_shares,
+            mutated_report_inits,
         );
         let response = put_aggregation_job(
             &test_case.task,
@@ -235,18 +246,16 @@ async fn aggregation_job_mutation_report_shares() {
 async fn aggregation_job_mutation_report_aggregations() {
     let test_case = setup_aggregate_init_test().await;
 
-    // Generate some new reports using the existing reports' metadata, but varying the input shares
-    // such that the prepare state computed during aggregation initializaton won't match the first
-    // aggregation job.
-    let mutated_report_shares_generator = test_case
-        .report_share_generator
-        .with_vdaf(dummy_vdaf::Vdaf::new().with_input_share(dummy_vdaf::InputShare(1)));
-    let mutated_report_shares = test_case
-        .report_shares
+    // Generate some new reports using the existing reports' metadata, but varying the measurement
+    // values such that the prepare state computed during aggregation initializaton won't match the
+    // first aggregation job.
+    let mutated_report_inits = test_case
+        .report_inits
         .iter()
         .map(|s| {
-            mutated_report_shares_generator
-                .next_with_metadata(s.metadata().clone())
+            test_case
+                .report_init_generator
+                .next_with_metadata(s.report_share().metadata().clone(), &1)
                 .0
         })
         .collect();
@@ -254,7 +263,7 @@ async fn aggregation_job_mutation_report_aggregations() {
     let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
         test_case.aggregation_param.get_encoded(),
         PartialBatchSelector::new_time_interval(),
-        mutated_report_shares,
+        mutated_report_inits,
     );
     let response = put_aggregation_job(
         &test_case.task,

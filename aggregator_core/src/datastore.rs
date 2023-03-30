@@ -3,8 +3,8 @@
 use self::models::{
     AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
     AggregatorRole, BatchAggregation, CollectionJob, CollectionJobState, CollectionJobStateCode,
-    LeaderStoredReport, Lease, LeaseToken, OutstandingBatch, PrepareMessageOrShare,
-    ReportAggregation, ReportAggregationState, ReportAggregationStateCode, SqlInterval,
+    LeaderStoredReport, Lease, LeaseToken, OutstandingBatch, ReportAggregation,
+    ReportAggregationState, ReportAggregationStateCode, SqlInterval,
 };
 #[cfg(feature = "test-util")]
 use crate::VdafHasAggregationParameter;
@@ -24,7 +24,8 @@ use janus_core::{
 use janus_messages::{
     query_type::{QueryType, TimeInterval},
     AggregationJobId, BatchId, CollectionJobId, Duration, Extension, HpkeCiphertext, HpkeConfig,
-    Interval, ReportId, ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time,
+    Interval, PrepareStep, ReportId, ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId,
+    Time,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram},
@@ -1719,8 +1720,9 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT client_reports.report_id, client_reports.client_timestamp,
                 report_aggregations.ord, report_aggregations.state, report_aggregations.prep_state,
-                report_aggregations.prep_msg, report_aggregations.out_share,
-                report_aggregations.error_code, aggregation_jobs.aggregation_param
+                report_aggregations.prep_msg, report_aggregations.last_prep_step,
+                report_aggregations.out_share, report_aggregations.error_code,
+                aggregation_jobs.aggregation_param
                 FROM report_aggregations
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
                 JOIN aggregation_jobs
@@ -1772,8 +1774,9 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT client_reports.report_id, client_reports.client_timestamp,
                 report_aggregations.ord, report_aggregations.state, report_aggregations.prep_state,
-                report_aggregations.prep_msg, report_aggregations.out_share,
-                report_aggregations.error_code, aggregation_jobs.aggregation_param
+                report_aggregations.prep_msg, report_aggregations.last_prep_step,
+                report_aggregations.out_share, report_aggregations.error_code,
+                aggregation_jobs.aggregation_param
                 FROM report_aggregations
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
                 JOIN aggregation_jobs
@@ -1826,8 +1829,9 @@ impl<C: Clock> Transaction<'_, C> {
                     aggregation_jobs.aggregation_job_id, client_reports.report_id,
                     client_reports.client_timestamp, report_aggregations.ord,
                     report_aggregations.state, report_aggregations.prep_state,
-                    report_aggregations.prep_msg, report_aggregations.out_share,
-                    report_aggregations.error_code, aggregation_jobs.aggregation_param
+                    report_aggregations.prep_msg, report_aggregations.last_prep_step,
+                    report_aggregations.out_share, report_aggregations.error_code,
+                    aggregation_jobs.aggregation_param
                 FROM report_aggregations
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
                 JOIN aggregation_jobs
@@ -1867,6 +1871,7 @@ impl<C: Clock> Transaction<'_, C> {
         let state: ReportAggregationStateCode = row.get("state");
         let prep_state_bytes: Option<Vec<u8>> = row.get("prep_state");
         let prep_msg_bytes: Option<Vec<u8>> = row.get("prep_msg");
+        let last_prep_step_bytes: Option<Vec<u8>> = row.get("last_prep_step");
         let out_share_bytes: Option<Vec<u8>> = row.get("out_share");
         let error_code: Option<i16> = row.get("error_code");
         let aggregation_param_bytes = row.get("aggregation_param");
@@ -1883,6 +1888,10 @@ impl<C: Clock> Transaction<'_, C> {
             None => None,
         };
 
+        let last_prep_step = last_prep_step_bytes
+            .map(|bytes| PrepareStep::get_decoded(&bytes))
+            .transpose()?;
+
         let agg_state = match state {
             ReportAggregationStateCode::Start => ReportAggregationState::Start,
             ReportAggregationStateCode::Waiting => {
@@ -1898,26 +1907,14 @@ impl<C: Clock> Transaction<'_, C> {
                         )
                     })?,
                 )?;
-                let prep_msg_bytes = prep_msg_bytes.ok_or_else(|| {
-                    Error::DbState(
-                        "report aggregation in state WAITING but prep_msg is NULL".to_string(),
-                    )
-                })?;
-                let prep_msg = match role {
-                    Role::Leader => PrepareMessageOrShare::Leader(
-                        A::PrepareMessage::get_decoded_with_param(&prep_state, &prep_msg_bytes)?,
-                    ),
-                    Role::Helper => PrepareMessageOrShare::Helper(
-                        A::PrepareShare::get_decoded_with_param(&prep_state, &prep_msg_bytes)?,
-                    ),
-                    _ => return Err(Error::DbState(format!("unexpected role {role}"))),
-                };
-
+                let prep_msg = prep_msg_bytes
+                    .map(|bytes| A::PrepareMessage::get_decoded_with_param(&prep_state, &bytes))
+                    .transpose()?;
                 ReportAggregationState::Waiting(prep_state, prep_msg)
             }
             ReportAggregationStateCode::Finished => {
                 let aggregation_param = A::AggregationParam::get_decoded(aggregation_param_bytes)?;
-                ReportAggregationState::Finished(A::OutputShare::get_decoded_with_param(
+                let output_share = A::OutputShare::get_decoded_with_param(
                     &(vdaf, &aggregation_param),
                     &out_share_bytes.ok_or_else(|| {
                         Error::DbState(
@@ -1925,7 +1922,8 @@ impl<C: Clock> Transaction<'_, C> {
                                 .to_string(),
                         )
                     })?,
-                )?)
+                )?;
+                ReportAggregationState::Finished(output_share)
             }
             ReportAggregationStateCode::Failed => {
                 ReportAggregationState::Failed(error_code.ok_or_else(|| {
@@ -1943,6 +1941,7 @@ impl<C: Clock> Transaction<'_, C> {
             *report_id,
             time,
             ord,
+            last_prep_step,
             agg_state,
         ))
     }
@@ -1960,17 +1959,20 @@ impl<C: Clock> Transaction<'_, C> {
         A::PrepareState: Encode,
     {
         let encoded_state_values = report_aggregation.state().encoded_values_from_state();
+        let encoded_last_prep_step = report_aggregation
+            .last_prep_step()
+            .map(PrepareStep::get_encoded);
 
         let stmt = self
             .prepare_cached(
                 "INSERT INTO report_aggregations
                 (aggregation_job_id, client_report_id, ord, state, prep_state, prep_msg, out_share,
-                    error_code)
+                    error_code, last_prep_step)
                 VALUES ((SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1),
                         (SELECT id FROM client_reports
                             WHERE task_id = (SELECT id FROM tasks WHERE task_id = $2)
                             AND report_id = $3),
-                        $4, $5, $6, $7, $8, $9)",
+                        $4, $5, $6, $7, $8, $9, $10)",
             )
             .await?;
         self.execute(
@@ -1986,6 +1988,7 @@ impl<C: Clock> Transaction<'_, C> {
                 /* prep_msg */ &encoded_state_values.prep_msg,
                 /* out_share */ &encoded_state_values.output_share,
                 /* error_code */ &encoded_state_values.report_share_err,
+                /* last_prep_step */ &encoded_last_prep_step,
             ],
         )
         .await?;
@@ -2004,16 +2007,19 @@ impl<C: Clock> Transaction<'_, C> {
         A::PrepareState: Encode,
     {
         let encoded_state_values = report_aggregation.state().encoded_values_from_state();
+        let encoded_last_prep_step = report_aggregation
+            .last_prep_step()
+            .map(PrepareStep::get_encoded);
 
         let stmt = self
             .prepare_cached(
                 "UPDATE report_aggregations SET ord = $1, state = $2, prep_state = $3,
-                prep_msg = $4, out_share = $5, error_code = $6
+                prep_msg = $4, out_share = $5, error_code = $6, last_prep_step = $7
                 WHERE aggregation_job_id = (SELECT id FROM aggregation_jobs WHERE
-                    aggregation_job_id = $7)
+                    aggregation_job_id = $8)
                 AND client_report_id = (SELECT id FROM client_reports
-                    WHERE task_id = (SELECT id FROM tasks WHERE task_id = $8)
-                    AND report_id = $9)",
+                    WHERE task_id = (SELECT id FROM tasks WHERE task_id = $9)
+                    AND report_id = $10)",
             )
             .await?;
         check_single_row_mutation(
@@ -2026,6 +2032,7 @@ impl<C: Clock> Transaction<'_, C> {
                     /* prep_msg */ &encoded_state_values.prep_msg,
                     /* out_share */ &encoded_state_values.output_share,
                     /* error_code */ &encoded_state_values.report_share_err,
+                    /* last_prep_step */ &encoded_last_prep_step,
                     /* aggregation_job_id */
                     &report_aggregation.aggregation_job_id().as_ref(),
                     /* task_id */ &report_aggregation.task_id().as_ref(),
@@ -3843,8 +3850,8 @@ pub mod models {
     use janus_messages::{
         query_type::{FixedSize, QueryType, TimeInterval},
         AggregationJobId, AggregationJobRound, BatchId, CollectionJobId, Duration, Extension,
-        HpkeCiphertext, Interval, ReportId, ReportIdChecksum, ReportMetadata, ReportShareError,
-        Role, TaskId, Time,
+        HpkeCiphertext, Interval, PrepareStep, ReportId, ReportIdChecksum, ReportMetadata,
+        ReportShareError, Role, TaskId, Time,
     };
     use postgres_protocol::types::{
         range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql, Range, RangeBound,
@@ -4384,6 +4391,7 @@ pub mod models {
         time: Time,
         ord: u64,
         state: ReportAggregationState<SEED_SIZE, A>,
+        last_prep_step: Option<PrepareStep>,
     }
 
     impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> ReportAggregation<SEED_SIZE, A> {
@@ -4394,6 +4402,7 @@ pub mod models {
             report_id: ReportId,
             time: Time,
             ord: u64,
+            last_prep_step: Option<PrepareStep>,
             state: ReportAggregationState<SEED_SIZE, A>,
         ) -> Self {
             Self {
@@ -4402,6 +4411,7 @@ pub mod models {
                 report_id,
                 time,
                 ord,
+                last_prep_step,
                 state,
             }
         }
@@ -4436,6 +4446,17 @@ pub mod models {
             self.ord
         }
 
+        pub fn last_prep_step(&self) -> Option<&PrepareStep> {
+            self.last_prep_step.as_ref()
+        }
+
+        pub fn with_last_prep_step(self, last_prep_step: Option<PrepareStep>) -> Self {
+            Self {
+                last_prep_step,
+                ..self
+            }
+        }
+
         /// Returns the state of the report aggregation.
         pub fn state(&self) -> &ReportAggregationState<SEED_SIZE, A> {
             &self.state
@@ -4462,6 +4483,7 @@ pub mod models {
                 && self.report_id == other.report_id
                 && self.time == other.time
                 && self.ord == other.ord
+                && self.last_prep_step == other.last_prep_step
                 && self.state == other.state
         }
     }
@@ -4476,76 +4498,6 @@ pub mod models {
     {
     }
 
-    /// Represents either a preprocessed VDAF preparation message (for the leader) or a VDAF
-    /// preparation message share (for the helper).
-    #[derive(Clone, Derivative)]
-    #[derivative(Debug)]
-    pub enum PrepareMessageOrShare<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
-        /// The helper stores a prepare message share
-        Helper(#[derivative(Debug = "ignore")] A::PrepareShare),
-        /// The leader stores a combined prepare message
-        Leader(#[derivative(Debug = "ignore")] A::PrepareMessage),
-    }
-
-    impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
-        PrepareMessageOrShare<SEED_SIZE, A>
-    {
-        /// Get the leader's preprocessed prepare message, or an error if this is a helper's prepare
-        /// share.
-        pub fn get_leader_prepare_message(&self) -> Result<&A::PrepareMessage, Error>
-        where
-            A::PrepareMessage: Encode,
-        {
-            if let Self::Leader(prep_msg) = self {
-                Ok(prep_msg)
-            } else {
-                Err(Error::InvalidParameter(
-                    "does not contain a prepare message",
-                ))
-            }
-        }
-
-        /// Get the helper's prepare share, or an error if this is a leader's preprocessed prepare
-        /// message.
-        pub fn get_helper_prepare_share(&self) -> Result<&A::PrepareShare, Error>
-        where
-            A::PrepareShare: Encode,
-        {
-            if let Self::Helper(prep_share) = self {
-                Ok(prep_share)
-            } else {
-                Err(Error::InvalidParameter("does not contain a prepare share"))
-            }
-        }
-    }
-
-    impl<const SEED_SIZE: usize, A> PartialEq for PrepareMessageOrShare<SEED_SIZE, A>
-    where
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
-        A::PrepareShare: PartialEq,
-        A::PrepareMessage: PartialEq,
-    {
-        fn eq(&self, other: &Self) -> bool {
-            match (self, other) {
-                (Self::Helper(self_prep_share), Self::Helper(other_prep_share)) => {
-                    self_prep_share.eq(other_prep_share)
-                }
-                (Self::Leader(self_prep_msg), Self::Leader(other_prep_msg)) => {
-                    self_prep_msg.eq(other_prep_msg)
-                }
-                _ => false,
-            }
-        }
-    }
-
-    impl<const SEED_SIZE: usize, A> Eq for PrepareMessageOrShare<SEED_SIZE, A>
-    where
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
-        A::PrepareShare: Eq,
-        A::PrepareMessage: Eq,
-    {
-    }
-
     /// ReportAggregationState represents the state of a single report aggregation. It corresponds
     /// to the REPORT_AGGREGATION_STATE enum in the schema, along with the state-specific data.
     #[derive(Clone, Derivative)]
@@ -4554,7 +4506,7 @@ pub mod models {
         Start,
         Waiting(
             #[derivative(Debug = "ignore")] A::PrepareState,
-            #[derivative(Debug = "ignore")] PrepareMessageOrShare<SEED_SIZE, A>,
+            #[derivative(Debug = "ignore")] Option<A::PrepareMessage>,
         ),
         Finished(#[derivative(Debug = "ignore")] A::OutputShare),
         Failed(ReportShareError),
@@ -4567,9 +4519,9 @@ pub mod models {
         pub fn state_code(&self) -> ReportAggregationStateCode {
             match self {
                 ReportAggregationState::Start => ReportAggregationStateCode::Start,
-                ReportAggregationState::Waiting(_, _) => ReportAggregationStateCode::Waiting,
-                ReportAggregationState::Finished(_) => ReportAggregationStateCode::Finished,
-                ReportAggregationState::Failed(_) => ReportAggregationStateCode::Failed,
+                ReportAggregationState::Waiting { .. } => ReportAggregationStateCode::Waiting,
+                ReportAggregationState::Finished { .. } => ReportAggregationStateCode::Finished,
+                ReportAggregationState::Failed { .. } => ReportAggregationStateCode::Failed,
                 ReportAggregationState::Invalid => ReportAggregationStateCode::Invalid,
             }
         }
@@ -4581,37 +4533,33 @@ pub mod models {
         where
             A::PrepareState: Encode,
         {
-            let (prep_state, prep_msg, output_share, report_share_err) = match self {
-                ReportAggregationState::Start => (None, None, None, None),
+            match self {
+                ReportAggregationState::Start => EncodedReportAggregationStateValues::default(),
                 ReportAggregationState::Waiting(prep_state, prep_msg) => {
-                    let encoded_msg = match prep_msg {
-                        PrepareMessageOrShare::Leader(prep_msg) => prep_msg.get_encoded(),
-                        PrepareMessageOrShare::Helper(prep_share) => prep_share.get_encoded(),
-                    };
-                    (
-                        Some(prep_state.get_encoded()),
-                        Some(encoded_msg),
-                        None,
-                        None,
-                    )
+                    EncodedReportAggregationStateValues {
+                        prep_state: Some(prep_state.get_encoded()),
+                        prep_msg: prep_msg.as_ref().map(Encode::get_encoded),
+                        ..Default::default()
+                    }
                 }
                 ReportAggregationState::Finished(output_share) => {
-                    (None, None, Some(output_share.get_encoded()), None)
+                    EncodedReportAggregationStateValues {
+                        output_share: Some(output_share.get_encoded()),
+                        ..Default::default()
+                    }
                 }
                 ReportAggregationState::Failed(report_share_err) => {
-                    (None, None, None, Some(*report_share_err as i16))
+                    EncodedReportAggregationStateValues {
+                        report_share_err: Some(*report_share_err as i16),
+                        ..Default::default()
+                    }
                 }
-                ReportAggregationState::Invalid => (None, None, None, None),
-            };
-            EncodedReportAggregationStateValues {
-                prep_state,
-                prep_msg,
-                output_share,
-                report_share_err,
+                ReportAggregationState::Invalid => EncodedReportAggregationStateValues::default(),
             }
         }
     }
 
+    #[derive(Default)]
     pub(super) struct EncodedReportAggregationStateValues {
         pub(super) prep_state: Option<Vec<u8>>,
         pub(super) prep_msg: Option<Vec<u8>>,
@@ -5367,8 +5315,8 @@ mod tests {
             models::{
                 AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
                 AggregationJobState, BatchAggregation, CollectionJob, CollectionJobState,
-                LeaderStoredReport, Lease, OutstandingBatch, PrepareMessageOrShare,
-                ReportAggregation, ReportAggregationState, SqlInterval,
+                LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
+                ReportAggregationState, SqlInterval,
             },
             test_util::{ephemeral_datastore, generate_aead_key},
             Crypter, Datastore, Error, Transaction,
@@ -5382,7 +5330,7 @@ mod tests {
     use futures::future::try_join_all;
     use janus_core::{
         hpke::{self, HpkeApplicationInfo, Label},
-        task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
+        task::{VdafInstance, VERIFY_KEY_LEN},
         test_util::{
             dummy_vdaf::{self, AggregateShare, AggregationParam},
             install_test_trace_subscriber, run_vdaf,
@@ -5393,8 +5341,8 @@ mod tests {
         query_type::{FixedSize, QueryType, TimeInterval},
         AggregateShareAad, AggregationJobId, AggregationJobRound, BatchId, BatchSelector,
         CollectionJobId, Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId,
-        Interval, ReportId, ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role,
-        TaskId, Time,
+        Interval, PrepareStep, PrepareStepResult, ReportId, ReportIdChecksum, ReportMetadata,
+        ReportShare, ReportShareError, Role, TaskId, Time,
     };
     use prio::{
         codec::{Decode, Encode},
@@ -5963,6 +5911,7 @@ mod tests {
                     aggregated_report_id,
                     aggregated_report_time,
                     0,
+                    None,
                     ReportAggregationState::Start,
                 ))
                 .await
@@ -6233,6 +6182,7 @@ mod tests {
                             *report_0.metadata().id(),
                             *report_0.metadata().time(),
                             0,
+                            None,
                             ReportAggregationState::Start,
                         );
                     let aggregation_job_0_report_aggregation_1 =
@@ -6242,6 +6192,7 @@ mod tests {
                             *report_1.metadata().id(),
                             *report_1.metadata().time(),
                             1,
+                            None,
                             ReportAggregationState::Start,
                         );
 
@@ -6262,6 +6213,7 @@ mod tests {
                             *report_0.metadata().id(),
                             *report_0.metadata().time(),
                             0,
+                            None,
                             ReportAggregationState::Start,
                         );
                     let aggregation_job_1_report_aggregation_1 =
@@ -6271,6 +6223,7 @@ mod tests {
                             *report_1.metadata().id(),
                             *report_1.metadata().time(),
                             1,
+                            None,
                             ReportAggregationState::Start,
                         );
 
@@ -6614,7 +6567,7 @@ mod tests {
                 tx.put_task(&task).await?;
                 for aggregation_job_id in aggregation_job_ids {
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LEN,
                         TimeInterval,
                         Prio3Count,
                     >::new(
@@ -6631,20 +6584,18 @@ mod tests {
                 }
 
                 // Write an aggregation job that is finished. We don't want to retrieve this one.
-                tx.put_aggregation_job(&AggregationJob::<
-                    PRIO3_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Count,
-                >::new(
-                    *task.id(),
-                    random(),
-                    (),
-                    (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
-                    AggregationJobState::Finished,
-                    AggregationJobRound::from(1),
-                ))
+                tx.put_aggregation_job(
+                    &AggregationJob::<VERIFY_KEY_LEN, TimeInterval, Prio3Count>::new(
+                        *task.id(),
+                        random(),
+                        (),
+                        (),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
+                        AggregationJobState::Finished,
+                        AggregationJobRound::from(1),
+                    ),
+                )
                 .await?;
 
                 // Write an aggregation job for a task that we are taking on the helper role for.
@@ -6656,20 +6607,18 @@ mod tests {
                 )
                 .build();
                 tx.put_task(&helper_task).await?;
-                tx.put_aggregation_job(&AggregationJob::<
-                    PRIO3_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Count,
-                >::new(
-                    *helper_task.id(),
-                    random(),
-                    (),
-                    (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
-                    AggregationJobState::InProgress,
-                    AggregationJobRound::from(0),
-                ))
+                tx.put_aggregation_job(
+                    &AggregationJob::<VERIFY_KEY_LEN, TimeInterval, Prio3Count>::new(
+                        *helper_task.id(),
+                        random(),
+                        (),
+                        (),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
+                        AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
+                    ),
+                )
                 .await
             })
         })
@@ -6882,7 +6831,7 @@ mod tests {
         let rslt = ds
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                    tx.get_aggregation_job::<VERIFY_KEY_LEN, TimeInterval, Prio3Count>(
                         &random(),
                         &random(),
                     )
@@ -6896,7 +6845,7 @@ mod tests {
         let rslt = ds
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.update_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                    tx.update_aggregation_job::<VERIFY_KEY_LEN, TimeInterval, Prio3Count>(
                         &AggregationJob::new(
                             random(),
                             random(),
@@ -7027,66 +6976,49 @@ mod tests {
 
         let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
-        let verify_key: [u8; PRIO3_VERIFY_KEY_LENGTH] = random();
+        let verify_key: [u8; VERIFY_KEY_LEN] = random();
         let vdaf_transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), &report_id, &0);
-        let (helper_prep_state, helper_prep_share) = vdaf_transcript.helper_prep_state(0);
-        let leader_prep_state = vdaf_transcript.leader_prep_state(0);
+        let (leader_prep_state, _) = vdaf_transcript.leader_prep_state(0);
 
-        for (ord, (role, state)) in [
-            (
-                Role::Leader,
-                ReportAggregationState::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::Start,
+        for (ord, state) in [
+            ReportAggregationState::<VERIFY_KEY_LEN, Prio3Count>::Start,
+            ReportAggregationState::Waiting(
+                leader_prep_state.clone(),
+                Some(vdaf_transcript.prepare_messages[0].clone()),
             ),
-            (
-                Role::Helper,
-                ReportAggregationState::Waiting(
-                    helper_prep_state.clone(),
-                    PrepareMessageOrShare::Helper(helper_prep_share.clone()),
-                ),
-            ),
-            (
-                Role::Leader,
-                ReportAggregationState::Waiting(
-                    leader_prep_state.clone(),
-                    PrepareMessageOrShare::Leader(vdaf_transcript.prepare_messages[0].clone()),
-                ),
-            ),
-            (
-                Role::Leader,
-                ReportAggregationState::Finished(
-                    vdaf_transcript.output_share(Role::Leader).clone(),
-                ),
-            ),
-            (
-                Role::Leader,
-                ReportAggregationState::Failed(ReportShareError::VdafPrepError),
-            ),
-            (Role::Leader, ReportAggregationState::Invalid),
+            ReportAggregationState::Waiting(leader_prep_state.clone(), None),
+            ReportAggregationState::Finished(vdaf_transcript.output_share(Role::Leader).clone()),
+            ReportAggregationState::Finished(vdaf_transcript.output_share(Role::Helper).clone()),
+            ReportAggregationState::Failed(ReportShareError::VdafPrepError),
+            ReportAggregationState::Invalid,
         ]
         .into_iter()
         .enumerate()
         {
-            let task = TaskBuilder::new(
-                task::QueryType::TimeInterval,
-                VdafInstance::Prio3Count,
-                role,
-            )
-            .build();
+            let task_id = random();
             let aggregation_job_id = random();
             let time = Time::from_seconds_since_epoch(12345);
-            let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
 
-            let report_aggregation = ds
+            let want_report_aggregation = ds
                 .run_tx(|tx| {
-                    let (task, state) = (task.clone(), state.clone());
+                    let state = state.clone();
                     Box::pin(async move {
-                        tx.put_task(&task).await?;
+                        tx.put_task(
+                            &TaskBuilder::new(
+                                task::QueryType::TimeInterval,
+                                VdafInstance::Prio3Count,
+                                Role::Leader,
+                            )
+                            .with_id(task_id)
+                            .build(),
+                        )
+                        .await?;
                         tx.put_aggregation_job(&AggregationJob::<
-                            PRIO3_VERIFY_KEY_LENGTH,
+                            VERIFY_KEY_LEN,
                             TimeInterval,
                             Prio3Count,
                         >::new(
-                            *task.id(),
+                            task_id,
                             aggregation_job_id,
                             (),
                             (),
@@ -7100,7 +7032,7 @@ mod tests {
                         ))
                         .await?;
                         tx.put_report_share(
-                            task.id(),
+                            &task_id,
                             &ReportShare::new(
                                 ReportMetadata::new(report_id, time),
                                 Vec::from("public_share"),
@@ -7114,11 +7046,18 @@ mod tests {
                         .await?;
 
                         let report_aggregation = ReportAggregation::new(
-                            *task.id(),
+                            task_id,
                             aggregation_job_id,
                             report_id,
                             time,
-                            ord.try_into().unwrap(),
+                            0,
+                            Some(PrepareStep::new(
+                                report_id,
+                                PrepareStepResult::Continued {
+                                    prep_msg: format!("prep_msg_{ord}").into(),
+                                    prep_share: format!("prep_share_{ord}").into(),
+                                },
+                            )),
                             state,
                         );
                         tx.put_report_aggregation(&report_aggregation).await?;
@@ -7130,12 +7069,12 @@ mod tests {
 
             let got_report_aggregation = ds
                 .run_tx(|tx| {
-                    let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
+                    let vdaf = Arc::clone(&vdaf);
                     Box::pin(async move {
                         tx.get_report_aggregation(
                             vdaf.as_ref(),
-                            &role,
-                            task.id(),
+                            &Role::Leader,
+                            &task_id,
                             &aggregation_job_id,
                             &report_id,
                         )
@@ -7145,45 +7084,34 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap();
-            assert_eq!(report_aggregation, got_report_aggregation);
+            assert_eq!(want_report_aggregation, got_report_aggregation);
 
-            if let ReportAggregationState::Waiting(_, message) = got_report_aggregation.state() {
-                match role {
-                    Role::Leader => {
-                        assert!(message.get_leader_prepare_message().is_ok());
-                        assert!(message.get_helper_prepare_share().is_err());
-                    }
-                    Role::Helper => {
-                        assert!(message.get_helper_prepare_share().is_ok());
-                        assert!(message.get_leader_prepare_message().is_err());
-                    }
-                    _ => panic!("unexpected role"),
-                }
-            }
-
-            let new_report_aggregation = ReportAggregation::new(
-                *report_aggregation.task_id(),
-                *report_aggregation.aggregation_job_id(),
-                *report_aggregation.report_id(),
-                *report_aggregation.time(),
-                report_aggregation.ord() + 10,
-                report_aggregation.state().clone(),
+            let want_report_aggregation = ReportAggregation::new(
+                *want_report_aggregation.task_id(),
+                *want_report_aggregation.aggregation_job_id(),
+                *want_report_aggregation.report_id(),
+                *want_report_aggregation.time(),
+                want_report_aggregation.ord() + 10,
+                want_report_aggregation.last_prep_step().cloned(),
+                want_report_aggregation.state().clone(),
             );
             ds.run_tx(|tx| {
-                let new_report_aggregation = new_report_aggregation.clone();
-                Box::pin(async move { tx.update_report_aggregation(&new_report_aggregation).await })
+                let want_report_aggregation = want_report_aggregation.clone();
+                Box::pin(
+                    async move { tx.update_report_aggregation(&want_report_aggregation).await },
+                )
             })
             .await
             .unwrap();
 
             let got_report_aggregation = ds
                 .run_tx(|tx| {
-                    let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
+                    let vdaf = Arc::clone(&vdaf);
                     Box::pin(async move {
                         tx.get_report_aggregation(
                             vdaf.as_ref(),
-                            &role,
-                            task.id(),
+                            &Role::Leader,
+                            &task_id,
                             &aggregation_job_id,
                             &report_id,
                         )
@@ -7192,7 +7120,7 @@ mod tests {
                 })
                 .await
                 .unwrap();
-            assert_eq!(Some(new_report_aggregation), got_report_aggregation);
+            assert_eq!(Some(want_report_aggregation), got_report_aggregation);
         }
     }
 
@@ -7247,6 +7175,7 @@ mod tests {
                     report_id,
                     Time::from_seconds_since_epoch(12345),
                     0,
+                    None,
                     ReportAggregationState::Start,
                 );
                 tx.put_report_aggregation(&report_aggregation).await?;
@@ -7355,6 +7284,7 @@ mod tests {
                         ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                         Time::from_seconds_since_epoch(12345),
                         0,
+                        None,
                         ReportAggregationState::Invalid,
                     ))
                     .await
@@ -7372,7 +7302,7 @@ mod tests {
 
         let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
-        let verify_key: [u8; PRIO3_VERIFY_KEY_LENGTH] = random();
+        let verify_key: [u8; VERIFY_KEY_LEN] = random();
         let vdaf_transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), &report_id, &0);
 
         let task = TaskBuilder::new(
@@ -7384,18 +7314,18 @@ mod tests {
         let aggregation_job_id = random();
         let time = Time::from_seconds_since_epoch(12345);
 
-        let report_aggregations = ds
+        let want_report_aggregations = ds
             .run_tx(|tx| {
                 let (task, prep_msg, prep_state, output_share) = (
                     task.clone(),
                     vdaf_transcript.prepare_messages[0].clone(),
-                    vdaf_transcript.leader_prep_state(0).clone(),
+                    vdaf_transcript.leader_prep_state(0).0.clone(),
                     vdaf_transcript.output_share(Role::Leader).clone(),
                 );
                 Box::pin(async move {
                     tx.put_task(&task).await?;
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LEN,
                         TimeInterval,
                         Prio3Count,
                     >::new(
@@ -7410,13 +7340,12 @@ mod tests {
                     ))
                     .await?;
 
-                    let mut report_aggregations = Vec::new();
+                    let mut want_report_aggregations = Vec::new();
                     for (ord, state) in [
-                        ReportAggregationState::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::Start,
-                        ReportAggregationState::Waiting(
-                            prep_state.clone(),
-                            PrepareMessageOrShare::Leader(prep_msg),
-                        ),
+                        ReportAggregationState::<VERIFY_KEY_LEN, Prio3Count>::Start,
+                        ReportAggregationState::Waiting(prep_state.clone(), Some(prep_msg)),
+                        ReportAggregationState::Waiting(prep_state.clone(), None),
+                        ReportAggregationState::Finished(output_share.clone()),
                         ReportAggregationState::Finished(output_share),
                         ReportAggregationState::Failed(ReportShareError::VdafPrepError),
                         ReportAggregationState::Invalid,
@@ -7445,12 +7374,18 @@ mod tests {
                             report_id,
                             time,
                             ord.try_into().unwrap(),
+                            Some(PrepareStep::new(
+                                report_id,
+                                PrepareStepResult::Finished {
+                                    prep_msg: format!("prep_msg_{ord}").into(),
+                                },
+                            )),
                             state.clone(),
                         );
                         tx.put_report_aggregation(&report_aggregation).await?;
-                        report_aggregations.push(report_aggregation);
+                        want_report_aggregations.push(report_aggregation);
                     }
-                    Ok(report_aggregations)
+                    Ok(want_report_aggregations)
                 })
             })
             .await
@@ -7471,7 +7406,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(report_aggregations, got_report_aggregations);
+        assert_eq!(want_report_aggregations, got_report_aggregations);
     }
 
     #[tokio::test]
@@ -7927,6 +7862,7 @@ mod tests {
             *reports[0].metadata().id(),
             *reports[0].metadata().time(),
             0,
+            None,
             ReportAggregationState::Start, // Doesn't matter what state the report aggregation is in
         )]);
 
@@ -8057,6 +7993,7 @@ mod tests {
             *reports[0].metadata().id(),
             *reports[0].metadata().time(),
             0,
+            None,
             ReportAggregationState::Start, // Doesn't matter what state the report aggregation is in
         )]);
 
@@ -8293,6 +8230,7 @@ mod tests {
             *reports[0].metadata().id(),
             *reports[0].metadata().time(),
             0,
+            None,
             ReportAggregationState::Start, // Shouldn't matter what state the report aggregation is in
         )]);
 
@@ -8357,6 +8295,7 @@ mod tests {
             *reports[0].metadata().id(),
             *reports[0].metadata().time(),
             0,
+            None,
             ReportAggregationState::Start,
         )]);
 
@@ -8434,6 +8373,7 @@ mod tests {
                 *reports[0].metadata().id(),
                 *reports[0].metadata().time(),
                 0,
+                None,
                 ReportAggregationState::Start,
             ),
             ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -8442,6 +8382,7 @@ mod tests {
                 *reports[1].metadata().id(),
                 *reports[1].metadata().time(),
                 0,
+                None,
                 ReportAggregationState::Start,
             ),
         ]);
@@ -8516,6 +8457,7 @@ mod tests {
                 *reports[0].metadata().id(),
                 *reports[0].metadata().time(),
                 0,
+                None,
                 ReportAggregationState::Start,
             ),
             ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -8524,6 +8466,7 @@ mod tests {
                 *reports[0].metadata().id(),
                 *reports[0].metadata().time(),
                 0,
+                None,
                 ReportAggregationState::Start,
             ),
         ]);
@@ -8679,6 +8622,7 @@ mod tests {
                 *reports[0].metadata().id(),
                 *reports[0].metadata().time(),
                 0,
+                None,
                 ReportAggregationState::Start,
             ),
             ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -8687,6 +8631,7 @@ mod tests {
                 *reports[0].metadata().id(),
                 *reports[0].metadata().time(),
                 0,
+                None,
                 ReportAggregationState::Start,
             ),
             ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -8695,6 +8640,7 @@ mod tests {
                 *reports[0].metadata().id(),
                 *reports[0].metadata().time(),
                 0,
+                None,
                 ReportAggregationState::Start,
             ),
         ]);
@@ -9253,6 +9199,7 @@ mod tests {
                         random(),
                         clock.now(),
                         0,
+                        None,
                         ReportAggregationState::Start, // Counted among max_size.
                     );
                     let report_aggregation_0_1 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -9261,9 +9208,10 @@ mod tests {
                         random(),
                         clock.now(),
                         1,
+                        None,
                         ReportAggregationState::Waiting(
                             dummy_vdaf::PrepareState::default(),
-                            PrepareMessageOrShare::Leader(()),
+                            Some(()),
                         ), // Counted among max_size.
                     );
                     let report_aggregation_0_2 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -9272,6 +9220,7 @@ mod tests {
                         random(),
                         clock.now(),
                         2,
+                        None,
                         ReportAggregationState::Failed(ReportShareError::VdafPrepError), // Not counted among min_size or max_size.
                     );
                     let report_aggregation_0_3 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -9280,6 +9229,7 @@ mod tests {
                         random(),
                         clock.now(),
                         3,
+                        None,
                         ReportAggregationState::Invalid, // Not counted among min_size or max_size.
                     );
 
@@ -9299,7 +9249,8 @@ mod tests {
                         random(),
                         clock.now(),
                         0,
-                        ReportAggregationState::Finished(dummy_vdaf::OutputShare()), // Counted among min_size and max_size.
+                        None,
+                        ReportAggregationState::Finished(dummy_vdaf::OutputShare(0)), // Counted among min_size and max_size.
                     );
                     let report_aggregation_1_1 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
@@ -9307,7 +9258,8 @@ mod tests {
                         random(),
                         clock.now(),
                         1,
-                        ReportAggregationState::Finished(dummy_vdaf::OutputShare()), // Counted among min_size and max_size.
+                        None,
+                        ReportAggregationState::Finished(dummy_vdaf::OutputShare(0)), // Counted among min_size and max_size.
                     );
                     let report_aggregation_1_2 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
@@ -9315,6 +9267,7 @@ mod tests {
                         random(),
                         clock.now(),
                         2,
+                        None,
                         ReportAggregationState::Failed(ReportShareError::VdafPrepError), // Not counted among min_size or max_size.
                     );
                     let report_aggregation_1_3 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -9323,6 +9276,7 @@ mod tests {
                         random(),
                         clock.now(),
                         3,
+                        None,
                         ReportAggregationState::Invalid, // Not counted among min_size or max_size.
                     );
 
@@ -9570,6 +9524,7 @@ mod tests {
                         *attached_report.metadata().id(),
                         *attached_report.metadata().time(),
                         0,
+                        None,
                         ReportAggregationState::<0, dummy_vdaf::Vdaf>::Start,
                     );
 
@@ -9698,6 +9653,7 @@ mod tests {
                     *report_id,
                     *client_timestamp,
                     ord.try_into().unwrap(),
+                    None,
                     ReportAggregationState::<0, dummy_vdaf::Vdaf>::Start,
                 );
                 tx.put_report_aggregation(&report_aggregation)
@@ -10408,6 +10364,7 @@ mod tests {
                     *report.metadata().id(),
                     *client_timestamp,
                     0,
+                    None,
                     ReportAggregationState::<0, dummy_vdaf::Vdaf>::Start,
                 );
                 tx.put_report_aggregation(&report_aggregation)
