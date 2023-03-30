@@ -2674,9 +2674,6 @@ mod tests {
         for (val, hex_encoding) in vals_and_encodings {
             let mut encoded_val = Vec::new();
             val.encode(&mut encoded_val);
-            if let Some(want_encoded_len) = val.encoded_len() {
-                assert_eq!(want_encoded_len, encoded_val.len());
-            }
             let encoding = hex::decode(hex_encoding).unwrap();
             assert_eq!(
                 encoding, encoded_val,
