@@ -551,6 +551,16 @@ async fn run(
                 .expect("completed collection_poll response is missing \"report_count\""),
             measurements.len()
         );
+        collection_poll_response_object
+            .get("interval_start")
+            .expect("completed collection_poll response is missing \"interval_start\"")
+            .as_f64()
+            .expect("\"interval_start\" is not a number");
+        collection_poll_response_object
+            .get("interval_duration")
+            .expect("completed collection_poll response is missing \"interval_duration\"")
+            .as_f64()
+            .expect("\"interval_duration\" is not a number");
         return collection_poll_response_object
             .get("result")
             .expect("completed collection_poll response is missing \"result\"")

@@ -93,6 +93,8 @@ struct CollectPollRequest {
 struct CollectResult {
     partial_batch_selector: Option<BatchId>,
     report_count: u64,
+    interval_start: i64,
+    interval_duration: i64,
     aggregation_result: AggregationResult,
 }
 
@@ -114,6 +116,10 @@ struct CollectPollResponse {
     batch_id: Option<String>,
     #[serde(default)]
     report_count: Option<u64>,
+    #[serde(default)]
+    interval_start: Option<i64>,
+    #[serde(default)]
+    interval_duration: Option<i64>,
     #[serde(default)]
     result: Option<AggregationResult>,
 }
@@ -188,9 +194,12 @@ where
     let agg_param = V::AggregationParam::get_decoded(agg_param_encoded)?;
     let handle = spawn(async move {
         let collect_result = collector.collect(query, &agg_param).await?;
+        let (interval_start, interval_duration) = collect_result.interval();
         Ok(CollectResult {
             partial_batch_selector: batch_convert_fn(collect_result.partial_batch_selector()),
             report_count: collect_result.report_count(),
+            interval_start: interval_start.timestamp(),
+            interval_duration: interval_duration.num_seconds(),
             aggregation_result: result_convert_fn(collect_result.aggregate_result()),
         })
     });
@@ -752,6 +761,8 @@ fn handler() -> anyhow::Result<impl Handler> {
                                 .partial_batch_selector
                                 .map(|batch_id| URL_SAFE_NO_PAD.encode(batch_id.as_ref())),
                             report_count: Some(collect_result.report_count),
+                            interval_start: Some(collect_result.interval_start),
+                            interval_duration: Some(collect_result.interval_duration),
                             result: Some(collect_result.aggregation_result),
                         }),
                         Ok(None) => Json(CollectPollResponse {
@@ -759,6 +770,8 @@ fn handler() -> anyhow::Result<impl Handler> {
                             error: None,
                             batch_id: None,
                             report_count: None,
+                            interval_start: None,
+                            interval_duration: None,
                             result: None,
                         }),
                         Err(e) => Json(CollectPollResponse {
@@ -766,6 +779,8 @@ fn handler() -> anyhow::Result<impl Handler> {
                             error: Some(format!("{e:?}")),
                             batch_id: None,
                             report_count: None,
+                            interval_start: None,
+                            interval_duration: None,
                             result: None,
                         }),
                     }
