@@ -202,7 +202,7 @@ enum ParsedQuery {
     FixedSize(FixedSizeQuery),
 }
 
-async fn handle_collect_start(
+async fn handle_collection_start(
     http_client: &reqwest::Client,
     tasks: &Mutex<HashMap<TaskId, TaskState>>,
     collection_jobs: &Mutex<HashMap<Handle, CollectionJobState>>,
@@ -604,7 +604,7 @@ async fn handle_collect_start(
     })
 }
 
-async fn handle_collect_poll(
+async fn handle_collection_poll(
     collection_jobs: &Mutex<HashMap<Handle, CollectionJobState>>,
     request: CollectPollRequest,
 ) -> anyhow::Result<Option<CollectResult>> {
@@ -647,7 +647,7 @@ async fn handle_collect_poll(
             )),
         },
         Entry::Vacant(_) => Err(anyhow::anyhow!(
-            "did not recognize handle in collect_poll request"
+            "did not recognize handle in collection_poll request"
         )),
     }
 }
@@ -705,7 +705,7 @@ fn handler() -> anyhow::Result<impl Handler> {
             ),
         )
         .post(
-            "/internal/test/collect_start",
+            "/internal/test/collection_start",
             api(
                 |_conn: &mut Conn,
                  (State(http_client), State(tasks), State(collection_jobs), Json(request)): (
@@ -714,8 +714,13 @@ fn handler() -> anyhow::Result<impl Handler> {
                     State<CollectionJobStateMap>,
                     Json<CollectStartRequest>,
                 )| async move {
-                    match handle_collect_start(&http_client, &tasks.0, &collection_jobs.0, request)
-                        .await
+                    match handle_collection_start(
+                        &http_client,
+                        &tasks.0,
+                        &collection_jobs.0,
+                        request,
+                    )
+                    .await
                     {
                         Ok(handle) => Json(CollectStartResponse {
                             status: SUCCESS,
@@ -732,14 +737,14 @@ fn handler() -> anyhow::Result<impl Handler> {
             ),
         )
         .post(
-            "/internal/test/collect_poll",
+            "/internal/test/collection_poll",
             api(
                 |_conn: &mut Conn,
                  (State(collection_jobs), Json(request)): (
                     State<CollectionJobStateMap>,
                     Json<CollectPollRequest>,
                 )| async move {
-                    match handle_collect_poll(&collection_jobs.0, request).await {
+                    match handle_collection_poll(&collection_jobs.0, request).await {
                         Ok(Some(collect_result)) => Json(CollectPollResponse {
                             status: COMPLETE,
                             error: None,
