@@ -187,17 +187,14 @@ impl CollectorParameters {
     /// Creates a new set of collector task parameters.
     pub fn new(
         task_id: TaskId,
-        mut leader_endpoint: Url,
+        leader_endpoint: Url,
         authentication_token: AuthenticationToken,
         hpke_config: HpkeConfig,
         hpke_private_key: HpkePrivateKey,
     ) -> CollectorParameters {
-        // Ensure the provided leader endpoint ends with a slash.
-        url_ensure_trailing_slash(&mut leader_endpoint);
-
         CollectorParameters {
             task_id,
-            leader_endpoint,
+            leader_endpoint: url_ensure_trailing_slash(leader_endpoint),
             authentication: Authentication::DapAuthToken(authentication_token),
             hpke_config,
             hpke_private_key,

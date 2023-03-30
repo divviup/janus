@@ -1,8 +1,8 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::{distributions::Standard, prelude::Distribution};
-use reqwest::Url;
 use ring::constant_time;
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 /// HTTP header where auth tokens are provided in messages between participants.
 pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
@@ -568,15 +568,16 @@ impl Distribution<AuthenticationToken> for Standard {
     }
 }
 
-/// Modifies a [`Url`] in place to ensure it ends with a slash.
+/// Returns the given [`Url`], possibly modified to end with a slash.
 ///
 /// Aggregator endpoint URLs should end with a slash if they will be used with [`Url::join`],
 /// because that method will drop the last path component of the base URL if it does not end with a
 /// slash.
-pub fn url_ensure_trailing_slash(url: &mut Url) {
+pub fn url_ensure_trailing_slash(mut url: Url) -> Url {
     if !url.as_str().ends_with('/') {
         url.set_path(&format!("{}/", url.path()));
     }
+    url
 }
 
 #[cfg(test)]

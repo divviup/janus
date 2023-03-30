@@ -499,7 +499,6 @@ mod tests {
     use prio::codec::{Decode, Encode};
     use rand::random;
     use std::{str, sync::Arc, time::Duration as StdDuration};
-    use url::Url;
 
     async fn setup_collection_job_test_case(
         server: &mut mockito::Server,
@@ -513,10 +512,7 @@ mod tests {
     ) {
         let time_precision = Duration::from_seconds(500);
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
-            .with_aggregator_endpoints(Vec::from([
-                Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-                Url::parse(&server.url()).unwrap(),
-            ]))
+            .with_helper_aggregator_endpoint(server.url().parse().unwrap())
             .with_time_precision(time_precision)
             .with_min_batch_size(10)
             .build();
@@ -640,10 +636,7 @@ mod tests {
 
         let time_precision = Duration::from_seconds(500);
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
-            .with_aggregator_endpoints(Vec::from([
-                Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-                Url::parse(&server.url()).unwrap(),
-            ]))
+            .with_helper_aggregator_endpoint(server.url().parse().unwrap())
             .with_time_precision(time_precision)
             .with_min_batch_size(10)
             .build();

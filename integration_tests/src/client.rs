@@ -159,18 +159,22 @@ impl<'a> ClientBackend<'a> {
     pub async fn build<V>(
         &self,
         task: &Task,
-        aggregator_endpoints: Vec<Url>,
+        leader_aggregator_endpoint: Url,
+        helper_aggregator_endpoint: Url,
         vdaf: V,
     ) -> anyhow::Result<ClientImplementation<'a, V>>
     where
         V: vdaf::Client<16> + InteropClientEncoding,
     {
         match self {
-            ClientBackend::InProcess => {
-                ClientImplementation::new_in_process(task, aggregator_endpoints, vdaf)
-                    .await
-                    .map_err(Into::into)
-            }
+            ClientBackend::InProcess => ClientImplementation::new_in_process(
+                task,
+                leader_aggregator_endpoint,
+                helper_aggregator_endpoint,
+                vdaf,
+            )
+            .await
+            .map_err(Into::into),
             ClientBackend::Container {
                 container_client,
                 container_image,
@@ -217,11 +221,16 @@ where
 {
     pub async fn new_in_process(
         task: &Task,
-        aggregator_endpoints: Vec<Url>,
+        leader_aggregator_endpoint: Url,
+        helper_aggregator_endpoint: Url,
         vdaf: V,
     ) -> Result<ClientImplementation<'static, V>, janus_client::Error> {
-        let client_parameters =
-            ClientParameters::new(*task.id(), aggregator_endpoints, *task.time_precision());
+        let client_parameters = ClientParameters::new(
+            *task.id(),
+            leader_aggregator_endpoint,
+            helper_aggregator_endpoint,
+            *task.time_precision(),
+        );
         let http_client = default_http_client()?;
         let leader_config =
             aggregator_hpke_config(&client_parameters, &Role::Leader, task.id(), &http_client)
@@ -259,8 +268,8 @@ where
         let http_client = reqwest::Client::new();
         ClientImplementation::Container(Box::new(ContainerClientImplementation {
             _container: container,
-            leader: task.aggregator_endpoints()[Role::Leader.index().unwrap()].clone(),
-            helper: task.aggregator_endpoints()[Role::Helper.index().unwrap()].clone(),
+            leader: task.leader_aggregator_endpoint().clone(),
+            helper: task.helper_aggregator_endpoint().clone(),
             task_id: *task.id(),
             time_precision: *task.time_precision(),
             vdaf,

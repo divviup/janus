@@ -52,7 +52,11 @@ impl<'a> Janus<'a> {
         task: &Task,
     ) -> Janus<'a> {
         // Start the Janus interop aggregator container running.
-        let endpoint = task.aggregator_url(task.role()).unwrap();
+        let endpoint = match task.role() {
+            Role::Leader => task.leader_aggregator_endpoint(),
+            Role::Helper => task.helper_aggregator_endpoint(),
+            _ => panic!("unexpected task role"),
+        };
         let container = container_client.run(
             RunnableImage::from(Aggregator::default())
                 .with_network(network)

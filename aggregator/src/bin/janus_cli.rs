@@ -778,9 +778,8 @@ mod tests {
         // YAML contains no task ID, VDAF verify keys, aggregator auth tokens, collector auth tokens
         // or HPKE keys.
         let serialized_task_yaml = r#"
-- aggregator_endpoints:
-  - https://leader
-  - https://helper
+- leader_aggregator_endpoint: https://leader
+  helper_aggregator_endpoint: https://helper
   query_type: TimeInterval
   vdaf: !Prio3Sum
     bits: 2
@@ -801,9 +800,8 @@ mod tests {
   aggregator_auth_tokens: []
   collector_auth_tokens: []
   hpke_keys: []
-- aggregator_endpoints:
-  - https://leader
-  - https://helper
+- leader_aggregator_endpoint: https://leader
+  helper_aggregator_endpoint: https://helper
   query_type: TimeInterval
   vdaf: !Prio3Sum
     bits: 2

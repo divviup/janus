@@ -73,15 +73,12 @@ impl<'a> JanusPair<'a> {
                 // where "port" is whatever unused port we use with `kubectl port-forward`. But when
                 // the aggregators talk to each other, they do it on the cluster's private network,
                 // and so they need the in-cluster DNS name of the other aggregator. However, since
-                // aggregators use the endpoint URLs in the task to construct collection job URIs, we
-                // must only fix the _peer_ aggregator's endpoint.
-                let leader_endpoints = {
-                    let mut endpoints = leader_task.aggregator_endpoints().to_vec();
-                    endpoints[1] = Self::in_cluster_aggregator_url(&helper_namespace);
-                    endpoints
-                };
+                // aggregators use the endpoint URLs in the task to construct collection job URIs,
+                // we must only fix the _peer_ aggregator's endpoint.
                 let leader_task = leader_task
-                    .with_aggregator_endpoints(leader_endpoints)
+                    .with_helper_aggregator_endpoint(Self::in_cluster_aggregator_url(
+                        &helper_namespace,
+                    ))
                     .build();
                 let leader = Janus::new_with_kubernetes_cluster(
                     &kubeconfig_path,
@@ -91,13 +88,10 @@ impl<'a> JanusPair<'a> {
                 )
                 .await;
 
-                let helper_endpoints = {
-                    let mut endpoints = helper_task.aggregator_endpoints().to_vec();
-                    endpoints[0] = Self::in_cluster_aggregator_url(&leader_namespace);
-                    endpoints
-                };
                 let helper_task = helper_task
-                    .with_aggregator_endpoints(helper_endpoints)
+                    .with_leader_aggregator_endpoint(Self::in_cluster_aggregator_url(
+                        &leader_namespace,
+                    ))
                     .build();
                 let helper = Janus::new_with_kubernetes_cluster(
                     &kubeconfig_path,

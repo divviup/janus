@@ -30,10 +30,12 @@ pub fn test_task_builders(
     let endpoint_random_value = hex::encode(random::<[u8; 4]>());
     let collector_keypair = generate_test_hpke_config_and_private_key();
     let leader_task = TaskBuilder::new(query_type, vdaf, Role::Leader)
-        .with_aggregator_endpoints(Vec::from([
+        .with_leader_aggregator_endpoint(
             Url::parse(&format!("http://leader-{endpoint_random_value}:8080/")).unwrap(),
+        )
+        .with_helper_aggregator_endpoint(
             Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
-        ]))
+        )
         .with_min_batch_size(46)
         .with_collector_hpke_config(collector_keypair.config().clone());
     let helper_task = leader_task
@@ -106,7 +108,7 @@ where
 
 pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
     vdaf: V,
-    aggregator_endpoints: Vec<Url>,
+    leader_aggregator_endpoint: &Url,
     leader_task: &'a Task,
     collector_private_key: &'a HpkePrivateKey,
     test_case: &'a AggregationTestCase<V>,
@@ -124,7 +126,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
 
     let collector_params = CollectorParameters::new(
         *leader_task.id(),
-        aggregator_endpoints[Role::Leader.index().unwrap()].clone(),
+        leader_aggregator_endpoint.clone(),
         leader_task.primary_collector_auth_token().clone(),
         leader_task.collector_hpke_config().clone(),
         collector_private_key.clone(),
@@ -143,9 +145,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
         janus_collector::default_http_client().unwrap(),
     );
 
-    let forwarded_port = aggregator_endpoints[Role::Leader.index().unwrap()]
-        .port()
-        .unwrap();
+    let forwarded_port = leader_aggregator_endpoint.port().unwrap();
 
     // Send a collect request and verify that we got the correct result.
     match leader_task.query_type() {
@@ -218,12 +218,10 @@ pub async fn submit_measurements_and_verify_aggregate(
     client_backend: &ClientBackend<'_>,
 ) {
     // Translate aggregator endpoints for our perspective outside the container network.
-    let aggregator_endpoints: Vec<_> = leader_task
-        .aggregator_endpoints()
-        .iter()
-        .zip([leader_port, helper_port])
-        .map(|(url, port)| translate_url_for_external_access(url, port))
-        .collect();
+    let leader_aggregator_endpoint =
+        translate_url_for_external_access(leader_task.leader_aggregator_endpoint(), leader_port);
+    let helper_aggregator_endpoint =
+        translate_url_for_external_access(leader_task.helper_aggregator_endpoint(), helper_port);
 
     // We generate exactly one batch's worth of measurement uploads to work around an issue in
     // Daphne at time of writing.
@@ -247,13 +245,18 @@ pub async fn submit_measurements_and_verify_aggregate(
             };
 
             let client_implementation = client_backend
-                .build(leader_task, aggregator_endpoints.clone(), vdaf.clone())
+                .build(
+                    leader_task,
+                    leader_aggregator_endpoint.clone(),
+                    helper_aggregator_endpoint,
+                    vdaf.clone(),
+                )
                 .await
                 .unwrap();
 
             submit_measurements_and_verify_aggregate_generic(
                 vdaf,
-                aggregator_endpoints,
+                &leader_aggregator_endpoint,
                 leader_task,
                 collector_private_key,
                 &test_case,
@@ -275,13 +278,18 @@ pub async fn submit_measurements_and_verify_aggregate(
             };
 
             let client_implementation = client_backend
-                .build(leader_task, aggregator_endpoints.clone(), vdaf.clone())
+                .build(
+                    leader_task,
+                    leader_aggregator_endpoint.clone(),
+                    helper_aggregator_endpoint,
+                    vdaf.clone(),
+                )
                 .await
                 .unwrap();
 
             submit_measurements_and_verify_aggregate_generic(
                 vdaf,
-                aggregator_endpoints,
+                &leader_aggregator_endpoint,
                 leader_task,
                 collector_private_key,
                 &test_case,
@@ -315,13 +323,18 @@ pub async fn submit_measurements_and_verify_aggregate(
             };
 
             let client_implementation = client_backend
-                .build(leader_task, aggregator_endpoints.clone(), vdaf.clone())
+                .build(
+                    leader_task,
+                    leader_aggregator_endpoint.clone(),
+                    helper_aggregator_endpoint,
+                    vdaf.clone(),
+                )
                 .await
                 .unwrap();
 
             submit_measurements_and_verify_aggregate_generic(
                 vdaf,
-                aggregator_endpoints,
+                &leader_aggregator_endpoint,
                 leader_task,
                 collector_private_key,
                 &test_case,
@@ -354,13 +367,18 @@ pub async fn submit_measurements_and_verify_aggregate(
             };
 
             let client_implementation = client_backend
-                .build(leader_task, aggregator_endpoints.clone(), vdaf.clone())
+                .build(
+                    leader_task,
+                    leader_aggregator_endpoint.clone(),
+                    helper_aggregator_endpoint,
+                    vdaf.clone(),
+                )
                 .await
                 .unwrap();
 
             submit_measurements_and_verify_aggregate_generic(
                 vdaf,
-                aggregator_endpoints,
+                &leader_aggregator_endpoint,
                 leader_task,
                 collector_private_key,
                 &test_case,
@@ -394,13 +412,18 @@ pub async fn submit_measurements_and_verify_aggregate(
             };
 
             let client_implementation = client_backend
-                .build(leader_task, aggregator_endpoints.clone(), vdaf.clone())
+                .build(
+                    leader_task,
+                    leader_aggregator_endpoint.clone(),
+                    helper_aggregator_endpoint,
+                    vdaf.clone(),
+                )
                 .await
                 .unwrap();
 
             submit_measurements_and_verify_aggregate_generic(
                 vdaf,
-                aggregator_endpoints,
+                &leader_aggregator_endpoint,
                 leader_task,
                 collector_private_key,
                 &test_case,

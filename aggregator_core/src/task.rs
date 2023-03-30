@@ -14,11 +14,7 @@ use janus_messages::{
 };
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
-use std::{
-    array::TryFromSliceError,
-    collections::HashMap,
-    fmt::{self, Formatter},
-};
+use std::{array::TryFromSliceError, collections::HashMap};
 use url::Url;
 
 /// Errors that methods and functions in this module may return.
@@ -77,10 +73,12 @@ impl<const SEED_SIZE: usize> TryFrom<&SecretBytes> for VerifyKey<SEED_SIZE> {
 pub struct Task {
     /// Unique identifier for the task.
     task_id: TaskId,
-    /// URLs relative to which aggregator API endpoints are found. The first
-    /// entry is the leader's.
-    #[derivative(Debug(format_with = "fmt_vector_of_urls"))]
-    aggregator_endpoints: Vec<Url>,
+    /// URL relative to which the Leader's API endpoints are found.
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    leader_aggregator_endpoint: Url,
+    /// URL relative to which the Helper's API endpoints are found.
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    helper_aggregator_endpoint: Url,
     /// The query type this task uses to generate batches.
     query_type: QueryType,
     /// The VDAF this task executes.
@@ -122,7 +120,8 @@ impl Task {
     #[allow(clippy::too_many_arguments)]
     pub fn new<I: IntoIterator<Item = HpkeKeypair>>(
         task_id: TaskId,
-        mut aggregator_endpoints: Vec<Url>,
+        leader_aggregator_endpoint: Url,
+        helper_aggregator_endpoint: Url,
         query_type: QueryType,
         vdaf: VdafInstance,
         role: Role,
@@ -138,13 +137,6 @@ impl Task {
         collector_auth_tokens: Vec<AuthenticationToken>,
         hpke_keys: I,
     ) -> Result<Self, Error> {
-        // Ensure provided aggregator endpoints end with a slash, as we will be joining additional
-        // path segments into these endpoints & the Url::join implementation is persnickety about
-        // the slash at the end of the path.
-        for url in &mut aggregator_endpoints {
-            url_ensure_trailing_slash(url);
-        }
-
         // Compute hpke_configs mapping cfg.id -> (cfg, key).
         let hpke_keys: HashMap<HpkeConfigId, HpkeKeypair> = hpke_keys
             .into_iter()
@@ -153,7 +145,8 @@ impl Task {
 
         let task = Self {
             task_id,
-            aggregator_endpoints,
+            leader_aggregator_endpoint: url_ensure_trailing_slash(leader_aggregator_endpoint),
+            helper_aggregator_endpoint: url_ensure_trailing_slash(helper_aggregator_endpoint),
             query_type,
             vdaf,
             role,
@@ -174,10 +167,6 @@ impl Task {
     }
 
     fn validate(&self) -> Result<(), Error> {
-        // DAP currently only supports configurations of exactly two aggregators.
-        if self.aggregator_endpoints.len() != 2 {
-            return Err(Error::InvalidParameter("aggregator_endpoints"));
-        }
         if !self.role.is_aggregator() {
             return Err(Error::InvalidParameter("role"));
         }
@@ -203,9 +192,14 @@ impl Task {
         &self.task_id
     }
 
-    /// Retrieves the aggregator endpoints associated with this task in natural order.
-    pub fn aggregator_endpoints(&self) -> &[Url] {
-        &self.aggregator_endpoints
+    /// Retrieves the Leader's aggregator endpoint associated with this task.
+    pub fn leader_aggregator_endpoint(&self) -> &Url {
+        &self.leader_aggregator_endpoint
+    }
+
+    /// Retrieves the Helper's aggregator endpoint associated with this task.
+    pub fn helper_aggregator_endpoint(&self) -> &Url {
+        &self.helper_aggregator_endpoint
     }
 
     /// Retrieves the query type associated with this task.
@@ -303,12 +297,6 @@ impl Task {
         }
     }
 
-    /// Returns the [`Url`] relative to which the server performing `role` serves its API.
-    pub fn aggregator_url(&self, role: &Role) -> Result<&Url, Error> {
-        let index = role.index().ok_or(Error::InvalidParameter(role.as_str()))?;
-        Ok(&self.aggregator_endpoints[index])
-    }
-
     /// Returns the [`AuthenticationToken`] currently used by this aggregator to authenticate itself
     /// to other aggregators.
     pub fn primary_aggregator_auth_token(&self) -> &AuthenticationToken {
@@ -363,14 +351,14 @@ impl Task {
     /// Returns the URI at which reports may be uploaded for this task.
     pub fn report_upload_uri(&self) -> Result<Url, Error> {
         Ok(self
-            .aggregator_url(&Role::Leader)?
+            .leader_aggregator_endpoint()
             .join(&format!("{}/reports", self.tasks_path()))?)
     }
 
     /// Returns the URI at which the helper resource for the specified aggregation job ID can be
     /// accessed.
     pub fn aggregation_job_uri(&self, aggregation_job_id: &AggregationJobId) -> Result<Url, Error> {
-        Ok(self.aggregator_url(&Role::Helper)?.join(&format!(
+        Ok(self.helper_aggregator_endpoint().join(&format!(
             "{}/aggregation_jobs/{aggregation_job_id}",
             self.tasks_path()
         ))?)
@@ -379,26 +367,18 @@ impl Task {
     /// Returns the URI at which the helper aggregate shares resource can be accessed.
     pub fn aggregate_shares_uri(&self) -> Result<Url, Error> {
         Ok(self
-            .aggregator_url(&Role::Helper)?
+            .helper_aggregator_endpoint()
             .join(&format!("{}/aggregate_shares", self.tasks_path()))?)
     }
 
     /// Returns the URI at which the leader resource for the specified collection job ID can be
     /// accessed.
     pub fn collection_job_uri(&self, collection_job_id: &CollectionJobId) -> Result<Url, Error> {
-        Ok(self.aggregator_url(&Role::Leader)?.join(&format!(
+        Ok(self.leader_aggregator_endpoint().join(&format!(
             "{}/collection_jobs/{collection_job_id}",
             self.tasks_path()
         ))?)
     }
-}
-
-fn fmt_vector_of_urls(urls: &Vec<Url>, f: &mut Formatter<'_>) -> fmt::Result {
-    let mut list = f.debug_list();
-    for url in urls {
-        list.entry(&format!("{url}"));
-    }
-    list.finish()
 }
 
 /// SerializedTask is an intermediate representation for tasks being serialized via the Serialize &
@@ -406,7 +386,8 @@ fn fmt_vector_of_urls(urls: &Vec<Url>, f: &mut Formatter<'_>) -> fmt::Result {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SerializedTask {
     task_id: Option<TaskId>,
-    aggregator_endpoints: Vec<Url>,
+    leader_aggregator_endpoint: Url,
+    helper_aggregator_endpoint: Url,
     query_type: QueryType,
     vdaf: VdafInstance,
     role: Role,
@@ -499,7 +480,8 @@ impl Serialize for Task {
 
         SerializedTask {
             task_id: Some(self.task_id),
-            aggregator_endpoints: self.aggregator_endpoints.clone(),
+            leader_aggregator_endpoint: self.leader_aggregator_endpoint.clone(),
+            helper_aggregator_endpoint: self.helper_aggregator_endpoint.clone(),
             query_type: self.query_type,
             vdaf: self.vdaf.clone(),
             role: self.role,
@@ -567,7 +549,8 @@ impl TryFrom<SerializedTask> for Task {
 
         Task::new(
             task_id,
-            serialized_task.aggregator_endpoints,
+            serialized_task.leader_aggregator_endpoint,
+            serialized_task.helper_aggregator_endpoint,
             serialized_task.query_type,
             serialized_task.vdaf,
             serialized_task.role,
@@ -594,7 +577,6 @@ impl<'de> Deserialize<'de> for Task {
     }
 }
 
-// This is public to allow use in integration tests.
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
@@ -664,10 +646,8 @@ pub mod test_util {
             Self(
                 Task::new(
                     task_id,
-                    Vec::from([
-                        "https://leader.endpoint".parse().unwrap(),
-                        "https://helper.endpoint".parse().unwrap(),
-                    ]),
+                    "https://leader.endpoint".parse().unwrap(),
+                    "https://helper.endpoint".parse().unwrap(),
                     query_type,
                     vdaf,
                     role,
@@ -692,17 +672,20 @@ pub mod test_util {
             Self(Task { task_id, ..self.0 })
         }
 
-        /// Associates the eventual task with the given aggregator endpoints.
-        pub fn with_aggregator_endpoints(self, aggregator_endpoints: Vec<Url>) -> Self {
+        /// Associates the eventual task with the given aggregator endpoint for the Leader.
+        pub fn with_leader_aggregator_endpoint(self, leader_aggregator_endpoint: Url) -> Self {
             Self(Task {
-                aggregator_endpoints,
+                leader_aggregator_endpoint,
                 ..self.0
             })
         }
 
-        /// Retrieves the aggregator endpoints associated with this task builder.
-        pub fn aggregator_endpoints(&self) -> &[Url] {
-            self.0.aggregator_endpoints()
+        /// Associates the eventual task with the given aggregator endpoint for the Helper.
+        pub fn with_helper_aggregator_endpoint(self, helper_aggregator_endpoint: Url) -> Self {
+            Self(Task {
+                helper_aggregator_endpoint,
+                ..self.0
+            })
         }
 
         /// Associates the eventual task with the given aggregator role.
@@ -828,7 +811,6 @@ mod tests {
     };
     use rand::random;
     use serde_test::{assert_tokens, Token};
-    use url::Url;
 
     #[test]
     fn task_serialization() {
@@ -852,10 +834,8 @@ mod tests {
         // As leader, we receive an error if no collector auth token is specified.
         Task::new(
             random(),
-            Vec::from([
-                "http://leader_endpoint".parse().unwrap(),
-                "http://helper_endpoint".parse().unwrap(),
-            ]),
+            "http://leader_endpoint".parse().unwrap(),
+            "http://helper_endpoint".parse().unwrap(),
             QueryType::TimeInterval,
             VdafInstance::Prio3Count,
             Role::Leader,
@@ -876,10 +856,8 @@ mod tests {
         // As leader, we receive no error if a collector auth token is specified.
         Task::new(
             random(),
-            Vec::from([
-                "http://leader_endpoint".parse().unwrap(),
-                "http://helper_endpoint".parse().unwrap(),
-            ]),
+            "http://leader_endpoint".parse().unwrap(),
+            "http://helper_endpoint".parse().unwrap(),
             QueryType::TimeInterval,
             VdafInstance::Prio3Count,
             Role::Leader,
@@ -900,10 +878,8 @@ mod tests {
         // As helper, we receive no error if no collector auth token is specified.
         Task::new(
             random(),
-            Vec::from([
-                "http://leader_endpoint".parse().unwrap(),
-                "http://helper_endpoint".parse().unwrap(),
-            ]),
+            "http://leader_endpoint".parse().unwrap(),
+            "http://helper_endpoint".parse().unwrap(),
             QueryType::TimeInterval,
             VdafInstance::Prio3Count,
             Role::Helper,
@@ -924,10 +900,8 @@ mod tests {
         // As helper, we receive an error if a collector auth token is specified.
         Task::new(
             random(),
-            Vec::from([
-                "http://leader_endpoint".parse().unwrap(),
-                "http://helper_endpoint".parse().unwrap(),
-            ]),
+            "http://leader_endpoint".parse().unwrap(),
+            "http://helper_endpoint".parse().unwrap(),
             QueryType::TimeInterval,
             VdafInstance::Prio3Count,
             Role::Helper,
@@ -950,10 +924,8 @@ mod tests {
     fn aggregator_endpoints_end_in_slash() {
         let task = Task::new(
             random(),
-            Vec::from([
-                "http://leader_endpoint/foo/bar".parse().unwrap(),
-                "http://helper_endpoint".parse().unwrap(),
-            ]),
+            "http://leader_endpoint/foo/bar".parse().unwrap(),
+            "http://helper_endpoint".parse().unwrap(),
             QueryType::TimeInterval,
             VdafInstance::Prio3Count,
             Role::Leader,
@@ -972,11 +944,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            task.aggregator_endpoints,
-            Vec::from([
-                "http://leader_endpoint/foo/bar/".parse().unwrap(),
-                "http://helper_endpoint/".parse().unwrap()
-            ])
+            task.leader_aggregator_endpoint,
+            "http://leader_endpoint/foo/bar/".parse().unwrap(),
+        );
+        assert_eq!(
+            task.helper_aggregator_endpoint,
+            "http://helper_endpoint/".parse().unwrap(),
         );
     }
 
@@ -999,10 +972,8 @@ mod tests {
                     VdafInstance::Prio3Count,
                     Role::Leader,
                 )
-                .with_aggregator_endpoints(Vec::from([
-                    Url::parse("https://leader.com/prefix/").unwrap(),
-                    Url::parse("https://helper.com/prefix/").unwrap(),
-                ]))
+                .with_leader_aggregator_endpoint("https://leader.com/prefix/".parse().unwrap())
+                .with_helper_aggregator_endpoint("https://helper.com/prefix/".parse().unwrap())
                 .build(),
             ),
         ] {
@@ -1030,10 +1001,8 @@ mod tests {
         assert_tokens(
             &Task::new(
                 TaskId::from([0; 32]),
-                Vec::from([
-                    "https://example.com/".parse().unwrap(),
-                    "https://example.net/".parse().unwrap(),
-                ]),
+                "https://example.com/".parse().unwrap(),
+                "https://example.net/".parse().unwrap(),
                 QueryType::TimeInterval,
                 VdafInstance::Prio3Count,
                 Role::Leader,
@@ -1068,16 +1037,15 @@ mod tests {
             &[
                 Token::Struct {
                     name: "SerializedTask",
-                    len: 16,
+                    len: 17,
                 },
                 Token::Str("task_id"),
                 Token::Some,
                 Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
-                Token::Str("aggregator_endpoints"),
-                Token::Seq { len: Some(2) },
+                Token::Str("leader_aggregator_endpoint"),
                 Token::Str("https://example.com/"),
+                Token::Str("helper_aggregator_endpoint"),
                 Token::Str("https://example.net/"),
-                Token::SeqEnd,
                 Token::Str("query_type"),
                 Token::UnitVariant {
                     name: "QueryType",
@@ -1193,10 +1161,8 @@ mod tests {
         assert_tokens(
             &Task::new(
                 TaskId::from([255; 32]),
-                Vec::from([
-                    "https://example.com/".parse().unwrap(),
-                    "https://example.net/".parse().unwrap(),
-                ]),
+                "https://example.com/".parse().unwrap(),
+                "https://example.net/".parse().unwrap(),
                 QueryType::FixedSize { max_batch_size: 10 },
                 VdafInstance::Prio3CountVec { length: 8 },
                 Role::Helper,
@@ -1231,16 +1197,15 @@ mod tests {
             &[
                 Token::Struct {
                     name: "SerializedTask",
-                    len: 16,
+                    len: 17,
                 },
                 Token::Str("task_id"),
                 Token::Some,
                 Token::Str("__________________________________________8"),
-                Token::Str("aggregator_endpoints"),
-                Token::Seq { len: Some(2) },
+                Token::Str("leader_aggregator_endpoint"),
                 Token::Str("https://example.com/"),
+                Token::Str("helper_aggregator_endpoint"),
                 Token::Str("https://example.net/"),
-                Token::SeqEnd,
                 Token::Str("query_type"),
                 Token::StructVariant {
                     name: "QueryType",
@@ -1370,10 +1335,8 @@ mod tests {
 
         let bad_agg_auth_token = SerializedTask {
             task_id: Some(random()),
-            aggregator_endpoints: Vec::from([
-                "https://www.example.com/".parse().unwrap(),
-                "https://www.example.net/".parse().unwrap(),
-            ]),
+            leader_aggregator_endpoint: "https://www.example.com/".parse().unwrap(),
+            helper_aggregator_endpoint: "https://www.example.net/".parse().unwrap(),
             query_type: QueryType::TimeInterval,
             vdaf: VdafInstance::Prio3Count,
             role: Role::Helper,
@@ -1396,10 +1359,8 @@ mod tests {
 
         let bad_collector_auth_token = SerializedTask {
             task_id: Some(random()),
-            aggregator_endpoints: Vec::from([
-                "https://www.example.com/".parse().unwrap(),
-                "https://www.example.net/".parse().unwrap(),
-            ]),
+            leader_aggregator_endpoint: "https://www.example.com/".parse().unwrap(),
+            helper_aggregator_endpoint: "https://www.example.net/".parse().unwrap(),
             query_type: QueryType::TimeInterval,
             vdaf: VdafInstance::Prio3Count,
             role: Role::Leader,

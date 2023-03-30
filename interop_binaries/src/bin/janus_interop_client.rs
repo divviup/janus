@@ -81,11 +81,8 @@ async fn handle_upload_generic<V: prio::vdaf::Client<16>>(
         .context("invalid base64url content in \"task_id\"")?;
     let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
     let time_precision = Duration::from_seconds(request.time_precision);
-    let client_parameters = ClientParameters::new(
-        task_id,
-        Vec::<Url>::from([request.leader, request.helper]),
-        time_precision,
-    );
+    let client_parameters =
+        ClientParameters::new(task_id, request.leader, request.helper, time_precision);
 
     let leader_hpke_config = janus_client::aggregator_hpke_config(
         &client_parameters,

@@ -893,7 +893,6 @@ mod tests {
         },
     };
     use rand::random;
-    use reqwest::Url;
     use std::{borrow::Borrow, str, sync::Arc, time::Duration as StdDuration};
 
     #[tokio::test]
@@ -917,10 +916,7 @@ mod tests {
             VdafInstance::Prio3Count,
             Role::Leader,
         )
-        .with_aggregator_endpoints(Vec::from([
-            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-            Url::parse(&server.url()).unwrap(),
-        ]))
+        .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .build();
 
         let time = clock
@@ -1140,10 +1136,7 @@ mod tests {
             VdafInstance::Prio3Count,
             Role::Leader,
         )
-        .with_aggregator_endpoints(Vec::from([
-            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-            Url::parse(&server.url()).unwrap(),
-        ]))
+        .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .build();
 
         let time = clock
@@ -1433,10 +1426,7 @@ mod tests {
             VdafInstance::Prio3Count,
             Role::Leader,
         )
-        .with_aggregator_endpoints(Vec::from([
-            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-            Url::parse(&server.url()).unwrap(),
-        ]))
+        .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .build();
 
         let report_metadata = ReportMetadata::new(
@@ -1663,10 +1653,7 @@ mod tests {
             VdafInstance::Prio3Count,
             Role::Leader,
         )
-        .with_aggregator_endpoints(Vec::from([
-            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-            Url::parse(&server.url()).unwrap(),
-        ]))
+        .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .build();
         let time = clock
             .now()
@@ -1953,10 +1940,7 @@ mod tests {
             VdafInstance::Prio3Count,
             Role::Leader,
         )
-        .with_aggregator_endpoints(Vec::from([
-            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-            Url::parse(&server.url()).unwrap(),
-        ]))
+        .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .build();
         let report_metadata = ReportMetadata::new(
             random(),
@@ -2409,10 +2393,7 @@ mod tests {
             VdafInstance::Prio3Count,
             Role::Leader,
         )
-        .with_aggregator_endpoints(Vec::from([
-            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-            Url::parse(&server.url()).unwrap(),
-        ]))
+        .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .build();
         let agg_auth_token = task.primary_aggregator_auth_token();
         let aggregation_job_id = random();

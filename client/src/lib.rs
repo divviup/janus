@@ -21,10 +21,7 @@ use prio::{
     vdaf,
 };
 use rand::random;
-use std::{
-    fmt::{self, Formatter},
-    io::Cursor,
-};
+use std::io::Cursor;
 use url::Url;
 
 #[derive(Debug, thiserror::Error)]
@@ -61,10 +58,12 @@ static CLIENT_USER_AGENT: &str = concat!(
 pub struct ClientParameters {
     /// Unique identifier for the task.
     task_id: TaskId,
-    /// URLs relative to which aggregator API endpoints are found. The first
-    /// entry is the leader's.
-    #[derivative(Debug(format_with = "fmt_vector_of_urls"))]
-    aggregator_endpoints: Vec<Url>,
+    /// URL relative to which the Leader's API endpoints are found.
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    leader_aggregator_endpoint: Url,
+    /// URL relative to which the Helper's API endpoints are found.
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    helper_aggregator_endpoint: Url,
     /// The time precision of the task. This value is shared by all parties in the protocol, and is
     /// used to compute report timestamps.
     time_precision: Duration,
@@ -74,10 +73,16 @@ pub struct ClientParameters {
 
 impl ClientParameters {
     /// Creates a new set of client task parameters.
-    pub fn new(task_id: TaskId, aggregator_endpoints: Vec<Url>, time_precision: Duration) -> Self {
+    pub fn new(
+        task_id: TaskId,
+        leader_aggregator_endpoint: Url,
+        helper_aggregator_endpoint: Url,
+        time_precision: Duration,
+    ) -> Self {
         Self::new_with_backoff(
             task_id,
-            aggregator_endpoints,
+            leader_aggregator_endpoint,
+            helper_aggregator_endpoint,
             time_precision,
             http_request_exponential_backoff(),
         )
@@ -86,35 +91,32 @@ impl ClientParameters {
     /// Creates a new set of client task parameters with non-default HTTP request retry parameters.
     pub fn new_with_backoff(
         task_id: TaskId,
-        mut aggregator_endpoints: Vec<Url>,
+        leader_aggregator_endpoint: Url,
+        helper_aggregator_endpoint: Url,
         time_precision: Duration,
         http_request_retry_parameters: ExponentialBackoff,
     ) -> Self {
-        // Ensure provided aggregator endpoints end with a slash, as we will be joining additional
-        // path segments into these endpoints & the Url::join implementation is persnickety about
-        // the slash at the end of the path.
-        for url in &mut aggregator_endpoints {
-            url_ensure_trailing_slash(url);
-        }
-
         Self {
             task_id,
-            aggregator_endpoints,
+            leader_aggregator_endpoint: url_ensure_trailing_slash(leader_aggregator_endpoint),
+            helper_aggregator_endpoint: url_ensure_trailing_slash(helper_aggregator_endpoint),
             time_precision,
             http_request_retry_parameters,
         }
     }
 
-    /// The URL relative to which the API endpoints for the aggregator may be
-    /// found, if the role is an aggregator, or an error otherwise.
+    /// The URL relative to which the API endpoints for the aggregator may be found, if the role is
+    /// an aggregator, or an error otherwise.
     fn aggregator_endpoint(&self, role: &Role) -> Result<&Url, Error> {
-        Ok(&self.aggregator_endpoints[role
-            .index()
-            .ok_or(Error::InvalidParameter("role is not an aggregator"))?])
+        match role {
+            Role::Leader => Ok(&self.leader_aggregator_endpoint),
+            Role::Helper => Ok(&self.helper_aggregator_endpoint),
+            _ => Err(Error::InvalidParameter("role is not an aggregator")),
+        }
     }
 
-    /// URL from which the HPKE configuration for the server filling `role` may
-    /// be fetched per draft-gpew-priv-ppm §4.3.1
+    /// URL from which the HPKE configuration for the server filling `role` may be fetched per
+    /// draft-gpew-priv-ppm §4.3.1
     fn hpke_config_endpoint(&self, role: &Role) -> Result<Url, Error> {
         Ok(self.aggregator_endpoint(role)?.join("hpke_config")?)
     }
@@ -122,21 +124,13 @@ impl ClientParameters {
     // URI to which reports may be uploaded for the provided task.
     fn reports_resource_uri(&self, task_id: &TaskId) -> Result<Url, Error> {
         Ok(self
-            .aggregator_endpoint(&Role::Leader)?
+            .leader_aggregator_endpoint
             .join(&format!("tasks/{task_id}/reports"))?)
     }
 }
 
-fn fmt_vector_of_urls(urls: &Vec<Url>, f: &mut Formatter<'_>) -> fmt::Result {
-    let mut list = f.debug_list();
-    for url in urls {
-        list.entry(&format!("{url}"));
-    }
-    list.finish()
-}
-
-/// Fetches HPKE configuration from the specified aggregator using the
-/// aggregator endpoints in the provided [`ClientParameters`].
+/// Fetches HPKE configuration from the specified aggregator using the aggregator endpoints in the
+/// provided [`ClientParameters`].
 #[tracing::instrument(err)]
 pub async fn aggregator_hpke_config(
     client_parameters: &ClientParameters,
@@ -312,14 +306,15 @@ mod tests {
     use url::Url;
 
     fn setup_client<V: vdaf::Client<16>>(
-        server: &mut mockito::Server,
+        server: &mockito::Server,
         vdaf_client: V,
     ) -> Client<V, MockClock> {
         let server_url = Url::parse(&server.url()).unwrap();
         Client::new(
             ClientParameters::new_with_backoff(
                 random(),
-                Vec::from([server_url.clone(), server_url]),
+                server_url.clone(),
+                server_url,
                 Duration::from_seconds(1),
                 test_http_request_exponential_backoff(),
             ),
@@ -335,19 +330,18 @@ mod tests {
     fn aggregator_endpoints_end_in_slash() {
         let client_parameters = ClientParameters::new(
             random(),
-            Vec::from([
-                "http://leader_endpoint/foo/bar".parse().unwrap(),
-                "http://helper_endpoint".parse().unwrap(),
-            ]),
+            "http://leader_endpoint/foo/bar".parse().unwrap(),
+            "http://helper_endpoint".parse().unwrap(),
             Duration::from_seconds(1),
         );
 
         assert_eq!(
-            client_parameters.aggregator_endpoints,
-            Vec::from([
-                "http://leader_endpoint/foo/bar/".parse().unwrap(),
-                "http://helper_endpoint/".parse().unwrap()
-            ])
+            client_parameters.leader_aggregator_endpoint,
+            "http://leader_endpoint/foo/bar/".parse().unwrap()
+        );
+        assert_eq!(
+            client_parameters.helper_aggregator_endpoint,
+            "http://helper_endpoint/".parse().unwrap()
         );
     }
 
@@ -355,7 +349,7 @@ mod tests {
     async fn upload_prio3_count() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let client = setup_client(&mut server, Prio3::new_count(2).unwrap());
+        let client = setup_client(&server, Prio3::new_count(2).unwrap());
 
         let mocked_upload = server
             .mock(
@@ -376,9 +370,9 @@ mod tests {
     #[tokio::test]
     async fn upload_prio3_invalid_measurement() {
         install_test_trace_subscriber();
-        let mut server = mockito::Server::new_async().await;
+        let server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_sum(2, 16).unwrap();
-        let client = setup_client(&mut server, vdaf);
+        let client = setup_client(&server, vdaf);
 
         // 65536 is too big for a 16 bit sum and will be rejected by the VDAF.
         // Make sure we get the right error variant but otherwise we aren't
@@ -390,7 +384,7 @@ mod tests {
     async fn upload_prio3_http_status_code() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let client = setup_client(&mut server, Prio3::new_count(2).unwrap());
+        let client = setup_client(&server, Prio3::new_count(2).unwrap());
 
         let mocked_upload = server
             .mock(
@@ -417,7 +411,7 @@ mod tests {
     async fn upload_problem_details() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let client = setup_client(&mut server, Prio3::new_count(2).unwrap());
+        let client = setup_client(&server, Prio3::new_count(2).unwrap());
 
         let mocked_upload = server
             .mock(
@@ -458,8 +452,12 @@ mod tests {
     async fn upload_bad_time_precision() {
         install_test_trace_subscriber();
 
-        let client_parameters =
-            ClientParameters::new(random(), Vec::new(), Duration::from_seconds(0));
+        let client_parameters = ClientParameters::new(
+            random(),
+            "https://leader.endpoint".parse().unwrap(),
+            "https://helper.endpoint".parse().unwrap(),
+            Duration::from_seconds(0),
+        );
         let client = Client::new(
             client_parameters,
             Prio3::new_count(2).unwrap(),
@@ -475,9 +473,9 @@ mod tests {
     #[test]
     fn report_timestamp() {
         install_test_trace_subscriber();
-        let mut server = mockito::Server::new();
+        let server = mockito::Server::new();
         let vdaf = Prio3::new_count(2).unwrap();
-        let mut client = setup_client(&mut server, vdaf);
+        let mut client = setup_client(&server, vdaf);
 
         client.parameters.time_precision = Duration::from_seconds(100);
         client.clock = MockClock::new(Time::from_seconds_since_epoch(101));

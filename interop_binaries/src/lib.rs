@@ -283,8 +283,8 @@ impl From<Task> for AggregatorAddTaskRequest {
         };
         Self {
             task_id: *task.id(),
-            leader: task.aggregator_url(&Role::Leader).unwrap().clone(),
-            helper: task.aggregator_url(&Role::Helper).unwrap().clone(),
+            leader: task.leader_aggregator_endpoint().clone(),
+            helper: task.helper_aggregator_endpoint().clone(),
             vdaf: task.vdaf().clone().into(),
             leader_authentication_token: String::from_utf8(
                 task.primary_aggregator_auth_token().as_bytes().to_vec(),
