@@ -285,7 +285,7 @@ mod tests {
 
         match handle {
             MetricsExporterHandle::Prometheus(handle) => handle.abort(),
-            MetricsExporterHandle::Noop => {}
+            _ => unreachable!(),
         }
     }
 }
