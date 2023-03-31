@@ -12,14 +12,12 @@ use std::{collections::HashMap, net::AddrParseError, sync::Arc};
 
 #[cfg(feature = "prometheus")]
 use {
-    http::StatusCode,
-    hyper::Response,
     opentelemetry::sdk::metrics::{controllers, processors},
     prometheus::{Encoder, TextEncoder},
-    std::net::SocketAddr,
     std::net::{IpAddr, Ipv4Addr},
     tokio::task::JoinHandle,
-    warp::{Filter, Reply},
+    trillium::{KnownHeaderName, Status},
+    trillium_router::Router,
 };
 
 #[cfg(feature = "otlp")]
@@ -143,14 +141,16 @@ pub fn install_metrics_exporter(
             host: config_exporter_host,
             port: config_exporter_port,
         }) => {
-            let exporter = opentelemetry_prometheus::exporter(
-                controllers::basic(processors::factory(
-                    CustomAggregatorSelector,
-                    stateless_temporality_selector(),
-                ))
-                .build(),
-            )
-            .try_init()?;
+            let exporter = Arc::new(
+                opentelemetry_prometheus::exporter(
+                    controllers::basic(processors::factory(
+                        CustomAggregatorSelector,
+                        stateless_temporality_selector(),
+                    ))
+                    .build(),
+                )
+                .try_init()?,
+            );
 
             let host = config_exporter_host
                 .as_ref()
@@ -158,27 +158,32 @@ pub fn install_metrics_exporter(
                 .unwrap_or_else(|| Ok(Ipv4Addr::UNSPECIFIED.into()))?;
             let port = config_exporter_port.unwrap_or_else(|| 9464);
 
-            let filter = warp::path("metrics").and(warp::get()).map({
-                move || {
+            let router = Router::new().get("metrics", move |conn: trillium::Conn| {
+                let exporter = Arc::clone(&exporter);
+                async move {
                     let mut buffer = Vec::new();
                     let encoder = TextEncoder::new();
                     match encoder.encode(&exporter.registry().gather(), &mut buffer) {
-                        Ok(()) => Response::builder()
-                            .header(hyper::header::CONTENT_TYPE, encoder.format_type())
-                            .body(buffer)
-                            // This unwrap is OK because the only possible source of errors is the
-                            // `header()` call, and its arguments are always valid.
-                            .unwrap()
-                            .into_response(),
+                        Ok(()) => conn
+                            .with_header(
+                                KnownHeaderName::ContentType,
+                                encoder.format_type().to_owned(),
+                            )
+                            .with_body(buffer),
                         Err(error) => {
                             tracing::error!(?error, "Failed to encode Prometheus metrics");
-                            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                            conn.with_status(Status::InternalServerError)
                         }
                     }
                 }
             });
-            let listen_address = SocketAddr::new(host, port);
-            let handle = tokio::task::spawn(warp::serve(filter).bind(listen_address));
+            let handle = tokio::task::spawn(
+                trillium_tokio::config()
+                    .with_port(port)
+                    .with_host(&host.to_string())
+                    .without_signals()
+                    .run_async(router),
+            );
 
             Ok(MetricsExporterHandle::Prometheus(handle))
         }
@@ -223,5 +228,64 @@ pub fn install_metrics_exporter(
 
         // If neither exporter is configured, leave the default NoopMeterProvider in place.
         None => Ok(MetricsExporterHandle::Noop),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "prometheus")]
+    use super::{
+        install_metrics_exporter, MetricsConfiguration, MetricsExporterConfiguration,
+        MetricsExporterHandle,
+    };
+    #[cfg(feature = "prometheus")]
+    use http::StatusCode;
+    #[cfg(feature = "prometheus")]
+    use opentelemetry::Context;
+    #[cfg(feature = "prometheus")]
+    use std::net::Ipv4Addr;
+    #[cfg(feature = "prometheus")]
+    use tokio::net::TcpListener;
+
+    #[cfg(feature = "prometheus")]
+    #[tokio::test]
+    async fn prometheus_metrics_pull() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let handle = install_metrics_exporter(&MetricsConfiguration {
+            exporter: Some(MetricsExporterConfiguration::Prometheus {
+                host: Some("127.0.0.1".to_owned()),
+                port: Some(port),
+            }),
+        })
+        .unwrap();
+
+        opentelemetry::global::meter("tests")
+            .u64_observable_gauge("test_metric")
+            .with_description("Gauge for test purposes")
+            .init()
+            .observe(&Context::current(), 1, &[]);
+
+        let response = reqwest::get(&format!("http://127.0.0.1:{port}/metrics"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("Content-Type").unwrap(),
+            "text/plain; version=0.0.4"
+        );
+        let text = response.text().await.unwrap();
+        assert!(
+            text.contains("HELP") && text.contains("TYPE"),
+            "Exported metrics: {:?}",
+            text
+        );
+
+        match handle {
+            MetricsExporterHandle::Prometheus(handle) => handle.abort(),
+            MetricsExporterHandle::Noop => {}
+        }
     }
 }
