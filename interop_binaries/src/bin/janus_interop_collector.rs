@@ -11,10 +11,11 @@ use janus_core::{
     hpke::HpkeKeypair,
     task::{AuthenticationToken, VdafInstance},
 };
+use janus_interop_binaries::Keyring;
 use janus_interop_binaries::{
     install_tracing_subscriber,
     status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
-    HpkeConfigRegistry, NumberAsString, VdafObject,
+    ErrorHandler, HpkeConfigRegistry, NumberAsString, VdafObject,
 };
 use janus_messages::{
     query_type::QueryType, BatchId, Duration, FixedSizeQuery, HpkeConfig, Interval,
@@ -36,8 +37,8 @@ use std::{
     time::Duration as StdDuration,
 };
 use tokio::{spawn, sync::Mutex, task::JoinHandle};
-use trillium::{Conn, Handler, State, Status};
-use trillium_api::{ApiConnExt, Json};
+use trillium::{Conn, Handler};
+use trillium_api::{api, Json, State};
 use trillium_router::Router;
 #[derive(Debug, Deserialize)]
 struct AddTaskRequest {
@@ -669,15 +670,6 @@ impl CollectionJobStateMap {
     }
 }
 
-#[derive(Clone)]
-struct Keyring(Arc<Mutex<HpkeConfigRegistry>>);
-
-impl Keyring {
-    fn new() -> Self {
-        Self(Arc::new(Mutex::new(HpkeConfigRegistry::new())))
-    }
-}
-
 fn handler() -> anyhow::Result<impl Handler> {
     let http_client = janus_collector::default_http_client()?;
     let tasks = TaskStateMap::new();
@@ -686,113 +678,103 @@ fn handler() -> anyhow::Result<impl Handler> {
 
     let router = Router::new()
         .post("/internal/test/ready", Json(serde_json::json!({})))
-        .post("/internal/test/add_task", |mut conn: Conn| async move {
-            let request = match conn.deserialize().await {
-                Ok(request) => request,
-                Err(e) => {
-                    return conn
-                        .with_json(&serde_json::json!({
-                            "status": ERROR,
-                            "error": format!("Could not parse request: {e}"),
-                        }))
-                        .with_status(Status::BadRequest)
-                }
-            };
-            let tasks = conn.state::<TaskStateMap>().unwrap();
-            let keyring = conn.state::<Keyring>().unwrap();
-            match handle_add_task(&tasks.0, &keyring.0, request).await {
-                Ok(collector_hpke_config) => conn.with_json(&AddTaskResponse {
-                    status: SUCCESS,
-                    error: None,
-                    collector_hpke_config: Some(
-                        URL_SAFE_NO_PAD.encode(collector_hpke_config.get_encoded()),
-                    ),
-                }),
-                Err(e) => conn.with_json(&AddTaskResponse {
-                    status: ERROR,
-                    error: Some(format!("{e:?}")),
-                    collector_hpke_config: None,
-                }),
-            }
-        })
+        .post(
+            "/internal/test/add_task",
+            api(
+                |_conn: &mut Conn,
+                 (State(tasks), State(keyring), Json(request)): (
+                    State<TaskStateMap>,
+                    State<Keyring>,
+                    Json<AddTaskRequest>,
+                )| async move {
+                    match handle_add_task(&tasks.0, &keyring.0, request).await {
+                        Ok(collector_hpke_config) => Json(AddTaskResponse {
+                            status: SUCCESS,
+                            error: None,
+                            collector_hpke_config: Some(
+                                URL_SAFE_NO_PAD.encode(collector_hpke_config.get_encoded()),
+                            ),
+                        }),
+                        Err(e) => Json(AddTaskResponse {
+                            status: ERROR,
+                            error: Some(format!("{e:?}")),
+                            collector_hpke_config: None,
+                        }),
+                    }
+                },
+            ),
+        )
         .post(
             "/internal/test/collect_start",
-            |mut conn: Conn| async move {
-                let request = match conn.deserialize().await {
-                    Ok(request) => request,
-                    Err(e) => {
-                        return conn
-                            .with_json(&serde_json::json!({
-                                "status": ERROR,
-                                "error": format!("Could not parse request: {e}"),
-                            }))
-                            .with_status(Status::BadRequest)
+            api(
+                |_conn: &mut Conn,
+                 (State(http_client), State(tasks), State(collection_jobs), Json(request)): (
+                    State<reqwest::Client>,
+                    State<TaskStateMap>,
+                    State<CollectionJobStateMap>,
+                    Json<CollectStartRequest>,
+                )| async move {
+                    match handle_collect_start(&http_client, &tasks.0, &collection_jobs.0, request)
+                        .await
+                    {
+                        Ok(handle) => Json(CollectStartResponse {
+                            status: SUCCESS,
+                            error: None,
+                            handle: Some(handle.0),
+                        }),
+                        Err(e) => Json(CollectStartResponse {
+                            status: ERROR,
+                            error: Some(format!("{e:?}")),
+                            handle: None,
+                        }),
                     }
-                };
-                let http_client = conn.state::<reqwest::Client>().unwrap();
-                let tasks = conn.state::<TaskStateMap>().unwrap();
-                let collection_jobs = conn.state::<CollectionJobStateMap>().unwrap();
-                match handle_collect_start(http_client, &tasks.0, &collection_jobs.0, request).await
-                {
-                    Ok(handle) => conn.with_json(&CollectStartResponse {
-                        status: SUCCESS,
-                        error: None,
-                        handle: Some(handle.0),
-                    }),
-                    Err(e) => conn.with_json(&CollectStartResponse {
-                        status: ERROR,
-                        error: Some(format!("{e:?}")),
-                        handle: None,
-                    }),
-                }
-            },
+                },
+            ),
         )
-        .post("/internal/test/collect_poll", |mut conn: Conn| async move {
-            let request = match conn.deserialize().await {
-                Ok(request) => request,
-                Err(e) => {
-                    return conn
-                        .with_json(&serde_json::json!({
-                            "status": ERROR,
-                            "error": format!("Could not parse request: {e}"),
-                        }))
-                        .with_status(Status::BadRequest)
-                }
-            };
-            let collection_jobs = conn.state::<CollectionJobStateMap>().unwrap();
-            match handle_collect_poll(&collection_jobs.0, request).await {
-                Ok(Some(collect_result)) => conn.with_json(&CollectPollResponse {
-                    status: COMPLETE,
-                    error: None,
-                    batch_id: collect_result
-                        .partial_batch_selector
-                        .map(|batch_id| URL_SAFE_NO_PAD.encode(batch_id.as_ref())),
-                    report_count: Some(collect_result.report_count),
-                    result: Some(collect_result.aggregation_result),
-                }),
-                Ok(None) => conn.with_json(&CollectPollResponse {
-                    status: IN_PROGRESS,
-                    error: None,
-                    batch_id: None,
-                    report_count: None,
-                    result: None,
-                }),
-                Err(e) => conn.with_json(&CollectPollResponse {
-                    status: ERROR,
-                    error: Some(format!("{e:?}")),
-                    batch_id: None,
-                    report_count: None,
-                    result: None,
-                }),
-            }
-        });
+        .post(
+            "/internal/test/collect_poll",
+            api(
+                |_conn: &mut Conn,
+                 (State(collection_jobs), Json(request)): (
+                    State<CollectionJobStateMap>,
+                    Json<CollectPollRequest>,
+                )| async move {
+                    match handle_collect_poll(&collection_jobs.0, request).await {
+                        Ok(Some(collect_result)) => Json(CollectPollResponse {
+                            status: COMPLETE,
+                            error: None,
+                            batch_id: collect_result
+                                .partial_batch_selector
+                                .map(|batch_id| URL_SAFE_NO_PAD.encode(batch_id.as_ref())),
+                            report_count: Some(collect_result.report_count),
+                            result: Some(collect_result.aggregation_result),
+                        }),
+                        Ok(None) => Json(CollectPollResponse {
+                            status: IN_PROGRESS,
+                            error: None,
+                            batch_id: None,
+                            report_count: None,
+                            result: None,
+                        }),
+                        Err(e) => Json(CollectPollResponse {
+                            status: ERROR,
+                            error: Some(format!("{e:?}")),
+                            batch_id: None,
+                            report_count: None,
+                            result: None,
+                        }),
+                    }
+                },
+            ),
+        );
 
     Ok((
-        State::new(http_client),
-        State::new(tasks),
-        State::new(collection_jobs),
-        State::new(keyring),
+        State(http_client),
+        State(tasks),
+        State(collection_jobs),
+        State(keyring),
         router,
+        ErrorHandler,
     ))
 }
 

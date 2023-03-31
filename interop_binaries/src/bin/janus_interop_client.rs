@@ -13,7 +13,7 @@ use janus_core::{
 use janus_interop_binaries::{
     install_tracing_subscriber,
     status::{ERROR, SUCCESS},
-    NumberAsString, VdafObject,
+    ErrorHandler, NumberAsString, VdafObject,
 };
 use janus_messages::{Duration, Role, TaskId, Time};
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -21,8 +21,8 @@ use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded;
 use prio::{codec::Decode, vdaf::prio3::Prio3};
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, net::Ipv4Addr, str::FromStr};
-use trillium::{Conn, Handler, Status};
-use trillium_api::{ApiConnExt, Json};
+use trillium::{Conn, Handler};
+use trillium_api::{api, Json, State};
 use trillium_router::Router;
 use url::Url;
 
@@ -212,34 +212,29 @@ async fn handle_upload(
 fn handler() -> anyhow::Result<impl Handler> {
     let http_client = janus_client::default_http_client()?;
 
-    Ok(Router::new()
-        .post("/internal/test/ready", Json(serde_json::json!({})))
-        .post("/internal/test/upload", move |mut conn: Conn| {
-            let http_client = http_client.clone();
-            async move {
-                let request = match conn.deserialize().await {
-                    Ok(request) => request,
-                    Err(e) => {
-                        return conn
-                            .with_json(&UploadResponse {
+    Ok((
+        State(http_client),
+        Router::new()
+            .post("/internal/test/ready", Json(serde_json::json!({})))
+            .post(
+                "/internal/test/upload",
+                api(
+                    |_conn: &mut Conn, (State(http_client), Json(request))| async move {
+                        match handle_upload(&http_client, request).await {
+                            Ok(()) => Json(UploadResponse {
+                                status: SUCCESS,
+                                error: None,
+                            }),
+                            Err(e) => Json(UploadResponse {
                                 status: ERROR,
-                                error: Some(format!("Could not parse request: {e}")),
-                            })
-                            .with_status(Status::BadRequest)
-                    }
-                };
-                match handle_upload(&http_client, request).await {
-                    Ok(()) => conn.with_json(&UploadResponse {
-                        status: SUCCESS,
-                        error: None,
-                    }),
-                    Err(e) => conn.with_json(&UploadResponse {
-                        status: ERROR,
-                        error: Some(format!("{e:?}")),
-                    }),
-                }
-            }
-        }))
+                                error: Some(format!("{e:?}")),
+                            }),
+                        }
+                    },
+                ),
+            ),
+        ErrorHandler,
+    ))
 }
 
 fn app() -> clap::Command {
