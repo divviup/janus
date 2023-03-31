@@ -77,7 +77,7 @@ async fn get_task_ids<C: Clock>(
         .map(|(_, v)| TaskId::from_str(v))
         .transpose()
         .map_err(|err| {
-            warn!(err = %err, "Couldn't parse pagination_token");
+            warn!(err = ?err, "Couldn't parse pagination_token");
             Status::BadRequest
         })?;
 
@@ -336,7 +336,7 @@ impl ConnExt for Conn {
             Status::InternalServerError
         })?)
         .map_err(|err| {
-            warn!(err = %err, "Couldn't parse task_id parameter");
+            warn!(err = ?err, "Couldn't parse task_id parameter");
             Status::BadRequest
         })
     }

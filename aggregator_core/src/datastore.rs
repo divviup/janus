@@ -492,6 +492,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// aggregations, etc).
     #[tracing::instrument(skip(self))]
     pub async fn delete_task(&self, task_id: &TaskId) -> Result<(), Error> {
+        // Deletion of other data implemented via ON DELETE CASCADE.
         let stmt = self
             .prepare_cached("DELETE FROM tasks WHERE task_id = $1")
             .await?;
