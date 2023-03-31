@@ -169,7 +169,7 @@ pub fn install_metrics_exporter(
                                 KnownHeaderName::ContentType,
                                 encoder.format_type().to_owned(),
                             )
-                            .with_body(buffer),
+                            .ok(buffer),
                         Err(error) => {
                             tracing::error!(?error, "Failed to encode Prometheus metrics");
                             conn.with_status(Status::InternalServerError)
