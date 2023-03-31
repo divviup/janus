@@ -241,6 +241,8 @@ mod tests {
     #[cfg(feature = "prometheus")]
     use http::StatusCode;
     #[cfg(feature = "prometheus")]
+    use janus_core::retries::{retry_http_request, test_http_request_exponential_backoff};
+    #[cfg(feature = "prometheus")]
     use opentelemetry::Context;
     #[cfg(feature = "prometheus")]
     use std::net::Ipv4Addr;
@@ -268,9 +270,12 @@ mod tests {
             .init()
             .observe(&Context::current(), 1, &[]);
 
-        let response = reqwest::get(&format!("http://127.0.0.1:{port}/metrics"))
-            .await
-            .unwrap();
+        let url = format!("http://127.0.0.1:{port}/metrics");
+        let response = retry_http_request(test_http_request_exponential_backoff(), || {
+            reqwest::get(&url)
+        })
+        .await
+        .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers().get("Content-Type").unwrap(),
