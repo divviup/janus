@@ -1813,6 +1813,10 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-stackdriver",
  "tracing-subscriber",
+ "trillium",
+ "trillium-head",
+ "trillium-router",
+ "trillium-tokio",
  "trycmd",
  "url",
  "uuid",
@@ -1822,7 +1826,7 @@ dependencies = [
 
 [[package]]
 name = "janus_aggregator_api"
-version = "0.3.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4409,9 +4413,9 @@ dependencies = [
 
 [[package]]
 name = "trillium"
-version = "0.2.6"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5598bb9ee521a4c76df72b4c54123eca7add1dc260b5d57d120c1992a25437e"
+checksum = "79b4d1605a08d6bda5d3023035007fad7f220aa4aeefb24caac3856c0dfdede8"
 dependencies = [
  "async-trait",
  "futures-lite",
@@ -4433,6 +4437,15 @@ dependencies = [
  "thiserror",
  "trillium",
  "trillium-http",
+]
+
+[[package]]
+name = "trillium-head"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4dc99042d2de11f55a2447d860ba272bb7edf11cccdb046645b172f46449c52a"
+dependencies = [
+ "trillium",
 ]
 
 [[package]]
