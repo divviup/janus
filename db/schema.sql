@@ -25,6 +25,7 @@ CREATE TABLE tasks(
     tolerable_clock_skew   BIGINT NOT NULL,           -- the maximum acceptable clock skew to allow between client and aggregator, in seconds
     collector_hpke_config  BYTEA NOT NULL             -- the HPKE config of the collector (encoded HpkeConfig message)
 );
+CREATE INDEX task_id_index ON tasks(task_id);
 
 -- The aggregator authentication tokens used by a given task.
 CREATE TABLE task_aggregator_auth_tokens(
@@ -34,7 +35,7 @@ CREATE TABLE task_aggregator_auth_tokens(
     token BYTEA NOT NULL,     -- bearer token used to authenticate messages to/from the other aggregator (encrypted)
 
     CONSTRAINT task_aggregator_auth_tokens_unique_task_id_and_ord UNIQUE(task_id, ord),
-    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
+    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 
 -- The collector authentication tokens used by a given task.
@@ -45,7 +46,7 @@ CREATE TABLE task_collector_auth_tokens(
     token BYTEA NOT NULL,     -- bearer token used to authenticate messages from the collector (encrypted)
 
     CONSTRAINT task_collector_auth_tokens_unique_task_id_and_ord UNIQUE(task_id, ord),
-    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
+    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 
 -- The HPKE public keys (aka configs) and private keys used by a given task.
@@ -57,7 +58,7 @@ CREATE TABLE task_hpke_keys(
     private_key BYTEA NOT NULL,   -- private key (encrypted)
 
     CONSTRAINT task_hpke_keys_unique_task_id_and_config_id UNIQUE(task_id, config_id),
-    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
+    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 
 -- The VDAF verification keys used by a given task.
@@ -68,7 +69,7 @@ CREATE TABLE task_vdaf_verify_keys(
     vdaf_verify_key BYTEA NOT NULL,  -- the VDAF verification key (encrypted)
 
     CONSTRAINT task_vdaf_verify_keys_unique_task_id UNIQUE(task_id),
-    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
+    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 
 -- Individual reports received from clients.
@@ -84,7 +85,7 @@ CREATE TABLE client_reports(
     aggregation_started             BOOLEAN NOT NULL DEFAULT FALSE,  -- has this client report been associated with an aggregation job?
 
     CONSTRAINT client_reports_unique_task_id_and_report_id UNIQUE(task_id, report_id),
-    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
+    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 CREATE INDEX client_reports_task_unaggregated ON client_reports(task_id) WHERE aggregation_started = FALSE;
 CREATE INDEX client_reports_task_and_timestamp_index ON client_reports(task_id, client_timestamp);
@@ -114,7 +115,7 @@ CREATE TABLE aggregation_jobs(
     lease_attempts           BIGINT NOT NULL DEFAULT 0,                         -- the number of lease acquiries since the last successful lease release
 
     CONSTRAINT aggregation_jobs_unique_id UNIQUE(aggregation_job_id),
-    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
+    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 CREATE INDEX aggregation_jobs_state_and_lease_expiry ON aggregation_jobs(state, lease_expiry) WHERE state = 'IN_PROGRESS';
 CREATE INDEX aggregation_jobs_task_and_batch_id ON aggregation_jobs(task_id, batch_id);
@@ -146,8 +147,8 @@ CREATE TABLE report_aggregations(
     error_code          SMALLINT,                           -- error code corresponding to a DAP ReportShareError value; null if in a state other than FAILED
 
     CONSTRAINT report_aggregations_unique_ord UNIQUE(aggregation_job_id, ord),
-    CONSTRAINT fk_aggregation_job_id FOREIGN KEY(aggregation_job_id) REFERENCES aggregation_jobs(id),
-    CONSTRAINT fk_client_report_id FOREIGN KEY(client_report_id) REFERENCES client_reports(id)
+    CONSTRAINT fk_aggregation_job_id FOREIGN KEY(aggregation_job_id) REFERENCES aggregation_jobs(id) ON DELETE CASCADE,
+    CONSTRAINT fk_client_report_id FOREIGN KEY(client_report_id) REFERENCES client_reports(id) ON DELETE CASCADE
 );
 CREATE INDEX report_aggregations_aggregation_job_id_index ON report_aggregations(aggregation_job_id);
 CREATE INDEX report_aggregations_client_report_id_index ON report_aggregations(client_report_id);
@@ -167,7 +168,7 @@ CREATE TABLE batch_aggregations(
     checksum              BYTEA NOT NULL,      -- the (possibly-incremental) checksum
 
     CONSTRAINT batch_aggregations_unique_task_id_batch_id_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param, ord),
-    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
+    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 
 -- Specifies the possible state of a collection job.
@@ -196,7 +197,7 @@ CREATE TABLE collection_jobs(
     lease_attempts          BIGINT NOT NULL DEFAULT 0,                         -- the number of lease acquiries since the last successful lease release
 
     CONSTRAINT collection_jobs_unique_task_id_batch_id_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param),
-    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
+    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 -- TODO(#224): verify that this index is optimal for purposes of acquiring collection jobs.
 CREATE INDEX collection_jobs_lease_expiry ON collection_jobs(lease_expiry);
@@ -214,7 +215,7 @@ CREATE TABLE aggregate_share_jobs(
     checksum                BYTEA NOT NULL,     -- the checksum over the reports included in helper_aggregate_share
 
     CONSTRAINT aggregate_share_jobs_unique_task_id_batch_id_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param),
-    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
+    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 CREATE INDEX aggregate_share_jobs_interval_containment_index ON aggregate_share_jobs USING gist (task_id, batch_interval);
 
@@ -226,5 +227,5 @@ CREATE TABLE outstanding_batches(
     batch_id BYTEA NOT NULL, -- 32-byte BatchID as defined by the DAP specification.
 
     CONSTRAINT outstanding_batches_unique_task_id_batch_id UNIQUE(task_id, batch_id),
-    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
+    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );

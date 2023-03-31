@@ -536,16 +536,15 @@ macro_rules! vdaf_dispatch {
 #[derive(Clone)]
 pub struct AuthenticationToken(Vec<u8>);
 
-impl From<Vec<u8>> for AuthenticationToken {
-    fn from(token: Vec<u8>) -> Self {
-        Self(token)
+impl AsRef<[u8]> for AuthenticationToken {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
     }
 }
 
-impl AuthenticationToken {
-    /// Returns a view of the aggregator authentication token as a byte slice.
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.0
+impl From<Vec<u8>> for AuthenticationToken {
+    fn from(token: Vec<u8>) -> Self {
+        Self(token)
     }
 }
 

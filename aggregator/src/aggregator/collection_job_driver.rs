@@ -787,7 +787,7 @@ mod tests {
             .mock("POST", task.aggregate_shares_uri().unwrap().path())
             .match_header(
                 "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+                str::from_utf8(agg_auth_token.as_ref()).unwrap(),
             )
             .match_header(
                 CONTENT_TYPE.as_str(),
@@ -845,7 +845,7 @@ mod tests {
             .mock("POST", task.aggregate_shares_uri().unwrap().path())
             .match_header(
                 "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+                str::from_utf8(agg_auth_token.as_ref()).unwrap(),
             )
             .match_header(
                 CONTENT_TYPE.as_str(),

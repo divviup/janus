@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "aggregator",
+    "aggregator_api",
     "aggregator_core",
     "build_script_utils",
     "client",

@@ -329,8 +329,8 @@ impl FromStr for ReportId {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let bytes = URL_SAFE_NO_PAD
             .decode(s)
-            .map_err(|e| Box::new(e) as Box<dyn Debug>)?;
-        Self::try_from(bytes.as_ref()).map_err(|e| Box::new(e) as Box<dyn Debug>)
+            .map_err(|err| Box::new(err) as Box<dyn Debug>)?;
+        Self::try_from(bytes.as_ref()).map_err(|err| Box::new(err) as Box<dyn Debug>)
     }
 }
 
@@ -603,8 +603,8 @@ impl FromStr for TaskId {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let bytes = URL_SAFE_NO_PAD
             .decode(s)
-            .map_err(|e| Box::new(e) as Box<dyn Debug>)?;
-        Self::try_from(bytes.as_ref()).map_err(|e| Box::new(e) as Box<dyn Debug>)
+            .map_err(|err| Box::new(err) as Box<dyn Debug>)?;
+        Self::try_from(bytes.as_ref()).map_err(|err| Box::new(err) as Box<dyn Debug>)
     }
 }
 
@@ -1555,8 +1555,8 @@ impl FromStr for CollectionJobId {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let bytes = URL_SAFE_NO_PAD
             .decode(s)
-            .map_err(|e| Box::new(e) as Box<dyn Debug>)?;
-        Self::try_from(bytes.as_ref()).map_err(|e| Box::new(e) as Box<dyn Debug>)
+            .map_err(|err| Box::new(err) as Box<dyn Debug>)?;
+        Self::try_from(bytes.as_ref()).map_err(|err| Box::new(err) as Box<dyn Debug>)
     }
 }
 
@@ -2151,11 +2151,10 @@ impl From<[u8; Self::LEN]> for AggregationJobId {
 impl<'a> TryFrom<&'a [u8]> for AggregationJobId {
     type Error = Error;
 
-    fn try_from(aggregation_job_id: &[u8]) -> Result<Self, Self::Error> {
-        let aggregation_job_id: [u8; Self::LEN] = aggregation_job_id
-            .try_into()
-            .map_err(|_| Error::InvalidParameter("AggregationJobId length incorrect"))?;
-        Ok(Self::from(aggregation_job_id))
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self(value.try_into().map_err(|_| {
+            Error::InvalidParameter("byte slice has incorrect length for AggregationJobId")
+        })?))
     }
 }
 
@@ -2171,8 +2170,8 @@ impl FromStr for AggregationJobId {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let bytes = URL_SAFE_NO_PAD
             .decode(s)
-            .map_err(|e| Box::new(e) as Box<dyn Debug>)?;
-        Self::try_from(bytes.as_ref()).map_err(|e| Box::new(e) as Box<dyn Debug>)
+            .map_err(|err| Box::new(err) as Box<dyn Debug>)?;
+        Self::try_from(bytes.as_ref()).map_err(|err| Box::new(err) as Box<dyn Debug>)
     }
 }
 

@@ -3158,7 +3158,7 @@ async fn send_request_to_helper<T: Encode>(
     let response_result = http_client
         .request(method, url)
         .header(CONTENT_TYPE, content_type)
-        .header(DAP_AUTH_HEADER, auth_token.as_bytes())
+        .header(DAP_AUTH_HEADER, auth_token.as_ref())
         .body(request_body)
         .send()
         .await;
@@ -4289,7 +4289,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .header("DAP-Auth-Token", random::<AuthenticationToken>().as_bytes())
+            .header("DAP-Auth-Token", random::<AuthenticationToken>().as_ref())
             .header(
                 CONTENT_TYPE,
                 AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -6782,7 +6782,7 @@ mod tests {
             .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
+                task.primary_collector_auth_token().as_ref(),
             )
             .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
             .body(request.get_encoded())
@@ -7167,7 +7167,7 @@ mod tests {
             ))
             .header(
                 "DAP-Auth-Token",
-                test_case.task.primary_collector_auth_token().as_bytes(),
+                test_case.task.primary_collector_auth_token().as_ref(),
             )
             .filter(&test_case.filter)
             .await
@@ -7344,7 +7344,7 @@ mod tests {
             )
             .header(
                 "DAP-Auth-Token",
-                test_case.task.primary_collector_auth_token().as_bytes(),
+                test_case.task.primary_collector_auth_token().as_ref(),
             )
             .filter(&test_case.filter)
             .await
@@ -7376,7 +7376,7 @@ mod tests {
             )
             .header(
                 "DAP-Auth-Token",
-                test_case.task.primary_collector_auth_token().as_bytes(),
+                test_case.task.primary_collector_auth_token().as_ref(),
             )
             .filter(&test_case.filter)
             .await
@@ -7419,7 +7419,7 @@ mod tests {
             .path(task.aggregate_shares_uri().unwrap().path())
             .header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
+                task.primary_aggregator_auth_token().as_ref(),
             )
             .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
             .body(request.get_encoded())
@@ -7485,7 +7485,7 @@ mod tests {
             .method("POST")
             .header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
+                task.primary_aggregator_auth_token().as_ref(),
             )
             .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
             .path(task.aggregate_shares_uri().unwrap().path())
@@ -7514,7 +7514,7 @@ mod tests {
             .method("POST")
             .header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
+                task.primary_aggregator_auth_token().as_ref(),
             )
             .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
             .path(task.aggregate_shares_uri().unwrap().path())
@@ -7575,7 +7575,7 @@ mod tests {
             .path(task.aggregate_shares_uri().unwrap().path())
             .header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
+                task.primary_aggregator_auth_token().as_ref(),
             )
             .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
             .body(request.get_encoded())
@@ -7716,7 +7716,7 @@ mod tests {
             .path(task.aggregate_shares_uri().unwrap().path())
             .header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
+                task.primary_aggregator_auth_token().as_ref(),
             )
             .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
             .body(request.get_encoded())
@@ -7773,7 +7773,7 @@ mod tests {
                 .path(task.aggregate_shares_uri().unwrap().path())
                 .header(
                     "DAP-Auth-Token",
-                    task.primary_aggregator_auth_token().as_bytes(),
+                    task.primary_aggregator_auth_token().as_ref(),
                 )
                 .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
                 .body(misaligned_request.get_encoded())
@@ -7842,7 +7842,7 @@ mod tests {
                     .path(task.aggregate_shares_uri().unwrap().path())
                     .header(
                         "DAP-Auth-Token",
-                        task.primary_aggregator_auth_token().as_bytes(),
+                        task.primary_aggregator_auth_token().as_ref(),
                     )
                     .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
                     .body(request.get_encoded())
@@ -7908,7 +7908,7 @@ mod tests {
             .path(task.aggregate_shares_uri().unwrap().path())
             .header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
+                task.primary_aggregator_auth_token().as_ref(),
             )
             .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
             .body(all_batch_request.get_encoded())
@@ -7962,7 +7962,7 @@ mod tests {
                 .path(task.aggregate_shares_uri().unwrap().path())
                 .header(
                     "DAP-Auth-Token",
-                    task.primary_aggregator_auth_token().as_bytes(),
+                    task.primary_aggregator_auth_token().as_ref(),
                 )
                 .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
                 .body(query_count_violation_request.get_encoded())
