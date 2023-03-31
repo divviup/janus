@@ -1016,10 +1016,13 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// `get_unaggregated_client_report_ids_for_task` returns some report IDs corresponding to
-    /// unaggregated client reports for the task identified by the given task ID. Returned client
-    /// reports are marked as aggregation-started: the caller must either create an aggregation job
-    /// with, or call `mark_reports_unaggregated` on each returned report as part of the same
-    /// transaction.
+    /// unaggregated client reports for the task identified by the given task ID. Reports whose
+    /// timestamps fall into an interval covered by a collection job that has been acquired or is
+    /// finished, abandoned or deleted are not returned.
+    ///
+    /// Returned client reports are marked as aggregation-started: the caller must either create an
+    /// aggregation job with, or call `mark_reports_unaggregated` on each returned report as part of
+    /// the same transaction.
     ///
     /// This should only be used with VDAFs that have an aggregation parameter of the unit type. It
     /// relies on this assumption to find relevant reports without consulting collection jobs. For
@@ -1035,11 +1038,22 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "UPDATE client_reports SET aggregation_started = TRUE
                 WHERE id IN (
-                    SELECT id FROM client_reports
-                    WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                      AND aggregation_started = FALSE
-                    FOR UPDATE SKIP LOCKED
-                    LIMIT 5000
+                  SELECT client_reports.id FROM client_reports LEFT JOIN collection_jobs
+                  ON client_reports.task_id = collection_jobs.task_id
+                    AND collection_jobs.batch_interval @> client_reports.client_timestamp
+                  WHERE client_reports.task_id = (SELECT tasks.id FROM tasks WHERE tasks.task_id = $1)
+                    AND client_reports.aggregation_started = FALSE
+                    AND (
+                        -- select reports that are not yet associated with a collect job
+                      collection_jobs.state IS NULL
+                        -- select reports whose collect job has been scheduled but never yet leased
+                      OR (
+                        collection_jobs.state = 'START'
+                        AND collection_jobs.lease_expiry = TIMESTAMP '-infinity'
+                      )
+                    )
+                  FOR UPDATE OF client_reports SKIP LOCKED
+                  LIMIT 5000
                 )
                 RETURNING report_id, client_timestamp",
             )

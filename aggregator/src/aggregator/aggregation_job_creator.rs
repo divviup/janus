@@ -764,30 +764,35 @@ mod tests {
     use futures::{future::try_join_all, TryFutureExt};
     use janus_aggregator_core::{
         datastore::{
-            models::{AggregationJob, CollectionJob, CollectionJobState, LeaderStoredReport},
-            test_util::ephemeral_datastore,
-            Transaction,
+            models::{
+                AggregationJob, CollectionJob, CollectionJobState, LeaderStoredReport,
+                ReportAggregation, ReportAggregationState,
+            },
+            test_util::{ephemeral_datastore, EphemeralDatastore},
+            Datastore, Transaction,
         },
         query_type::AccumulableQueryType,
-        task::{test_util::TaskBuilder, QueryType as TaskQueryType},
+        task::{test_util::TaskBuilder, QueryType as TaskQueryType, Task},
     };
     use janus_core::{
         task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
         test_util::{
             dummy_vdaf::{self, AggregationParam},
-            install_test_trace_subscriber,
+            install_test_trace_subscriber, run_vdaf,
         },
-        time::{Clock, MockClock, TimeExt},
+        time::{Clock, IntervalExt, MockClock, TimeExt},
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
-        AggregationJobId, AggregationJobRound, Interval, ReportId, Role, TaskId, Time,
+        AggregationJobId, AggregationJobRound, HpkeCiphertext, HpkeConfigId, Interval, ReportId,
+        ReportMetadata, Role, TaskId, Time,
     };
     use prio::{
         codec::ParameterizedDecode,
+        field::Field64,
         vdaf::{
             prio3::{Prio3, Prio3Count},
-            Aggregator,
+            AggregateShare, Aggregator, OutputShare,
         },
     };
     use rand::random;
@@ -998,6 +1003,228 @@ mod tests {
 
         // Every client report was added to some aggregation job.
         assert_eq!(all_report_ids, seen_report_ids);
+    }
+
+    struct CollectedIntervalTestCase {
+        task: Arc<Task>,
+        reports: Vec<LeaderStoredReport<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>>,
+        _ephemeral_datastore: EphemeralDatastore,
+        datastore: Datastore<MockClock>,
+    }
+
+    impl CollectedIntervalTestCase {
+        const MIN_AGGREGATION_JOB_SIZE: usize = 50;
+        const MAX_AGGREGATION_JOB_SIZE: usize = 60;
+
+        async fn setup(
+            collection_job_state: CollectionJobState<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>,
+        ) -> Self {
+            // Setup.
+            install_test_trace_subscriber();
+            let clock = MockClock::default();
+            let ephemeral_datastore = ephemeral_datastore().await;
+            let datastore = ephemeral_datastore.datastore(clock.clone());
+            let task = Arc::new(
+                TaskBuilder::new(
+                    TaskQueryType::TimeInterval,
+                    VdafInstance::Prio3Count,
+                    Role::Leader,
+                )
+                .build(),
+            );
+            let vdaf = Prio3Count::new_count(2).unwrap();
+            let verify_key = task.primary_vdaf_verify_key().unwrap();
+
+            // Create enough reports for an aggregation job
+            let report_time = clock.now();
+            let reports: Vec<LeaderStoredReport<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>> =
+                iter::repeat_with(|| {
+                    let report_id = random();
+                    let transcript = run_vdaf(&vdaf, verify_key.as_bytes(), &(), &report_id, &1);
+                    LeaderStoredReport::new(
+                        *task.id(),
+                        ReportMetadata::new(report_id, report_time),
+                        transcript.public_share,
+                        Vec::new(),
+                        transcript.input_shares[0].clone(),
+                        HpkeCiphertext::new(HpkeConfigId::from(13), Vec::new(), Vec::new()),
+                    )
+                })
+                .take(Self::MIN_AGGREGATION_JOB_SIZE)
+                .collect();
+
+            // Create a collection job whose time interval includes all the reports
+            let collection_job =
+                CollectionJob::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                    *task.id(),
+                    random(),
+                    Interval::from_time(&report_time).unwrap(),
+                    (),
+                    collection_job_state,
+                );
+
+            datastore
+                .run_tx(|tx| {
+                    let (vdaf, task, reports, collection_job) = (
+                        vdaf.clone(),
+                        task.clone(),
+                        reports.clone(),
+                        collection_job.clone(),
+                    );
+                    Box::pin(async move {
+                        tx.put_task(&task).await.unwrap();
+                        for report in reports {
+                            tx.put_client_report(&vdaf, &report).await.unwrap();
+                        }
+                        tx.put_collection_job(&collection_job).await.unwrap();
+
+                        Ok(())
+                    })
+                })
+                .await
+                .unwrap();
+
+            Self {
+                task,
+                _ephemeral_datastore: ephemeral_datastore,
+                reports,
+                datastore,
+            }
+        }
+
+        async fn run(
+            self,
+        ) -> Vec<AggregationJob<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>> {
+            // Run.
+            let job_creator = Arc::new(AggregationJobCreator {
+                datastore: self.datastore,
+                tasks_update_frequency: Duration::from_secs(3600),
+                aggregation_job_creation_interval: Duration::from_secs(1),
+                min_aggregation_job_size: Self::MIN_AGGREGATION_JOB_SIZE,
+                max_aggregation_job_size: Self::MAX_AGGREGATION_JOB_SIZE,
+            });
+            Arc::clone(&job_creator)
+                .create_aggregation_jobs_for_task(Arc::clone(&self.task))
+                .await
+                .unwrap();
+
+            // Verify.
+            job_creator
+                .datastore
+                .run_tx(|tx| {
+                    let task_id = *self.task.id();
+                    Box::pin(async move {
+                        Ok(tx.get_aggregation_jobs_for_task(&task_id).await.unwrap())
+                    })
+                })
+                .await
+                .unwrap()
+        }
+    }
+
+    #[tokio::test]
+    async fn create_aggregation_jobs_for_time_interval_task_collected_interval_started_no_lease() {
+        // If the collection job has been created but never leased, then we can still run new
+        // aggregation jobs.
+        let test_case = CollectedIntervalTestCase::setup(CollectionJobState::Start).await;
+        assert!(!test_case.run().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_aggregation_jobs_for_time_interval_task_collected_interval_started_with_lease()
+    {
+        // If the collection job has been leased, then we've committed to a set of reports and may
+        // create no additional aggregation jobs for the interval.
+        let test_case = CollectedIntervalTestCase::setup(CollectionJobState::Start).await;
+
+        // Populate datastore with necessary report aggregations and aggregation job so that the
+        // collection job will be acquirable.
+        let aggregation_job_id = test_case
+            .datastore
+            .run_tx(|tx| {
+                let (task_id, reports) = (*test_case.task.id(), test_case.reports.clone());
+                Box::pin(async move {
+                    let aggregation_job =
+                        AggregationJob::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                            task_id,
+                            random(),
+                            (),
+                            (),
+                            Interval::from_time(reports[0].metadata().time()).unwrap(),
+                            janus_aggregator_core::datastore::models::AggregationJobState::Finished,
+                            AggregationJobRound::from(1),
+                        );
+
+                    tx.put_aggregation_job(&aggregation_job).await.unwrap();
+
+                    for (ord, report) in reports.iter().enumerate() {
+                        let report_aggregation =
+                            ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
+                                task_id,
+                                *aggregation_job.id(),
+                                *report.metadata().id(),
+                                *report.metadata().time(),
+                                ord as u64,
+                                ReportAggregationState::Start,
+                            );
+                        tx.put_report_aggregation(&report_aggregation)
+                            .await
+                            .unwrap();
+                    }
+
+                    let leases = tx
+                        .acquire_incomplete_time_interval_collection_jobs(
+                            &Duration::from_secs(60),
+                            10,
+                        )
+                        .await
+                        .unwrap();
+                    assert!(!leases.is_empty());
+
+                    Ok(*aggregation_job.id())
+                })
+            })
+            .await
+            .unwrap();
+
+        let aggregation_jobs = test_case.run().await;
+        assert_eq!(aggregation_jobs.len(), 1);
+        assert_eq!(aggregation_jobs[0].id(), &aggregation_job_id);
+    }
+
+    #[tokio::test]
+    async fn create_aggregation_jobs_for_time_interval_task_collected_interval_finished() {
+        // If the collection job is finished, we may create no additional aggregation jobs for the
+        // interval.
+        let test_case = CollectedIntervalTestCase::setup(CollectionJobState::Finished {
+            report_count: 1,
+            encrypted_helper_aggregate_share: HpkeCiphertext::new(
+                HpkeConfigId::from(12),
+                Vec::new(),
+                Vec::new(),
+            ),
+            leader_aggregate_share: AggregateShare::from(OutputShare::from(Vec::from([
+                Field64::from(7),
+            ]))),
+        })
+        .await;
+        assert!(test_case.run().await.is_empty())
+    }
+
+    #[tokio::test]
+    async fn create_aggregation_jobs_for_time_interval_task_collected_interval_abandoned() {
+        // If the collection job is abandoned, we may create no additional aggregation jobs for the
+        // interval.
+        let test_case = CollectedIntervalTestCase::setup(CollectionJobState::Abandoned).await;
+        assert!(test_case.run().await.is_empty())
+    }
+
+    #[tokio::test]
+    async fn create_aggregation_jobs_for_time_interval_task_collected_interval_deleted() {
+        // If the collection job is deleted, we may create no additional aggregation jobs for the
+        // interval.
+        let test_case = CollectedIntervalTestCase::setup(CollectionJobState::Deleted).await;
+        assert!(test_case.run().await.is_empty())
     }
 
     #[tokio::test]
