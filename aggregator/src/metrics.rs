@@ -1,5 +1,7 @@
 //! Collection and exporting of application-level metrics for Janus.
 
+#[cfg(any(not(feature = "prometheus"), not(feature = "otlp")))]
+use anyhow::anyhow;
 use opentelemetry::sdk::{
     export::metrics::AggregatorSelector,
     metrics::{
@@ -12,11 +14,15 @@ use std::{collections::HashMap, net::AddrParseError, sync::Arc};
 
 #[cfg(feature = "prometheus")]
 use {
+    anyhow::Context,
     opentelemetry::sdk::metrics::{controllers, processors},
     prometheus::{Encoder, TextEncoder},
     std::net::{IpAddr, Ipv4Addr},
-    tokio::task::JoinHandle,
-    trillium::{KnownHeaderName, Status},
+    tokio::{
+        sync::oneshot::{channel, Receiver, Sender},
+        task::JoinHandle,
+    },
+    trillium::{Conn, Handler, Info, KnownHeaderName, Status},
     trillium_router::Router,
 };
 
@@ -52,7 +58,7 @@ pub enum Error {
     #[error(transparent)]
     TonicMetadataValue(#[from] tonic::metadata::errors::InvalidMetadataValue),
     #[error("{0}")]
-    Other(&'static str),
+    Other(#[from] anyhow::Error),
 }
 
 /// Configuration for collection/exporting of application-level metrics.
@@ -87,7 +93,10 @@ pub struct OtlpExporterConfiguration {
 /// Choice of OpenTelemetry metrics exporter implementation.
 pub enum MetricsExporterHandle {
     #[cfg(feature = "prometheus")]
-    Prometheus(JoinHandle<()>),
+    Prometheus {
+        handle: JoinHandle<()>,
+        port: u16,
+    },
     #[cfg(feature = "otlp")]
     Otlp(BasicController),
     Noop,
@@ -129,10 +138,61 @@ impl AggregatorSelector for CustomAggregatorSelector {
     }
 }
 
+#[cfg(feature = "prometheus")]
+/// A Trillium [`Handler`] that saves the server's TCP port number and makes it externally
+/// available.
+struct GrabPort {
+    sender: Option<Sender<Option<u16>>>,
+}
+
+#[cfg(feature = "prometheus")]
+impl GrabPort {
+    fn new() -> (Self, GrabPortReceiver) {
+        let (sender, receiver) = channel();
+        (
+            GrabPort {
+                sender: Some(sender),
+            },
+            GrabPortReceiver { receiver },
+        )
+    }
+}
+
+#[cfg(feature = "prometheus")]
+#[trillium::async_trait]
+impl Handler for GrabPort {
+    async fn run(&self, conn: Conn) -> Conn {
+        conn
+    }
+
+    async fn init(&mut self, info: &mut Info) {
+        let port_opt = info.tcp_socket_addr().map(|socket_addr| socket_addr.port());
+        let _ = self
+            .sender
+            .take()
+            .expect("init should not be called more than once")
+            .send(port_opt);
+    }
+}
+
+#[cfg(feature = "prometheus")]
+struct GrabPortReceiver {
+    receiver: Receiver<Option<u16>>,
+}
+
+#[cfg(feature = "prometheus")]
+impl GrabPortReceiver {
+    async fn wait_for_port(self) -> anyhow::Result<u16> {
+        self.receiver
+            .await?
+            .context("server does not have a TCP port")
+    }
+}
+
 /// Install a metrics provider and exporter, per the given configuration. The OpenTelemetry global
 /// API can be used to create and update meters, and they will be sent through this exporter. The
 /// returned handle should not be dropped until the application shuts down.
-pub fn install_metrics_exporter(
+pub async fn install_metrics_exporter(
     config: &MetricsConfiguration,
 ) -> Result<MetricsExporterHandle, Error> {
     match &config.exporter {
@@ -177,21 +237,26 @@ pub fn install_metrics_exporter(
                     }
                 }
             });
+
+            let (grab_port, receiver) = GrabPort::new();
+
             let handle = tokio::task::spawn(
                 trillium_tokio::config()
                     .with_port(port)
                     .with_host(&host.to_string())
                     .without_signals()
-                    .run_async(router),
+                    .run_async((grab_port, router)),
             );
 
-            Ok(MetricsExporterHandle::Prometheus(handle))
+            let port = receiver.wait_for_port().await?;
+
+            Ok(MetricsExporterHandle::Prometheus { handle, port })
         }
         #[cfg(not(feature = "prometheus"))]
-        Some(MetricsExporterConfiguration::Prometheus { .. }) => Err(Error::Other(
+        Some(MetricsExporterConfiguration::Prometheus { .. }) => Err(Error::Other(anyhow!(
             "The OpenTelemetry Prometheus metrics exporter was enabled in the configuration file, \
              but support was not enabled at compile time. Rebuild with `--features prometheus`.",
-        )),
+        ))),
 
         #[cfg(feature = "otlp")]
         Some(MetricsExporterConfiguration::Otlp(otlp_config)) => {
@@ -221,10 +286,10 @@ pub fn install_metrics_exporter(
             Ok(MetricsExporterHandle::Otlp(basic_controller))
         }
         #[cfg(not(feature = "otlp"))]
-        Some(MetricsExporterConfiguration::Otlp(_)) => Err(Error::Other(
+        Some(MetricsExporterConfiguration::Otlp(_)) => Err(Error::Other(anyhow!(
             "The OpenTelemetry OTLP metrics exporter was enabled in the configuration file, but \
              support was not enabled at compile time. Rebuild with `--features otlp`.",
-        )),
+        ))),
 
         // If neither exporter is configured, leave the default NoopMeterProvider in place.
         None => Ok(MetricsExporterHandle::Noop),
@@ -244,25 +309,22 @@ mod tests {
     use janus_core::retries::{retry_http_request, test_http_request_exponential_backoff};
     #[cfg(feature = "prometheus")]
     use opentelemetry::Context;
-    #[cfg(feature = "prometheus")]
-    use std::net::Ipv4Addr;
-    #[cfg(feature = "prometheus")]
-    use tokio::net::TcpListener;
 
     #[cfg(feature = "prometheus")]
     #[tokio::test]
     async fn prometheus_metrics_pull() {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-
         let handle = install_metrics_exporter(&MetricsConfiguration {
             exporter: Some(MetricsExporterConfiguration::Prometheus {
                 host: Some("127.0.0.1".to_owned()),
-                port: Some(port),
+                port: Some(0),
             }),
         })
+        .await
         .unwrap();
+        let port = match handle {
+            MetricsExporterHandle::Prometheus { port, .. } => port,
+            _ => unreachable!(),
+        };
 
         opentelemetry::global::meter("tests")
             .u64_observable_gauge("test_metric")
@@ -289,7 +351,7 @@ mod tests {
         );
 
         match handle {
-            MetricsExporterHandle::Prometheus(handle) => handle.abort(),
+            MetricsExporterHandle::Prometheus { handle, .. } => handle.abort(),
             _ => unreachable!(),
         }
     }
