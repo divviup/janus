@@ -93,6 +93,8 @@ struct CollectPollRequest {
 struct CollectResult {
     partial_batch_selector: Option<BatchId>,
     report_count: u64,
+    interval_start: i64,
+    interval_duration: i64,
     aggregation_result: AggregationResult,
 }
 
@@ -114,6 +116,10 @@ struct CollectPollResponse {
     batch_id: Option<String>,
     #[serde(default)]
     report_count: Option<u64>,
+    #[serde(default)]
+    interval_start: Option<i64>,
+    #[serde(default)]
+    interval_duration: Option<i64>,
     #[serde(default)]
     result: Option<AggregationResult>,
 }
@@ -188,9 +194,12 @@ where
     let agg_param = V::AggregationParam::get_decoded(agg_param_encoded)?;
     let handle = spawn(async move {
         let collect_result = collector.collect(query, &agg_param).await?;
+        let (interval_start, interval_duration) = collect_result.interval();
         Ok(CollectResult {
             partial_batch_selector: batch_convert_fn(collect_result.partial_batch_selector()),
             report_count: collect_result.report_count(),
+            interval_start: interval_start.timestamp(),
+            interval_duration: interval_duration.num_seconds(),
             aggregation_result: result_convert_fn(collect_result.aggregate_result()),
         })
     });
@@ -202,7 +211,7 @@ enum ParsedQuery {
     FixedSize(FixedSizeQuery),
 }
 
-async fn handle_collect_start(
+async fn handle_collection_start(
     http_client: &reqwest::Client,
     tasks: &Mutex<HashMap<TaskId, TaskState>>,
     collection_jobs: &Mutex<HashMap<Handle, CollectionJobState>>,
@@ -604,7 +613,7 @@ async fn handle_collect_start(
     })
 }
 
-async fn handle_collect_poll(
+async fn handle_collection_poll(
     collection_jobs: &Mutex<HashMap<Handle, CollectionJobState>>,
     request: CollectPollRequest,
 ) -> anyhow::Result<Option<CollectResult>> {
@@ -647,7 +656,7 @@ async fn handle_collect_poll(
             )),
         },
         Entry::Vacant(_) => Err(anyhow::anyhow!(
-            "did not recognize handle in collect_poll request"
+            "did not recognize handle in collection_poll request"
         )),
     }
 }
@@ -705,7 +714,7 @@ fn handler() -> anyhow::Result<impl Handler> {
             ),
         )
         .post(
-            "/internal/test/collect_start",
+            "/internal/test/collection_start",
             api(
                 |_conn: &mut Conn,
                  (State(http_client), State(tasks), State(collection_jobs), Json(request)): (
@@ -714,8 +723,13 @@ fn handler() -> anyhow::Result<impl Handler> {
                     State<CollectionJobStateMap>,
                     Json<CollectStartRequest>,
                 )| async move {
-                    match handle_collect_start(&http_client, &tasks.0, &collection_jobs.0, request)
-                        .await
+                    match handle_collection_start(
+                        &http_client,
+                        &tasks.0,
+                        &collection_jobs.0,
+                        request,
+                    )
+                    .await
                     {
                         Ok(handle) => Json(CollectStartResponse {
                             status: SUCCESS,
@@ -732,14 +746,14 @@ fn handler() -> anyhow::Result<impl Handler> {
             ),
         )
         .post(
-            "/internal/test/collect_poll",
+            "/internal/test/collection_poll",
             api(
                 |_conn: &mut Conn,
                  (State(collection_jobs), Json(request)): (
                     State<CollectionJobStateMap>,
                     Json<CollectPollRequest>,
                 )| async move {
-                    match handle_collect_poll(&collection_jobs.0, request).await {
+                    match handle_collection_poll(&collection_jobs.0, request).await {
                         Ok(Some(collect_result)) => Json(CollectPollResponse {
                             status: COMPLETE,
                             error: None,
@@ -747,6 +761,8 @@ fn handler() -> anyhow::Result<impl Handler> {
                                 .partial_batch_selector
                                 .map(|batch_id| URL_SAFE_NO_PAD.encode(batch_id.as_ref())),
                             report_count: Some(collect_result.report_count),
+                            interval_start: Some(collect_result.interval_start),
+                            interval_duration: Some(collect_result.interval_duration),
                             result: Some(collect_result.aggregation_result),
                         }),
                         Ok(None) => Json(CollectPollResponse {
@@ -754,6 +770,8 @@ fn handler() -> anyhow::Result<impl Handler> {
                             error: None,
                             batch_id: None,
                             report_count: None,
+                            interval_start: None,
+                            interval_duration: None,
                             result: None,
                         }),
                         Err(e) => Json(CollectPollResponse {
@@ -761,6 +779,8 @@ fn handler() -> anyhow::Result<impl Handler> {
                             error: Some(format!("{e:?}")),
                             batch_id: None,
                             report_count: None,
+                            interval_start: None,
+                            interval_duration: None,
                             result: None,
                         }),
                     }
