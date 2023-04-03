@@ -56,7 +56,7 @@ opentelemetry-jaeger = { version = "0.17", optional = true, features = ["rt-toki
 opentelemetry-otlp = { version = "0.11", optional = true, features = ["metrics"] }  # ensure that the version of tonic below matches what this uses
 opentelemetry-prometheus = { version = "0.11", optional = true }
 opentelemetry-semantic-conventions = { version = "0.10", optional = true }
-postgres-protocol = "0.6.4"
+postgres-protocol = "0.6.5"
 postgres-types = { version = "0.2.4", features = ["derive", "array-impls"] }
 prio = { version = "0.10.0", features = ["multithreaded"] }
 prometheus = { version = "0.13.3", optional = true }
