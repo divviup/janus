@@ -1845,7 +1845,6 @@ dependencies = [
  "tracing",
  "trillium",
  "trillium-api",
- "trillium-http",
  "trillium-opentelemetry",
  "trillium-router",
  "trillium-testing",
