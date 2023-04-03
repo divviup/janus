@@ -41,7 +41,7 @@ console-subscriber = { version = "0.1.8", optional = true }
 deadpool = { version = "0.9.5", features = ["rt_tokio_1"] }
 deadpool-postgres = "0.10.5"
 derivative = "2.2.0"
-futures = "0.3.27"
+futures = "0.3.28"
 http = "0.2.9"
 http-api-problem = "0.56.0"
 hyper = "0.14.25"

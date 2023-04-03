@@ -29,7 +29,7 @@ backoff = { version = "0.4.0", features = ["tokio"] }
 base64 = "0.21.0"
 chrono = "0.4"
 derivative = "2.2.0"
-futures = "0.3.27"
+futures = "0.3.28"
 hex = "0.4"
 hpke-dispatch = "0.5.0"
 http-api-problem = "0.56.0"
