@@ -11,10 +11,11 @@ use janus_core::{
     hpke::HpkeKeypair,
     task::{AuthenticationToken, VdafInstance},
 };
+use janus_interop_binaries::Keyring;
 use janus_interop_binaries::{
     install_tracing_subscriber,
     status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
-    HpkeConfigRegistry, NumberAsString, VdafObject,
+    ErrorHandler, HpkeConfigRegistry, NumberAsString, VdafObject,
 };
 use janus_messages::{
     query_type::QueryType, BatchId, Duration, FixedSizeQuery, HpkeConfig, Interval,
@@ -31,12 +32,14 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{hash_map::Entry, HashMap},
-    net::{Ipv4Addr, SocketAddr},
+    net::Ipv4Addr,
     sync::Arc,
     time::Duration as StdDuration,
 };
 use tokio::{spawn, sync::Mutex, task::JoinHandle};
-use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
+use trillium::{Conn, Handler};
+use trillium_api::{api, Json, State};
+use trillium_router::Router;
 #[derive(Debug, Deserialize)]
 struct AddTaskRequest {
     task_id: String,
@@ -649,116 +652,129 @@ async fn handle_collect_poll(
     }
 }
 
-fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
-    let http_client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()?;
-    let tasks: Arc<Mutex<HashMap<TaskId, TaskState>>> = Arc::new(Mutex::new(HashMap::new()));
-    let collection_jobs: Arc<Mutex<HashMap<Handle, CollectionJobState>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    let keyring = Arc::new(Mutex::new(HpkeConfigRegistry::new()));
+#[derive(Clone)]
+struct TaskStateMap(Arc<Mutex<HashMap<TaskId, TaskState>>>);
 
-    let ready_filter = warp::path!("ready").map(|| {
-        warp::reply::with_status(warp::reply::json(&serde_json::json!({})), StatusCode::OK)
-            .into_response()
-    });
-    let add_task_filter = warp::path!("add_task").and(warp::body::json()).then({
-        let tasks = Arc::clone(&tasks);
-        let keyring = Arc::clone(&keyring);
-        move |request: AddTaskRequest| {
-            let tasks = Arc::clone(&tasks);
-            let keyring = Arc::clone(&keyring);
-            async move {
-                let response = match handle_add_task(&tasks, &keyring, request).await {
-                    Ok(collector_hpke_config) => AddTaskResponse {
-                        status: SUCCESS,
-                        error: None,
-                        collector_hpke_config: Some(
-                            URL_SAFE_NO_PAD.encode(collector_hpke_config.get_encoded()),
-                        ),
-                    },
-                    Err(e) => AddTaskResponse {
-                        status: ERROR,
-                        error: Some(format!("{e:?}")),
-                        collector_hpke_config: None,
-                    },
-                };
-                warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
-                    .into_response()
-            }
-        }
-    });
-    let collect_start_filter = warp::path!("collect_start").and(warp::body::json()).then({
-        let tasks = Arc::clone(&tasks);
-        let collection_jobs = Arc::clone(&collection_jobs);
-        move |request: CollectStartRequest| {
-            let http_client = http_client.clone();
-            let tasks = Arc::clone(&tasks);
-            let collection_jobs = Arc::clone(&collection_jobs);
-            async move {
-                let response =
-                    match handle_collect_start(&http_client, &tasks, &collection_jobs, request)
+impl TaskStateMap {
+    fn new() -> Self {
+        Self(Arc::new(Mutex::new(HashMap::new())))
+    }
+}
+
+#[derive(Clone)]
+struct CollectionJobStateMap(Arc<Mutex<HashMap<Handle, CollectionJobState>>>);
+
+impl CollectionJobStateMap {
+    fn new() -> Self {
+        Self(Arc::new(Mutex::new(HashMap::new())))
+    }
+}
+
+fn handler() -> anyhow::Result<impl Handler> {
+    let http_client = janus_collector::default_http_client()?;
+    let tasks = TaskStateMap::new();
+    let collection_jobs = CollectionJobStateMap::new();
+    let keyring = Keyring::new();
+
+    let router = Router::new()
+        .post("/internal/test/ready", Json(serde_json::json!({})))
+        .post(
+            "/internal/test/add_task",
+            api(
+                |_conn: &mut Conn,
+                 (State(tasks), State(keyring), Json(request)): (
+                    State<TaskStateMap>,
+                    State<Keyring>,
+                    Json<AddTaskRequest>,
+                )| async move {
+                    match handle_add_task(&tasks.0, &keyring.0, request).await {
+                        Ok(collector_hpke_config) => Json(AddTaskResponse {
+                            status: SUCCESS,
+                            error: None,
+                            collector_hpke_config: Some(
+                                URL_SAFE_NO_PAD.encode(collector_hpke_config.get_encoded()),
+                            ),
+                        }),
+                        Err(e) => Json(AddTaskResponse {
+                            status: ERROR,
+                            error: Some(format!("{e:?}")),
+                            collector_hpke_config: None,
+                        }),
+                    }
+                },
+            ),
+        )
+        .post(
+            "/internal/test/collect_start",
+            api(
+                |_conn: &mut Conn,
+                 (State(http_client), State(tasks), State(collection_jobs), Json(request)): (
+                    State<reqwest::Client>,
+                    State<TaskStateMap>,
+                    State<CollectionJobStateMap>,
+                    Json<CollectStartRequest>,
+                )| async move {
+                    match handle_collect_start(&http_client, &tasks.0, &collection_jobs.0, request)
                         .await
                     {
-                        Ok(handle) => CollectStartResponse {
+                        Ok(handle) => Json(CollectStartResponse {
                             status: SUCCESS,
                             error: None,
                             handle: Some(handle.0),
-                        },
-                        Err(e) => CollectStartResponse {
+                        }),
+                        Err(e) => Json(CollectStartResponse {
                             status: ERROR,
                             error: Some(format!("{e:?}")),
                             handle: None,
-                        },
-                    };
-                warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
-                    .into_response()
-            }
-        }
-    });
-    let collect_poll_filter = warp::path!("collect_poll").and(warp::body::json()).then({
-        move |request: CollectPollRequest| {
-            let collection_jobs = Arc::clone(&collection_jobs);
-            async move {
-                let response = match handle_collect_poll(&collection_jobs, request).await {
-                    Ok(Some(collect_result)) => CollectPollResponse {
-                        status: COMPLETE,
-                        error: None,
-                        batch_id: collect_result
-                            .partial_batch_selector
-                            .map(|batch_id| URL_SAFE_NO_PAD.encode(batch_id.as_ref())),
-                        report_count: Some(collect_result.report_count),
-                        result: Some(collect_result.aggregation_result),
-                    },
-                    Ok(None) => CollectPollResponse {
-                        status: IN_PROGRESS,
-                        error: None,
-                        batch_id: None,
-                        report_count: None,
-                        result: None,
-                    },
-                    Err(e) => CollectPollResponse {
-                        status: ERROR,
-                        error: Some(format!("{e:?}")),
-                        batch_id: None,
-                        report_count: None,
-                        result: None,
-                    },
-                };
-                warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
-                    .into_response()
-            }
-        }
-    });
+                        }),
+                    }
+                },
+            ),
+        )
+        .post(
+            "/internal/test/collect_poll",
+            api(
+                |_conn: &mut Conn,
+                 (State(collection_jobs), Json(request)): (
+                    State<CollectionJobStateMap>,
+                    Json<CollectPollRequest>,
+                )| async move {
+                    match handle_collect_poll(&collection_jobs.0, request).await {
+                        Ok(Some(collect_result)) => Json(CollectPollResponse {
+                            status: COMPLETE,
+                            error: None,
+                            batch_id: collect_result
+                                .partial_batch_selector
+                                .map(|batch_id| URL_SAFE_NO_PAD.encode(batch_id.as_ref())),
+                            report_count: Some(collect_result.report_count),
+                            result: Some(collect_result.aggregation_result),
+                        }),
+                        Ok(None) => Json(CollectPollResponse {
+                            status: IN_PROGRESS,
+                            error: None,
+                            batch_id: None,
+                            report_count: None,
+                            result: None,
+                        }),
+                        Err(e) => Json(CollectPollResponse {
+                            status: ERROR,
+                            error: Some(format!("{e:?}")),
+                            batch_id: None,
+                            report_count: None,
+                            result: None,
+                        }),
+                    }
+                },
+            ),
+        );
 
-    Ok(warp::path!("internal" / "test" / ..).and(warp::post()).and(
-        ready_filter
-            .or(add_task_filter)
-            .unify()
-            .or(collect_start_filter)
-            .unify()
-            .or(collect_poll_filter)
-            .unify(),
+    Ok((
+        State(http_client),
+        State(tasks),
+        State(collection_jobs),
+        State(keyring),
+        router,
+        ErrorHandler,
     ))
 }
 
@@ -773,18 +789,16 @@ fn app() -> clap::Command {
     )
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     install_tracing_subscriber()?;
     let matches = app().get_matches();
     let port = matches
         .try_get_one::<u16>("port")?
         .ok_or_else(|| anyhow!("port argument missing"))?;
-    let filter = make_filter()?;
-    let server = warp::serve(filter);
-    server
-        .bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, *port)))
-        .await;
+    trillium_tokio::config()
+        .with_host(&Ipv4Addr::UNSPECIFIED.to_string())
+        .with_port(*port)
+        .run(handler()?);
     Ok(())
 }
 
