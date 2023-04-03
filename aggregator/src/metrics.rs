@@ -18,11 +18,8 @@ use {
     opentelemetry::sdk::metrics::{controllers, processors},
     prometheus::{Encoder, TextEncoder},
     std::net::{IpAddr, Ipv4Addr},
-    tokio::{
-        sync::oneshot::{channel, Receiver, Sender},
-        task::JoinHandle,
-    },
-    trillium::{Conn, Handler, Info, KnownHeaderName, Status},
+    tokio::{sync::oneshot::channel, task::JoinHandle},
+    trillium::{Info, Init, KnownHeaderName, Status},
     trillium_router::Router,
 };
 
@@ -138,57 +135,6 @@ impl AggregatorSelector for CustomAggregatorSelector {
     }
 }
 
-#[cfg(feature = "prometheus")]
-/// A Trillium [`Handler`] that saves the server's TCP port number and makes it externally
-/// available.
-struct GrabPort {
-    sender: Option<Sender<Option<u16>>>,
-}
-
-#[cfg(feature = "prometheus")]
-impl GrabPort {
-    fn new() -> (Self, GrabPortReceiver) {
-        let (sender, receiver) = channel();
-        (
-            GrabPort {
-                sender: Some(sender),
-            },
-            GrabPortReceiver { receiver },
-        )
-    }
-}
-
-#[cfg(feature = "prometheus")]
-#[trillium::async_trait]
-impl Handler for GrabPort {
-    async fn run(&self, conn: Conn) -> Conn {
-        conn
-    }
-
-    async fn init(&mut self, info: &mut Info) {
-        let port_opt = info.tcp_socket_addr().map(|socket_addr| socket_addr.port());
-        let _ = self
-            .sender
-            .take()
-            .expect("init should not be called more than once")
-            .send(port_opt);
-    }
-}
-
-#[cfg(feature = "prometheus")]
-struct GrabPortReceiver {
-    receiver: Receiver<Option<u16>>,
-}
-
-#[cfg(feature = "prometheus")]
-impl GrabPortReceiver {
-    async fn wait_for_port(self) -> anyhow::Result<u16> {
-        self.receiver
-            .await?
-            .context("server does not have a TCP port")
-    }
-}
-
 /// Install a metrics provider and exporter, per the given configuration. The OpenTelemetry global
 /// API can be used to create and update meters, and they will be sent through this exporter. The
 /// returned handle should not be dropped until the application shuts down.
@@ -238,17 +184,24 @@ pub async fn install_metrics_exporter(
                 }
             });
 
-            let (grab_port, receiver) = GrabPort::new();
+            let (sender, receiver) = channel();
+            let init = Init::new(|info: Info| async move {
+                // Ignore error if the receiver is dropped.
+                let _ = sender.send(info.tcp_socket_addr().map(|socket_addr| socket_addr.port()));
+            });
 
             let handle = tokio::task::spawn(
                 trillium_tokio::config()
                     .with_port(port)
                     .with_host(&host.to_string())
                     .without_signals()
-                    .run_async((grab_port, router)),
+                    .run_async((init, router)),
             );
 
-            let port = receiver.wait_for_port().await?;
+            let port = receiver
+                .await
+                .context("Init handler was dropped before sending port")?
+                .context("server does not have a TCP port")?;
 
             Ok(MetricsExporterHandle::Prometheus { handle, port })
         }
