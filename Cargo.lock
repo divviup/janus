@@ -4485,9 +4485,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-testing"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b813287bb4edb1653b0a8eeebccfc1f1bb0aff122a7b1db6357a2ba2c784b60"
+checksum = "89d156a52e6df12cac72ba9d2a0beee96b303c72a15e2850c443e25450f9c8f1"
 dependencies = [
  "async-channel",
  "async-dup",

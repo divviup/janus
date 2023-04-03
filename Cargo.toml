@@ -44,7 +44,7 @@ trillium-api = { version = "0.2.0-rc.2", default-features = false }
 trillium-head = "0.2.0"
 trillium-opentelemetry = "0.0.1"
 trillium-router = "0.3.5"
-trillium-testing = "0.4.1"
+trillium-testing = "0.4.2"
 trillium-tokio = "0.2.1"
 
 [profile.dev]
