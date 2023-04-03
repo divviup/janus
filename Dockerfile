@@ -1,4 +1,4 @@
-FROM rust:1.68.1-alpine as builder
+FROM rust:1.68.2-alpine as builder
 ARG BINARY=aggregator
 RUN apk add libc-dev protobuf-dev protoc
 WORKDIR /src
