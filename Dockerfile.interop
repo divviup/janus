@@ -19,7 +19,7 @@ COPY interop_binaries /src/interop_binaries
 COPY messages /src/messages
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --profile $PROFILE -p janus_interop_binaries --bin $BINARY && cp /src/target/$PROFILE/$BINARY /$BINARY
 
-FROM alpine:3.17.2
+FROM alpine:3.17.3
 ARG BINARY
 RUN mkdir /logs
 COPY --from=builder /src/db/schema.sql /db/schema.sql
