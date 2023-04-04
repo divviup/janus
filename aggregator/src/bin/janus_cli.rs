@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
     let command_line_options = CommandLineOptions::parse();
     let config_file: ConfigFile = read_config(&command_line_options.common_options)?;
 
-    install_tracing_and_metrics_handlers(config_file.common_config())?;
+    install_tracing_and_metrics_handlers(config_file.common_config()).await?;
 
     debug!(?command_line_options, ?config_file, "Starting up");
 
@@ -153,10 +153,11 @@ impl Command {
     }
 }
 
-fn install_tracing_and_metrics_handlers(config: &CommonConfig) -> Result<()> {
+async fn install_tracing_and_metrics_handlers(config: &CommonConfig) -> Result<()> {
     install_trace_subscriber(&config.logging_config)
         .context("couldn't install tracing subscriber")?;
     let _metrics_exporter = install_metrics_exporter(&config.metrics_config)
+        .await
         .context("failed to install metrics exporter")?;
 
     Ok(())

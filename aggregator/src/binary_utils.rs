@@ -263,6 +263,7 @@ where
     install_trace_subscriber(&config.common_config().logging_config)
         .context("couldn't install tracing subscriber")?;
     let _metrics_exporter = install_metrics_exporter(&config.common_config().metrics_config)
+        .await
         .context("failed to install metrics exporter")?;
 
     // Create build info metrics gauge.
