@@ -67,6 +67,6 @@ janus_core = { path = ".", features = ["test-util"] }
 # lack of support for connecting to servers by IP addresses, which affects many
 # Kubernetes clusters.
 kube = { workspace = true, features = ["openssl-tls"] }
-mockito = "1.0.1"
+mockito = "1.0.2"
 serde_test = "1.0.158"
 url = "2.3.1"
