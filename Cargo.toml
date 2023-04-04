@@ -20,7 +20,7 @@ homepage = "https://divviup.org"
 license = "MPL-2.0"
 repository = "https://github.com/divviup/janus"
 rust-version = "1.65.0"
-version = "0.4.1"
+version = "0.4.2"
 
 [workspace.dependencies]
 # Disable default features to disable compatibility with the old `time` crate, and we also don't
