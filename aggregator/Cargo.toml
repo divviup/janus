@@ -91,6 +91,7 @@ tracing-stackdriver = "0.6.2"
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt", "json"] }
 trillium.workspace = true
 trillium-head.workspace = true
+trillium-prometheus = "0.1.0"
 trillium-router.workspace = true
 trillium-tokio.workspace = true
 url = { version = "2.3.1", features = ["serde"] }
