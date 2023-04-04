@@ -1,7 +1,6 @@
 //! This crate implements the Janus Aggregator API.
 
 use crate::models::{GetTaskIdsResp, PostTaskReq};
-use async_trait::async_trait;
 use janus_aggregator_core::{
     datastore::{self, Datastore},
     task::Task,
@@ -13,10 +12,11 @@ use models::{GetTaskMetricsResp, TaskResp};
 use querystring::querify;
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use ring::constant_time;
-use std::{borrow::Cow, str::FromStr, sync::Arc};
+use std::{str::FromStr, sync::Arc};
 use tracing::{error, info_span, warn, Instrument};
-use trillium::{Conn, Handler, Info, Status, Upgrade};
+use trillium::{Conn, Handler, Status};
 use trillium_api::{api, Halt, Json, State};
+use trillium_macros::Handler;
 use trillium_opentelemetry::metrics;
 use trillium_router::{Router, RouterConnExt};
 
@@ -346,36 +346,16 @@ fn instrumented<H: Handler>(handler: H) -> InstrumentedHandler<H> {
     InstrumentedHandler(handler)
 }
 
-struct InstrumentedHandler<H>(H);
+#[derive(Handler)]
+struct InstrumentedHandler<H>(#[handler(except = run)] H);
 
-#[async_trait]
-impl<H: Handler> Handler for InstrumentedHandler<H> {
+impl<H: Handler> InstrumentedHandler<H> {
     async fn run(&self, conn: Conn) -> Conn {
         let route = conn.route().expect("no route in conn").to_string();
         self.0
             .run(conn)
             .instrument(info_span!("janus_aggregator_api.endpoint", route = route))
             .await
-    }
-
-    async fn init(&mut self, info: &mut Info) {
-        self.0.init(info).await
-    }
-
-    async fn before_send(&self, conn: Conn) -> Conn {
-        self.0.before_send(conn).await
-    }
-
-    fn has_upgrade(&self, upgrade: &Upgrade) -> bool {
-        self.0.has_upgrade(upgrade)
-    }
-
-    async fn upgrade(&self, upgrade: Upgrade) {
-        self.0.upgrade(upgrade).await
-    }
-
-    fn name(&self) -> Cow<'static, str> {
-        self.0.name()
     }
 }
 

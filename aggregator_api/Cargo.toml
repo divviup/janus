@@ -25,6 +25,7 @@ serde_test = "1.0.159"
 tracing = "0.1.37"
 trillium.workspace = true
 trillium-api.workspace = true
+trillium-macros = "0.0.3"
 trillium-opentelemetry.workspace = true
 trillium-router.workspace = true
 url = { version = "2.3.1", features = ["serde"] }
