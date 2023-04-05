@@ -1842,6 +1842,7 @@ dependencies = [
  "ring",
  "serde",
  "serde_json",
+ "serde_test",
  "tokio",
  "tracing",
  "trillium",
