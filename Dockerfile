@@ -24,7 +24,6 @@ FROM alpine:3.17.3
 ARG BINARY=aggregator
 ARG GIT_REVISION=unknown
 LABEL revision ${GIT_REVISION}
-COPY --from=builder /src/db/schema.sql /db/schema.sql
 COPY --from=builder /$BINARY /$BINARY
 # Store the build argument in an environment variable so we can reference it
 # from the ENTRYPOINT at runtime.

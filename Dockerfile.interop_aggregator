@@ -28,27 +28,24 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_aggregator \
     --bin aggregation_job_creator \
     --bin aggregation_job_driver \
-    --bin collection_job_driver \
-    --bin janus_cli && \
+    --bin collection_job_driver && \
     cp /src/target/$PROFILE/aggregation_job_creator /aggregation_job_creator && \
     cp /src/target/$PROFILE/aggregation_job_driver /aggregation_job_driver && \
-    cp /src/target/$PROFILE/collection_job_driver /collection_job_driver && \
-    cp /src/target/$PROFILE/janus_cli /janus_cli
+    cp /src/target/$PROFILE/collection_job_driver /collection_job_driver
 
 FROM postgres:14-alpine
 RUN mkdir /logs && mkdir /etc/janus
 RUN apk add --update supervisor && rm -rf /tmp/* /var/cache/apk/*
+COPY db /etc/janus/migrations
 COPY interop_binaries/setup.sh /usr/local/bin/setup.sh
 COPY interop_binaries/config/supervisord.conf /etc/janus/supervisord.conf
 COPY interop_binaries/config/janus_interop_aggregator.yaml /etc/janus/janus_interop_aggregator.yaml
 COPY interop_binaries/config/aggregation_job_creator.yaml /etc/janus/aggregation_job_creator.yaml
 COPY interop_binaries/config/aggregation_job_driver.yaml /etc/janus/aggregation_job_driver.yaml
 COPY interop_binaries/config/collection_job_driver.yaml /etc/janus/collection_job_driver.yaml
-COPY interop_binaries/config/janus_cli.yaml /etc/janus/janus_cli.yaml
 COPY --from=builder /janus_interop_aggregator /usr/local/bin/janus_interop_aggregator
 COPY --from=builder /aggregation_job_creator /usr/local/bin/aggregation_job_creator
 COPY --from=builder /aggregation_job_driver /usr/local/bin/aggregation_job_driver
 COPY --from=builder /collection_job_driver /usr/local/bin/collection_job_driver
-COPY --from=builder /janus_cli /usr/local/bin/janus_cli
 EXPOSE 8080
 ENTRYPOINT ["/usr/bin/supervisord", "-c", "/etc/janus/supervisord.conf"]
