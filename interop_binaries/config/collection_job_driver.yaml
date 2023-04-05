@@ -1,3 +1,6 @@
+# This configuration file is used in the janus_interop_aggregator container
+# image. It is tuned for very low aggregation latency, to speed up integration
+# tests, and is not intended for production use.
 database:
   url: postgres://postgres@127.0.0.1:5432/postgres
 health_check_listen_address: 0.0.0.0:8003
