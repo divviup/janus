@@ -1,3 +1,5 @@
+# This configuration file is used in the janus_interop_aggregator container
+# image.
 database:
   url: postgres://postgres@127.0.0.1:5432/postgres
 health_check_listen_address: 0.0.0.0:8000
