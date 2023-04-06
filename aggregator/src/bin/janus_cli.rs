@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 use clap::Parser;
+use deadpool_postgres::Pool;
 use janus_aggregator::{
     binary_utils::{database_pool, datastore, read_config, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
@@ -26,6 +27,8 @@ use std::{
 use tokio::fs;
 use tracing::{debug, info};
 
+static SCHEMA: &str = include_str!("../../../db/schema.sql");
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse command-line options, then read & parse config.
@@ -48,6 +51,9 @@ async fn main() -> Result<()> {
 
 #[derive(Debug, Parser)]
 enum Command {
+    /// Write the Janus database schema to the database.
+    WriteSchema,
+
     /// Write a set of tasks identified in a file to the datastore.
     ProvisionTasks {
         #[clap(flatten)]
@@ -84,6 +90,18 @@ impl Command {
         // function with the main command logic.
         let kube_client = LazyKubeClient::new();
         match self {
+            Command::WriteSchema => {
+                let pool = database_pool(
+                    &config_file.common_config.database,
+                    command_line_options
+                        .common_options
+                        .database_password
+                        .as_deref(),
+                )
+                .await?;
+                write_schema(&pool, command_line_options.dry_run).await
+            }
+
             Command::ProvisionTasks {
                 kubernetes_secret_options,
                 tasks_file,
@@ -143,6 +161,21 @@ async fn install_tracing_and_metrics_handlers(config: &CommonConfig) -> Result<(
         .context("failed to install metrics exporter")?;
 
     Ok(())
+}
+
+async fn write_schema(pool: &Pool, dry_run: bool) -> Result<()> {
+    info!("Writing database schema");
+    let db_client = pool.get().await.context("couldn't get database client")?;
+
+    if dry_run {
+        info!(schema = SCHEMA, "DRY RUN: not writing schema.");
+        return Ok(());
+    }
+
+    db_client
+        .batch_execute(SCHEMA)
+        .await
+        .context("couldn't write database schema")
 }
 
 async fn provision_tasks<C: Clock>(
@@ -455,7 +488,10 @@ mod tests {
         config::CommonConfig,
     };
     use janus_aggregator_core::{
-        datastore::{test_util::ephemeral_datastore, Datastore},
+        datastore::{
+            test_util::{ephemeral_datastore, ephemeral_datastore_no_schema},
+            Datastore,
+        },
         task::{test_util::TaskBuilder, QueryType, Task},
     };
     use janus_core::{
@@ -543,6 +579,46 @@ mod tests {
 
         kubernetes_secret_options
             .datastore_keys(&common_options, &kube_client)
+            .await
+            .unwrap_err();
+    }
+
+    #[tokio::test]
+    async fn write_schema() {
+        let ephemeral_datastore = ephemeral_datastore_no_schema().await;
+        let ds = ephemeral_datastore.datastore(RealClock::default());
+
+        // Verify that the query we will run later returns an error if there is no database schema written.
+        ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+            .await
+            .unwrap_err();
+
+        // Run the program logic.
+        super::write_schema(&ephemeral_datastore.pool(), false)
+            .await
+            .unwrap();
+
+        // Verify that the schema was written (by running a query that would fail if it weren't).
+        ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn write_schema_dry_run() {
+        let ephemeral_datastore = ephemeral_datastore_no_schema().await;
+        let ds = ephemeral_datastore.datastore(RealClock::default());
+
+        ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+            .await
+            .unwrap_err();
+
+        super::write_schema(&ephemeral_datastore.pool(), true)
+            .await
+            .unwrap();
+
+        // Verify that no schema was written (by running a query that would fail if it weren't).
+        ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
             .await
             .unwrap_err();
     }

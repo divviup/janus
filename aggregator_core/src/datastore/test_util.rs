@@ -126,8 +126,9 @@ impl EphemeralDatastore {
     }
 }
 
-/// Creates a new, empty EphemeralDatastore with all schema migrations applied to it.
-pub async fn ephemeral_datastore() -> EphemeralDatastore {
+/// Creates a new, empty EphemeralDatastore with no schema applied. Almost all uses will want to
+/// call `ephemeral_datastore` instead, which applies the standard schema.
+pub async fn ephemeral_datastore_no_schema() -> EphemeralDatastore {
     let db = EphemeralDatabase::shared().await;
     let db_name = format!("janus_test_{}", hex::encode(random::<[u8; 16]>()));
     trace!("Creating ephemeral postgres datastore {db_name}");
@@ -142,20 +143,8 @@ pub async fn ephemeral_datastore() -> EphemeralDatastore {
         .await
         .unwrap();
 
-    let connection_string = db.connection_string(&db_name);
-
-    let mut connection = PgConnection::connect(&connection_string).await.unwrap();
-
-    // We deliberately avoid using sqlx::migrate! or other compile-time macros to ensure that
-    // changes to the migration scripts will be picked up by every run of the tests.
-    let migrations_path = PathBuf::from_str(env!("CARGO_MANIFEST_DIR"))
-        .unwrap()
-        .join("..")
-        .join("db");
-    let migrator = Migrator::new(migrations_path).await.unwrap();
-    migrator.run(&mut connection).await.unwrap();
-
     // Create a connection pool for the newly-created database.
+    let connection_string = db.connection_string(&db_name);
     let cfg = Config::from_str(&connection_string).unwrap();
     let conn_mgr = Manager::new(cfg, NoTls);
     let pool = Pool::builder(conn_mgr).build().unwrap();
@@ -166,6 +155,26 @@ pub async fn ephemeral_datastore() -> EphemeralDatastore {
         pool,
         datastore_key_bytes: generate_aead_key_bytes(),
     }
+}
+
+/// Creates a new, empty EphemeralDatastore with all schema migrations applied to it.
+pub async fn ephemeral_datastore() -> EphemeralDatastore {
+    let ephemeral_datastore = ephemeral_datastore_no_schema().await;
+
+    let mut connection = PgConnection::connect(&ephemeral_datastore.connection_string)
+        .await
+        .unwrap();
+
+    // We deliberately avoid using sqlx::migrate! or other compile-time macros to ensure that
+    // changes to the migration scripts will be picked up by every run of the tests.
+    let migrations_path = PathBuf::from_str(env!("CARGO_MANIFEST_DIR"))
+        .unwrap()
+        .join("..")
+        .join("db");
+    let migrator = Migrator::new(migrations_path).await.unwrap();
+    migrator.run(&mut connection).await.unwrap();
+
+    ephemeral_datastore
 }
 
 pub fn generate_aead_key_bytes() -> Vec<u8> {
