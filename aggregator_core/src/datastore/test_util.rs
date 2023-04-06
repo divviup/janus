@@ -132,9 +132,9 @@ impl EphemeralDatastore {
     }
 }
 
-/// Creates a new, empty EphemeralDatastore with no schema applied. Almost all uses will want to
-/// call `ephemeral_datastore` instead, which applies the standard schema.
-pub async fn ephemeral_datastore_no_schema() -> EphemeralDatastore {
+/// Create a new, empty EphemeralDatastore with all schema migrations up to the specified version
+/// applied to it.
+pub async fn ephemeral_datastore_max_schema_version(max_schema_version: i64) -> EphemeralDatastore {
     let db = EphemeralDatabase::shared().await;
     let db_name = format!("janus_test_{}", hex::encode(random::<[u8; 16]>()));
     trace!("Creating ephemeral postgres datastore {db_name}");
@@ -149,26 +149,9 @@ pub async fn ephemeral_datastore_no_schema() -> EphemeralDatastore {
         .await
         .unwrap();
 
-    // Create a connection pool for the newly-created database.
     let connection_string = db.connection_string(&db_name);
-    let cfg = Config::from_str(&connection_string).unwrap();
-    let conn_mgr = Manager::new(cfg, NoTls);
-    let pool = Pool::builder(conn_mgr).build().unwrap();
 
-    EphemeralDatastore {
-        _db: db,
-        connection_string,
-        pool,
-        datastore_key_bytes: generate_aead_key_bytes(),
-    }
-}
-
-pub async fn ephemeral_datastore_max_schema_version(max_schema_version: i64) -> EphemeralDatastore {
-    let ephemeral_datastore = ephemeral_datastore_no_schema().await;
-
-    let mut connection = PgConnection::connect(&ephemeral_datastore.connection_string)
-        .await
-        .unwrap();
+    let mut connection = PgConnection::connect(&connection_string).await.unwrap();
 
     // We deliberately avoid using sqlx::migrate! or other compile-time macros to ensure that
     // changes to the migration scripts will be picked up by every run of the tests.
@@ -186,7 +169,17 @@ pub async fn ephemeral_datastore_max_schema_version(max_schema_version: i64) -> 
 
     migrator.run(&mut connection).await.unwrap();
 
-    ephemeral_datastore
+    // Create a connection pool for the newly-created database.
+    let cfg = Config::from_str(&connection_string).unwrap();
+    let conn_mgr = Manager::new(cfg, NoTls);
+    let pool = Pool::builder(conn_mgr).build().unwrap();
+
+    EphemeralDatastore {
+        _db: db,
+        connection_string,
+        pool,
+        datastore_key_bytes: generate_aead_key_bytes(),
+    }
 }
 
 /// Creates a new, empty EphemeralDatastore with all schema migrations applied to it.
