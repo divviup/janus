@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 use clap::Parser;
-use deadpool_postgres::Pool;
 use janus_aggregator::{
     binary_utils::{database_pool, datastore, read_config, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
@@ -24,8 +23,6 @@ use std::{
 use tokio::fs;
 use tracing::{debug, info};
 
-static SCHEMA: &str = include_str!("../../../db/schema.sql");
-
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse options, then read & parse config.
@@ -38,12 +35,6 @@ async fn main() -> Result<()> {
 
 #[derive(Debug, Parser)]
 enum Command {
-    /// Write the Janus database schema to the database.
-    WriteSchema {
-        #[clap(flatten)]
-        common_options: CommonBinaryOptions,
-    },
-
     /// Write a set of tasks identified in a file to the datastore.
     ProvisionTasks {
         #[clap(flatten)]
@@ -81,17 +72,6 @@ impl Command {
         // generally create the command's dependencies based on options/config, then call another
         // function with the main command logic.
         match self {
-            Command::WriteSchema { common_options } => {
-                let config: Config = read_config(common_options)?;
-                install_tracing_and_metrics_handlers(config.common_config())?;
-                let pool = database_pool(
-                    &config.common_config.database,
-                    common_options.database_password.as_deref(),
-                )
-                .await?;
-                write_schema(&pool).await
-            }
-
             Command::ProvisionTasks {
                 common_options,
                 kubernetes_secret_options,
@@ -161,16 +141,6 @@ fn install_tracing_and_metrics_handlers(config: &CommonConfig) -> Result<()> {
     let _metrics_exporter = install_metrics_exporter(&config.metrics_config)
         .context("failed to install metrics exporter")?;
 
-    Ok(())
-}
-
-async fn write_schema(pool: &Pool) -> Result<()> {
-    info!("Writing database schema");
-    let db_client = pool.get().await.context("couldn't get database client")?;
-    db_client
-        .batch_execute(SCHEMA)
-        .await
-        .context("couldn't write database schema")?;
     Ok(())
 }
 
@@ -398,7 +368,7 @@ mod tests {
             generate_db_config, generate_metrics_config, generate_trace_config, roundtrip_encoding,
         },
         config::CommonConfig,
-        datastore::test_util::{ephemeral_datastore, ephemeral_db_handle},
+        datastore::test_util::ephemeral_datastore,
         task::{test_util::TaskBuilder, QueryType, Task},
     };
     use janus_core::{task::VdafInstance, test_util::kubernetes, time::RealClock};
@@ -478,25 +448,6 @@ mod tests {
             .datastore_keys(&CommonBinaryOptions::default(), kube_client.clone())
             .await
             .unwrap_err();
-    }
-
-    #[tokio::test]
-    async fn write_schema() {
-        let db_handle = ephemeral_db_handle();
-        let ds = db_handle.datastore(RealClock::default());
-
-        // Verify that the query we will run later returns an error if there is no database schema written.
-        ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
-            .await
-            .unwrap_err();
-
-        // Run the program logic.
-        super::write_schema(&db_handle.pool()).await.unwrap();
-
-        // Verify that the schema was written (by running a query that would fail if it weren't).
-        ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
-            .await
-            .unwrap();
     }
 
     fn task_hashmap_from_slice(tasks: Vec<Task>) -> HashMap<TaskId, Task> {

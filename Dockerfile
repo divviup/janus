@@ -17,7 +17,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,targe
 
 FROM alpine:3.17.3
 ARG BINARY=aggregator
-COPY --from=builder /src/db/schema.sql /db/schema.sql
 COPY --from=builder /$BINARY /$BINARY
 # Store the build argument in an environment variable so we can reference it
 # from the ENTRYPOINT at runtime.
