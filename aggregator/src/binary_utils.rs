@@ -15,7 +15,6 @@ use deadpool::managed::TimeoutType;
 use deadpool_postgres::{Manager, Pool, PoolError, Runtime, Timeouts};
 use futures::StreamExt;
 use git_version::git_version;
-use http::StatusCode;
 use janus_aggregator_core::datastore::{Crypter, Datastore};
 use janus_core::time::Clock;
 use opentelemetry::{Context, KeyValue};
@@ -31,7 +30,8 @@ use std::{
 };
 use tokio_postgres::NoTls;
 use tracing::{debug, info};
-use warp::Filter;
+use trillium_head::Head;
+use trillium_router::Router;
 
 /// Reads, parses, and returns the config referenced by the given options, or None if no config file
 /// path was set.
@@ -263,6 +263,7 @@ where
     install_trace_subscriber(&config.common_config().logging_config)
         .context("couldn't install tracing subscriber")?;
     let _metrics_exporter = install_metrics_exporter(&config.common_config().metrics_config)
+        .await
         .context("failed to install metrics exporter")?;
 
     // Create build info metrics gauge.
@@ -332,11 +333,17 @@ where
 /// body and status code 200. Each Janus component exposes this HTTP server to enable health
 /// checks, and to indicate when it has successfully started up.
 async fn health_endpoint_server(address: SocketAddr) {
-    let filter = warp::path("healthz")
-        .and(warp::get().or(warp::head()).unify())
-        .map(|| warp::reply::with_status(warp::reply::reply(), StatusCode::OK));
-    let server = warp::serve(filter);
-    server.bind(address).await;
+    let router = Router::new().get(
+        "/healthz",
+        |conn: trillium::Conn| async move { conn.ok("") },
+    );
+    let handler = (Head::new(), router);
+    trillium_tokio::config()
+        .with_port(address.port())
+        .with_host(&address.ip().to_string())
+        .without_signals()
+        .run_async(handler)
+        .await;
 }
 
 /// Register a signal handler for SIGTERM, and return a future that will become ready when a

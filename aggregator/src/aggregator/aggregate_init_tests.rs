@@ -168,7 +168,7 @@ pub(crate) async fn put_aggregation_job(
         .path(task.aggregation_job_uri(aggregation_job_id).unwrap().path())
         .header(
             "DAP-Auth-Token",
-            task.primary_aggregator_auth_token().as_bytes(),
+            task.primary_aggregator_auth_token().as_ref(),
         )
         .header(
             CONTENT_TYPE,

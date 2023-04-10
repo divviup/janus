@@ -13,20 +13,18 @@ use janus_core::{
 use janus_interop_binaries::{
     install_tracing_subscriber,
     status::{ERROR, SUCCESS},
-    NumberAsString, VdafObject,
+    ErrorHandler, NumberAsString, VdafObject,
 };
 use janus_messages::{Duration, Role, TaskId, Time};
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded;
 use prio::{codec::Decode, vdaf::prio3::Prio3};
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::Display,
-    net::{Ipv4Addr, SocketAddr},
-    str::FromStr,
-};
+use std::{fmt::Display, net::Ipv4Addr, str::FromStr};
+use trillium::{Conn, Handler};
+use trillium_api::{api, Json, State};
+use trillium_router::Router;
 use url::Url;
-use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
 
 /// Parse a numeric measurement from its intermediate JSON representation.
 fn parse_primitive_measurement<T>(value: serde_json::Value) -> anyhow::Result<T>
@@ -208,37 +206,32 @@ async fn handle_upload(
     Ok(())
 }
 
-fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
+fn handler() -> anyhow::Result<impl Handler> {
     let http_client = janus_client::default_http_client()?;
 
-    let ready_filter = warp::path!("ready").map(|| {
-        warp::reply::with_status(warp::reply::json(&serde_json::json!({})), StatusCode::OK)
-            .into_response()
-    });
-    let upload_filter =
-        warp::path!("upload")
-            .and(warp::body::json())
-            .then(move |request: UploadRequest| {
-                let http_client = http_client.clone();
-                async move {
-                    let response = match handle_upload(&http_client, request).await {
-                        Ok(()) => UploadResponse {
-                            status: SUCCESS,
-                            error: None,
-                        },
-                        Err(e) => UploadResponse {
-                            status: ERROR,
-                            error: Some(format!("{e:?}")),
-                        },
-                    };
-                    warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
-                        .into_response()
-                }
-            });
-
-    Ok(warp::path!("internal" / "test" / ..)
-        .and(warp::post())
-        .and(ready_filter.or(upload_filter).unify()))
+    Ok((
+        State(http_client),
+        Router::new()
+            .post("/internal/test/ready", Json(serde_json::json!({})))
+            .post(
+                "/internal/test/upload",
+                api(
+                    |_conn: &mut Conn, (State(http_client), Json(request))| async move {
+                        match handle_upload(&http_client, request).await {
+                            Ok(()) => Json(UploadResponse {
+                                status: SUCCESS,
+                                error: None,
+                            }),
+                            Err(e) => Json(UploadResponse {
+                                status: ERROR,
+                                error: Some(format!("{e:?}")),
+                            }),
+                        }
+                    },
+                ),
+            ),
+        ErrorHandler,
+    ))
 }
 
 fn app() -> clap::Command {
@@ -252,18 +245,16 @@ fn app() -> clap::Command {
     )
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     install_tracing_subscriber()?;
     let matches = app().get_matches();
     let port = matches
         .try_get_one::<u16>("port")?
         .ok_or_else(|| anyhow!("port argument missing"))?;
-    let filter = make_filter()?;
-    let server = warp::serve(filter);
-    server
-        .bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, *port)))
-        .await;
+    trillium_tokio::config()
+        .with_host(&Ipv4Addr::UNSPECIFIED.to_string())
+        .with_port(*port)
+        .run(handler()?);
     Ok(())
 }
 

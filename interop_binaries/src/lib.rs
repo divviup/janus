@@ -22,11 +22,15 @@ use std::{
     path::PathBuf,
     process::Command,
     str::FromStr,
+    sync::Arc,
     thread::panicking,
 };
 use testcontainers::{Container, Image};
+use tokio::sync::Mutex;
 use tracing_log::LogTracer;
 use tracing_subscriber::{prelude::*, EnvFilter, Registry};
+use trillium::{async_trait, Conn, Handler, Status};
+use trillium_api::ApiConnExt;
 use url::Url;
 
 #[cfg(feature = "testcontainer")]
@@ -287,12 +291,12 @@ impl From<Task> for AggregatorAddTaskRequest {
             helper: task.helper_aggregator_endpoint().clone(),
             vdaf: task.vdaf().clone().into(),
             leader_authentication_token: String::from_utf8(
-                task.primary_aggregator_auth_token().as_bytes().to_vec(),
+                task.primary_aggregator_auth_token().as_ref().to_vec(),
             )
             .unwrap(),
             collector_authentication_token: if task.role() == &Role::Leader {
                 Some(
-                    String::from_utf8(task.primary_collector_auth_token().as_bytes().to_vec())
+                    String::from_utf8(task.primary_collector_auth_token().as_ref().to_vec())
                         .unwrap(),
                 )
             } else {
@@ -439,6 +443,45 @@ impl<'d, I: Image> Deref for ContainerLogsDropGuard<'d, I> {
 
     fn deref(&self) -> &Self::Target {
         &self.container
+    }
+}
+
+pub struct ErrorHandler;
+
+#[async_trait]
+impl Handler for ErrorHandler {
+    async fn run(&self, conn: Conn) -> Conn {
+        conn
+    }
+
+    async fn before_send(&self, mut conn: Conn) -> Conn {
+        if let Some(error) = conn.take_state::<trillium_api::Error>() {
+            // Could not parse the request, return a 400 status code.
+            return conn
+                .with_json(&serde_json::json!({
+                    "status": status::ERROR,
+                    "error": format!("{error}"),
+                }))
+                .with_status(Status::BadRequest);
+        }
+        conn
+    }
+}
+
+/// A wrapper around [`HpkeConfigRegistry`] that is suitable for use in Trillium connection
+/// state.
+#[derive(Clone)]
+pub struct Keyring(pub Arc<Mutex<HpkeConfigRegistry>>);
+
+impl Keyring {
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(HpkeConfigRegistry::new())))
+    }
+}
+
+impl Default for Keyring {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

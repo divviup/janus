@@ -15,7 +15,7 @@ kube-openssl = ["kube/openssl-tls"]
 anyhow = "1"
 backoff = { version = "0.4", features = ["tokio"] }
 base64 = "0.21.0"
-futures = "0.3.27"
+futures = "0.3.28"
 hex = "0.4"
 janus_aggregator = { workspace = true, features = ["test-util"] }
 janus_aggregator_core = { workspace = true, features = ["test-util"] }

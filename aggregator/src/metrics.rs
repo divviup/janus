@@ -1,5 +1,7 @@
 //! Collection and exporting of application-level metrics for Janus.
 
+#[cfg(any(not(feature = "prometheus"), not(feature = "otlp")))]
+use anyhow::anyhow;
 use opentelemetry::sdk::{
     export::metrics::AggregatorSelector,
     metrics::{
@@ -12,14 +14,11 @@ use std::{collections::HashMap, net::AddrParseError, sync::Arc};
 
 #[cfg(feature = "prometheus")]
 use {
-    http::StatusCode,
-    hyper::Response,
+    anyhow::Context,
     opentelemetry::sdk::metrics::{controllers, processors},
-    prometheus::{Encoder, TextEncoder},
-    std::net::SocketAddr,
     std::net::{IpAddr, Ipv4Addr},
-    tokio::task::JoinHandle,
-    warp::{Filter, Reply},
+    tokio::{sync::oneshot::channel, task::JoinHandle},
+    trillium::{Info, Init},
 };
 
 #[cfg(feature = "otlp")]
@@ -54,7 +53,7 @@ pub enum Error {
     #[error(transparent)]
     TonicMetadataValue(#[from] tonic::metadata::errors::InvalidMetadataValue),
     #[error("{0}")]
-    Other(&'static str),
+    Other(#[from] anyhow::Error),
 }
 
 /// Configuration for collection/exporting of application-level metrics.
@@ -89,7 +88,10 @@ pub struct OtlpExporterConfiguration {
 /// Choice of OpenTelemetry metrics exporter implementation.
 pub enum MetricsExporterHandle {
     #[cfg(feature = "prometheus")]
-    Prometheus(JoinHandle<()>),
+    Prometheus {
+        handle: JoinHandle<()>,
+        port: u16,
+    },
     #[cfg(feature = "otlp")]
     Otlp(BasicController),
     Noop,
@@ -134,7 +136,7 @@ impl AggregatorSelector for CustomAggregatorSelector {
 /// Install a metrics provider and exporter, per the given configuration. The OpenTelemetry global
 /// API can be used to create and update meters, and they will be sent through this exporter. The
 /// returned handle should not be dropped until the application shuts down.
-pub fn install_metrics_exporter(
+pub async fn install_metrics_exporter(
     config: &MetricsConfiguration,
 ) -> Result<MetricsExporterHandle, Error> {
     match &config.exporter {
@@ -143,14 +145,16 @@ pub fn install_metrics_exporter(
             host: config_exporter_host,
             port: config_exporter_port,
         }) => {
-            let exporter = opentelemetry_prometheus::exporter(
-                controllers::basic(processors::factory(
-                    CustomAggregatorSelector,
-                    stateless_temporality_selector(),
-                ))
-                .build(),
-            )
-            .try_init()?;
+            let exporter = Arc::new(
+                opentelemetry_prometheus::exporter(
+                    controllers::basic(processors::factory(
+                        CustomAggregatorSelector,
+                        stateless_temporality_selector(),
+                    ))
+                    .build(),
+                )
+                .try_init()?,
+            );
 
             let host = config_exporter_host
                 .as_ref()
@@ -158,35 +162,34 @@ pub fn install_metrics_exporter(
                 .unwrap_or_else(|| Ok(Ipv4Addr::UNSPECIFIED.into()))?;
             let port = config_exporter_port.unwrap_or_else(|| 9464);
 
-            let filter = warp::path("metrics").and(warp::get()).map({
-                move || {
-                    let mut buffer = Vec::new();
-                    let encoder = TextEncoder::new();
-                    match encoder.encode(&exporter.registry().gather(), &mut buffer) {
-                        Ok(()) => Response::builder()
-                            .header(hyper::header::CONTENT_TYPE, encoder.format_type())
-                            .body(buffer)
-                            // This unwrap is OK because the only possible source of errors is the
-                            // `header()` call, and its arguments are always valid.
-                            .unwrap()
-                            .into_response(),
-                        Err(error) => {
-                            tracing::error!(?error, "Failed to encode Prometheus metrics");
-                            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-                        }
-                    }
-                }
-            });
-            let listen_address = SocketAddr::new(host, port);
-            let handle = tokio::task::spawn(warp::serve(filter).bind(listen_address));
+            let router = trillium_prometheus::text_format_handler(exporter.registry().clone());
 
-            Ok(MetricsExporterHandle::Prometheus(handle))
+            let (sender, receiver) = channel();
+            let init = Init::new(|info: Info| async move {
+                // Ignore error if the receiver is dropped.
+                let _ = sender.send(info.tcp_socket_addr().map(|socket_addr| socket_addr.port()));
+            });
+
+            let handle = tokio::task::spawn(
+                trillium_tokio::config()
+                    .with_port(port)
+                    .with_host(&host.to_string())
+                    .without_signals()
+                    .run_async((init, router)),
+            );
+
+            let port = receiver
+                .await
+                .context("Init handler was dropped before sending port")?
+                .context("server does not have a TCP port")?;
+
+            Ok(MetricsExporterHandle::Prometheus { handle, port })
         }
         #[cfg(not(feature = "prometheus"))]
-        Some(MetricsExporterConfiguration::Prometheus { .. }) => Err(Error::Other(
+        Some(MetricsExporterConfiguration::Prometheus { .. }) => Err(Error::Other(anyhow!(
             "The OpenTelemetry Prometheus metrics exporter was enabled in the configuration file, \
              but support was not enabled at compile time. Rebuild with `--features prometheus`.",
-        )),
+        ))),
 
         #[cfg(feature = "otlp")]
         Some(MetricsExporterConfiguration::Otlp(otlp_config)) => {
@@ -216,12 +219,73 @@ pub fn install_metrics_exporter(
             Ok(MetricsExporterHandle::Otlp(basic_controller))
         }
         #[cfg(not(feature = "otlp"))]
-        Some(MetricsExporterConfiguration::Otlp(_)) => Err(Error::Other(
+        Some(MetricsExporterConfiguration::Otlp(_)) => Err(Error::Other(anyhow!(
             "The OpenTelemetry OTLP metrics exporter was enabled in the configuration file, but \
              support was not enabled at compile time. Rebuild with `--features otlp`.",
-        )),
+        ))),
 
         // If neither exporter is configured, leave the default NoopMeterProvider in place.
         None => Ok(MetricsExporterHandle::Noop),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "prometheus")]
+    use super::{
+        install_metrics_exporter, MetricsConfiguration, MetricsExporterConfiguration,
+        MetricsExporterHandle,
+    };
+    #[cfg(feature = "prometheus")]
+    use http::StatusCode;
+    #[cfg(feature = "prometheus")]
+    use janus_core::retries::{retry_http_request, test_http_request_exponential_backoff};
+    #[cfg(feature = "prometheus")]
+    use opentelemetry::Context;
+
+    #[cfg(feature = "prometheus")]
+    #[tokio::test]
+    async fn prometheus_metrics_pull() {
+        let handle = install_metrics_exporter(&MetricsConfiguration {
+            exporter: Some(MetricsExporterConfiguration::Prometheus {
+                host: Some("127.0.0.1".to_owned()),
+                port: Some(0),
+            }),
+        })
+        .await
+        .unwrap();
+        let port = match handle {
+            MetricsExporterHandle::Prometheus { port, .. } => port,
+            _ => unreachable!(),
+        };
+
+        opentelemetry::global::meter("tests")
+            .u64_observable_gauge("test_metric")
+            .with_description("Gauge for test purposes")
+            .init()
+            .observe(&Context::current(), 1, &[]);
+
+        let url = format!("http://127.0.0.1:{port}/metrics");
+        let response = retry_http_request(test_http_request_exponential_backoff(), || {
+            reqwest::get(&url)
+        })
+        .await
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("Content-Type").unwrap(),
+            "text/plain; version=0.0.4"
+        );
+        let text = response.text().await.unwrap();
+        assert!(
+            text.contains("HELP") && text.contains("TYPE"),
+            "Exported metrics: {:?}",
+            text
+        );
+
+        match handle {
+            MetricsExporterHandle::Prometheus { handle, .. } => handle.abort(),
+            _ => unreachable!(),
+        }
     }
 }

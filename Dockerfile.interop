@@ -1,7 +1,7 @@
 ARG BINARY
 ARG PROFILE=release
 
-FROM rust:1.68.1-alpine as builder
+FROM rust:1.68.2-alpine as builder
 ARG BINARY
 ARG PROFILE
 RUN apk add libc-dev protobuf-dev protoc
@@ -9,6 +9,7 @@ WORKDIR /src
 COPY Cargo.toml /src/Cargo.toml
 COPY Cargo.lock /src/Cargo.lock
 COPY aggregator /src/aggregator
+COPY aggregator_api /src/aggregator_api
 COPY aggregator_core /src/aggregator_core
 COPY build_script_utils /src/build_script_utils
 COPY client /src/client
@@ -21,10 +22,9 @@ COPY messages /src/messages
 COPY tools /src/tools
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_interop_binaries --bin $BINARY && cp /src/target/$PROFILE/$BINARY /$BINARY
 
-FROM alpine:3.17.2
+FROM alpine:3.17.3
 ARG BINARY
 RUN mkdir /logs
-COPY --from=builder /src/db/schema.sql /db/schema.sql
 COPY --from=builder /$BINARY /$BINARY
 EXPOSE 8080
 # Store the build argument in an environment variable so we can reference it

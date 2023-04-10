@@ -35,7 +35,7 @@ backoff = { version = "0.4.0", features = ["tokio"] }
 base64 = "0.21.0"
 chrono = { workspace = true, features = ["clock"] }
 derivative = "2.2.0"
-futures = "0.3.27"
+futures = "0.3.28"
 hex = "0.4"
 hpke-dispatch = "0.5.0"
 http-api-problem = "0.56.0"
@@ -47,13 +47,13 @@ prio.workspace = true
 rand = "0.8"
 reqwest = { version = "0.11.16", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.16.20"
-serde = { version = "1.0.158", features = ["derive"] }
+serde = { version = "1.0.159", features = ["derive"] }
 serde_json = { version = "1.0.95", optional = true }
 serde_yaml = "0.9.19"
 tempfile = { version = "3", optional = true }
 testcontainers = { version = "0.14", optional = true }
 thiserror = "1.0"
-tokio = { version = "1.26", features = ["macros", "net", "rt"] }
+tokio = { version = "1.27", features = ["macros", "net", "rt"] }
 tracing = "0.1.37"
 tracing-log = { version = "0.1.3", optional = true }
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"], optional = true }
@@ -68,6 +68,6 @@ janus_core = { path = ".", features = ["test-util"] }
 # lack of support for connecting to servers by IP addresses, which affects many
 # Kubernetes clusters.
 kube = { workspace = true, features = ["openssl-tls"] }
-mockito = "1.0.1"
-serde_test = "1.0.158"
+mockito = "1.0.2"
+serde_test = "1.0.159"
 url = "2.3.1"

@@ -1,4 +1,0 @@
-database:
-  url: postgres://postgres@127.0.0.1:5432/postgres
-logging_config:
-  force_json_output: true

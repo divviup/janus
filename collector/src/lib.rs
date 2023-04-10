@@ -411,7 +411,7 @@ impl<V: vdaf::Collector> Collector<V> {
                     .body(collect_request.get_encoded());
                 match &self.parameters.authentication {
                     Authentication::DapAuthToken(token) => {
-                        request = request.header(DAP_AUTH_HEADER, token.as_bytes())
+                        request = request.header(DAP_AUTH_HEADER, token.as_ref())
                     }
                 }
                 request.send().await
@@ -459,7 +459,7 @@ impl<V: vdaf::Collector> Collector<V> {
                 let mut request = self.http_client.post(job.collection_job_url.clone());
                 match &self.parameters.authentication {
                     Authentication::DapAuthToken(token) => {
-                        request = request.header(DAP_AUTH_HEADER, token.as_bytes())
+                        request = request.header(DAP_AUTH_HEADER, token.as_ref())
                     }
                 }
                 request.send().await

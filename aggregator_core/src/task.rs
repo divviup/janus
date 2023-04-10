@@ -438,12 +438,12 @@ impl SerializedTask {
 
         if self.aggregator_auth_tokens.is_empty() {
             self.aggregator_auth_tokens =
-                Vec::from([URL_SAFE_NO_PAD.encode(random::<AuthenticationToken>().as_bytes())]);
+                Vec::from([URL_SAFE_NO_PAD.encode(random::<AuthenticationToken>())]);
         }
 
         if self.collector_auth_tokens.is_empty() && self.role == Role::Leader {
             self.collector_auth_tokens =
-                Vec::from([URL_SAFE_NO_PAD.encode(random::<AuthenticationToken>().as_bytes())]);
+                Vec::from([URL_SAFE_NO_PAD.encode(random::<AuthenticationToken>())]);
         }
 
         if self.hpke_keys.is_empty() {
@@ -469,12 +469,12 @@ impl Serialize for Task {
         let aggregator_auth_tokens = self
             .aggregator_auth_tokens
             .iter()
-            .map(|token| URL_SAFE_NO_PAD.encode(token.as_bytes()))
+            .map(|token| URL_SAFE_NO_PAD.encode(token))
             .collect();
         let collector_auth_tokens = self
             .collector_auth_tokens
             .iter()
-            .map(|token| URL_SAFE_NO_PAD.encode(token.as_bytes()))
+            .map(|token| URL_SAFE_NO_PAD.encode(token))
             .collect();
         let hpke_keys = self.hpke_keys.values().cloned().collect();
 
@@ -524,7 +524,7 @@ impl TryFrom<SerializedTask> for Task {
             .map(|token| Ok(AuthenticationToken::from(URL_SAFE_NO_PAD.decode(token)?)))
             .collect::<Result<Vec<AuthenticationToken>, Self::Error>>()?;
         for token in aggregator_auth_tokens.iter() {
-            HeaderValue::try_from(token.as_bytes()).map_err(|_| {
+            HeaderValue::try_from(token.as_ref()).map_err(|_| {
                 Error::InvalidParameter(concat!(
                     "value in aggregator_auth_tokens does not base64url-decode to a valid ",
                     "HTTP header value"
@@ -539,7 +539,7 @@ impl TryFrom<SerializedTask> for Task {
             .map(|token| Ok(AuthenticationToken::from(URL_SAFE_NO_PAD.decode(token)?)))
             .collect::<Result<Vec<AuthenticationToken>, Self::Error>>()?;
         for token in collector_auth_tokens.iter() {
-            HeaderValue::try_from(token.as_bytes()).map_err(|_| {
+            HeaderValue::try_from(token.as_ref()).map_err(|_| {
                 Error::InvalidParameter(concat!(
                     "value in collector_auth_tokens does not base64url-decode to a valid ",
                     "HTTP header value"
@@ -1373,7 +1373,7 @@ mod tests {
             tolerable_clock_skew: Duration::from_seconds(15),
             collector_hpke_config: collector_keypair.config().clone(),
             aggregator_auth_tokens: Vec::from([
-                URL_SAFE_NO_PAD.encode(random::<AuthenticationToken>().as_bytes())
+                URL_SAFE_NO_PAD.encode(random::<AuthenticationToken>())
             ]),
             collector_auth_tokens: Vec::from(["AAAAAAAAAAAAAA".to_string()]),
             hpke_keys: Vec::from([aggregator_keypair]),

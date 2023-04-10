@@ -96,11 +96,25 @@ file](samples/collection_job_driver_config.yaml) for details.
 
 ## Database
 
-Janus currently requires PostgreSQL 14. Initial database setup can be done in
-one of two ways, either by running the script
-[`db/schema.sql`](../db/schema.sql) on the database, or running `janus_cli
-write-schema` and providing database connection information in its configuration
-file.
+Janus currently requires PostgreSQL 14. The schema is defined by SQL migration
+scripts in the [`db`](../db) directory, which are generated and applied using
+[`sqlx`][sqlx-cli]. Initial database setup can be done with `sqlx migrate run`,
+using the `--source` argument to point to `janus/db` and providing database
+connection information in any of the ways supported by `sqlx` (see its
+documentation).
+
+Janus database migrations are reversible, meaning they come in pairs named
+`*.up.sql` and `*.down.sql`. To add a new database migration, run:
+
+```bash
+sqlx migrate add -r <name> --source /path/to/janus/db
+```
+
+This will generate two new migration scripts. Fill the `*.up.sql` file with the
+migration you want to run and the `*.down.sql` file with a script that reverses
+the first script.
+
+[sqlx-cli]: https://crates.io/crates/sqlx-cli
 
 ## `janus_cli provision-tasks`
 

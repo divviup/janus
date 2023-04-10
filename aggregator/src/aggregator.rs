@@ -461,18 +461,14 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
-        auth_token: Option<String>,
+        auth_token: Option<AuthenticationToken>,
     ) -> Result<Vec<u8>, Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
         }
         if !auth_token
-            .map(|t| {
-                task_aggregator
-                    .task
-                    .check_aggregator_auth_token(&t.into_bytes().into())
-            })
+            .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
             .unwrap_or(false)
         {
             return Err(Error::UnauthorizedRequest(*task_id));
@@ -495,18 +491,14 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
-        auth_token: Option<String>,
+        auth_token: Option<AuthenticationToken>,
     ) -> Result<Vec<u8>, Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
         }
         if !auth_token
-            .map(|t| {
-                task_aggregator
-                    .task
-                    .check_aggregator_auth_token(&t.into_bytes().into())
-            })
+            .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
             .unwrap_or(false)
         {
             return Err(Error::UnauthorizedRequest(*task_id));
@@ -536,18 +528,14 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         collection_job_id: &CollectionJobId,
         req_bytes: &[u8],
-        auth_token: Option<String>,
+        auth_token: Option<AuthenticationToken>,
     ) -> Result<(), Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Error::UnrecognizedTask(*task_id));
         }
         if !auth_token
-            .map(|t| {
-                task_aggregator
-                    .task
-                    .check_collector_auth_token(&t.into_bytes().into())
-            })
+            .map(|t| task_aggregator.task.check_collector_auth_token(&t))
             .unwrap_or(false)
         {
             return Err(Error::UnauthorizedRequest(*task_id));
@@ -566,18 +554,14 @@ impl<C: Clock> Aggregator<C> {
         &self,
         task_id: &TaskId,
         collection_job_id: &CollectionJobId,
-        auth_token: Option<String>,
+        auth_token: Option<AuthenticationToken>,
     ) -> Result<Option<Vec<u8>>, Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Error::UnrecognizedTask(*task_id));
         }
         if !auth_token
-            .map(|t| {
-                task_aggregator
-                    .task
-                    .check_collector_auth_token(&t.into_bytes().into())
-            })
+            .map(|t| task_aggregator.task.check_collector_auth_token(&t))
             .unwrap_or(false)
         {
             return Err(Error::UnauthorizedRequest(*task_id));
@@ -593,18 +577,14 @@ impl<C: Clock> Aggregator<C> {
         &self,
         task_id: &TaskId,
         collection_job_id: &CollectionJobId,
-        auth_token: Option<String>,
+        auth_token: Option<AuthenticationToken>,
     ) -> Result<Response, Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Error::UnrecognizedTask(*task_id));
         }
         if !auth_token
-            .map(|t| {
-                task_aggregator
-                    .task
-                    .check_collector_auth_token(&t.into_bytes().into())
-            })
+            .map(|t| task_aggregator.task.check_collector_auth_token(&t))
             .unwrap_or(false)
         {
             return Err(Error::UnauthorizedRequest(*task_id));
@@ -623,18 +603,14 @@ impl<C: Clock> Aggregator<C> {
         &self,
         task_id: &TaskId,
         req_bytes: &[u8],
-        auth_token: Option<String>,
+        auth_token: Option<AuthenticationToken>,
     ) -> Result<Vec<u8>, Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
         }
         if !auth_token
-            .map(|t| {
-                task_aggregator
-                    .task
-                    .check_aggregator_auth_token(&t.into_bytes().into())
-            })
+            .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
             .unwrap_or(false)
         {
             return Err(Error::UnauthorizedRequest(*task_id));
@@ -2923,7 +2899,12 @@ pub fn aggregator_filter<C: Clock>(
                     .header(CONTENT_TYPE, AggregationJobResp::MEDIA_TYPE)
                     .body(
                         aggregator
-                            .handle_aggregate_init(&task_id, &aggregation_job_id, &body, auth_token)
+                            .handle_aggregate_init(
+                                &task_id,
+                                &aggregation_job_id,
+                                &body,
+                                auth_token.map(String::into_bytes).map(Into::into),
+                            )
                             .await
                             .map_err(Arc::new)?,
                     )
@@ -2966,7 +2947,7 @@ pub fn aggregator_filter<C: Clock>(
                                 &task_id,
                                 &aggregation_job_id,
                                 &body,
-                                auth_token,
+                                auth_token.map(String::into_bytes).map(Into::into),
                             )
                             .await
                             .map_err(Arc::new)?,
@@ -3003,7 +2984,12 @@ pub fn aggregator_filter<C: Clock>(
              body: Bytes,
              auth_token: Option<String>| async move {
                 aggregator
-                    .handle_create_collection_job(&task_id, &collection_job_id, &body, auth_token)
+                    .handle_create_collection_job(
+                        &task_id,
+                        &collection_job_id,
+                        &body,
+                        auth_token.map(String::into_bytes).map(Into::into),
+                    )
                     .await?;
                 Ok(warp::reply::with_status(warp::reply(), StatusCode::CREATED))
             },
@@ -3029,7 +3015,11 @@ pub fn aggregator_filter<C: Clock>(
              aggregator: Arc<Aggregator<C>>,
              auth_token: Option<String>| async move {
                 let resp_bytes = aggregator
-                    .handle_get_collection_job(&task_id, &collection_job_id, auth_token)
+                    .handle_get_collection_job(
+                        &task_id,
+                        &collection_job_id,
+                        auth_token.map(String::into_bytes).map(Into::into),
+                    )
                     .await?;
                 match resp_bytes {
                     Some(resp_bytes) => http::Response::builder()
@@ -3065,7 +3055,11 @@ pub fn aggregator_filter<C: Clock>(
              aggregator: Arc<Aggregator<C>>,
              auth_token: Option<String>| async move {
                 aggregator
-                    .handle_delete_collection_job(&task_id, &collection_job_id, auth_token)
+                    .handle_delete_collection_job(
+                        &task_id,
+                        &collection_job_id,
+                        auth_token.map(String::into_bytes).map(Into::into),
+                    )
                     .await
                     .map_err(Arc::new)
             },
@@ -3094,7 +3088,11 @@ pub fn aggregator_filter<C: Clock>(
              body: Bytes,
              auth_token: Option<String>| async move {
                 let resp_bytes = aggregator
-                    .handle_aggregate_share(&task_id, &body, auth_token)
+                    .handle_aggregate_share(
+                        &task_id,
+                        &body,
+                        auth_token.map(String::into_bytes).map(Into::into),
+                    )
                     .await
                     .map_err(Arc::new)?;
                 http::Response::builder()
@@ -3176,7 +3174,7 @@ async fn send_request_to_helper<T: Encode>(
     let response_result = http_client
         .request(method, url)
         .header(CONTENT_TYPE, content_type)
-        .header(DAP_AUTH_HEADER, auth_token.as_bytes())
+        .header(DAP_AUTH_HEADER, auth_token.as_ref())
         .body(request_body)
         .send()
         .await;
@@ -4263,7 +4261,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .header("DAP-Auth-Token", random::<AuthenticationToken>().as_bytes())
+            .header("DAP-Auth-Token", random::<AuthenticationToken>().as_ref())
             .header(
                 CONTENT_TYPE,
                 AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -6874,7 +6872,7 @@ mod tests {
             .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
+                task.primary_collector_auth_token().as_ref(),
             )
             .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
             .body(request.get_encoded())
@@ -7258,7 +7256,7 @@ mod tests {
             ))
             .header(
                 "DAP-Auth-Token",
-                test_case.task.primary_collector_auth_token().as_bytes(),
+                test_case.task.primary_collector_auth_token().as_ref(),
             )
             .filter(&test_case.filter)
             .await
@@ -7435,7 +7433,7 @@ mod tests {
             )
             .header(
                 "DAP-Auth-Token",
-                test_case.task.primary_collector_auth_token().as_bytes(),
+                test_case.task.primary_collector_auth_token().as_ref(),
             )
             .filter(&test_case.filter)
             .await
@@ -7467,7 +7465,7 @@ mod tests {
             )
             .header(
                 "DAP-Auth-Token",
-                test_case.task.primary_collector_auth_token().as_bytes(),
+                test_case.task.primary_collector_auth_token().as_ref(),
             )
             .filter(&test_case.filter)
             .await
@@ -7510,7 +7508,7 @@ mod tests {
             .path(task.aggregate_shares_uri().unwrap().path())
             .header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
+                task.primary_aggregator_auth_token().as_ref(),
             )
             .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
             .body(request.get_encoded())
@@ -7576,7 +7574,7 @@ mod tests {
             .method("POST")
             .header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
+                task.primary_aggregator_auth_token().as_ref(),
             )
             .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
             .path(task.aggregate_shares_uri().unwrap().path())
@@ -7605,7 +7603,7 @@ mod tests {
             .method("POST")
             .header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
+                task.primary_aggregator_auth_token().as_ref(),
             )
             .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
             .path(task.aggregate_shares_uri().unwrap().path())
@@ -7666,7 +7664,7 @@ mod tests {
             .path(task.aggregate_shares_uri().unwrap().path())
             .header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
+                task.primary_aggregator_auth_token().as_ref(),
             )
             .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
             .body(request.get_encoded())
@@ -7807,7 +7805,7 @@ mod tests {
             .path(task.aggregate_shares_uri().unwrap().path())
             .header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
+                task.primary_aggregator_auth_token().as_ref(),
             )
             .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
             .body(request.get_encoded())
@@ -7864,7 +7862,7 @@ mod tests {
                 .path(task.aggregate_shares_uri().unwrap().path())
                 .header(
                     "DAP-Auth-Token",
-                    task.primary_aggregator_auth_token().as_bytes(),
+                    task.primary_aggregator_auth_token().as_ref(),
                 )
                 .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
                 .body(misaligned_request.get_encoded())
@@ -7933,7 +7931,7 @@ mod tests {
                     .path(task.aggregate_shares_uri().unwrap().path())
                     .header(
                         "DAP-Auth-Token",
-                        task.primary_aggregator_auth_token().as_bytes(),
+                        task.primary_aggregator_auth_token().as_ref(),
                     )
                     .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
                     .body(request.get_encoded())
@@ -7999,7 +7997,7 @@ mod tests {
             .path(task.aggregate_shares_uri().unwrap().path())
             .header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
+                task.primary_aggregator_auth_token().as_ref(),
             )
             .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
             .body(all_batch_request.get_encoded())
@@ -8053,7 +8051,7 @@ mod tests {
                 .path(task.aggregate_shares_uri().unwrap().path())
                 .header(
                     "DAP-Auth-Token",
-                    task.primary_aggregator_auth_token().as_bytes(),
+                    task.primary_aggregator_auth_token().as_ref(),
                 )
                 .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
                 .body(query_count_violation_request.get_encoded())

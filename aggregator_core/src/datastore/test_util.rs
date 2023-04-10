@@ -4,7 +4,9 @@ use janus_core::time::Clock;
 use lazy_static::lazy_static;
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
+use sqlx::{migrate::Migrator, Connection, PgConnection};
 use std::{
+    path::PathBuf,
     str::FromStr,
     sync::{Arc, Barrier, Weak},
     thread::{self, JoinHandle},
@@ -155,14 +157,23 @@ pub async fn ephemeral_datastore_no_schema() -> EphemeralDatastore {
     }
 }
 
-/// Creates a new, empty EphemeralDatastore.
+/// Creates a new, empty EphemeralDatastore with all schema migrations applied to it.
 pub async fn ephemeral_datastore() -> EphemeralDatastore {
     let ephemeral_datastore = ephemeral_datastore_no_schema().await;
-    let client = ephemeral_datastore.pool().get().await.unwrap();
-    client
-        .batch_execute(include_str!("../../../db/schema.sql"))
+
+    let mut connection = PgConnection::connect(&ephemeral_datastore.connection_string)
         .await
         .unwrap();
+
+    // We deliberately avoid using sqlx::migrate! or other compile-time macros to ensure that
+    // changes to the migration scripts will be picked up by every run of the tests.
+    let migrations_path = PathBuf::from_str(env!("CARGO_MANIFEST_DIR"))
+        .unwrap()
+        .join("..")
+        .join("db");
+    let migrator = Migrator::new(migrations_path).await.unwrap();
+    migrator.run(&mut connection).await.unwrap();
+
     ephemeral_datastore
 }
 

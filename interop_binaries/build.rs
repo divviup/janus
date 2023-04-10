@@ -36,7 +36,7 @@ fn main() {
                 println!("cargo:rerun-if-changed=../aggregator");
                 println!("cargo:rerun-if-changed=../client");
                 println!("cargo:rerun-if-changed=../core");
-                println!("cargo:rerun-if-changed=../db/schema.sql");
+                println!("cargo:rerun-if-changed=../db");
                 println!("cargo:rerun-if-changed=../integration_tests");
                 println!("cargo:rerun-if-changed=../interop_binaries");
                 println!("cargo:rerun-if-changed=../messages");
