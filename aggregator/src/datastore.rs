@@ -4900,17 +4900,16 @@ pub mod test_util {
     use lazy_static::lazy_static;
     use rand::{distributions::Standard, thread_rng, Rng};
     use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
+    use sqlx::{migrate::Migrator, Connection, PgConnection};
     use std::{
         env::{self, VarError},
+        path::PathBuf,
         process::Command,
         str::FromStr,
     };
     use testcontainers::{images::postgres::Postgres, Container, RunnableImage};
     use tokio_postgres::{Config, NoTls};
     use tracing::trace;
-
-    /// The Janus database schema.
-    pub const SCHEMA: &str = include_str!("../../db/schema.sql");
 
     lazy_static! {
         static ref CONTAINER_CLIENT: testcontainers::clients::Cli =
@@ -5071,8 +5070,20 @@ pub mod test_util {
     /// Dropping the second return value causes the database to be shut down & cleaned up.
     pub async fn ephemeral_datastore<C: Clock>(clock: C) -> (Datastore<C>, DbHandle) {
         let db_handle = ephemeral_db_handle();
-        let client = db_handle.pool().get().await.unwrap();
-        client.batch_execute(SCHEMA).await.unwrap();
+
+        let mut connection = PgConnection::connect(&db_handle.connection_string)
+            .await
+            .unwrap();
+
+        // We deliberately avoid using sqlx::migrate! or other compile-time macros to ensure that
+        // changes to the migration scripts will be picked up by every run of the tests.
+        let migrations_path = PathBuf::from_str(env!("CARGO_MANIFEST_DIR"))
+            .unwrap()
+            .join("..")
+            .join("db");
+        let migrator = Migrator::new(migrations_path).await.unwrap();
+        migrator.run(&mut connection).await.unwrap();
+
         (db_handle.datastore(clock), db_handle)
     }
 

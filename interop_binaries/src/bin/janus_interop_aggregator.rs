@@ -17,9 +17,11 @@ use janus_interop_binaries::{
 use janus_messages::{BatchId, Duration, HpkeConfig, TaskId, Time};
 use prio::codec::Decode;
 use serde::{Deserialize, Serialize};
+use sqlx::{migrate::Migrator, Connection, PgConnection};
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
+    path::PathBuf,
     sync::Arc,
 };
 use tokio::sync::Mutex;
@@ -316,6 +318,9 @@ struct Config {
     /// Path prefix, e.g. `/dap/`, to serve DAP from.
     #[serde(default = "default_dap_serving_prefix")]
     dap_serving_prefix: String,
+
+    /// Path at which `sqlx` migration files can be found. Migrations will be applied at startup.
+    sql_migrations_source: PathBuf,
 }
 
 impl BinaryConfig for Config {
@@ -332,6 +337,12 @@ impl BinaryConfig for Config {
 async fn main() -> anyhow::Result<()> {
     janus_main::<_, Options, Config, _, _>(RealClock::default(), |ctx| async move {
         let datastore = Arc::new(ctx.datastore);
+
+        // Apply SQL migrations to database
+        let mut connection =
+            PgConnection::connect(ctx.config.common_config.database.url.as_str()).await?;
+        let migrator = Migrator::new(ctx.config.sql_migrations_source).await?;
+        migrator.run(&mut connection).await?;
 
         // Run an HTTP server with both the DAP aggregator endpoints and the interoperation test
         // endpoints.
