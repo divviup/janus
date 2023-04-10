@@ -62,7 +62,7 @@ use prio::{
         poplar1::Poplar1,
         prg::PrgSha3,
         prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVecMultithreaded},
-        VdafError, PrepareTransition
+        PrepareTransition, VdafError,
     },
 };
 use regex::Regex;
@@ -1379,12 +1379,15 @@ impl VdafOps {
         if incoming_report_share_data
             .iter()
             .zip(existing_report_aggregations)
-            .any(|(incoming_report_share_data, existing_report_aggregation)| {
-                !existing_report_aggregation
-                    .report_metadata()
-                    .eq(incoming_report_share_data.report_share.metadata())
-                    || !existing_report_aggregation.eq(&incoming_report_share_data.report_aggregation)
-            })
+            .any(
+                |(incoming_report_share_data, existing_report_aggregation)| {
+                    !existing_report_aggregation
+                        .report_metadata()
+                        .eq(incoming_report_share_data.report_share.metadata())
+                        || !existing_report_aggregation
+                            .eq(&incoming_report_share_data.report_aggregation)
+                },
+            )
         {
             return Ok(false);
         }
@@ -1751,7 +1754,7 @@ impl VdafOps {
                                                     .with_last_prep_step(Some(PrepareStep::new(
                                                         *report_share_data.report_share.metadata().id(),
                                                         PrepareStepResult::Failed(ReportShareError::ReportReplayed))
-                                                    ));            
+                                                    ));
                                         },
                                         err => return Err(err),
                                     }
