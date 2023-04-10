@@ -13,6 +13,7 @@ default = []
 test-util = [
     "dep:hex",
     "dep:lazy_static",
+    "dep:sqlx",
     "dep:testcontainers",
     "janus_core/test-util",
     "janus_messages/test-util",
@@ -49,6 +50,7 @@ ring = "0.16.20"
 serde = { version = "1.0.159", features = ["derive"] }
 serde_json = "1.0.95"
 serde_yaml = "0.9.19"
+sqlx = { version = "0.6.3", optional = true, features = ["runtime-tokio-rustls", "migrate", "postgres"] }
 testcontainers = { version = "0.14.0", optional = true }
 thiserror = "1.0"
 tokio = { version = "1.27", features = ["full", "tracing"] }
