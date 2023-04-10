@@ -16,11 +16,9 @@ use std::{collections::HashMap, net::AddrParseError, sync::Arc};
 use {
     anyhow::Context,
     opentelemetry::sdk::metrics::{controllers, processors},
-    prometheus::{Encoder, TextEncoder},
     std::net::{IpAddr, Ipv4Addr},
     tokio::{sync::oneshot::channel, task::JoinHandle},
-    trillium::{Info, Init, KnownHeaderName, Status},
-    trillium_router::Router,
+    trillium::{Info, Init},
 };
 
 #[cfg(feature = "otlp")]
@@ -164,25 +162,7 @@ pub async fn install_metrics_exporter(
                 .unwrap_or_else(|| Ok(Ipv4Addr::UNSPECIFIED.into()))?;
             let port = config_exporter_port.unwrap_or_else(|| 9464);
 
-            let router = Router::new().get("metrics", move |conn: trillium::Conn| {
-                let exporter = Arc::clone(&exporter);
-                async move {
-                    let mut buffer = Vec::new();
-                    let encoder = TextEncoder::new();
-                    match encoder.encode(&exporter.registry().gather(), &mut buffer) {
-                        Ok(()) => conn
-                            .with_header(
-                                KnownHeaderName::ContentType,
-                                encoder.format_type().to_owned(),
-                            )
-                            .ok(buffer),
-                        Err(error) => {
-                            tracing::error!(?error, "Failed to encode Prometheus metrics");
-                            conn.with_status(Status::InternalServerError)
-                        }
-                    }
-                }
-            });
+            let router = trillium_prometheus::text_format_handler(exporter.registry().clone());
 
             let (sender, receiver) = channel();
             let init = Init::new(|info: Info| async move {

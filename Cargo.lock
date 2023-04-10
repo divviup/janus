@@ -1816,6 +1816,7 @@ dependencies = [
  "tracing-subscriber",
  "trillium",
  "trillium-head",
+ "trillium-prometheus",
  "trillium-router",
  "trillium-tokio",
  "trycmd",
@@ -4489,6 +4490,18 @@ checksum = "058ce68d79872eb606079571cf0212633ae1095541a9c6afa0a363de3de4301b"
 dependencies = [
  "opentelemetry",
  "trillium",
+]
+
+[[package]]
+name = "trillium-prometheus"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a50568433817ef994081242d1c62e672fec0c32165f431f47dc8bb58d2665c1a"
+dependencies = [
+ "prometheus",
+ "tracing",
+ "trillium",
+ "trillium-router",
 ]
 
 [[package]]
