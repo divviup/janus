@@ -457,18 +457,14 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
-        auth_token: Option<String>,
+        auth_token: Option<AuthenticationToken>,
     ) -> Result<Vec<u8>, Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
         }
         if !auth_token
-            .map(|t| {
-                task_aggregator
-                    .task
-                    .check_aggregator_auth_token(&t.into_bytes().into())
-            })
+            .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
             .unwrap_or(false)
         {
             return Err(Error::UnauthorizedRequest(*task_id));
@@ -491,18 +487,14 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
-        auth_token: Option<String>,
+        auth_token: Option<AuthenticationToken>,
     ) -> Result<Vec<u8>, Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
         }
         if !auth_token
-            .map(|t| {
-                task_aggregator
-                    .task
-                    .check_aggregator_auth_token(&t.into_bytes().into())
-            })
+            .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
             .unwrap_or(false)
         {
             return Err(Error::UnauthorizedRequest(*task_id));
@@ -532,18 +524,14 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         collection_job_id: &CollectionJobId,
         req_bytes: &[u8],
-        auth_token: Option<String>,
+        auth_token: Option<AuthenticationToken>,
     ) -> Result<(), Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Error::UnrecognizedTask(*task_id));
         }
         if !auth_token
-            .map(|t| {
-                task_aggregator
-                    .task
-                    .check_collector_auth_token(&t.into_bytes().into())
-            })
+            .map(|t| task_aggregator.task.check_collector_auth_token(&t))
             .unwrap_or(false)
         {
             return Err(Error::UnauthorizedRequest(*task_id));
@@ -562,18 +550,14 @@ impl<C: Clock> Aggregator<C> {
         &self,
         task_id: &TaskId,
         collection_job_id: &CollectionJobId,
-        auth_token: Option<String>,
+        auth_token: Option<AuthenticationToken>,
     ) -> Result<Option<Vec<u8>>, Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Error::UnrecognizedTask(*task_id));
         }
         if !auth_token
-            .map(|t| {
-                task_aggregator
-                    .task
-                    .check_collector_auth_token(&t.into_bytes().into())
-            })
+            .map(|t| task_aggregator.task.check_collector_auth_token(&t))
             .unwrap_or(false)
         {
             return Err(Error::UnauthorizedRequest(*task_id));
@@ -589,18 +573,14 @@ impl<C: Clock> Aggregator<C> {
         &self,
         task_id: &TaskId,
         collection_job_id: &CollectionJobId,
-        auth_token: Option<String>,
+        auth_token: Option<AuthenticationToken>,
     ) -> Result<Response, Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Error::UnrecognizedTask(*task_id));
         }
         if !auth_token
-            .map(|t| {
-                task_aggregator
-                    .task
-                    .check_collector_auth_token(&t.into_bytes().into())
-            })
+            .map(|t| task_aggregator.task.check_collector_auth_token(&t))
             .unwrap_or(false)
         {
             return Err(Error::UnauthorizedRequest(*task_id));
@@ -619,18 +599,14 @@ impl<C: Clock> Aggregator<C> {
         &self,
         task_id: &TaskId,
         req_bytes: &[u8],
-        auth_token: Option<String>,
+        auth_token: Option<AuthenticationToken>,
     ) -> Result<Vec<u8>, Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
         }
         if !auth_token
-            .map(|t| {
-                task_aggregator
-                    .task
-                    .check_aggregator_auth_token(&t.into_bytes().into())
-            })
+            .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
             .unwrap_or(false)
         {
             return Err(Error::UnauthorizedRequest(*task_id));
@@ -2905,7 +2881,12 @@ pub fn aggregator_filter<C: Clock>(
                     .header(CONTENT_TYPE, AggregationJobResp::MEDIA_TYPE)
                     .body(
                         aggregator
-                            .handle_aggregate_init(&task_id, &aggregation_job_id, &body, auth_token)
+                            .handle_aggregate_init(
+                                &task_id,
+                                &aggregation_job_id,
+                                &body,
+                                auth_token.map(String::into_bytes).map(Into::into),
+                            )
                             .await
                             .map_err(Arc::new)?,
                     )
@@ -2948,7 +2929,7 @@ pub fn aggregator_filter<C: Clock>(
                                 &task_id,
                                 &aggregation_job_id,
                                 &body,
-                                auth_token,
+                                auth_token.map(String::into_bytes).map(Into::into),
                             )
                             .await
                             .map_err(Arc::new)?,
@@ -2985,7 +2966,12 @@ pub fn aggregator_filter<C: Clock>(
              body: Bytes,
              auth_token: Option<String>| async move {
                 aggregator
-                    .handle_create_collection_job(&task_id, &collection_job_id, &body, auth_token)
+                    .handle_create_collection_job(
+                        &task_id,
+                        &collection_job_id,
+                        &body,
+                        auth_token.map(String::into_bytes).map(Into::into),
+                    )
                     .await?;
                 Ok(warp::reply::with_status(warp::reply(), StatusCode::CREATED))
             },
@@ -3011,7 +2997,11 @@ pub fn aggregator_filter<C: Clock>(
              aggregator: Arc<Aggregator<C>>,
              auth_token: Option<String>| async move {
                 let resp_bytes = aggregator
-                    .handle_get_collection_job(&task_id, &collection_job_id, auth_token)
+                    .handle_get_collection_job(
+                        &task_id,
+                        &collection_job_id,
+                        auth_token.map(String::into_bytes).map(Into::into),
+                    )
                     .await?;
                 match resp_bytes {
                     Some(resp_bytes) => http::Response::builder()
@@ -3047,7 +3037,11 @@ pub fn aggregator_filter<C: Clock>(
              aggregator: Arc<Aggregator<C>>,
              auth_token: Option<String>| async move {
                 aggregator
-                    .handle_delete_collection_job(&task_id, &collection_job_id, auth_token)
+                    .handle_delete_collection_job(
+                        &task_id,
+                        &collection_job_id,
+                        auth_token.map(String::into_bytes).map(Into::into),
+                    )
                     .await
                     .map_err(Arc::new)
             },
@@ -3076,7 +3070,11 @@ pub fn aggregator_filter<C: Clock>(
              body: Bytes,
              auth_token: Option<String>| async move {
                 let resp_bytes = aggregator
-                    .handle_aggregate_share(&task_id, &body, auth_token)
+                    .handle_aggregate_share(
+                        &task_id,
+                        &body,
+                        auth_token.map(String::into_bytes).map(Into::into),
+                    )
                     .await
                     .map_err(Arc::new)?;
                 http::Response::builder()
