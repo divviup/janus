@@ -1738,40 +1738,33 @@ impl VdafOps {
 
                         for report_share_data in &mut report_share_data
                         {
-                            if !replayed_request {
-                                // Write client report & report aggregation.
-                                if let Err(err) = tx.put_report_share(
-                                    task.id(),
-                                    &report_share_data.report_share
-                                ).await {
-                                    match err {
-                                        datastore::Error::MutationTargetAlreadyExists => {
-                                            report_share_data.report_aggregation =
-                                                report_share_data.report_aggregation
-                                                    .clone()
-                                                    .with_state(ReportAggregationState::Failed(
-                                                        ReportShareError::ReportReplayed))
-                                                    .with_last_prep_step(Some(PrepareStep::new(
-                                                        *report_share_data.report_share.metadata().id(),
-                                                        PrepareStepResult::Failed(ReportShareError::ReportReplayed))
-                                                    ));
-                                        },
-                                        err => return Err(err),
-                                    }
+                            // Write client report & report aggregation.
+                            if let Err(err) = tx.put_report_share(task.id(), &report_share_data.report_share).await {
+                                match err {
+                                    datastore::Error::MutationTargetAlreadyExists => {
+                                        report_share_data.report_aggregation =
+                                            report_share_data.report_aggregation
+                                                .clone()
+                                                .with_state(ReportAggregationState::Failed(
+                                                    ReportShareError::ReportReplayed))
+                                                .with_last_prep_step(Some(PrepareStep::new(
+                                                    *report_share_data.report_share.metadata().id(),
+                                                    PrepareStepResult::Failed(ReportShareError::ReportReplayed))
+                                                ));
+                                    },
+                                    err => return Err(err),
                                 }
-                                tx.put_report_aggregation(&report_share_data.report_aggregation).await?;
+                            }
+                            tx.put_report_aggregation(&report_share_data.report_aggregation).await?;
 
-                                if let ReportAggregationState::<SEED_SIZE, A>::Finished(output_share) =
-                                report_share_data.report_aggregation.state()
-                                {
-                                    accumulator.update(
-                                        aggregation_job.partial_batch_identifier(),
-                                        report_share_data.report_share.metadata().id(),
-                                        report_share_data.report_share.metadata().time(),
-                                        output_share,
-                                    )?;
-                                }
-
+                            if let ReportAggregationState::Finished(output_share) = report_share_data.report_aggregation.state()
+                            {
+                                accumulator.update(
+                                    aggregation_job.partial_batch_identifier(),
+                                    report_share_data.report_share.metadata().id(),
+                                    report_share_data.report_share.metadata().time(),
+                                    output_share,
+                                )?;
                             }
                         }
 
