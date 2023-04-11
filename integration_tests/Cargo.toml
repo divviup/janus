@@ -9,6 +9,9 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
+# This feature is deprecated, and will be removed in the future, once janus-ops
+# no longer depends on it. Rustls is now used unconditionally for Kubernetes
+# connections.
 kube-openssl = []
 
 [dependencies]
