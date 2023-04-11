@@ -13,7 +13,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["kube-rustls"]
+default = []
 fpvec_bounded_l2 = ["dep:fixed", "janus_core/fpvec_bounded_l2"]
 tokio-console = ["dep:console-subscriber"]
 jaeger = ["dep:tracing-opentelemetry", "dep:opentelemetry-jaeger"]
@@ -31,8 +31,6 @@ test-util = [
     "dep:lazy_static",
     "dep:testcontainers",
 ]
-kube-rustls = ["kube/rustls-tls"]
-kube-openssl = ["kube/openssl-tls"]
 
 [dependencies]
 async-trait = "0.1"
@@ -102,12 +100,7 @@ warp = { version = "0.3", features = ["tls"] }
 assert_matches = "1"
 hyper = "0.14.25"
 itertools = "0.10.5"
-# Enable `kube`'s `openssl-tls` feature (which takes precedence over the
-# `rustls-tls` feature when creating a default client) to work around rustls's
-# lack of support for connecting to servers by IP addresses, which affects many
-# Kubernetes clusters. Enable the `test-util` feature for various utilities
-# used in unit tests.
-janus_aggregator = { path = ".", features = ["fpvec_bounded_l2", "kube-openssl", "test-util"] }
+janus_aggregator = { path = ".", features = ["fpvec_bounded_l2", "test-util"] }
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
 mockito = "1.0.2"
 tempfile = "3.5.0"

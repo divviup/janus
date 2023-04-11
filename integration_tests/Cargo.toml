@@ -8,9 +8,6 @@ repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
-[features]
-kube-openssl = ["kube/openssl-tls"]
-
 [dependencies]
 anyhow = "1"
 backoff = { version = "0.4", features = ["tokio"] }
