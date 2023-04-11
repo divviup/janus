@@ -3090,7 +3090,7 @@ dependencies = [
 [[package]]
 name = "prio"
 version = "0.12.0"
-source = "git+https://github.com/divviup/libprio-rs.git?branch=bran/encode-poplar1-state#e0357075d880d209f1021b1e9282261533678ba7"
+source = "git+https://github.com/divviup/libprio-rs.git?rev=54a46230615d28c7e131d0595cc558e1619b8071#54a46230615d28c7e131d0595cc558e1619b8071"
 dependencies = [
  "aes",
  "base64 0.21.0",
