@@ -342,11 +342,11 @@ impl ConnExt for Conn {
     }
 }
 
-pub fn instrumented<H: Handler>(handler: H) -> InstrumentedHandler<H> {
+pub fn instrumented<H: Handler>(handler: H) -> impl Handler {
     InstrumentedHandler(handler)
 }
 
-pub struct InstrumentedHandler<H>(H);
+struct InstrumentedHandler<H>(H);
 
 #[async_trait]
 impl<H: Handler> Handler for InstrumentedHandler<H> {

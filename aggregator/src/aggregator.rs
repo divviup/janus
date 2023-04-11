@@ -80,8 +80,7 @@ use std::{
     time::{Duration as StdDuration, Instant},
 };
 use tokio::{
-    sync::{oneshot::channel, Mutex},
-    task::spawn,
+    sync::{oneshot, Mutex},
     try_join,
 };
 use tracing::{debug, error, info, warn};
@@ -2552,19 +2551,17 @@ impl ConnExt for Conn {
     fn with_problem_details(self, error_type: DapProblemType, task_id: Option<&TaskId>) -> Self {
         let status = error_type.http_status();
 
-        let problem_document = ProblemDocument {
-            type_: error_type.type_uri(),
-            title: error_type.description(),
-            status: status as u16,
-            taskid: &task_id.as_ref().map(ToString::to_string),
-        };
-
         self.with_status(status as u16)
             .with_header(
                 KnownHeaderName::ContentType,
                 PROBLEM_DETAILS_JSON_MEDIA_TYPE,
             )
-            .with_json(&problem_document)
+            .with_json(&ProblemDocument {
+                type_: error_type.type_uri(),
+                title: error_type.description(),
+                status: status as u16,
+                taskid: &task_id.as_ref().map(ToString::to_string),
+            })
     }
 }
 
@@ -2743,7 +2740,7 @@ pub fn aggregator_handler<C: Clock>(
     cfg: Config,
 ) -> Result<impl Handler, Error> {
     let meter = opentelemetry::global::meter("janus_aggregator");
-    let aggregator = Arc::new(Aggregator::new(Arc::clone(&datastore), clock, &meter, cfg));
+    let aggregator = Arc::new(Aggregator::new(datastore, clock, &meter, cfg));
 
     Ok((
         State(aggregator),
@@ -3084,7 +3081,7 @@ pub async fn aggregator_server<C: Clock>(
     shutdown_signal: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(SocketAddr, impl Future<Output = ()> + 'static), Error> {
     let stopper = Stopper::new();
-    spawn({
+    tokio::spawn({
         let stopper = stopper.clone();
         async move {
             shutdown_signal.await;
@@ -3092,7 +3089,7 @@ pub async fn aggregator_server<C: Clock>(
         }
     });
 
-    let (sender, receiver) = channel();
+    let (sender, receiver) = oneshot::channel();
     let init = Init::new(|info: Info| async move {
         // Ignore error if the receiver is dropped.
         let _ = sender.send(info.tcp_socket_addr().copied());
@@ -3109,7 +3106,7 @@ pub async fn aggregator_server<C: Clock>(
         aggregator_handler(datastore, clock, cfg)?,
     );
 
-    let task_handle = spawn(server_config.run_async(handler));
+    let task_handle = tokio::spawn(server_config.run_async(handler));
 
     let address = receiver
         .await
