@@ -1897,7 +1897,7 @@ dependencies = [
  "rustc_version",
  "serde",
  "serde_json",
- "serde_yaml 0.9.19",
+ "serde_yaml 0.9.21",
  "signal-hook",
  "signal-hook-tokio",
  "tempfile",
@@ -1988,7 +1988,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_test",
- "serde_yaml 0.9.19",
+ "serde_yaml 0.9.21",
  "sqlx",
  "tempfile",
  "testcontainers",
@@ -2083,7 +2083,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_test",
- "serde_yaml 0.9.19",
+ "serde_yaml 0.9.21",
  "tempfile",
  "testcontainers",
  "thiserror",
@@ -2204,7 +2204,7 @@ dependencies = [
  "prio",
  "rand",
  "reqwest",
- "serde_yaml 0.9.19",
+ "serde_yaml 0.9.21",
  "tokio",
  "tracing",
  "tracing-log",
@@ -3756,9 +3756,9 @@ dependencies = [
 
 [[package]]
 name = "serde_yaml"
-version = "0.9.19"
+version = "0.9.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f82e6c8c047aa50a7328632d067bcae6ef38772a79e28daf32f735e0e4f3dd10"
+checksum = "d9d684e3ec7de3bf5466b32bd75303ac16f0736426e5a4e0d6e489559ce1249c"
 dependencies = [
  "indexmap",
  "itoa",
