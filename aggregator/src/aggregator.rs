@@ -6,6 +6,7 @@ use crate::aggregator::{
     query_type::{CollectableQueryType, UploadableQueryType},
     report_writer::{ReportWriteBatcher, WritableReport},
 };
+use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -13,11 +14,9 @@ use fixed::{
     types::extra::{U15, U31, U63},
     FixedI16, FixedI32, FixedI64,
 };
-use http::{
-    header::{CACHE_CONTROL, CONTENT_TYPE},
-    HeaderMap, Method, StatusCode,
-};
+use http::{header::CONTENT_TYPE, Method};
 use http_api_problem::HttpApiProblem;
+use janus_aggregator_api::instrumented;
 use janus_aggregator_core::{
     datastore::{
         self,
@@ -50,7 +49,7 @@ use janus_messages::{
     ReportShare, ReportShareError, Role, TaskId, Time,
 };
 use opentelemetry::{
-    metrics::{Counter, Histogram, Meter, Unit},
+    metrics::{Counter, Histogram, Meter},
     Context, KeyValue,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -65,24 +64,33 @@ use prio::{
         VdafError,
     },
 };
-use regex::Regex;
 use reqwest::Client;
 use ring::digest::{digest, SHA256};
+use routefinder::Captures;
+use serde::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
     collections::{HashMap, HashSet},
-    convert::Infallible,
     fmt::{self, Debug, Display, Formatter},
     future::Future,
     net::SocketAddr,
     num::TryFromIntError,
+    panic,
     sync::Arc,
     time::{Duration as StdDuration, Instant},
 };
-use tokio::{sync::Mutex, try_join};
+use tokio::{
+    sync::{oneshot::channel, Mutex},
+    task::spawn,
+    try_join,
+};
 use tracing::{debug, error, info, warn};
+use trillium::{Conn, Handler, Headers, Info, Init, KnownHeaderName, Status};
+use trillium_api::{api, ApiConnExt, State};
+use trillium_opentelemetry::metrics;
+use trillium_router::{Router, RouterConnExt};
+use trillium_tokio::Stopper;
 use url::Url;
-use warp::{cors::Cors, filters::BoxedFilter, reply::Response, trace, Filter, Rejection, Reply};
 
 pub mod accumulator;
 #[cfg(test)]
@@ -210,6 +218,9 @@ pub enum Error {
         resource_type: &'static str,
         identifier: String,
     },
+    /// A catch-all error representing an issue with a request.
+    #[error("request error: {0}")]
+    BadRequest(String),
 }
 
 impl Error {
@@ -246,6 +257,7 @@ impl Error {
             Error::EmptyAggregation(_) => "empty_aggregation",
             Error::Internal(_) => "internal",
             Error::ForbiddenMutation { .. } => "forbidden_mutation",
+            Error::BadRequest(_) => "bad_request",
         }
     }
 }
@@ -387,7 +399,7 @@ impl Default for Config {
 }
 
 impl<C: Clock> Aggregator<C> {
-    fn new(datastore: Arc<Datastore<C>>, clock: C, meter: Meter, cfg: Config) -> Self {
+    fn new(datastore: Arc<Datastore<C>>, clock: C, meter: &Meter, cfg: Config) -> Self {
         let report_writer = Arc::new(ReportWriteBatcher::new(
             Arc::clone(&datastore),
             cfg.max_upload_batch_size,
@@ -406,7 +418,7 @@ impl<C: Clock> Aggregator<C> {
             .init();
         upload_decode_failure_counter.add(&Context::current(), 0, &[]);
 
-        let aggregate_step_failure_counter = aggregate_step_failure_counter(&meter);
+        let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
         aggregate_step_failure_counter.add(&Context::current(), 0, &[]);
 
         Self {
@@ -421,7 +433,10 @@ impl<C: Clock> Aggregator<C> {
         }
     }
 
-    async fn handle_hpke_config(&self, task_id_base64: Option<&[u8]>) -> Result<Vec<u8>, Error> {
+    async fn handle_hpke_config(
+        &self,
+        task_id_base64: Option<&[u8]>,
+    ) -> Result<HpkeConfigList, Error> {
         // Task ID is optional in an HPKE config request, but Janus requires it.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.1
         let task_id_base64 = task_id_base64.ok_or(Error::MissingTaskId)?;
@@ -432,7 +447,7 @@ impl<C: Clock> Aggregator<C> {
         let task_id = TaskId::get_decoded(&task_id_bytes)
             .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
         let task_aggregator = self.task_aggregator_for(&task_id).await?;
-        Ok(task_aggregator.handle_hpke_config().get_encoded())
+        Ok(task_aggregator.handle_hpke_config())
     }
 
     async fn handle_upload(&self, task_id: &TaskId, report_bytes: &[u8]) -> Result<(), Arc<Error>> {
@@ -458,7 +473,7 @@ impl<C: Clock> Aggregator<C> {
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<AggregationJobResp, Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
@@ -470,7 +485,7 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnauthorizedRequest(*task_id));
         }
 
-        Ok(task_aggregator
+        task_aggregator
             .handle_aggregate_init(
                 &self.datastore,
                 &self.aggregate_step_failure_counter,
@@ -478,8 +493,7 @@ impl<C: Clock> Aggregator<C> {
                 aggregation_job_id,
                 req_bytes,
             )
-            .await?
-            .get_encoded())
+            .await
     }
 
     async fn handle_aggregate_continue(
@@ -488,7 +502,7 @@ impl<C: Clock> Aggregator<C> {
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<AggregationJobResp, Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
@@ -504,7 +518,7 @@ impl<C: Clock> Aggregator<C> {
         // unwrap safety: SHA-256 computed by ring should always be 32 bytes
         let request_hash = digest(&SHA256, req_bytes).as_ref().try_into().unwrap();
 
-        Ok(task_aggregator
+        task_aggregator
             .handle_aggregate_continue(
                 &self.datastore,
                 &self.aggregate_step_failure_counter,
@@ -513,8 +527,7 @@ impl<C: Clock> Aggregator<C> {
                 req,
                 request_hash,
             )
-            .await?
-            .get_encoded())
+            .await
     }
 
     /// Handle a collection job creation request. Only supported by the leader. `req_bytes` is an
@@ -574,7 +587,7 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         collection_job_id: &CollectionJobId,
         auth_token: Option<AuthenticationToken>,
-    ) -> Result<Response, Error> {
+    ) -> Result<(), Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Error::UnrecognizedTask(*task_id));
@@ -590,17 +603,17 @@ impl<C: Clock> Aggregator<C> {
             .handle_delete_collection_job(&self.datastore, collection_job_id)
             .await?;
 
-        Ok(StatusCode::NO_CONTENT.into_response())
+        Ok(())
     }
 
-    /// Handle an aggregate share request. Only supported by the helper. `req_bytes` is an encoded,
-    /// authenticated [`AggregateShareReq`]. Returns an encoded, authenticated [`AggregateShare`].
+    /// Handle an aggregate share request. Only supported by the helper. `req_bytes` is an encoded
+    /// [`AggregateShareReq`]. Returns an [`AggregateShare`].
     async fn handle_aggregate_share(
         &self,
         task_id: &TaskId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<AggregateShare, Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
@@ -612,10 +625,9 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnauthorizedRequest(*task_id));
         }
 
-        let resp = task_aggregator
+        task_aggregator
             .handle_aggregate_share(&self.datastore, &self.clock, req_bytes)
-            .await?;
-        Ok(resp.get_encoded())
+            .await
     }
 
     async fn task_aggregator_for(&self, task_id: &TaskId) -> Result<Arc<TaskAggregator<C>>, Error> {
@@ -2497,251 +2509,138 @@ impl VdafOps {
     }
 }
 
-/// Injects a clone of the provided value into the warp filter, making it
-/// available to the filter's map() or and_then() handler.
-fn with_cloned_value<T>(value: T) -> impl Filter<Extract = (T,), Error = Infallible> + Clone
-where
-    T: Clone + Sync + Send,
-{
-    warp::any().map(move || value.clone())
-}
-
 trait DapProblemTypeExt {
     /// Returns the HTTP status code that should be used in responses whose body is a problem
     /// document of this type.
-    fn http_status(&self) -> StatusCode;
+    fn http_status(&self) -> Status;
 }
 
 impl DapProblemTypeExt for DapProblemType {
     /// Returns the HTTP status code that should be used in responses whose body is a problem
     /// document of this type.
-    fn http_status(&self) -> StatusCode {
+    fn http_status(&self) -> Status {
         // Per the errors section of the protocol, error responses should use "HTTP status code 400
         // Bad Request unless explicitly specified otherwise."
         // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#name-errors
-        StatusCode::BAD_REQUEST
+        Status::BadRequest
     }
 }
 
 /// The media type for problem details formatted as a JSON document, per RFC 7807.
 static PROBLEM_DETAILS_JSON_MEDIA_TYPE: &str = "application/problem+json";
 
-/// Construct an error response in accordance with
+/// Serialization helper struct for JSON problem details error responses. See
 /// https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-3.2.
-fn build_problem_details_response(error_type: DapProblemType, task_id: Option<TaskId>) -> Response {
-    let status = error_type.http_status();
-
-    let mut problem_document = serde_json::Map::from_iter(
-        [
-            ("type", serde_json::Value::from(error_type.type_uri())),
-            ("title", serde_json::Value::from(error_type.description())),
-            ("status", serde_json::Value::from(status.as_u16())),
-        ]
-        .map(|(k, v)| (k.to_string(), v)),
-    );
-
-    if let Some(task_id) = task_id {
-        problem_document.insert(
-            "taskid".to_string(),
-            serde_json::Value::from(format!("{task_id}")),
-        );
-    }
-
-    warp::reply::with_status(
-        warp::reply::with_header(
-            warp::reply::json(&problem_document),
-            http::header::CONTENT_TYPE,
-            PROBLEM_DETAILS_JSON_MEDIA_TYPE,
-        ),
-        status,
-    )
-    .into_response()
+#[derive(Serialize)]
+struct ProblemDocument<'a> {
+    #[serde(rename = "type")]
+    type_: &'static str,
+    title: &'static str,
+    status: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    taskid: &'a Option<String>,
 }
 
-/// Produces a closure that will transform applicable errors into a problem details JSON object
-/// (see RFC 7807) and update a metrics counter tracking the error status of the result as well as
-/// timing information. The returned closure is meant to be used in a warp `with` filter.
-fn error_handler<F, T>(
-    response_time_histogram: Histogram<f64>,
-    name: &'static str,
-) -> impl Fn(F) -> BoxedFilter<(Response,)>
-where
-    F: Filter<Extract = (Result<T, Arc<Error>>,), Error = Rejection>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
-    T: Reply,
-{
-    move |filter| {
-        let response_time_histogram = response_time_histogram.clone();
-        warp::any()
-            .map(Instant::now)
-            .and(filter)
-            .map(move |start: Instant, result: Result<T, Arc<Error>>| {
-                let error_code = if let Err(error) = result.as_ref() {
-                    warn!(?error, endpoint = name, "Error handling endpoint");
-                    error.error_code()
-                } else {
-                    ""
-                };
-                response_time_histogram.record(
-                    &Context::current(),
-                    start.elapsed().as_secs_f64(),
-                    &[
-                        KeyValue::new("endpoint", name),
-                        KeyValue::new("error_code", error_code),
-                    ],
-                );
+trait ConnExt {
+    /// Send a response containing a JSON-encoded problem details document for the given
+    /// DAP-specific problem type, (optionally including the DAP task ID) and set the appropriate
+    /// HTTP status code.
+    fn with_problem_details(self, error_type: DapProblemType, task_id: Option<&TaskId>) -> Self;
+}
 
-                match result {
-                    Ok(reply) => reply.into_response(),
-                    Err(err) => match err.as_ref() {
-                        Error::InvalidConfiguration(_) => {
-                            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-                        }
-                        Error::MessageDecode(_) => build_problem_details_response(
-                            DapProblemType::UnrecognizedMessage,
-                            None,
-                        ),
-                        Error::ReportRejected(task_id, _, _) => build_problem_details_response(
-                            DapProblemType::ReportRejected,
-                            Some(*task_id),
-                        ),
-                        Error::UnrecognizedMessage(task_id, _) => build_problem_details_response(
-                            DapProblemType::UnrecognizedMessage,
-                            *task_id,
-                        ),
-                        Error::RoundMismatch { task_id, .. } => build_problem_details_response(
-                            DapProblemType::RoundMismatch,
-                            Some(*task_id),
-                        ),
-                        Error::UnrecognizedTask(task_id) => {
-                            // TODO(#237): ensure that a helper returns HTTP 404 or 403 when this happens.
-                            build_problem_details_response(
-                                DapProblemType::UnrecognizedTask,
-                                Some(*task_id),
-                            )
-                        }
-                        Error::MissingTaskId => {
-                            build_problem_details_response(DapProblemType::MissingTaskId, None)
-                        }
-                        Error::UnrecognizedAggregationJob(task_id, _) => {
-                            build_problem_details_response(
-                                DapProblemType::UnrecognizedAggregationJob,
-                                Some(*task_id),
-                            )
-                        }
-                        Error::DeletedCollectionJob(_) => StatusCode::NO_CONTENT.into_response(),
-                        Error::UnrecognizedCollectionJob(_) => {
-                            StatusCode::NOT_FOUND.into_response()
-                        }
-                        Error::OutdatedHpkeConfig(task_id, _) => build_problem_details_response(
-                            DapProblemType::OutdatedConfig,
-                            Some(*task_id),
-                        ),
-                        Error::ReportTooEarly(task_id, _, _) => build_problem_details_response(
-                            DapProblemType::ReportTooEarly,
-                            Some(*task_id),
-                        ),
-                        Error::UnauthorizedRequest(task_id) => build_problem_details_response(
-                            DapProblemType::UnauthorizedRequest,
-                            Some(*task_id),
-                        ),
-                        Error::InvalidBatchSize(task_id, _) => build_problem_details_response(
-                            DapProblemType::InvalidBatchSize,
-                            Some(*task_id),
-                        ),
-                        Error::BatchInvalid(task_id, _) => build_problem_details_response(
-                            DapProblemType::BatchInvalid,
-                            Some(*task_id),
-                        ),
-                        Error::BatchOverlap(task_id, _) => build_problem_details_response(
-                            DapProblemType::BatchOverlap,
-                            Some(*task_id),
-                        ),
-                        Error::BatchMismatch(inner) => build_problem_details_response(
-                            DapProblemType::BatchMismatch,
-                            Some(inner.task_id),
-                        ),
-                        Error::BatchQueriedTooManyTimes(task_id, ..) => {
-                            build_problem_details_response(
-                                DapProblemType::BatchQueriedTooManyTimes,
-                                Some(*task_id),
-                            )
-                        }
-                        Error::Hpke(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                        Error::Datastore(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                        Error::Vdaf(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                        Error::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                        Error::Url(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                        Error::Message(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                        Error::HttpClient(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                        Error::Http { .. } => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                        Error::AggregateShareRequestRejected(_, _) => {
-                            StatusCode::BAD_REQUEST.into_response()
-                        }
-                        Error::EmptyAggregation(task_id) => build_problem_details_response(
-                            DapProblemType::UnrecognizedMessage,
-                            Some(*task_id),
-                        ),
-                        Error::TaskParameters(_) => {
-                            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-                        }
-                        Error::ForbiddenMutation { .. } => StatusCode::CONFLICT.into_response(),
-                    },
-                }
-            })
-            .boxed()
+impl ConnExt for Conn {
+    fn with_problem_details(self, error_type: DapProblemType, task_id: Option<&TaskId>) -> Self {
+        let status = error_type.http_status();
+
+        let problem_document = ProblemDocument {
+            type_: error_type.type_uri(),
+            title: error_type.description(),
+            status: status as u16,
+            taskid: &task_id.as_ref().map(ToString::to_string),
+        };
+
+        self.with_status(status as u16)
+            .with_header(
+                KnownHeaderName::ContentType,
+                PROBLEM_DETAILS_JSON_MEDIA_TYPE,
+            )
+            .with_json(&problem_document)
     }
 }
 
-/// Convenience function to perform common composition of Warp filters for a single endpoint. A
-/// combined filter is returned, with a CORS handler, instrumented to measure both request
-/// processing time and successes or failures for metrics, and with per-route named tracing spans.
-///
-/// `route_filter` should be a filter that determines whether the incoming request matches a
-/// given route or not. It should inspect the ambient request, and either extract the empty tuple
-/// or reject.
-///
-/// `response_filter` should be a filter that performs all response handling for this route, after
-/// the above `route_filter` has already determined the request is applicable to this route. It
-/// should only reject in response to malformed requests, not requests that may yet be served by a
-/// different route. This will ensure that a single request doesn't pass through multiple wrapping
-/// filters, skewing the low end of unrelated requests' timing histograms. The filter's return type
-/// should be `Result<impl Reply, Error>`, and errors will be transformed into responses with
-/// problem details documents as appropriate.
-///
-/// `cors` is a configuration object describing CORS policies for this route.
-///
-/// `response_time_histogram` is a `Histogram` that will be used to record request handling timings.
-///
-/// `name` is a unique name for this route. This will be used as a metrics label, and will be added
-/// to the tracing span's values as its message.
-fn compose_common_wrappers<F1, F2, T>(
-    route_filter: F1,
-    response_filter: F2,
-    cors: Cors,
-    response_time_histogram: Histogram<f64>,
-    name: &'static str,
-) -> BoxedFilter<(impl Reply,)>
-where
-    F1: Filter<Extract = (), Error = Rejection> + Send + Sync + 'static,
-    F2: Filter<Extract = (Result<T, Arc<Error>>,), Error = Rejection>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
-    T: Reply + 'static,
-{
-    route_filter
-        .and(
-            response_filter
-                .with(warp::wrap_fn(error_handler(response_time_histogram, name)))
-                .with(cors)
-                .with(trace::named(name)),
-        )
-        .boxed()
+/// Newtype holding a textual error code, to be stored in a Trillium connection's state.
+struct ErrorCode(&'static str);
+
+#[async_trait]
+impl Handler for Error {
+    async fn run(&self, mut conn: Conn) -> Conn {
+        let error_code = self.error_code();
+        conn.set_state(ErrorCode(error_code));
+        warn!(error_code, error=?self, "Error handling endpoint");
+        match self {
+            Error::InvalidConfiguration(_) => conn.with_status(Status::InternalServerError),
+            Error::MessageDecode(_) => {
+                conn.with_problem_details(DapProblemType::UnrecognizedMessage, None)
+            }
+            Error::ReportRejected(task_id, _, _) => {
+                conn.with_problem_details(DapProblemType::ReportRejected, Some(task_id))
+            }
+            Error::UnrecognizedMessage(task_id, _) => {
+                conn.with_problem_details(DapProblemType::UnrecognizedMessage, task_id.as_ref())
+            }
+            Error::RoundMismatch { task_id, .. } => {
+                conn.with_problem_details(DapProblemType::RoundMismatch, Some(task_id))
+            }
+            Error::UnrecognizedTask(task_id) => {
+                conn.with_problem_details(DapProblemType::UnrecognizedTask, Some(task_id))
+            }
+            Error::MissingTaskId => conn.with_problem_details(DapProblemType::MissingTaskId, None),
+            Error::UnrecognizedAggregationJob(task_id, _) => {
+                conn.with_problem_details(DapProblemType::UnrecognizedAggregationJob, Some(task_id))
+            }
+            Error::DeletedCollectionJob(_) => conn.with_status(Status::NoContent),
+            Error::UnrecognizedCollectionJob(_) => conn.with_status(Status::NotFound),
+            Error::OutdatedHpkeConfig(task_id, _) => {
+                conn.with_problem_details(DapProblemType::OutdatedConfig, Some(task_id))
+            }
+            Error::ReportTooEarly(task_id, _, _) => {
+                conn.with_problem_details(DapProblemType::ReportTooEarly, Some(task_id))
+            }
+            Error::UnauthorizedRequest(task_id) => {
+                conn.with_problem_details(DapProblemType::UnauthorizedRequest, Some(task_id))
+            }
+            Error::InvalidBatchSize(task_id, _) => {
+                conn.with_problem_details(DapProblemType::InvalidBatchSize, Some(task_id))
+            }
+            Error::BatchInvalid(task_id, _) => {
+                conn.with_problem_details(DapProblemType::BatchInvalid, Some(task_id))
+            }
+            Error::BatchOverlap(task_id, _) => {
+                conn.with_problem_details(DapProblemType::BatchOverlap, Some(task_id))
+            }
+            Error::BatchMismatch(inner) => {
+                conn.with_problem_details(DapProblemType::BatchMismatch, Some(&inner.task_id))
+            }
+            Error::BatchQueriedTooManyTimes(task_id, _) => {
+                conn.with_problem_details(DapProblemType::BatchQueriedTooManyTimes, Some(task_id))
+            }
+            Error::Hpke(_)
+            | Error::Datastore(_)
+            | Error::Vdaf(_)
+            | Error::Internal(_)
+            | Error::Url(_)
+            | Error::Message(_)
+            | Error::HttpClient(_)
+            | Error::Http { .. }
+            | Error::TaskParameters(_) => conn.with_status(Status::InternalServerError),
+            Error::AggregateShareRequestRejected(_, _) => conn.with_status(Status::BadRequest),
+            Error::EmptyAggregation(task_id) => {
+                conn.with_problem_details(DapProblemType::UnrecognizedMessage, Some(task_id))
+            }
+            Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
+            Error::BadRequest(_) => conn.with_status(Status::BadRequest),
+        }
+    }
 }
 
 /// The number of seconds we send in the Access-Control-Max-Age header. This determines for how
@@ -2751,375 +2650,481 @@ where
 /// See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Max-Age
 const CORS_PREFLIGHT_CACHE_AGE: u32 = 24 * 60 * 60;
 
-/// Constructs a Warp filter that matches the request path for tasks, as well as whatever regex is
-/// provided, but without consuming the path or any values encoded into it, such that later filters
-/// can still extract path components.
-fn path_matching_filter(trailing_fragment_regex: &str) -> Result<BoxedFilter<()>, Error> {
-    let regex = Regex::new(&format!(
-        // Task ID is 32 bytes, hence 43 bytes of Base64URL
-        "tasks/[A-Za-z0-9-_]{{43}}/{trailing_fragment_regex}"
-    ))
-    .map_err(|e| Error::Internal(format!("error compiling regex: {e}")))?;
-
-    let filter = warp::path::peek()
-        .and_then(move |peek: warp::path::Peek| {
-            let regex = regex.clone();
-            async move {
-                if regex.is_match(peek.as_str()) {
-                    Ok(())
-                } else {
-                    Err(warp::reject::reject())
-                }
-            }
-        })
-        .untuple_one()
-        .boxed();
-
-    Ok(filter)
+/// Wrapper around a type that implements [`Encode`]. It acts as a Trillium handler, encoding the
+/// inner object and sending it as the response body, setting the Content-Type header to the
+/// provided media type, and setting the status to 200.
+struct EncodedBody<T> {
+    object: T,
+    media_type: &'static str,
 }
 
-/// AggregationJobId is 16 bytes, hence 22 bytes of Base64URL
-const AGGREGATION_JOB_PATH_REGEX: &str = "aggregation_jobs/[A-Za-z0-9-_]{22}";
+impl<T> EncodedBody<T>
+where
+    T: Encode,
+{
+    fn new(object: T, media_type: &'static str) -> Self {
+        Self { object, media_type }
+    }
+}
 
-/// CollectionId is 16 bytes, hence 22 bytes of Base64URL
-const COLLECTION_JOB_PATH_REGEX: &str = "collection_jobs/[A-Za-z0-9-_]{22}";
+#[async_trait]
+impl<T> Handler for EncodedBody<T>
+where
+    T: Encode + Sync + Send + 'static,
+{
+    async fn run(&self, mut conn: Conn) -> Conn {
+        conn.headers_mut()
+            .insert(KnownHeaderName::ContentType, self.media_type);
+        conn.ok(self.object.get_encoded())
+    }
+}
 
-/// Constructs a Warp filter with endpoints common to all aggregators.
-pub fn aggregator_filter<C: Clock>(
+/// A Trillium handler that checks for state set when sending an error response, and updates an
+/// OpenTelemetry counter accordingly.
+struct StatusCounter(Counter<u64>);
+
+impl StatusCounter {
+    fn new(meter: &Meter) -> Self {
+        Self(
+            meter
+                .u64_counter("janus_aggregator_responses_total")
+                .with_description(
+                    "Count of requests handled by the aggregator, by method, route, and response status.",
+                )
+                .init(),
+        )
+    }
+}
+
+#[async_trait]
+impl Handler for StatusCounter {
+    async fn run(&self, conn: Conn) -> Conn {
+        conn
+    }
+
+    async fn before_send(&self, conn: Conn) -> Conn {
+        // Check for the error code set by the Error handler implementation.
+        let error_code_opt = conn.state::<ErrorCode>().map(|error_code| error_code.0);
+        let error_code = if let Some(status) = conn.status() {
+            if status.is_client_error() || status.is_server_error() {
+                error_code_opt.unwrap_or("unknown")
+            } else {
+                // Set the label to an empty string on success.
+                ""
+            }
+        } else {
+            // No status is set, it will fall back to 404.
+            error_code_opt.unwrap_or("unknown")
+        };
+        // Fetch the method.
+        let method = conn.method().as_str();
+        // Check for the route set by the router.
+        let route = conn
+            .route()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| "unknown".to_owned());
+        self.0.add(
+            &Context::current(),
+            1,
+            &[
+                KeyValue::new("method", method),
+                KeyValue::new("route", route),
+                KeyValue::new("error_code", error_code),
+            ],
+        );
+        conn
+    }
+}
+
+/// Constructs a Trillium handler for the aggregator.
+pub fn aggregator_handler<C: Clock>(
     datastore: Arc<Datastore<C>>,
     clock: C,
     cfg: Config,
-) -> Result<BoxedFilter<(impl Reply,)>, Error> {
+) -> Result<impl Handler, Error> {
     let meter = opentelemetry::global::meter("janus_aggregator");
-    let response_time_histogram = meter
-        .f64_histogram("janus_aggregator_response_time")
-        .with_description("Elapsed time handling incoming requests, by endpoint & status.")
-        .with_unit(Unit::new("seconds"))
-        .init();
+    let aggregator = Arc::new(Aggregator::new(Arc::clone(&datastore), clock, &meter, cfg));
 
-    let aggregator = Arc::new(Aggregator::new(datastore, clock, meter, cfg));
+    Ok((
+        State(aggregator),
+        metrics("janus_aggregator"),
+        Router::new()
+            .get("hpke_config", instrumented(api(hpke_config::<C>)))
+            .with_route(
+                trillium::Method::Options,
+                "hpke_config",
+                hpke_config_cors_preflight,
+            )
+            .put("tasks/:task_id/reports", instrumented(api(upload::<C>)))
+            .with_route(
+                trillium::Method::Options,
+                "tasks/:task_id/reports",
+                upload_cors_preflight,
+            )
+            .put(
+                "tasks/:task_id/aggregation_jobs/:aggregation_job_id",
+                instrumented(api(aggregation_jobs_put::<C>)),
+            )
+            .post(
+                "tasks/:task_id/aggregation_jobs/:aggregation_job_id",
+                instrumented(api(aggregation_jobs_post::<C>)),
+            )
+            .put(
+                "tasks/:task_id/collection_jobs/:collection_job_id",
+                instrumented(api(collection_jobs_put::<C>)),
+            )
+            .post(
+                "tasks/:task_id/collection_jobs/:collection_job_id",
+                instrumented(api(collection_jobs_post::<C>)),
+            )
+            .delete(
+                "tasks/:task_id/collection_jobs/:collection_job_id",
+                instrumented(api(collection_jobs_delete::<C>)),
+            )
+            .post(
+                "tasks/:task_id/aggregate_shares",
+                instrumented(api(aggregate_shares::<C>)),
+            ),
+        StatusCounter::new(&meter),
+    ))
+}
 
-    let hpke_config_responding = warp::get()
-        .and(with_cloned_value(Arc::clone(&aggregator)))
-        .and(warp::query::<HashMap<String, String>>())
-        .then(
-            |aggregator: Arc<Aggregator<C>>, query_params: HashMap<String, String>| async move {
-                let hpke_config_bytes = aggregator
-                    .handle_hpke_config(query_params.get("task_id").map(String::as_ref))
-                    .await
-                    .map_err(Arc::new)?;
-                http::Response::builder()
-                    .header(CACHE_CONTROL, "max-age=86400")
-                    .header(CONTENT_TYPE, HpkeConfigList::MEDIA_TYPE)
-                    .body(hpke_config_bytes)
-                    .map_err(|err| {
-                        Arc::new(Error::Internal(format!("couldn't produce response: {err}")))
-                    })
-            },
+/// Deserialization helper struct to extract a "task_id" parameter from a query string.
+#[derive(Deserialize)]
+struct HpkeConfigQuery {
+    /// The optional "task_id" parameter, in base64url-encoded form.
+    #[serde(default)]
+    task_id: Option<String>,
+}
+
+/// API handler for the "/hpke_config" GET endpoint.
+async fn hpke_config<C: Clock>(
+    conn: &mut Conn,
+    State(aggregator): State<Arc<Aggregator<C>>>,
+) -> Result<EncodedBody<HpkeConfigList>, Error> {
+    let query = serde_urlencoded::from_str::<HpkeConfigQuery>(conn.querystring())
+        .map_err(|err| Error::BadRequest(format!("couldn't parse query string: {err}")))?;
+    let hpke_config_list = aggregator
+        .handle_hpke_config(query.task_id.as_ref().map(AsRef::as_ref))
+        .await?;
+
+    conn.headers_mut()
+        .insert(KnownHeaderName::CacheControl, "max-age=86400");
+
+    // Handle CORS, if the request header is present.
+    if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
+        // Unconditionally allow CORS requests from all origins.
+        let origin = origin.clone();
+        conn.headers_mut()
+            .insert(KnownHeaderName::AccessControlAllowOrigin, origin);
+    }
+
+    Ok(EncodedBody::new(
+        hpke_config_list,
+        HpkeConfigList::MEDIA_TYPE,
+    ))
+}
+
+/// Handler for CORS preflight requests to "/hpke_config".
+async fn hpke_config_cors_preflight(mut conn: Conn) -> Conn {
+    conn.headers_mut().insert(KnownHeaderName::Allow, "GET");
+    if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
+        let origin = origin.clone();
+        let request_headers = conn.headers_mut();
+        request_headers.insert(KnownHeaderName::AccessControlAllowOrigin, origin);
+        request_headers.insert(KnownHeaderName::AccessControlAllowMethods, "GET");
+        request_headers.insert(
+            KnownHeaderName::AccessControlMaxAge,
+            format!("{CORS_PREFLIGHT_CACHE_AGE}"),
         );
+    }
+    conn.set_status(Status::Ok);
+    conn
+}
 
-    let hpke_config_endpoint = compose_common_wrappers(
-        warp::path("hpke_config"),
-        hpke_config_responding,
-        warp::cors()
-            .allow_any_origin()
-            .allow_method("GET")
-            .max_age(CORS_PREFLIGHT_CACHE_AGE)
-            .build(),
-        response_time_histogram.clone(),
-        "hpke_config",
-    );
+/// API handler for the "/tasks/.../reports" PUT endpoint.
+async fn upload<C: Clock>(
+    conn: &mut Conn,
+    (State(aggregator), State(captures), body): (
+        State<Arc<Aggregator<C>>>,
+        State<Captures<'static, 'static>>,
+        Vec<u8>,
+    ),
+) -> Result<Status, Arc<Error>> {
+    validate_content_type(conn, Report::MEDIA_TYPE).map_err(Arc::new)?;
 
-    let upload_responding = warp::put()
-        .and(warp::path!("tasks" / TaskId / "reports"))
-        .and(warp::header::exact(
-            CONTENT_TYPE.as_str(),
-            Report::MEDIA_TYPE,
-        ))
-        .and(with_cloned_value(Arc::clone(&aggregator)))
-        .and(warp::body::bytes())
-        .then(
-            |task_id: TaskId, aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
-                aggregator
-                    .handle_upload(&task_id, &body)
-                    .await
-                    .map(|_| StatusCode::OK)
-            },
+    let task_id = parse_task_id(&captures).map_err(Arc::new)?;
+    aggregator.handle_upload(&task_id, &body).await?;
+
+    // Handle CORS, if the request header is present.
+    if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
+        // Unconditionally allow CORS requests from all origins.
+        let origin = origin.clone();
+        conn.headers_mut()
+            .insert(KnownHeaderName::AccessControlAllowOrigin, origin);
+    }
+
+    Ok(Status::Ok)
+}
+
+/// Handler for CORS preflight requests to "/tasks/.../reports".
+async fn upload_cors_preflight(mut conn: Conn) -> Conn {
+    conn.headers_mut().insert(KnownHeaderName::Allow, "PUT");
+    if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
+        let origin = origin.clone();
+        let request_headers = conn.headers_mut();
+        request_headers.insert(KnownHeaderName::AccessControlAllowOrigin, origin);
+        request_headers.insert(KnownHeaderName::AccessControlAllowMethods, "PUT");
+        request_headers.insert(KnownHeaderName::AccessControlAllowHeaders, "content-type");
+        request_headers.insert(
+            KnownHeaderName::AccessControlMaxAge,
+            format!("{CORS_PREFLIGHT_CACHE_AGE}"),
         );
+    }
+    conn.set_status(Status::Ok);
+    conn
+}
 
-    let upload_endpoint = compose_common_wrappers(
-        path_matching_filter("reports")?,
-        upload_responding,
-        warp::cors()
-            .allow_any_origin()
-            .allow_method("PUT")
-            .allow_header("content-type")
-            .max_age(CORS_PREFLIGHT_CACHE_AGE)
-            .build(),
-        response_time_histogram.clone(),
-        "upload",
-    );
+/// API handler for the "/tasks/.../aggregation_jobs/..." PUT endpoint.
+async fn aggregation_jobs_put<C: Clock>(
+    conn: &mut Conn,
+    (State(aggregator), State(captures), body): (
+        State<Arc<Aggregator<C>>>,
+        State<Captures<'static, 'static>>,
+        Vec<u8>,
+    ),
+) -> Result<EncodedBody<AggregationJobResp>, Error> {
+    validate_content_type(
+        conn,
+        AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+    )?;
 
-    let aggregation_jobs_put_responding = warp::put()
-        .and(warp::path!(
-            "tasks" / TaskId / "aggregation_jobs" / AggregationJobId
-        ))
-        .and(warp::header::exact(
-            CONTENT_TYPE.as_str(),
-            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-        ))
-        .and(with_cloned_value(Arc::clone(&aggregator)))
-        .and(warp::body::bytes())
-        .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
-        .then(
-            |task_id: TaskId,
-             aggregation_job_id: AggregationJobId,
-             aggregator: Arc<Aggregator<C>>,
-             body: Bytes,
-             auth_token: Option<String>| async move {
-                http::Response::builder()
-                    .header(CONTENT_TYPE, AggregationJobResp::MEDIA_TYPE)
-                    .body(
-                        aggregator
-                            .handle_aggregate_init(
-                                &task_id,
-                                &aggregation_job_id,
-                                &body,
-                                auth_token.map(String::into_bytes).map(Into::into),
-                            )
-                            .await
-                            .map_err(Arc::new)?,
-                    )
-                    .map_err(|err| {
-                        Arc::new(Error::Internal(format!("couldn't produce response: {err}")))
-                    })
-            },
-        );
+    let task_id = parse_task_id(&captures)?;
+    let aggregation_job_id = parse_aggregation_job_id(&captures)?;
+    let auth_token = parse_auth_token(conn);
+    let response = aggregator
+        .handle_aggregate_init(&task_id, &aggregation_job_id, &body, auth_token)
+        .await?;
 
-    let aggregation_jobs_put_endpoint = compose_common_wrappers(
-        path_matching_filter(AGGREGATION_JOB_PATH_REGEX)?,
-        aggregation_jobs_put_responding,
-        warp::cors().build(),
-        response_time_histogram.clone(),
-        "aggregation_job_put",
-    );
+    Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))
+}
 
-    let aggregation_jobs_post_responding = warp::post()
-        .and(warp::path!(
-            "tasks" / TaskId / "aggregation_jobs" / AggregationJobId
-        ))
-        .and(warp::header::exact(
-            CONTENT_TYPE.as_str(),
-            AggregationJobContinueReq::MEDIA_TYPE,
-        ))
-        .and(with_cloned_value(Arc::clone(&aggregator)))
-        .and(warp::body::bytes())
-        .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
-        .then(
-            |task_id: TaskId,
-             aggregation_job_id: AggregationJobId,
-             aggregator: Arc<Aggregator<C>>,
-             body: Bytes,
-             auth_token: Option<String>| async move {
-                http::Response::builder()
-                    .header(CONTENT_TYPE, AggregationJobResp::MEDIA_TYPE)
-                    .body(
-                        aggregator
-                            .handle_aggregate_continue(
-                                &task_id,
-                                &aggregation_job_id,
-                                &body,
-                                auth_token.map(String::into_bytes).map(Into::into),
-                            )
-                            .await
-                            .map_err(Arc::new)?,
-                    )
-                    .map_err(|err| {
-                        Arc::new(Error::Internal(format!("couldn't produce response: {err}")))
-                    })
-            },
-        );
+/// API handler for the "/tasks/.../aggregation_jobs/..." POST endpoint.
+async fn aggregation_jobs_post<C: Clock>(
+    conn: &mut Conn,
+    (State(aggregator), State(captures), body): (
+        State<Arc<Aggregator<C>>>,
+        State<Captures<'static, 'static>>,
+        Vec<u8>,
+    ),
+) -> Result<EncodedBody<AggregationJobResp>, Error> {
+    validate_content_type(conn, AggregationJobContinueReq::MEDIA_TYPE)?;
 
-    let aggregation_jobs_post_endpoint = compose_common_wrappers(
-        path_matching_filter(AGGREGATION_JOB_PATH_REGEX)?,
-        aggregation_jobs_post_responding,
-        warp::cors().build(),
-        response_time_histogram.clone(),
-        "aggregation_job_post",
-    );
+    let task_id = parse_task_id(&captures)?;
+    let aggregation_job_id = parse_aggregation_job_id(&captures)?;
+    let auth_token = parse_auth_token(conn);
+    let response = aggregator
+        .handle_aggregate_continue(&task_id, &aggregation_job_id, &body, auth_token)
+        .await?;
 
-    let collection_jobs_put_responding = warp::put()
-        .and(warp::path!(
-            "tasks" / TaskId / "collection_jobs" / CollectionJobId
-        ))
-        .and(warp::header::exact(
-            CONTENT_TYPE.as_str(),
-            CollectionReq::<TimeInterval>::MEDIA_TYPE,
-        ))
-        .and(with_cloned_value(Arc::clone(&aggregator)))
-        .and(warp::body::bytes())
-        .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
-        .then(
-            |task_id: TaskId,
-             collection_job_id: CollectionJobId,
-             aggregator: Arc<Aggregator<C>>,
-             body: Bytes,
-             auth_token: Option<String>| async move {
-                aggregator
-                    .handle_create_collection_job(
-                        &task_id,
-                        &collection_job_id,
-                        &body,
-                        auth_token.map(String::into_bytes).map(Into::into),
-                    )
-                    .await?;
-                Ok(warp::reply::with_status(warp::reply(), StatusCode::CREATED))
-            },
-        );
+    Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))
+}
 
-    let collection_jobs_put_endpoint = compose_common_wrappers(
-        path_matching_filter(COLLECTION_JOB_PATH_REGEX)?,
-        collection_jobs_put_responding,
-        warp::cors().build(),
-        response_time_histogram.clone(),
-        "collections_put",
-    );
+/// API handler for the "/tasks/.../collection_jobs/..." PUT endpoint.
+async fn collection_jobs_put<C: Clock>(
+    conn: &mut Conn,
+    (State(aggregator), State(captures), body): (
+        State<Arc<Aggregator<C>>>,
+        State<Captures<'static, 'static>>,
+        Vec<u8>,
+    ),
+) -> Result<Status, Error> {
+    validate_content_type(conn, CollectionReq::<TimeInterval>::MEDIA_TYPE)?;
 
-    let collection_jobs_post_responding = warp::post()
-        .and(warp::path!(
-            "tasks" / TaskId / "collection_jobs" / CollectionJobId
-        ))
-        .and(with_cloned_value(Arc::clone(&aggregator)))
-        .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
-        .then(
-            |task_id: TaskId,
-             collection_job_id: CollectionJobId,
-             aggregator: Arc<Aggregator<C>>,
-             auth_token: Option<String>| async move {
-                let resp_bytes = aggregator
-                    .handle_get_collection_job(
-                        &task_id,
-                        &collection_job_id,
-                        auth_token.map(String::into_bytes).map(Into::into),
-                    )
-                    .await?;
-                match resp_bytes {
-                    Some(resp_bytes) => http::Response::builder()
-                        .header(CONTENT_TYPE, Collection::<TimeInterval>::MEDIA_TYPE)
-                        .body(resp_bytes),
-                    None => http::Response::builder()
-                        .status(StatusCode::ACCEPTED)
-                        .body(Vec::new()),
-                }
-                .map_err(|err| {
-                    Arc::new(Error::Internal(format!("couldn't produce response: {err}")))
-                })
-            },
-        );
+    let task_id = parse_task_id(&captures)?;
+    let collection_job_id = parse_collection_job_id(&captures)?;
+    let auth_token = parse_auth_token(conn);
+    aggregator
+        .handle_create_collection_job(&task_id, &collection_job_id, &body, auth_token)
+        .await?;
 
-    let collection_jobs_post_endpoint = compose_common_wrappers(
-        path_matching_filter(COLLECTION_JOB_PATH_REGEX)?,
-        collection_jobs_post_responding,
-        warp::cors().build(),
-        response_time_histogram.clone(),
-        "collections_post",
-    );
+    Ok(Status::Created)
+}
 
-    let collection_jobs_delete_responding = warp::delete()
-        .and(warp::path!(
-            "tasks" / TaskId / "collection_jobs" / CollectionJobId
-        ))
-        .and(with_cloned_value(Arc::clone(&aggregator)))
-        .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
-        .then(
-            |task_id: TaskId,
-             collection_job_id: CollectionJobId,
-             aggregator: Arc<Aggregator<C>>,
-             auth_token: Option<String>| async move {
-                aggregator
-                    .handle_delete_collection_job(
-                        &task_id,
-                        &collection_job_id,
-                        auth_token.map(String::into_bytes).map(Into::into),
-                    )
-                    .await
-                    .map_err(Arc::new)
-            },
-        );
+/// API handler for the "/tasks/.../collection_jobs/..." POST endpoint.
+async fn collection_jobs_post<C: Clock>(
+    conn: &mut Conn,
+    (State(aggregator), State(captures)): (
+        State<Arc<Aggregator<C>>>,
+        State<Captures<'static, 'static>>,
+    ),
+) -> Result<(), Error> {
+    let task_id = parse_task_id(&captures)?;
+    let collection_job_id = parse_collection_job_id(&captures)?;
+    let auth_token = parse_auth_token(conn);
+    let response_opt = aggregator
+        .handle_get_collection_job(&task_id, &collection_job_id, auth_token)
+        .await?;
+    match response_opt {
+        Some(response_bytes) => {
+            conn.headers_mut().insert(
+                KnownHeaderName::ContentType,
+                Collection::<TimeInterval>::MEDIA_TYPE,
+            );
+            conn.set_status(Status::Ok);
+            conn.set_body(response_bytes);
+        }
+        None => conn.set_status(Status::Accepted),
+    }
+    Ok(())
+}
 
-    let collection_jobs_delete_endpoint = compose_common_wrappers(
-        path_matching_filter(COLLECTION_JOB_PATH_REGEX)?,
-        collection_jobs_delete_responding,
-        warp::cors().build(),
-        response_time_histogram.clone(),
-        "collections_delete",
-    );
+/// API handler for the "/tasks/.../collection_jobs/..." DELETE endpoint.
+async fn collection_jobs_delete<C: Clock>(
+    conn: &mut Conn,
+    (State(aggregator), State(captures)): (
+        State<Arc<Aggregator<C>>>,
+        State<Captures<'static, 'static>>,
+    ),
+) -> Result<Status, Error> {
+    let task_id = parse_task_id(&captures)?;
+    let collection_job_id = parse_collection_job_id(&captures)?;
+    let auth_token = parse_auth_token(conn);
+    aggregator
+        .handle_delete_collection_job(&task_id, &collection_job_id, auth_token)
+        .await?;
+    Ok(Status::NoContent)
+}
 
-    let aggregate_shares_responding = warp::post()
-        .and(warp::path!("tasks" / TaskId / "aggregate_shares"))
-        .and(warp::header::exact(
-            CONTENT_TYPE.as_str(),
-            AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
-        ))
-        .and(with_cloned_value(Arc::clone(&aggregator)))
-        .and(warp::body::bytes())
-        .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
-        .then(
-            |task_id: TaskId,
-             aggregator: Arc<Aggregator<C>>,
-             body: Bytes,
-             auth_token: Option<String>| async move {
-                let resp_bytes = aggregator
-                    .handle_aggregate_share(
-                        &task_id,
-                        &body,
-                        auth_token.map(String::into_bytes).map(Into::into),
-                    )
-                    .await
-                    .map_err(Arc::new)?;
-                http::Response::builder()
-                    .header(CONTENT_TYPE, AggregateShare::MEDIA_TYPE)
-                    .body(resp_bytes)
-                    .map_err(|err| {
-                        Arc::new(Error::Internal(format!("couldn't produce response: {err}")))
-                    })
-            },
-        );
-    let aggregate_shares_endpoint = compose_common_wrappers(
-        path_matching_filter("aggregate_shares")?,
-        aggregate_shares_responding,
-        warp::cors().build(),
-        response_time_histogram,
-        "aggregate_shares",
-    );
+/// API handler for the "/tasks/.../aggregate_shares" POST endpoint.
+async fn aggregate_shares<C: Clock>(
+    conn: &mut Conn,
+    (State(aggregator), State(captures), body): (
+        State<Arc<Aggregator<C>>>,
+        State<Captures<'static, 'static>>,
+        Vec<u8>,
+    ),
+) -> Result<EncodedBody<AggregateShare>, Error> {
+    validate_content_type(conn, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)?;
 
-    Ok(hpke_config_endpoint
-        .or(upload_endpoint)
-        .or(aggregation_jobs_put_endpoint)
-        .or(aggregation_jobs_post_endpoint)
-        .or(collection_jobs_put_endpoint)
-        .or(collection_jobs_post_endpoint)
-        .or(collection_jobs_delete_endpoint)
-        .or(aggregate_shares_endpoint)
-        .boxed())
+    let task_id = parse_task_id(&captures)?;
+    let auth_token = parse_auth_token(conn);
+    let share = aggregator
+        .handle_aggregate_share(&task_id, &body, auth_token)
+        .await?;
+
+    Ok(EncodedBody::new(share, AggregateShare::MEDIA_TYPE))
+}
+
+/// Check the request's Content-Type header, and return an error if it is missing or not equal to
+/// the expected value.
+fn validate_content_type(conn: &Conn, expected_media_type: &'static str) -> Result<(), Error> {
+    if let Some(content_type) = conn.request_headers().get(KnownHeaderName::ContentType) {
+        if content_type != expected_media_type {
+            Err(Error::BadRequest(format!(
+                "wrong Content-Type header: {content_type}"
+            )))
+        } else {
+            Ok(())
+        }
+    } else {
+        Err(Error::BadRequest("no Content-Type header".to_owned()))
+    }
+}
+
+/// Parse a [`TaskId`] from the "task_id" parameter in a set of path parameter [`Captures`].
+fn parse_task_id(captures: &Captures) -> Result<TaskId, Error> {
+    let encoded = captures
+        .get("task_id")
+        .ok_or_else(|| Error::Internal("task_id parameter is missing from captures".to_string()))?;
+    encoded
+        .parse()
+        .map_err(|_| Error::BadRequest("invalid TaskId".to_owned()))
+}
+
+/// Parse an [`AggregationJobId`] from the "aggregation_job_id" parameter in a set of path parameter
+/// [`Captures`].
+fn parse_aggregation_job_id(captures: &Captures) -> Result<AggregationJobId, Error> {
+    let encoded = captures.get("aggregation_job_id").ok_or_else(|| {
+        Error::Internal("aggregation_job_id parameter is missing from captures".to_string())
+    })?;
+    encoded
+        .parse()
+        .map_err(|_| Error::BadRequest("invalid AggregationJobId".to_owned()))
+}
+
+/// Parse an [`CollectionJobId`] from the "collection_job_id" parameter in a set of path parameter
+/// [`Captures`].
+fn parse_collection_job_id(captures: &Captures) -> Result<CollectionJobId, Error> {
+    let encoded = captures.get("collection_job_id").ok_or_else(|| {
+        Error::Internal("collection_job_id parameter is missing from captures".to_string())
+    })?;
+    encoded
+        .parse()
+        .map_err(|_| Error::BadRequest("invalid CollectionJobId".to_owned()))
+}
+
+/// Get the value of the DAP-Auth-Token header from the request.
+fn parse_auth_token(conn: &Conn) -> Option<AuthenticationToken> {
+    conn.request_headers()
+        .get(DAP_AUTH_HEADER)
+        .map(|value| value.as_ref().to_owned().into())
 }
 
 /// Construct a DAP aggregator server, listening on the provided [`SocketAddr`]. If the
 /// `SocketAddr`'s `port` is 0, an ephemeral port is used. Returns a `SocketAddr` representing the
-/// address and port the server are listening on and a future that can be `await`ed to begin serving
-/// requests.
-pub fn aggregator_server<C: Clock>(
+/// address and port the server are listening on and a future that can be `await`ed to wait until
+/// the server shuts down.
+pub async fn aggregator_server<C: Clock>(
     datastore: Arc<Datastore<C>>,
     clock: C,
     cfg: Config,
     listen_address: SocketAddr,
-    response_headers: HeaderMap,
+    response_headers: Headers,
     shutdown_signal: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(SocketAddr, impl Future<Output = ()> + 'static), Error> {
-    let filter = aggregator_filter(datastore, clock, cfg)?;
-    let wrapped_filter = filter.with(warp::filters::reply::headers(response_headers));
-    let server = warp::serve(wrapped_filter);
-    Ok(server.bind_with_graceful_shutdown(listen_address, shutdown_signal))
+    let stopper = Stopper::new();
+    spawn({
+        let stopper = stopper.clone();
+        async move {
+            shutdown_signal.await;
+            stopper.stop();
+        }
+    });
+
+    let (sender, receiver) = channel();
+    let init = Init::new(|info: Info| async move {
+        // Ignore error if the receiver is dropped.
+        let _ = sender.send(info.tcp_socket_addr().copied());
+    });
+
+    let server_config = trillium_tokio::config()
+        .with_port(listen_address.port())
+        .with_host(&listen_address.ip().to_string())
+        .with_stopper(stopper)
+        .without_signals();
+    let handler = (
+        init,
+        response_headers,
+        aggregator_handler(datastore, clock, cfg)?,
+    );
+
+    let task_handle = spawn(server_config.run_async(handler));
+
+    let address = receiver
+        .await
+        .map_err(|err| Error::Internal(format!("error waiting for socket address: {err}")))?
+        .ok_or_else(|| Error::Internal("could not get server's socket address".to_string()))?;
+
+    let future = async {
+        if let Err(err) = task_handle.await {
+            if let Ok(reason) = err.try_into_panic() {
+                panic::resume_unwind(reason);
+            }
+        }
+    };
+
+    Ok((address, future))
 }
 
 /// Convenience method to perform an HTTP request to the helper. This includes common
@@ -3233,17 +3238,13 @@ mod tests {
         aggregation_job_continue::test_util::{
             post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
         },
-        aggregator_filter,
+        aggregator_handler,
         collection_job_tests::setup_collection_job_test_case,
-        error_handler, send_request_to_helper, Aggregator, BatchMismatch, Config, Error,
+        send_request_to_helper, Aggregator, BatchMismatch, Config, Error,
     };
     use assert_matches::assert_matches;
     use futures::future::{join_all, try_join_all};
-    use http::{
-        header::{CACHE_CONTROL, CONTENT_TYPE},
-        Method, StatusCode,
-    };
-    use hyper::body;
+    use http::Method;
     use itertools::Itertools;
     use janus_aggregator_core::{
         datastore::{
@@ -3291,12 +3292,14 @@ mod tests {
     use rand::random;
     use reqwest::Client;
     use serde_json::json;
-    use std::{collections::HashSet, io::Cursor, iter, sync::Arc, time::Duration as StdDuration};
-    use warp::{
-        cors::CorsForbidden,
-        filters::BoxedFilter,
-        reply::{Reply, Response},
-        Filter, Rejection,
+    use std::{
+        borrow::Cow, collections::HashSet, io::Cursor, iter, sync::Arc,
+        time::Duration as StdDuration,
+    };
+    use trillium::{KnownHeaderName, Status};
+    use trillium_testing::{
+        prelude::{delete, get, post, put},
+        TestConn,
     };
 
     const DUMMY_VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
@@ -3330,21 +3333,21 @@ mod tests {
 
         let want_hpke_key = task.current_hpke_key().clone();
 
-        let filter =
-            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler =
+            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
         // No task ID provided
-        let mut response = warp::test::request()
-            .path("/hpke_config")
-            .method("GET")
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
-        // The protocol mandates problem type but not HTTP status
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        let mut test_conn = get("/hpke_config").run_async(&handler).await;
+        assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
@@ -3355,18 +3358,21 @@ mod tests {
         );
 
         // Unknown task ID provided
-        let mut response = warp::test::request()
-            .path(&format!("/hpke_config?task_id={unknown_task_id}"))
-            .method("GET")
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
+        let mut test_conn = get(&format!("/hpke_config?task_id={unknown_task_id}"))
+            .run_async(&handler)
+            .await;
         // Expected status and problem type should be per the protocol
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.1
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
@@ -3378,25 +3384,32 @@ mod tests {
         );
 
         // Recognized task ID provided
-        let response = warp::test::request()
-            .path(&format!("/hpke_config?task_id={}", task.id()))
-            .method("GET")
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
+        let mut test_conn = get(&format!("/hpke_config?task_id={}", task.id()))
+            .run_async(&handler)
+            .await;
 
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_eq!(
-            response.headers().get(CACHE_CONTROL).unwrap(),
+            test_conn
+                .response_headers()
+                .get(KnownHeaderName::CacheControl)
+                .unwrap(),
             "max-age=86400"
         );
         assert_eq!(
-            response.headers().get(CONTENT_TYPE).unwrap(),
+            test_conn
+                .response_headers()
+                .get(KnownHeaderName::ContentType)
+                .unwrap(),
             HpkeConfigList::MEDIA_TYPE
         );
 
-        let bytes = body::to_bytes(response.into_body()).await.unwrap();
+        let bytes = test_conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap();
         let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
         assert_eq!(
             hpke_config_list.hpke_configs(),
@@ -3442,21 +3455,21 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter =
-            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler =
+            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
         // Check for appropriate CORS headers in response to a preflight request.
-        let response = warp::test::request()
-            .method("OPTIONS")
-            .path(&format!("/hpke_config?task_id={}", task.id()))
-            .header("origin", "https://example.com/")
-            .header("access-control-request-method", "GET")
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert!(response.status().is_success());
-        let headers = response.headers();
+        let test_conn = TestConn::build(
+            trillium::Method::Options,
+            &format!("/hpke_config?task_id={}", task.id()),
+            (),
+        )
+        .with_request_header(KnownHeaderName::Origin, "https://example.com/")
+        .with_request_header(KnownHeaderName::AccessControlRequestMethod, "GET")
+        .run_async(&handler)
+        .await;
+        assert!(test_conn.status().unwrap().is_success());
+        let headers = test_conn.response_headers();
         assert_eq!(
             headers.get("access-control-allow-origin").unwrap(),
             "https://example.com/"
@@ -3465,18 +3478,14 @@ mod tests {
         assert_eq!(headers.get("access-control-max-age").unwrap(), "86400");
 
         // Check for appropriate CORS headers with a simple GET request.
-        let response = warp::test::request()
-            .method("GET")
-            .path(&format!("/hpke_config?task_id={}", task.id()))
-            .header("origin", "https://example.com/")
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert!(response.status().is_success());
+        let test_conn = get(&format!("/hpke_config?task_id={}", task.id()))
+            .with_request_header(KnownHeaderName::Origin, "https://example.com/")
+            .run_async(&handler)
+            .await;
+        assert!(test_conn.status().unwrap().is_success());
         assert_eq!(
-            response
-                .headers()
+            test_conn
+                .response_headers()
                 .get("access-control-allow-origin")
                 .unwrap(),
             "https://example.com/"
@@ -3524,40 +3533,29 @@ mod tests {
         create_report_with_id(task, report_timestamp, random())
     }
 
-    /// Convenience method to handle interaction with `warp::test` for typical DAP requests.
-    async fn drive_filter(
-        method: Method,
-        path: &str,
-        body: &[u8],
-        filter: &BoxedFilter<(impl Reply + 'static,)>,
-    ) -> Result<Response, Rejection> {
-        warp::test::request()
-            .method(method.as_str())
-            .path(path)
-            .header(CONTENT_TYPE, Report::MEDIA_TYPE)
-            .body(body)
-            .filter(filter)
-            .await
-            .map(|reply| reply.into_response())
-    }
-
     #[tokio::test]
-    async fn upload_filter() {
+    async fn upload_handler() {
         async fn check_response(
-            response: &mut Response,
-            desired_status: StatusCode,
+            test_conn: &mut TestConn,
+            desired_status: Status,
             desired_type: &str,
             desired_title: &str,
             desired_task_id: &TaskId,
         ) {
-            assert_eq!(response.status(), desired_status);
-            let problem_details: serde_json::Value =
-                serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap())
-                    .unwrap();
+            assert_eq!(test_conn.status(), Some(desired_status));
+            let problem_details: serde_json::Value = serde_json::from_slice(
+                &test_conn
+                    .take_response_body()
+                    .unwrap()
+                    .into_bytes()
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
             assert_eq!(
                 problem_details,
                 json!({
-                    "status": desired_status.as_u16(),
+                    "status": desired_status as u16,
                     "type": format!("urn:ietf:params:ppm:dap:error:{desired_type}"),
                     "title": desired_title,
                     "taskid": format!("{desired_task_id}"),
@@ -3581,7 +3579,7 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
         let report = create_report(&task, clock.now());
-        let filter = aggregator_filter(
+        let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock.clone(),
             default_aggregator_config(),
@@ -3590,37 +3588,28 @@ mod tests {
 
         // Upload a report. Do this twice to prove that PUT is idempotent.
         for _ in 0..2 {
-            let response = drive_filter(
-                Method::PUT,
-                task.report_upload_uri().unwrap().path(),
-                &report.get_encoded(),
-                &filter,
-            )
-            .await
-            .unwrap();
+            let mut test_conn = put(task.report_upload_uri().unwrap().path())
+                .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
+                .with_request_body(report.get_encoded())
+                .run_async(&handler)
+                .await;
 
-            assert_eq!(response.status(), StatusCode::OK);
-            assert!(body::to_bytes(response.into_body())
-                .await
-                .unwrap()
-                .is_empty());
+            assert_eq!(test_conn.status(), Some(Status::Ok));
+            assert!(test_conn.take_response_body().is_none());
         }
 
         let accepted_report_id = report.metadata().id();
 
         // Verify that new reports using an existing report ID are rejected with reportRejected
         let duplicate_id_report = create_report_with_id(&task, clock.now(), *accepted_report_id);
-        let mut response = drive_filter(
-            Method::PUT,
-            task.report_upload_uri().unwrap().path(),
-            &duplicate_id_report.get_encoded(),
-            &filter,
-        )
-        .await
-        .unwrap();
+        let mut test_conn = put(task.report_upload_uri().unwrap().path())
+            .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
+            .with_request_body(duplicate_id_report.get_encoded())
+            .run_async(&handler)
+            .await;
         check_response(
-            &mut response,
-            StatusCode::BAD_REQUEST,
+            &mut test_conn,
+            Status::BadRequest,
             "reportRejected",
             "Report could not be processed.",
             task.id(),
@@ -3640,17 +3629,14 @@ mod tests {
             report.public_share().to_vec(),
             report.encrypted_input_shares().to_vec(),
         );
-        let mut response = drive_filter(
-            Method::PUT,
-            task.report_upload_uri().unwrap().path(),
-            &gc_eligible_report.get_encoded(),
-            &filter,
-        )
-        .await
-        .unwrap();
+        let mut test_conn = put(task.report_upload_uri().unwrap().path())
+            .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
+            .with_request_body(gc_eligible_report.get_encoded())
+            .run_async(&handler)
+            .await;
         check_response(
-            &mut response,
-            StatusCode::BAD_REQUEST,
+            &mut test_conn,
+            Status::BadRequest,
             "reportRejected",
             "Report could not be processed.",
             task.id(),
@@ -3663,17 +3649,14 @@ mod tests {
             report.public_share().to_vec(),
             Vec::from([report.encrypted_input_shares()[0].clone()]),
         );
-        let mut response = drive_filter(
-            Method::PUT,
-            task.report_upload_uri().unwrap().path(),
-            &bad_report.get_encoded(),
-            &filter,
-        )
-        .await
-        .unwrap();
+        let mut test_conn = put(task.report_upload_uri().unwrap().path())
+            .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
+            .with_request_body(bad_report.get_encoded())
+            .run_async(&handler)
+            .await;
         check_response(
-            &mut response,
-            StatusCode::BAD_REQUEST,
+            &mut test_conn,
+            Status::BadRequest,
             "unrecognizedMessage",
             "The message type for a response was incorrect or the payload was malformed.",
             task.id(),
@@ -3700,17 +3683,14 @@ mod tests {
                 report.encrypted_input_shares()[1].clone(),
             ]),
         );
-        let mut response = drive_filter(
-            Method::PUT,
-            task.report_upload_uri().unwrap().path(),
-            &bad_report.get_encoded(),
-            &filter,
-        )
-        .await
-        .unwrap();
+        let mut test_conn = put(task.report_upload_uri().unwrap().path())
+            .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
+            .with_request_body(bad_report.get_encoded())
+            .run_async(&handler)
+            .await;
         check_response(
-            &mut response,
-            StatusCode::BAD_REQUEST,
+            &mut test_conn,
+            Status::BadRequest,
             "outdatedConfig",
             "The message was generated using an outdated configuration.",
             task.id(),
@@ -3729,17 +3709,14 @@ mod tests {
             report.public_share().to_vec(),
             report.encrypted_input_shares().to_vec(),
         );
-        let mut response = drive_filter(
-            Method::PUT,
-            task.report_upload_uri().unwrap().path(),
-            &bad_report.get_encoded(),
-            &filter,
-        )
-        .await
-        .unwrap();
+        let mut test_conn = put(task.report_upload_uri().unwrap().path())
+            .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
+            .with_request_body(bad_report.get_encoded())
+            .run_async(&handler)
+            .await;
         check_response(
-            &mut response,
-            StatusCode::BAD_REQUEST,
+            &mut test_conn,
+            Status::BadRequest,
             "reportTooEarly",
             "Report could not be processed because it arrived too early.",
             task.id(),
@@ -3759,17 +3736,14 @@ mod tests {
             &task_expire_soon,
             clock.now().add(&Duration::from_seconds(120)).unwrap(),
         );
-        let mut response = drive_filter(
-            Method::PUT,
-            task_expire_soon.report_upload_uri().unwrap().path(),
-            &report_2.get_encoded(),
-            &filter,
-        )
-        .await
-        .unwrap();
+        let mut test_conn = put(task_expire_soon.report_upload_uri().unwrap().path())
+            .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
+            .with_request_body(report_2.get_encoded())
+            .run_async(&handler)
+            .await;
         check_response(
-            &mut response,
-            StatusCode::BAD_REQUEST,
+            &mut test_conn,
+            Status::BadRequest,
             "reportRejected",
             "Report could not be processed.",
             task_expire_soon.id(),
@@ -3777,18 +3751,18 @@ mod tests {
         .await;
 
         // Check for appropriate CORS headers in response to a preflight request.
-        let response = warp::test::request()
-            .method("OPTIONS")
-            .path(task.report_upload_uri().unwrap().path())
-            .header("origin", "https://example.com/")
-            .header("access-control-request-method", "PUT")
-            .header("access-control-request-headers", "content-type")
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert!(response.status().is_success());
-        let headers = response.headers();
+        let test_conn = TestConn::build(
+            trillium::Method::Options,
+            task.report_upload_uri().unwrap().path(),
+            (),
+        )
+        .with_request_header(KnownHeaderName::Origin, "https://example.com/")
+        .with_request_header(KnownHeaderName::AccessControlRequestMethod, "PUT")
+        .with_request_header(KnownHeaderName::AccessControlRequestHeaders, "content-type")
+        .run_async(&handler)
+        .await;
+        assert!(test_conn.status().unwrap().is_success());
+        let headers = test_conn.response_headers();
         assert_eq!(
             headers.get("access-control-allow-origin").unwrap(),
             "https://example.com/"
@@ -3801,12 +3775,10 @@ mod tests {
         assert_eq!(headers.get("access-control-max-age").unwrap(), "86400");
 
         // Check for appropriate CORS headers in response to the main request.
-        let response = warp::test::request()
-            .method("PUT")
-            .path(task.report_upload_uri().unwrap().path())
-            .header("origin", "https://example.com/")
-            .header(CONTENT_TYPE, Report::MEDIA_TYPE)
-            .body(
+        let test_conn = put(task.report_upload_uri().unwrap().path())
+            .with_request_header(KnownHeaderName::Origin, "https://example.com/")
+            .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
+            .with_request_body(
                 Report::new(
                     ReportMetadata::new(
                         random(),
@@ -3820,14 +3792,12 @@ mod tests {
                 )
                 .get_encoded(),
             )
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert!(response.status().is_success());
+            .run_async(&handler)
+            .await;
+        assert!(test_conn.status().unwrap().is_success());
         assert_eq!(
-            response
-                .headers()
+            test_conn
+                .response_headers()
                 .get("access-control-allow-origin")
                 .unwrap(),
             "https://example.com/"
@@ -3836,7 +3806,7 @@ mod tests {
 
     // Helper should not expose /upload endpoint
     #[tokio::test]
-    async fn upload_filter_helper() {
+    async fn upload_handler_helper() {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
@@ -3852,22 +3822,22 @@ mod tests {
         datastore.put_task(&task).await.unwrap();
         let report = create_report(&task, clock.now());
 
-        let filter =
-            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler =
+            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
-        let (part, body) = warp::test::request()
-            .method("PUT")
-            .path(task.report_upload_uri().unwrap().path())
-            .header(CONTENT_TYPE, Report::MEDIA_TYPE)
-            .body(report.get_encoded())
-            .filter(&filter)
-            .await
+        let mut test_conn = put(task.report_upload_uri().unwrap().path())
+            .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
+            .with_request_body(report.get_encoded())
+            .run_async(&handler)
+            .await;
+
+        assert!(!test_conn.status().unwrap().is_success());
+        let bytes = test_conn
+            .take_response_body()
             .unwrap()
-            .into_response()
-            .into_parts();
-
-        assert!(!part.status.is_success());
-        let bytes = body::to_bytes(body).await.unwrap();
+            .into_bytes()
+            .await
+            .unwrap();
         let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             problem_details,
@@ -3886,7 +3856,7 @@ mod tests {
                 .unwrap()
                 .as_u64()
                 .unwrap(),
-            part.status.as_u16() as u64
+            test_conn.status().unwrap() as u16 as u64
         );
     }
 
@@ -3917,7 +3887,7 @@ mod tests {
         let aggregator = Aggregator::new(
             Arc::clone(&datastore),
             clock.clone(),
-            meter("janus_aggregator"),
+            &meter("janus_aggregator"),
             cfg,
         );
 
@@ -4203,16 +4173,20 @@ mod tests {
             Vec::new(),
         );
 
-        let filter =
-            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler =
+            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
-        let (part, body) = put_aggregation_job(&task, &aggregation_job_id, &request, &filter)
-            .await
-            .into_parts();
+        let mut test_conn =
+            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
 
-        assert!(!part.status.is_success());
-        let bytes = body::to_bytes(body).await.unwrap();
+        assert!(!test_conn.status().unwrap().is_success());
+        let bytes = test_conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap();
         let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             problem_details,
@@ -4231,27 +4205,38 @@ mod tests {
                 .unwrap()
                 .as_u64()
                 .unwrap(),
-            part.status.as_u16() as u64
+            test_conn.status().unwrap() as u16 as u64
         );
 
         // Check that CORS headers don't bleed over to other routes.
-        assert!(part.headers.get("access-control-allow-origin").is_none());
-        assert!(part.headers.get("access-control-allow-methods").is_none());
-        assert!(part.headers.get("access-control-max-age").is_none());
+        assert!(test_conn
+            .response_headers()
+            .get("access-control-allow-origin")
+            .is_none());
+        assert!(test_conn
+            .response_headers()
+            .get("access-control-allow-methods")
+            .is_none());
+        assert!(test_conn
+            .response_headers()
+            .get("access-control-max-age")
+            .is_none());
 
-        let result = warp::test::request()
-            .method("OPTIONS")
-            .path(
-                task.aggregation_job_uri(&aggregation_job_id)
-                    .unwrap()
-                    .path(),
-            )
-            .header("origin", "https://example.com/")
-            .header("access-control-request-method", "PUT")
-            .filter(&filter)
-            .await
-            .map(Reply::into_response);
-        assert_matches!(result, Err(rejection) => rejection.find::<CorsForbidden>().unwrap());
+        let test_conn = TestConn::build(
+            trillium::Method::Options,
+            task.aggregation_job_uri(&aggregation_job_id)
+                .unwrap()
+                .path(),
+            (),
+        )
+        .with_request_header(KnownHeaderName::Origin, "https://example.com/")
+        .with_request_header(KnownHeaderName::AccessControlRequestMethod, "PUT")
+        .run_async(&handler)
+        .await;
+        assert!(test_conn
+            .response_headers()
+            .get(KnownHeaderName::AccessControlAllowMethods)
+            .is_none());
     }
 
     #[tokio::test]
@@ -4276,32 +4261,36 @@ mod tests {
             Vec::new(),
         );
 
-        let filter =
-            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler =
+            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
-        let (parts, body) = warp::test::request()
-            .method("PUT")
-            .path(
-                task.aggregation_job_uri(&aggregation_job_id)
-                    .unwrap()
-                    .path(),
-            )
-            .header("DAP-Auth-Token", random::<AuthenticationToken>().as_ref())
-            .header(
-                CONTENT_TYPE,
-                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
+        let mut test_conn = put(task
+            .aggregation_job_uri(&aggregation_job_id)
             .unwrap()
-            .into_response()
-            .into_parts();
+            .path())
+        .with_request_header(
+            "DAP-Auth-Token",
+            random::<AuthenticationToken>().as_ref().to_owned(),
+        )
+        .with_request_header(
+            KnownHeaderName::ContentType,
+            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+        )
+        .with_request_body(request.get_encoded())
+        .run_async(&handler)
+        .await;
 
         let want_status = 400;
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
@@ -4311,29 +4300,30 @@ mod tests {
                 "taskid": format!("{}", task.id()),
             })
         );
-        assert_eq!(want_status, parts.status.as_u16());
+        assert_eq!(want_status, test_conn.status().unwrap() as u16);
 
-        let (parts, body) = warp::test::request()
-            .method("PUT")
-            .path(
-                task.aggregation_job_uri(&aggregation_job_id)
-                    .unwrap()
-                    .path(),
-            )
-            .header(
-                CONTENT_TYPE,
-                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
+        let mut test_conn = put(task
+            .aggregation_job_uri(&aggregation_job_id)
             .unwrap()
-            .into_response()
-            .into_parts();
+            .path())
+        .with_request_header(
+            KnownHeaderName::ContentType,
+            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+        )
+        .with_request_body(request.get_encoded())
+        .run_async(&handler)
+        .await;
 
         let want_status = 400;
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
@@ -4343,7 +4333,7 @@ mod tests {
                 "taskid": format!("{}", task.id()),
             })
         );
-        assert_eq!(want_status, parts.status.as_u16());
+        assert_eq!(want_status, test_conn.status().unwrap() as u16);
     }
 
     #[tokio::test]
@@ -4723,19 +4713,27 @@ mod tests {
 
         // Create aggregator filter, send request, and parse response. Do this twice to prove that
         // the request is idempotent.
-        let filter =
-            aggregator_filter(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
+        let handler =
+            aggregator_handler(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         for _ in 0..2 {
-            let mut response =
-                put_aggregation_job(&task, &aggregation_job_id, &request, &filter).await;
-            assert_eq!(response.status(), StatusCode::OK);
+            let mut test_conn =
+                put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+            assert_eq!(test_conn.status(), Some(Status::Ok));
             assert_eq!(
-                response.headers().get(CONTENT_TYPE).unwrap(),
+                test_conn
+                    .response_headers()
+                    .get(KnownHeaderName::ContentType)
+                    .unwrap(),
                 AggregationJobResp::MEDIA_TYPE
             );
-            let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
+            let body_bytes = test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap();
             let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
             // Validate response.
@@ -4867,10 +4865,15 @@ mod tests {
             Vec::from([mutated_timestamp_report_share.clone()]),
         );
 
-        let mut response =
-            put_aggregation_job(&test_case.task, &random(), &request, &test_case.filter).await;
-        assert_eq!(response.status(), StatusCode::OK);
-        let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
+        let mut test_conn =
+            put_aggregation_job(&test_case.task, &random(), &request, &test_case.handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let body_bytes = test_conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap();
         let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
         assert_eq!(aggregate_resp.prepare_steps().len(), 1);
@@ -4943,17 +4946,26 @@ mod tests {
         );
 
         // Create aggregator filter, send request, and parse response.
-        let filter =
-            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler =
+            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
-        let mut response = put_aggregation_job(&task, &aggregation_job_id, &request, &filter).await;
-        assert_eq!(response.status(), StatusCode::OK);
+        let mut test_conn =
+            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_eq!(
-            response.headers().get(CONTENT_TYPE).unwrap(),
+            test_conn
+                .response_headers()
+                .get(KnownHeaderName::ContentType)
+                .unwrap(),
             AggregationJobResp::MEDIA_TYPE
         );
-        let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
+        let body_bytes = test_conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap();
         let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
@@ -5006,17 +5018,26 @@ mod tests {
         );
 
         // Create aggregator filter, send request, and parse response.
-        let filter =
-            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler =
+            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
-        let mut response = put_aggregation_job(&task, &aggregation_job_id, &request, &filter).await;
-        assert_eq!(response.status(), StatusCode::OK);
+        let mut test_conn =
+            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_eq!(
-            response.headers().get(CONTENT_TYPE).unwrap(),
+            test_conn
+                .response_headers()
+                .get(KnownHeaderName::ContentType)
+                .unwrap(),
             AggregationJobResp::MEDIA_TYPE
         );
-        let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
+        let body_bytes = test_conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap();
         let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
@@ -5066,17 +5087,23 @@ mod tests {
             Vec::from([report_share.clone(), report_share]),
         );
 
-        let filter =
-            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler =
+            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
-        let (parts, body) = put_aggregation_job(&task, &aggregation_job_id, &request, &filter)
-            .await
-            .into_parts();
+        let mut test_conn =
+            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
 
         let want_status = 400;
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
@@ -5086,7 +5113,7 @@ mod tests {
                 "taskid": format!("{}", task.id()),
             })
         );
-        assert_eq!(want_status, parts.status.as_u16());
+        assert_eq!(want_status, test_conn.status().unwrap());
     }
 
     #[tokio::test]
@@ -5315,12 +5342,12 @@ mod tests {
             ]),
         );
 
-        // Create aggregator filter, send request, and parse response.
-        let filter =
-            aggregator_filter(datastore.clone(), clock, default_aggregator_config()).unwrap();
+        // Create aggregator handler, send request, and parse response.
+        let handler =
+            aggregator_handler(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
 
         let aggregate_resp =
-            post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &filter).await;
+            post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
 
         // Validate response.
         assert_eq!(
@@ -5634,16 +5661,16 @@ mod tests {
             ]),
         );
 
-        // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(
-            datastore.clone(),
+        // Create aggregator handler, send request, and parse response.
+        let handler = aggregator_handler(
+            Arc::clone(&datastore),
             first_batch_interval_clock.clone(),
             default_aggregator_config(),
         )
         .unwrap();
 
         let _ =
-            post_aggregation_job_and_decode(&task, &aggregation_job_id_0, &request, &filter).await;
+            post_aggregation_job_and_decode(&task, &aggregation_job_id_0, &request, &handler).await;
 
         // Map the batch aggregation ordinal value to 0, as it may vary due to sharding.
         let batch_aggregations: Vec<_> = datastore
@@ -5934,16 +5961,16 @@ mod tests {
             ]),
         );
 
-        // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(
-            datastore.clone(),
+        // Create aggregator handler, send request, and parse response.
+        let handler = aggregator_handler(
+            Arc::clone(&datastore),
             first_batch_interval_clock,
             default_aggregator_config(),
         )
         .unwrap();
 
         let _ =
-            post_aggregation_job_and_decode(&task, &aggregation_job_id_1, &request, &filter).await;
+            post_aggregation_job_and_decode(&task, &aggregation_job_id_1, &request, &handler).await;
 
         // Map the batch aggregation ordinal value to 0, as it may vary due to sharding, and merge
         // batch aggregations over the same interval. (the task & aggregation parameter will always
@@ -6138,15 +6165,15 @@ mod tests {
             )]),
         );
 
-        let filter =
-            aggregator_filter(datastore.clone(), clock, default_aggregator_config()).unwrap();
+        let handler =
+            aggregator_handler(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
 
         post_aggregation_job_expecting_error(
             &task,
             &aggregation_job_id,
             &request,
-            &filter,
-            StatusCode::BAD_REQUEST,
+            &handler,
+            Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
             "The message type for a response was incorrect or the payload was malformed.",
         )
@@ -6238,11 +6265,11 @@ mod tests {
             )]),
         );
 
-        let filter =
-            aggregator_filter(datastore.clone(), clock, default_aggregator_config()).unwrap();
+        let handler =
+            aggregator_handler(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
 
         let aggregate_resp =
-            post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &filter).await;
+            post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
         assert_eq!(
             aggregate_resp,
             AggregationJobResp::new(Vec::from([PrepareStep::new(
@@ -6387,15 +6414,15 @@ mod tests {
             )]),
         );
 
-        let filter =
-            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler =
+            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
         post_aggregation_job_expecting_error(
             &task,
             &aggregation_job_id,
             &request,
-            &filter,
-            StatusCode::BAD_REQUEST,
+            &handler,
+            Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
             "The message type for a response was incorrect or the payload was malformed.",
         )
@@ -6530,15 +6557,15 @@ mod tests {
             ]),
         );
 
-        let filter =
-            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler =
+            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
         post_aggregation_job_expecting_error(
             &task,
             &aggregation_job_id,
             &request,
-            &filter,
-            StatusCode::BAD_REQUEST,
+            &handler,
+            Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
             "The message type for a response was incorrect or the payload was malformed.",
         )
@@ -6623,15 +6650,15 @@ mod tests {
             )]),
         );
 
-        let filter =
-            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler =
+            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
         post_aggregation_job_expecting_error(
             &task,
             &aggregation_job_id,
             &request,
-            &filter,
-            StatusCode::BAD_REQUEST,
+            &handler,
+            Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
             "The message type for a response was incorrect or the payload was malformed.",
         )
@@ -6654,18 +6681,24 @@ mod tests {
             dummy_vdaf::AggregationParam::default().get_encoded(),
         );
 
-        let (parts, body) = test_case
+        let mut test_conn = test_case
             .put_collection_job_with_auth_token(&collection_job_id, &request, Some(&random()))
-            .await
-            .into_parts();
+            .await;
 
-        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
                 "taskid": format!("{}", test_case.task.id()),
@@ -6690,18 +6723,24 @@ mod tests {
             dummy_vdaf::AggregationParam::default().get_encoded(),
         );
 
-        let (parts, body) = test_case
+        let mut test_conn = test_case
             .put_collection_job(&collection_job_id, &request)
-            .await
-            .into_parts();
+            .await;
 
-        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
                 "title": "The batch implied by the query is invalid.",
                 "taskid": format!("{}", test_case.task.id()),
@@ -6727,19 +6766,25 @@ mod tests {
             Vec::from([0u8, 0u8]),
         );
 
-        let (parts, body) = test_case
+        let mut test_conn = test_case
             .put_collection_job(&collection_job_id, &request)
-            .await
-            .into_parts();
+            .await;
 
         // Collect request will be rejected because the aggregation parameter can't be decoded
-        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
             })
@@ -6760,8 +6805,8 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter =
-            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler =
+            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
         let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
@@ -6775,29 +6820,34 @@ mod tests {
             dummy_vdaf::AggregationParam::default().get_encoded(),
         );
 
-        let (parts, body) = warp::test::request()
-            .method("PUT")
-            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
-            .header(
+        let mut test_conn = put(task.collection_job_uri(&collection_job_id).unwrap().path())
+            .with_request_header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_ref(),
+                task.primary_collector_auth_token().as_ref().to_owned(),
             )
-            .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response()
-            .into_parts();
+            .with_request_header(
+                KnownHeaderName::ContentType,
+                CollectionReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .with_request_body(request.get_encoded())
+            .run_async(&handler)
+            .await;
 
         // Collect request will be rejected because there are no reports in the batch interval
-        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
                 "title": "The number of reports included in the batch is invalid.",
                 "taskid": format!("{}", task.id()),
@@ -6821,26 +6871,33 @@ mod tests {
         );
 
         // Incorrect authentication token.
-        let mut response = test_case
+        let mut test_conn = test_case
             .put_collection_job_with_auth_token(&collection_job_id, &req, Some(&random()))
             .await;
 
-        let want_status = StatusCode::BAD_REQUEST;
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        let want_status = Status::BadRequest;
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": want_status.as_u16(),
+                "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
                 "taskid": format!("{}", test_case.task.id()),
             })
         );
-        assert_eq!(want_status, response.status());
+        assert_eq!(want_status, test_conn.status().unwrap());
 
         // Aggregator authentication token.
-        let mut response = test_case
+        let mut test_conn = test_case
             .put_collection_job_with_auth_token(
                 &collection_job_id,
                 &req,
@@ -6848,38 +6905,52 @@ mod tests {
             )
             .await;
 
-        let want_status = StatusCode::BAD_REQUEST;
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        let want_status = Status::BadRequest;
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": want_status.as_u16(),
+                "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
                 "taskid": format!("{}", test_case.task.id()),
             })
         );
-        assert_eq!(want_status, response.status());
+        assert_eq!(want_status, test_conn.status().unwrap());
 
         // Missing authentication token.
-        let mut response = test_case
+        let mut test_conn = test_case
             .put_collection_job_with_auth_token(&collection_job_id, &req, None)
             .await;
 
-        let want_status = StatusCode::BAD_REQUEST;
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        let want_status = Status::BadRequest;
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": want_status.as_u16(),
+                "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
                 "taskid": format!("{}", test_case.task.id()),
             })
         );
-        assert_eq!(want_status, response.status());
+        assert_eq!(want_status, test_conn.status().unwrap());
     }
 
     #[tokio::test]
@@ -6898,72 +6969,92 @@ mod tests {
             dummy_vdaf::AggregationParam::default().get_encoded(),
         );
 
-        let response = test_case
+        let test_conn = test_case
             .put_collection_job(&collection_job_id, &request)
-            .await
-            .into_response();
+            .await;
 
-        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(test_conn.status().unwrap(), Status::Created);
 
         // Incorrect authentication token.
-        let mut response = test_case
+        let mut test_conn = test_case
             .post_collection_job_with_auth_token(&collection_job_id, Some(&random()))
             .await;
 
-        let want_status = StatusCode::BAD_REQUEST;
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        let want_status = Status::BadRequest;
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": want_status.as_u16(),
+                "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
                 "taskid": format!("{}", test_case.task.id()),
             })
         );
-        assert_eq!(want_status, response.status());
+        assert_eq!(want_status, test_conn.status().unwrap());
 
         // Aggregator authentication token.
-        let mut response = test_case
+        let mut test_conn = test_case
             .post_collection_job_with_auth_token(
                 &collection_job_id,
                 Some(test_case.task.primary_aggregator_auth_token()),
             )
             .await;
 
-        let want_status = StatusCode::BAD_REQUEST;
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        let want_status = Status::BadRequest;
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": want_status.as_u16(),
+                "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
                 "taskid": format!("{}", test_case.task.id()),
             })
         );
-        assert_eq!(want_status, response.status());
+        assert_eq!(want_status, test_conn.status().unwrap());
 
         // Missing authentication token.
-        let mut response = test_case
+        let mut test_conn = test_case
             .post_collection_job_with_auth_token(&collection_job_id, None)
             .await;
 
-        let want_status = StatusCode::BAD_REQUEST;
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        let want_status = Status::BadRequest;
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": want_status.as_u16(),
+                "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
                 "taskid": format!("{}", test_case.task.id()),
             })
         );
-        assert_eq!(want_status, response.status());
+        assert_eq!(want_status, test_conn.status().unwrap());
     }
 
     #[tokio::test]
@@ -6985,15 +7076,14 @@ mod tests {
             dummy_vdaf::AggregationParam::default().get_encoded(),
         );
 
-        let response = test_case
+        let test_conn = test_case
             .put_collection_job(&collection_job_id, &request)
-            .await
-            .into_response();
+            .await;
 
-        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(test_conn.status(), Some(Status::Created));
 
-        let collection_job_response = test_case.post_collection_job(&collection_job_id).await;
-        assert_eq!(collection_job_response.status(), StatusCode::ACCEPTED);
+        let test_conn = test_case.post_collection_job(&collection_job_id).await;
+        assert_eq!(test_conn.status(), Some(Status::Accepted));
 
         // Update the collection job with the aggregate shares and some aggregation jobs. collection
         // job should now be complete.
@@ -7090,17 +7180,22 @@ mod tests {
             .await
             .unwrap();
 
-        let (parts, body) = test_case
-            .post_collection_job(&collection_job_id)
-            .await
-            .into_parts();
+        let mut test_conn = test_case.post_collection_job(&collection_job_id).await;
 
-        assert_eq!(parts.status, StatusCode::OK);
+        assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_eq!(
-            parts.headers.get(CONTENT_TYPE).unwrap(),
+            test_conn
+                .response_headers()
+                .get(KnownHeaderName::ContentType)
+                .unwrap(),
             Collection::<TimeInterval>::MEDIA_TYPE
         );
-        let body_bytes = body::to_bytes(body).await.unwrap();
+        let body_bytes = test_conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap();
         let collect_resp = Collection::<TimeInterval>::get_decoded(body_bytes.as_ref()).unwrap();
 
         assert_eq!(collect_resp.report_count(), 12);
@@ -7157,21 +7252,21 @@ mod tests {
 
         let no_such_collection_job_id: CollectionJobId = random();
 
-        let response = warp::test::request()
-            .method("POST")
-            .path(&format!(
-                "/tasks/{}/collection_jobs/{no_such_collection_job_id}",
-                test_case.task.id(),
-            ))
-            .header(
-                "DAP-Auth-Token",
-                test_case.task.primary_collector_auth_token().as_ref(),
-            )
-            .filter(&test_case.filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let test_conn = post(&format!(
+            "/tasks/{}/collection_jobs/{no_such_collection_job_id}",
+            test_case.task.id()
+        ))
+        .with_request_header(
+            "DAP-Auth-Token",
+            test_case
+                .task
+                .primary_collector_auth_token()
+                .as_ref()
+                .to_owned(),
+        )
+        .run_async(&test_case.handler)
+        .await;
+        assert_eq!(test_conn.status(), Some(Status::NotFound));
     }
 
     #[tokio::test]
@@ -7215,9 +7310,9 @@ mod tests {
             dummy_vdaf::AggregationParam(0).get_encoded(),
         );
 
-        let response = test_case.put_collection_job(&random(), &request).await;
+        let test_conn = test_case.put_collection_job(&random(), &request).await;
 
-        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(test_conn.status(), Some(Status::Created));
 
         // This request will not be allowed due to the query count already being consumed.
         let invalid_request = CollectionReq::new(
@@ -7225,17 +7320,23 @@ mod tests {
             dummy_vdaf::AggregationParam(1).get_encoded(),
         );
 
-        let (parts, body) = test_case
+        let mut test_conn = test_case
             .put_collection_job(&random(), &invalid_request)
-            .await
-            .into_parts();
-        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+            .await;
+        assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes",
                 "title": "The batch described by the query has been queried too many times.",
                 "taskid": format!("{}", test_case.task.id()),
@@ -7291,9 +7392,9 @@ mod tests {
             dummy_vdaf::AggregationParam(0).get_encoded(),
         );
 
-        let response = test_case.put_collection_job(&random(), &request).await;
+        let test_conn = test_case.put_collection_job(&random(), &request).await;
 
-        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(test_conn.status(), Some(Status::Created));
 
         // This request will not be allowed due to overlapping with the previous request.
         let invalid_request = CollectionReq::new(
@@ -7301,17 +7402,23 @@ mod tests {
             dummy_vdaf::AggregationParam(1).get_encoded(),
         );
 
-        let (parts, body) = test_case
+        let mut test_conn = test_case
             .put_collection_job(&random(), &invalid_request)
-            .await
-            .into_parts();
-        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+            .await;
+        assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
                 "title": "The queried batch overlaps with a previously queried batch.",
                 "taskid": format!("{}", test_case.task.id()),
@@ -7331,24 +7438,24 @@ mod tests {
         let collection_job_id: CollectionJobId = random();
 
         // Try to delete a collection job that doesn't exist
-        let delete_job_response = warp::test::request()
-            .method("DELETE")
-            .path(
-                test_case
-                    .task
-                    .collection_job_uri(&collection_job_id)
-                    .unwrap()
-                    .path(),
-            )
-            .header(
-                "DAP-Auth-Token",
-                test_case.task.primary_collector_auth_token().as_ref(),
-            )
-            .filter(&test_case.filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert_eq!(delete_job_response.status(), StatusCode::NOT_FOUND);
+        let test_conn = delete(
+            test_case
+                .task
+                .collection_job_uri(&collection_job_id)
+                .unwrap()
+                .path(),
+        )
+        .with_request_header(
+            "DAP-Auth-Token",
+            test_case
+                .task
+                .primary_collector_auth_token()
+                .as_ref()
+                .to_owned(),
+        )
+        .run_async(&test_case.handler)
+        .await;
+        assert_eq!(test_conn.status(), Some(Status::NotFound));
 
         // Create a collection job
         let request = CollectionReq::new(
@@ -7356,35 +7463,35 @@ mod tests {
             dummy_vdaf::AggregationParam::default().get_encoded(),
         );
 
-        let collect_response = test_case
+        let test_conn = test_case
             .put_collection_job(&collection_job_id, &request)
             .await;
 
-        assert_eq!(collect_response.status(), StatusCode::CREATED);
+        assert_eq!(test_conn.status(), Some(Status::Created));
 
         // Cancel the job
-        let delete_job_response = warp::test::request()
-            .method("DELETE")
-            .path(
-                test_case
-                    .task
-                    .collection_job_uri(&collection_job_id)
-                    .unwrap()
-                    .path(),
-            )
-            .header(
-                "DAP-Auth-Token",
-                test_case.task.primary_collector_auth_token().as_ref(),
-            )
-            .filter(&test_case.filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert_eq!(delete_job_response.status(), StatusCode::NO_CONTENT);
+        let test_conn = delete(
+            test_case
+                .task
+                .collection_job_uri(&collection_job_id)
+                .unwrap()
+                .path(),
+        )
+        .with_request_header(
+            "DAP-Auth-Token",
+            test_case
+                .task
+                .primary_collector_auth_token()
+                .as_ref()
+                .to_owned(),
+        )
+        .run_async(&test_case.handler)
+        .await;
+        assert_eq!(test_conn.status(), Some(Status::NoContent));
 
         // Get the job again
-        let get_response = test_case.post_collection_job(&collection_job_id).await;
-        assert_eq!(get_response.status(), StatusCode::NO_CONTENT);
+        let test_conn = test_case.post_collection_job(&collection_job_id).await;
+        assert_eq!(test_conn.status(), Some(Status::NoContent));
     }
 
     #[tokio::test]
@@ -7400,8 +7507,8 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter =
-            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler =
+            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
         let request = AggregateShareReq::new(
             BatchSelector::new_time_interval(
@@ -7412,28 +7519,33 @@ mod tests {
             ReportIdChecksum::default(),
         );
 
-        let (parts, body) = warp::test::request()
-            .method("POST")
-            .path(task.aggregate_shares_uri().unwrap().path())
-            .header(
+        let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
+            .with_request_header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref(),
+                task.primary_aggregator_auth_token().as_ref().to_owned(),
             )
-            .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response()
-            .into_parts();
+            .with_request_header(
+                KnownHeaderName::ContentType,
+                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .with_request_body(request.get_encoded())
+            .run_async(&handler)
+            .await;
 
-        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
                 "taskid": format!("{}", task.id()),
@@ -7456,7 +7568,7 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(
+        let handler = aggregator_handler(
             Arc::new(datastore),
             clock.clone(),
             default_aggregator_config(),
@@ -7479,28 +7591,33 @@ mod tests {
 
         // Test that a request for an invalid batch fails. (Specifically, the batch interval is too
         // small.)
-        let (parts, body) = warp::test::request()
-            .method("POST")
-            .header(
+        let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
+            .with_request_header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref(),
+                task.primary_aggregator_auth_token().as_ref().to_owned(),
             )
-            .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
-            .path(task.aggregate_shares_uri().unwrap().path())
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response()
-            .into_parts();
+            .with_request_header(
+                KnownHeaderName::ContentType,
+                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .with_request_body(request.get_encoded())
+            .run_async(&handler)
+            .await;
 
-        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
                 "title": "The batch implied by the query is invalid.",
                 "taskid": format!("{}", task.id()),
@@ -7508,15 +7625,16 @@ mod tests {
         );
 
         // Test that a request for a too-old batch fails.
-        let (parts, _) = warp::test::request()
-            .method("POST")
-            .header(
+        let test_conn = post(task.aggregate_shares_uri().unwrap().path())
+            .with_request_header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref(),
+                task.primary_aggregator_auth_token().as_ref().to_owned(),
             )
-            .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
-            .path(task.aggregate_shares_uri().unwrap().path())
-            .body(
+            .with_request_header(
+                KnownHeaderName::ContentType,
+                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .with_request_body(
                 AggregateShareReq::new(
                     BatchSelector::new_time_interval(
                         Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision())
@@ -7528,13 +7646,10 @@ mod tests {
                 )
                 .get_encoded(),
             )
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response()
-            .into_parts();
+            .run_async(&handler)
+            .await;
 
-        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        assert_eq!(test_conn.status(), Some(Status::BadRequest));
     }
 
     #[tokio::test]
@@ -7555,8 +7670,8 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter =
-            aggregator_filter(datastore.clone(), clock, default_aggregator_config()).unwrap();
+        let handler =
+            aggregator_handler(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
 
         // There are no batch aggregations in the datastore yet
         let request = AggregateShareReq::new(
@@ -7568,28 +7683,33 @@ mod tests {
             ReportIdChecksum::default(),
         );
 
-        let (parts, body) = warp::test::request()
-            .method("POST")
-            .path(task.aggregate_shares_uri().unwrap().path())
-            .header(
+        let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
+            .with_request_header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref(),
+                task.primary_aggregator_auth_token().as_ref().to_owned(),
             )
-            .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response()
-            .into_parts();
+            .with_request_header(
+                KnownHeaderName::ContentType,
+                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .with_request_body(request.get_encoded())
+            .run_async(&handler)
+            .await;
 
-        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
                 "title": "The number of reports included in the batch is invalid.",
                 "taskid": format!("{}", task.id()),
@@ -7709,28 +7829,33 @@ mod tests {
             5,
             ReportIdChecksum::default(),
         );
-        let (parts, body) = warp::test::request()
-            .method("POST")
-            .path(task.aggregate_shares_uri().unwrap().path())
-            .header(
+        let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
+            .with_request_header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref(),
+                task.primary_aggregator_auth_token().as_ref().to_owned(),
             )
-            .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response()
-            .into_parts();
+            .with_request_header(
+                KnownHeaderName::ContentType,
+                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .with_request_body(request.get_encoded())
+            .run_async(&handler)
+            .await;
 
-        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
                 "title": "The number of reports included in the batch is invalid.",
                 "taskid": format!("{}", task.id()),
@@ -7766,28 +7891,33 @@ mod tests {
                 ReportIdChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
             ),
         ] {
-            let (parts, body) = warp::test::request()
-                .method("POST")
-                .path(task.aggregate_shares_uri().unwrap().path())
-                .header(
+            let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
+                .with_request_header(
                     "DAP-Auth-Token",
-                    task.primary_aggregator_auth_token().as_ref(),
+                    task.primary_aggregator_auth_token().as_ref().to_owned(),
                 )
-                .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
-                .body(misaligned_request.get_encoded())
-                .filter(&filter)
-                .await
-                .unwrap()
-                .into_response()
-                .into_parts();
+                .with_request_header(
+                    KnownHeaderName::ContentType,
+                    AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
+                )
+                .with_request_body(misaligned_request.get_encoded())
+                .run_async(&handler)
+                .await;
 
-            assert_eq!(parts.status, StatusCode::BAD_REQUEST);
-            let problem_details: serde_json::Value =
-                serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+            assert_eq!(test_conn.status(), Some(Status::BadRequest));
+            let problem_details: serde_json::Value = serde_json::from_slice(
+                &test_conn
+                    .take_response_body()
+                    .unwrap()
+                    .into_bytes()
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
             assert_eq!(
                 problem_details,
                 json!({
-                    "status": StatusCode::BAD_REQUEST.as_u16(),
+                    "status": Status::BadRequest as u16,
                     "type": "urn:ietf:params:ppm:dap:error:batchMismatch",
                     "title": "Leader and helper disagree on reports aggregated in a batch.",
                     "taskid": format!("{}", task.id()),
@@ -7835,32 +7965,38 @@ mod tests {
             // Request the aggregate share multiple times. If the request parameters don't change,
             // then there is no query count violation and all requests should succeed.
             for iteration in 0..3 {
-                let (parts, body) = warp::test::request()
-                    .method("POST")
-                    .path(task.aggregate_shares_uri().unwrap().path())
-                    .header(
+                let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
+                    .with_request_header(
                         "DAP-Auth-Token",
-                        task.primary_aggregator_auth_token().as_ref(),
+                        task.primary_aggregator_auth_token().as_ref().to_owned(),
                     )
-                    .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
-                    .body(request.get_encoded())
-                    .filter(&filter)
-                    .await
-                    .unwrap()
-                    .into_response()
-                    .into_parts();
+                    .with_request_header(
+                        KnownHeaderName::ContentType,
+                        AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
+                    )
+                    .with_request_body(request.get_encoded())
+                    .run_async(&handler)
+                    .await;
 
                 assert_eq!(
-                    parts.status,
-                    StatusCode::OK,
+                    test_conn.status(),
+                    Some(Status::Ok),
                     "test case: {label:?}, iteration: {iteration}"
                 );
                 assert_eq!(
-                    parts.headers.get(CONTENT_TYPE).unwrap(),
+                    test_conn
+                        .response_headers()
+                        .get(KnownHeaderName::ContentType)
+                        .unwrap(),
                     AggregateShareMessage::MEDIA_TYPE,
                     "test case: {label:?}, iteration: {iteration}"
                 );
-                let body_bytes = body::to_bytes(body).await.unwrap();
+                let body_bytes = test_conn
+                    .take_response_body()
+                    .unwrap()
+                    .into_bytes()
+                    .await
+                    .unwrap();
                 let aggregate_share_resp = AggregateShareMessage::get_decoded(&body_bytes).unwrap();
 
                 let aggregate_share = hpke::open(
@@ -7901,26 +8037,32 @@ mod tests {
             20,
             ReportIdChecksum::get_decoded(&[8 ^ 4 ^ 3 ^ 2; 32]).unwrap(),
         );
-        let mut resp = warp::test::request()
-            .method("POST")
-            .path(task.aggregate_shares_uri().unwrap().path())
-            .header(
+        let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
+            .with_request_header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref(),
+                task.primary_aggregator_auth_token().as_ref().to_owned(),
             )
-            .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
-            .body(all_batch_request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(resp.body_mut()).await.unwrap()).unwrap();
+            .with_request_header(
+                KnownHeaderName::ContentType,
+                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .with_request_body(all_batch_request.get_encoded())
+            .run_async(&handler)
+            .await;
+        assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        let problem_details: serde_json::Value = serde_json::from_slice(
+            &test_conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
                 "title": "The queried batch overlaps with a previously queried batch.",
                 "taskid": format!("{}", task.id()),
@@ -7955,26 +8097,32 @@ mod tests {
                 ReportIdChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
             ),
         ] {
-            let mut resp = warp::test::request()
-                .method("POST")
-                .path(task.aggregate_shares_uri().unwrap().path())
-                .header(
+            let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
+                .with_request_header(
                     "DAP-Auth-Token",
-                    task.primary_aggregator_auth_token().as_ref(),
+                    task.primary_aggregator_auth_token().as_ref().to_owned(),
                 )
-                .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
-                .body(query_count_violation_request.get_encoded())
-                .filter(&filter)
-                .await
-                .unwrap()
-                .into_response();
-            assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-            let problem_details: serde_json::Value =
-                serde_json::from_slice(&body::to_bytes(resp.body_mut()).await.unwrap()).unwrap();
+                .with_request_header(
+                    KnownHeaderName::ContentType,
+                    AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
+                )
+                .with_request_body(query_count_violation_request.get_encoded())
+                .run_async(&handler)
+                .await;
+            assert_eq!(test_conn.status(), Some(Status::BadRequest));
+            let problem_details: serde_json::Value = serde_json::from_slice(
+                &test_conn
+                    .take_response_body()
+                    .unwrap()
+                    .into_bytes()
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
             assert_eq!(
                 problem_details,
                 json!({
-                    "status": StatusCode::BAD_REQUEST.as_u16(),
+                    "status": Status::BadRequest as u16,
                     "type": "urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes",
                     "title": "The batch described by the query has been queried too many times.",
                     "taskid": format!("{}", task.id()),
@@ -8046,7 +8194,6 @@ mod tests {
     #[tokio::test]
     async fn problem_details_round_trip() {
         let meter = opentelemetry::global::meter("");
-        let response_histogram = meter.f64_histogram("janus_aggregator_response_time").init();
         let request_histogram = meter
             .f64_histogram("janus_http_request_duration_seconds")
             .init();
@@ -8157,30 +8304,24 @@ mod tests {
             .into_iter()
             .map(|test_case| {
                 let request_histogram = request_histogram.clone();
-                let response_histogram = response_histogram.clone();
                 async move {
-                    // Run error_handler() on the given error, and capture its response.
+                    // Run the handler implementation of the given error, and capture its response.
                     let error_factory = Arc::new(test_case.error_factory);
-                    let base_filter = warp::post().map({
-                        let error_factory = Arc::clone(&error_factory);
-                        move || -> Result<Response, Arc<Error>> { Err(Arc::new(error_factory())) }
-                    });
-                    let wrapped_filter = base_filter.with(warp::wrap_fn(error_handler(
-                        response_histogram.clone(),
-                        "test",
-                    )));
-                    let response = warp::test::request()
-                        .method("POST")
-                        .reply(&wrapped_filter)
-                        .await;
+                    let error = error_factory();
+                    let mut test_conn = post("/").run_async(&error).await;
+                    let body = if let Some(body) = test_conn.take_response_body() {
+                        body.into_bytes().await.unwrap()
+                    } else {
+                        Cow::from([].as_slice())
+                    };
 
                     // Serve the response via mockito, and run it through post_to_helper's error handling.
                     let mut server = mockito::Server::new_async().await;
                     let error_mock = server
                         .mock("POST", "/")
-                        .with_status(response.status().as_u16().into())
+                        .with_status(test_conn.status().unwrap() as u16 as usize)
                         .with_header("Content-Type", "application/problem+json")
-                        .with_body(response.body())
+                        .with_body(body)
                         .create_async()
                         .await;
                     let actual_error = send_request_to_helper(

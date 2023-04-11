@@ -28,6 +28,7 @@ version = "0.4.2"
 # https://docs.rs/chrono/latest/chrono/#duration
 chrono = { version = "0.4", default-features = false }
 janus_aggregator = { version = "0.4", path = "aggregator" }
+janus_aggregator_api = { version = "0.4", path = "aggregator_api" }
 janus_aggregator_core = { version = "0.4", path = "aggregator_core" }
 janus_build_script_utils = { version = "0.4", path = "build_script_utils" }
 janus_client = { version = "0.4", path = "client" }
