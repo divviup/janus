@@ -2,7 +2,7 @@ use anyhow::Context;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
 use janus_aggregator::{
-    aggregator::{self, aggregator_handler},
+    aggregator::{self, http_handlers::aggregator_handler},
     binary_utils::{janus_main, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
 };
