@@ -57,11 +57,7 @@ tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"],
 [dev-dependencies]
 hex = { version = "0.4", features = ["serde"] }  # ensure this remains compatible with the non-dev dependency
 janus_core = { path = ".", features = ["test-util"] }
-# Enable `kube`'s `openssl-tls` feature (which takes precedence over the
-# `rustls-tls` feature when creating a default client) to work around rustls's
-# lack of support for connecting to servers by IP addresses, which affects many
-# Kubernetes clusters.
-kube = { workspace = true, features = ["openssl-tls"] }
+kube.workspace = true
 mockito = "1.0.2"
 serde_test = "1.0.159"
 url = "2.3.1"

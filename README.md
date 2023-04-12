@@ -41,8 +41,6 @@ aggregator --config-file <config-file> --role <role>
 `janus_aggregator` has the following features available.
 
 * `jaeger`: Enables tracing support and a Jaeger exporter; [see below](#jaeger).
-* `kube-rustls`: Sets the `kube/rustls-tls` feature. This is enabled by default. Note that if both `kube/rustls-tls` and `kube/openssl-tls` are set, OpenSSL will take precedence.
-* `kube-openssl`: Sets the `kube/openssl-tls` feature. Note that if both `kube/rustls-tls` and `kube/openssl-tls` are set, OpenSSL will take precedence. Enable this feature if you need to communicate with a Kind cluster, i.e. `cargo run --bin janus_cli --features kube-openssl -- <SUBCOMMAND> ...`. (this works around an issue with rustls and IP addresses as names in certificates)
 * `otlp`: Enables OTLP exporter support for both metrics ([see below](#honeycomb-1)) and tracing ([see below](#honeycomb)).
 * `prometheus`: Enables metrics support and a Prometheus exporter; [see below](#prometheus).
 * `test-util`: Enables miscellaneous test-only APIs. This should not be used outside of tests, and any such APIs do not carry any stability guarantees.
@@ -152,7 +150,7 @@ The command line flag `--otlp-metrics-metadata` or environment variable `OTLP_ME
 
   * This should always be followed for non-`Copy` types to avoid expensive `clone()` calls. Even
     when using `Copy` types, it is a best practice to follow this rule.
-  
+
   * In particular, when writing a constructor, receive the fields by value. Do not take a reference
     and then call `clone()` on it. Doing so may incur an extra `clone()` if the caller already has a
     value in hand which they are OK handing off. (And if they have a reference, or a value that
