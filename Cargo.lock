@@ -1931,6 +1931,7 @@ dependencies = [
  "tracing",
  "trillium",
  "trillium-api",
+ "trillium-macros",
  "trillium-opentelemetry",
  "trillium-router",
  "trillium-testing",
@@ -4675,6 +4676,17 @@ dependencies = [
  "smartstring",
  "stopper",
  "thiserror",
+]
+
+[[package]]
+name = "trillium-macros"
+version = "0.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6aeb704a6816c9b6319a0bffbeab5807ecb9a2c4ff8a9385e04cf7a130c8a2f2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.10",
 ]
 
 [[package]]
