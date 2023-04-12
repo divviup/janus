@@ -1070,6 +1070,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "etag"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b3d0661a2ccddc26cba0b834e9b717959ed6fdd76c7129ee159c170a875bf44"
+dependencies = [
+ "str-buf",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "event-listener"
 version = "2.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1891,6 +1901,7 @@ dependencies = [
  "tracing-subscriber",
  "trillium",
  "trillium-api",
+ "trillium-caching-headers",
  "trillium-head",
  "trillium-opentelemetry",
  "trillium-prometheus",
@@ -4029,6 +4040,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "str-buf"
+version = "3.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e75b72ee54e2f93c3ea1354066162be893ee5e25773ab743de3e088cecbb4f31"
+
+[[package]]
 name = "stringprep"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4625,6 +4642,17 @@ dependencies = [
  "thiserror",
  "trillium",
  "trillium-http",
+]
+
+[[package]]
+name = "trillium-caching-headers"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "babb5b0bd26ae31576f0d4fa2591459a7098a021cf93f69fe6c3f2937d8f0a03"
+dependencies = [
+ "etag",
+ "httpdate",
+ "trillium",
 ]
 
 [[package]]
@@ -5272,6 +5300,12 @@ dependencies = [
  "rand_core 0.6.4",
  "zeroize",
 ]
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "735a71d46c4d68d71d4b24d03fdc2b98e38cea81730595801db779c04fe80d70"
 
 [[package]]
 name = "yaml-rust"

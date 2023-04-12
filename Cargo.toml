@@ -42,6 +42,7 @@ kube = { version = "0.75.0", default-features = false, features = ["client"] }
 prio = { version = "0.12.0", features = ["multithreaded"] }
 trillium = "0.2.8"
 trillium-api = { version = "0.2.0-rc.2", default-features = false }
+trillium-caching-headers = "0.2.1"
 trillium-head = "0.2.0"
 trillium-opentelemetry = "0.0.1"
 trillium-router = "0.3.5"

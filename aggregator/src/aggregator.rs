@@ -86,6 +86,7 @@ use tokio::{
 use tracing::{debug, error, info, warn};
 use trillium::{Conn, Handler, Headers, Info, Init, KnownHeaderName, Status};
 use trillium_api::{api, ApiConnExt, State};
+use trillium_caching_headers::CacheControlDirective;
 use trillium_opentelemetry::metrics;
 use trillium_router::{Router, RouterConnExt};
 use trillium_tokio::Stopper;
@@ -2669,10 +2670,9 @@ impl<T> Handler for EncodedBody<T>
 where
     T: Encode + Sync + Send + 'static,
 {
-    async fn run(&self, mut conn: Conn) -> Conn {
-        conn.headers_mut()
-            .insert(KnownHeaderName::ContentType, self.media_type);
-        conn.ok(self.object.get_encoded())
+    async fn run(&self, conn: Conn) -> Conn {
+        conn.with_header(KnownHeaderName::ContentType, self.media_type)
+            .ok(self.object.get_encoded())
     }
 }
 
@@ -2746,6 +2746,7 @@ pub fn aggregator_handler<C: Clock>(
         State(aggregator),
         metrics("janus_aggregator"),
         Router::new()
+            .without_options_handling()
             .get("hpke_config", instrumented(api(hpke_config::<C>)))
             .with_route(
                 trillium::Method::Options,
@@ -2798,15 +2799,12 @@ struct HpkeConfigQuery {
 async fn hpke_config<C: Clock>(
     conn: &mut Conn,
     State(aggregator): State<Arc<Aggregator<C>>>,
-) -> Result<EncodedBody<HpkeConfigList>, Error> {
+) -> Result<(CacheControlDirective, EncodedBody<HpkeConfigList>), Error> {
     let query = serde_urlencoded::from_str::<HpkeConfigQuery>(conn.querystring())
         .map_err(|err| Error::BadRequest(format!("couldn't parse query string: {err}")))?;
     let hpke_config_list = aggregator
         .handle_hpke_config(query.task_id.as_ref().map(AsRef::as_ref))
         .await?;
-
-    conn.headers_mut()
-        .insert(KnownHeaderName::CacheControl, "max-age=86400");
 
     // Handle CORS, if the request header is present.
     if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
@@ -2816,9 +2814,9 @@ async fn hpke_config<C: Clock>(
             .insert(KnownHeaderName::AccessControlAllowOrigin, origin);
     }
 
-    Ok(EncodedBody::new(
-        hpke_config_list,
-        HpkeConfigList::MEDIA_TYPE,
+    Ok((
+        CacheControlDirective::MaxAge(StdDuration::from_secs(86400)),
+        EncodedBody::new(hpke_config_list, HpkeConfigList::MEDIA_TYPE),
     ))
 }
 
@@ -3295,6 +3293,7 @@ mod tests {
     };
     use trillium::{KnownHeaderName, Status};
     use trillium_testing::{
+        assert_headers,
         prelude::{delete, get, post, put},
         TestConn,
     };
@@ -3386,19 +3385,10 @@ mod tests {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::Ok));
-        assert_eq!(
-            test_conn
-                .response_headers()
-                .get(KnownHeaderName::CacheControl)
-                .unwrap(),
-            "max-age=86400"
-        );
-        assert_eq!(
-            test_conn
-                .response_headers()
-                .get(KnownHeaderName::ContentType)
-                .unwrap(),
-            HpkeConfigList::MEDIA_TYPE
+        assert_headers!(
+            &test_conn,
+            "cache-control" => "max-age=86400",
+            "content-type" => (HpkeConfigList::MEDIA_TYPE),
         );
 
         let bytes = test_conn
@@ -3466,13 +3456,12 @@ mod tests {
         .run_async(&handler)
         .await;
         assert!(test_conn.status().unwrap().is_success());
-        let headers = test_conn.response_headers();
-        assert_eq!(
-            headers.get("access-control-allow-origin").unwrap(),
-            "https://example.com/"
+        assert_headers!(
+            &test_conn,
+            "access-control-allow-origin" => "https://example.com/",
+            "access-control-allow-methods"=> "GET",
+            "access-control-max-age"=> "86400",
         );
-        assert_eq!(headers.get("access-control-allow-methods").unwrap(), "GET");
-        assert_eq!(headers.get("access-control-max-age").unwrap(), "86400");
 
         // Check for appropriate CORS headers with a simple GET request.
         let test_conn = get(&format!("/hpke_config?task_id={}", task.id()))
@@ -3480,12 +3469,9 @@ mod tests {
             .run_async(&handler)
             .await;
         assert!(test_conn.status().unwrap().is_success());
-        assert_eq!(
-            test_conn
-                .response_headers()
-                .get("access-control-allow-origin")
-                .unwrap(),
-            "https://example.com/"
+        assert_headers!(
+            &test_conn,
+            "access-control-allow-origin" => "https://example.com/",
         );
     }
 
@@ -3759,17 +3745,13 @@ mod tests {
         .run_async(&handler)
         .await;
         assert!(test_conn.status().unwrap().is_success());
-        let headers = test_conn.response_headers();
-        assert_eq!(
-            headers.get("access-control-allow-origin").unwrap(),
-            "https://example.com/"
+        assert_headers!(
+            &test_conn,
+            "access-control-allow-origin" => "https://example.com/",
+            "access-control-allow-methods"=> "PUT",
+            "access-control-allow-headers" => "content-type",
+            "access-control-max-age"=> "86400",
         );
-        assert_eq!(headers.get("access-control-allow-methods").unwrap(), "PUT");
-        assert_eq!(
-            headers.get("access-control-allow-headers").unwrap(),
-            "content-type"
-        );
-        assert_eq!(headers.get("access-control-max-age").unwrap(), "86400");
 
         // Check for appropriate CORS headers in response to the main request.
         let test_conn = put(task.report_upload_uri().unwrap().path())
@@ -3792,12 +3774,9 @@ mod tests {
             .run_async(&handler)
             .await;
         assert!(test_conn.status().unwrap().is_success());
-        assert_eq!(
-            test_conn
-                .response_headers()
-                .get("access-control-allow-origin")
-                .unwrap(),
-            "https://example.com/"
+        assert_headers!(
+            &test_conn,
+            "access-control-allow-origin" => "https://example.com/"
         );
     }
 
@@ -4718,12 +4697,9 @@ mod tests {
             let mut test_conn =
                 put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
             assert_eq!(test_conn.status(), Some(Status::Ok));
-            assert_eq!(
-                test_conn
-                    .response_headers()
-                    .get(KnownHeaderName::ContentType)
-                    .unwrap(),
-                AggregationJobResp::MEDIA_TYPE
+            assert_headers!(
+                &test_conn,
+                "content-type" => (AggregationJobResp::MEDIA_TYPE)
             );
             let body_bytes = test_conn
                 .take_response_body()
@@ -4950,12 +4926,9 @@ mod tests {
         let mut test_conn =
             put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
-        assert_eq!(
-            test_conn
-                .response_headers()
-                .get(KnownHeaderName::ContentType)
-                .unwrap(),
-            AggregationJobResp::MEDIA_TYPE
+        assert_headers!(
+            &test_conn,
+            "content-type" => (AggregationJobResp::MEDIA_TYPE)
         );
         let body_bytes = test_conn
             .take_response_body()
@@ -5022,12 +4995,9 @@ mod tests {
         let mut test_conn =
             put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
-        assert_eq!(
-            test_conn
-                .response_headers()
-                .get(KnownHeaderName::ContentType)
-                .unwrap(),
-            AggregationJobResp::MEDIA_TYPE
+        assert_headers!(
+            &test_conn,
+            "content-type" => (AggregationJobResp::MEDIA_TYPE)
         );
         let body_bytes = test_conn
             .take_response_body()
@@ -7180,12 +7150,9 @@ mod tests {
         let mut test_conn = test_case.post_collection_job(&collection_job_id).await;
 
         assert_eq!(test_conn.status(), Some(Status::Ok));
-        assert_eq!(
-            test_conn
-                .response_headers()
-                .get(KnownHeaderName::ContentType)
-                .unwrap(),
-            Collection::<TimeInterval>::MEDIA_TYPE
+        assert_headers!(
+            &test_conn,
+            "content-type" => (Collection::<TimeInterval>::MEDIA_TYPE)
         );
         let body_bytes = test_conn
             .take_response_body()
@@ -7980,13 +7947,9 @@ mod tests {
                     Some(Status::Ok),
                     "test case: {label:?}, iteration: {iteration}"
                 );
-                assert_eq!(
-                    test_conn
-                        .response_headers()
-                        .get(KnownHeaderName::ContentType)
-                        .unwrap(),
-                    AggregateShareMessage::MEDIA_TYPE,
-                    "test case: {label:?}, iteration: {iteration}"
+                assert_headers!(
+                    &test_conn,
+                    "content-type" => (AggregateShareMessage::MEDIA_TYPE)
                 );
                 let body_bytes = test_conn
                     .take_response_body()
