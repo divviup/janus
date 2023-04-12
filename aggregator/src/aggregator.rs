@@ -54,13 +54,12 @@ use opentelemetry::{
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded;
 #[cfg(feature = "test-util")]
-use prio::vdaf::PrepareTransition;
+use prio::vdaf::{PrepareTransition, VdafError};
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     vdaf::{
         self,
         prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVecMultithreaded},
-        VdafError,
     },
 };
 use reqwest::Client;
