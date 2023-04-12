@@ -23,7 +23,7 @@ use sqlx::{migrate::Migrator, Connection, PgConnection};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 use trillium::{Conn, Handler};
-use trillium_api::{api, Json, State};
+use trillium_api::{api, Json};
 use trillium_router::Router;
 
 #[derive(Debug, Serialize)]
@@ -140,16 +140,11 @@ fn make_handler(
         )
         .post(
             "internal/test/add_task",
-            (
-                State(datastore),
-                State(keyring),
-                api(
-                    |_conn: &mut Conn,
-                     (State(datastore), State(keyring), Json(request)): (
-                        State<Arc<Datastore<RealClock>>>,
-                        State<Keyring>,
-                        Json<AggregatorAddTaskRequest>,
-                    )| async move {
+            api(
+                move |_conn: &mut Conn, Json(request): Json<AggregatorAddTaskRequest>| {
+                    let datastore = Arc::clone(&datastore);
+                    let keyring = keyring.clone();
+                    async move {
                         match handle_add_task(&datastore, &keyring.0, request).await {
                             Ok(()) => Json(AddTaskResponse {
                                 status: SUCCESS.to_string(),
@@ -160,8 +155,8 @@ fn make_handler(
                                 error: Some(format!("{e:?}")),
                             }),
                         }
-                    },
-                ),
+                    }
+                },
             ),
         );
     Ok(handler)
