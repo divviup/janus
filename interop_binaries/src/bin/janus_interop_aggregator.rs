@@ -21,7 +21,7 @@ use sqlx::{migrate::Migrator, Connection, PgConnection};
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
-    path::PathBuf,
+    path::Path,
     sync::Arc,
 };
 use tokio::sync::Mutex;
@@ -318,9 +318,6 @@ struct Config {
     /// Path prefix, e.g. `/dap/`, to serve DAP from.
     #[serde(default = "default_dap_serving_prefix")]
     dap_serving_prefix: String,
-
-    /// Path at which `sqlx` migration files can be found. Migrations will be applied at startup.
-    sql_migrations_source: PathBuf,
 }
 
 impl BinaryConfig for Config {
@@ -341,7 +338,9 @@ async fn main() -> anyhow::Result<()> {
         // Apply SQL migrations to database
         let mut connection =
             PgConnection::connect(ctx.config.common_config.database.url.as_str()).await?;
-        let migrator = Migrator::new(ctx.config.sql_migrations_source).await?;
+        // Migration scripts are mounted into the container at this path by
+        // Dockerfile.interop_aggregator
+        let migrator = Migrator::new(Path::new("/etc/janus/migrations")).await?;
         migrator.run(&mut connection).await?;
 
         // Run an HTTP server with both the DAP aggregator endpoints and the interoperation test
