@@ -5079,8 +5079,7 @@ pub mod test_util {
         // changes to the migration scripts will be picked up by every run of the tests.
         let migrations_path = PathBuf::from_str(env!("CARGO_MANIFEST_DIR"))
             .unwrap()
-            .join("..")
-            .join("db");
+            .join("../db");
         let migrator = Migrator::new(migrations_path).await.unwrap();
         migrator.run(&mut connection).await.unwrap();
 
