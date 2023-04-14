@@ -36,7 +36,7 @@ use std::{
     sync::Arc,
     time::Duration as StdDuration,
 };
-use tokio::{spawn, sync::Mutex, task::JoinHandle};
+use tokio::{sync::Mutex, task::JoinHandle};
 use trillium::{Conn, Handler};
 use trillium_api::{api, Json, State};
 use trillium_router::Router;
@@ -192,7 +192,7 @@ where
 {
     let collector = Collector::new(collector_params, vdaf, http_client.clone());
     let agg_param = V::AggregationParam::get_decoded(agg_param_encoded)?;
-    let handle = spawn(async move {
+    let handle = tokio::spawn(async move {
         let collect_result = collector.collect(query, &agg_param).await?;
         let (interval_start, interval_duration) = collect_result.interval();
         Ok(CollectResult {

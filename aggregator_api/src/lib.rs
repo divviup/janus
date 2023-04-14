@@ -342,7 +342,7 @@ impl ConnExt for Conn {
     }
 }
 
-fn instrumented<H: Handler>(handler: H) -> InstrumentedHandler<H> {
+pub fn instrumented<H: Handler>(handler: H) -> impl Handler {
     InstrumentedHandler(handler)
 }
 
@@ -354,7 +354,7 @@ impl<H: Handler> InstrumentedHandler<H> {
         let route = conn.route().expect("no route in conn").to_string();
         self.0
             .run(conn)
-            .instrument(info_span!("janus_aggregator_api.endpoint", route = route))
+            .instrument(info_span!("endpoint", route = route))
             .await
     }
 }

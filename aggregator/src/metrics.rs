@@ -17,7 +17,7 @@ use {
     anyhow::Context,
     opentelemetry::sdk::metrics::{controllers, processors},
     std::net::{IpAddr, Ipv4Addr},
-    tokio::{sync::oneshot::channel, task::JoinHandle},
+    tokio::{sync::oneshot, task::JoinHandle},
     trillium::{Info, Init},
 };
 
@@ -164,7 +164,7 @@ pub async fn install_metrics_exporter(
 
             let router = trillium_prometheus::text_format_handler(exporter.registry().clone());
 
-            let (sender, receiver) = channel();
+            let (sender, receiver) = oneshot::channel();
             let init = Init::new(|info: Info| async move {
                 // Ignore error if the receiver is dropped.
                 let _ = sender.send(info.tcp_socket_addr().map(|socket_addr| socket_addr.port()));
