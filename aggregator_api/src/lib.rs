@@ -762,6 +762,7 @@ mod tests {
                                         *report.metadata().id(),
                                         *report.metadata().time(),
                                         ord.try_into().unwrap(),
+                                        None,
                                         ReportAggregationState::Start,
                                     ),
                                 )

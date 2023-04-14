@@ -415,6 +415,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 *report_id,
                                 *time,
                                 ord.try_into()?,
+                                None,
                                 ReportAggregationState::Start,
                             ));
                         }
@@ -571,6 +572,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                         report_id,
                                         client_timestamp,
                                         ord.try_into()?,
+                                        None,
                                         ReportAggregationState::Start,
                                     ))
                                 })
@@ -732,6 +734,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                     *report_id,
                                     *time,
                                     ord.try_into()?,
+                                    None,
                                     ReportAggregationState::Start,
                                 ));
                             }
