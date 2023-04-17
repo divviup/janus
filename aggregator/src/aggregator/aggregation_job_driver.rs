@@ -448,7 +448,7 @@ impl AggregationJobDriver {
                         self.aggregate_step_failure_counter.add(
                             &Context::current(),
                             1,
-                            &[KeyValue::new("type", "missing_prepare_message")], // XXX: "register" this error type
+                            &[KeyValue::new("type", "missing_prepare_message")],
                         );
                         report_aggregations_to_write.push(report_aggregation.with_state(
                             ReportAggregationState::Failed(ReportShareError::VdafPrepError),

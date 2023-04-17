@@ -112,6 +112,7 @@ pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
     // Initialize counters with desired status labels. This causes Prometheus to see the first
     // non-zero value we record.
     for failure_type in [
+        "missing_prepare_message",
         "missing_leader_input_share",
         "missing_helper_input_share",
         "prepare_init_failure",
