@@ -47,7 +47,7 @@ prio.workspace = true
 rand = "0.8"
 reqwest = { version = "0.11.16", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.16.20"
-serde = { version = "1.0.159", features = ["derive"] }
+serde = { version = "1.0.160", features = ["derive"] }
 serde_json = { version = "1.0.96", optional = true }
 serde_yaml = "0.9.21"
 tempfile = { version = "3", optional = true }
