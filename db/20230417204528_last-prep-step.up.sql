@@ -1,0 +1,1 @@
+ALTER TABLE report_aggregations ADD COLUMN last_prep_step BYTEA;  -- the last PreparationStep message sent to the Leader, to assist in replay (opaque VDAF message, populated for Helper only)

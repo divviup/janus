@@ -143,7 +143,6 @@ CREATE TABLE report_aggregations(
     prep_msg            BYTEA,                              -- the next preparation message to be sent to the helper (opaque VDAF message, populated for Leader only)
     out_share           BYTEA,                              -- the output share (opaque VDAF message, only if in state FINISHED)
     error_code          SMALLINT,                           -- error code corresponding to a DAP ReportShareError value; null if in a state other than FAILED
-    last_prep_step      BYTEA,                              -- the last PreparationStep message sent to the Leader, to assist in replay (opaque VDAF message, populated for Helper only)
 
     CONSTRAINT report_aggregations_unique_ord UNIQUE(aggregation_job_id, ord),
     CONSTRAINT fk_aggregation_job_id FOREIGN KEY(aggregation_job_id) REFERENCES aggregation_jobs(id) ON DELETE CASCADE,
