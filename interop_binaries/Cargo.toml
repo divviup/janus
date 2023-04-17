@@ -57,7 +57,6 @@ trillium-api.workspace = true
 trillium-router.workspace = true
 trillium-tokio.workspace = true
 url = { version = "2.3.1", features = ["serde"] }
-warp = "0.3"
 zstd = { version = "0.12", optional = true }
 
 [dev-dependencies]

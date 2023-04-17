@@ -1,6 +1,5 @@
-use crate::aggregator::{aggregator_filter, Config};
-use http::{header::CONTENT_TYPE, StatusCode};
-use hyper::body;
+use crate::aggregator::{aggregator_handler, Config};
+use http::StatusCode;
 use janus_aggregator_core::{
     datastore::{
         models::{
@@ -30,51 +29,52 @@ use prio::codec::{Decode, Encode};
 use rand::random;
 use serde_json::json;
 use std::sync::Arc;
-use warp::{
-    filters::BoxedFilter,
-    reply::{Reply, Response},
+use trillium::{Handler, KnownHeaderName, Status};
+use trillium_testing::{
+    prelude::{post, put},
+    TestConn,
 };
 
-pub(crate) struct CollectionJobTestCase<R> {
+pub(crate) struct CollectionJobTestCase {
     pub(super) task: Task,
     clock: MockClock,
     pub(super) collector_hpke_keypair: HpkeKeypair,
-    pub(super) filter: BoxedFilter<(R,)>,
+    pub(super) handler: Box<dyn Handler>,
     pub(super) datastore: Arc<Datastore<MockClock>>,
     _ephemeral_datastore: EphemeralDatastore,
 }
 
-impl<R: Reply + 'static> CollectionJobTestCase<R> {
+impl CollectionJobTestCase {
     pub(super) async fn put_collection_job_with_auth_token<Q: QueryTypeTrait>(
         &self,
         collection_job_id: &CollectionJobId,
         request: &CollectionReq<Q>,
         auth_token: Option<&AuthenticationToken>,
-    ) -> Response {
-        let mut builder = warp::test::request().method("PUT").path(
-            self.task
-                .collection_job_uri(collection_job_id)
-                .unwrap()
-                .path(),
-        );
+    ) -> TestConn {
+        let mut test_conn = put(self
+            .task
+            .collection_job_uri(collection_job_id)
+            .unwrap()
+            .path());
         if let Some(token) = auth_token {
-            builder = builder.header("DAP-Auth-Token", token.as_ref())
+            test_conn = test_conn.with_request_header("DAP-Auth-Token", token.as_ref().to_owned())
         }
 
-        builder
-            .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&self.filter)
+        test_conn
+            .with_request_header(
+                KnownHeaderName::ContentType,
+                CollectionReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .with_request_body(request.get_encoded())
+            .run_async(&self.handler)
             .await
-            .unwrap()
-            .into_response()
     }
 
     pub(super) async fn put_collection_job<Q: QueryTypeTrait>(
         &self,
         collection_job_id: &CollectionJobId,
         request: &CollectionReq<Q>,
-    ) -> Response {
+    ) -> TestConn {
         self.put_collection_job_with_auth_token(
             collection_job_id,
             request,
@@ -87,23 +87,23 @@ impl<R: Reply + 'static> CollectionJobTestCase<R> {
         &self,
         collection_job_id: &CollectionJobId,
         auth_token: Option<&AuthenticationToken>,
-    ) -> Response {
-        let mut builder = warp::test::request().method("POST").path(
+    ) -> TestConn {
+        let mut test_conn = post(
             self.task
                 .collection_job_uri(collection_job_id)
                 .unwrap()
                 .path(),
         );
         if let Some(token) = auth_token {
-            builder = builder.header("DAP-Auth-Token", token.as_ref())
+            test_conn = test_conn.with_request_header("DAP-Auth-Token", token.as_ref().to_owned())
         }
-        builder.filter(&self.filter).await.unwrap().into_response()
+        test_conn.run_async(&self.handler).await
     }
 
     pub(super) async fn post_collection_job(
         &self,
         collection_job_id: &CollectionJobId,
-    ) -> Response {
+    ) -> TestConn {
         self.post_collection_job_with_auth_token(
             collection_job_id,
             Some(self.task.primary_collector_auth_token()),
@@ -115,7 +115,7 @@ impl<R: Reply + 'static> CollectionJobTestCase<R> {
 pub(crate) async fn setup_collection_job_test_case(
     role: Role,
     query_type: QueryType,
-) -> CollectionJobTestCase<impl Reply + 'static> {
+) -> CollectionJobTestCase {
     install_test_trace_subscriber();
 
     let collector_hpke_keypair = generate_test_hpke_config_and_private_key();
@@ -128,7 +128,7 @@ pub(crate) async fn setup_collection_job_test_case(
 
     datastore.put_task(&task).await.unwrap();
 
-    let filter = aggregator_filter(
+    let handler = aggregator_handler(
         Arc::clone(&datastore),
         clock.clone(),
         Config {
@@ -142,18 +142,14 @@ pub(crate) async fn setup_collection_job_test_case(
         task,
         clock,
         collector_hpke_keypair,
-        filter,
+        handler: Box::new(handler),
         datastore,
         _ephemeral_datastore: ephemeral_datastore,
     }
 }
 
-async fn setup_fixed_size_current_batch_collection_job_test_case() -> (
-    CollectionJobTestCase<impl Reply + 'static>,
-    BatchId,
-    BatchId,
-    Interval,
-) {
+async fn setup_fixed_size_current_batch_collection_job_test_case(
+) -> (CollectionJobTestCase, BatchId, BatchId, Interval) {
     let test_case =
         setup_collection_job_test_case(Role::Leader, QueryType::FixedSize { max_batch_size: 10 })
             .await;
@@ -257,14 +253,13 @@ async fn collection_job_success_fixed_size() {
     for _ in 0..2 {
         let collection_job_id: CollectionJobId = random();
 
-        let response = test_case
+        let test_conn = test_case
             .put_collection_job(&collection_job_id, &request)
-            .await
-            .into_response();
-        assert_eq!(response.status(), StatusCode::CREATED);
+            .await;
+        assert_eq!(test_conn.status(), Some(Status::Created));
 
-        let collection_job_response = test_case.post_collection_job(&collection_job_id).await;
-        assert_eq!(collection_job_response.status(), StatusCode::ACCEPTED);
+        let test_conn = test_case.post_collection_job(&collection_job_id).await;
+        assert_eq!(test_conn.status(), Some(Status::Accepted));
 
         // Update the collection job with the aggregate shares. collection job should now be complete.
         let batch_id = test_case
@@ -324,17 +319,22 @@ async fn collection_job_success_fixed_size() {
             panic!("unexpected batch ID");
         }
 
-        let (parts, body) = test_case
-            .post_collection_job(&collection_job_id)
-            .await
-            .into_parts();
+        let mut test_conn = test_case.post_collection_job(&collection_job_id).await;
 
-        assert_eq!(parts.status, StatusCode::OK);
+        assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_eq!(
-            parts.headers.get(CONTENT_TYPE).unwrap(),
+            test_conn
+                .response_headers()
+                .get(KnownHeaderName::ContentType)
+                .unwrap(),
             Collection::<FixedSize>::MEDIA_TYPE
         );
-        let body_bytes = body::to_bytes(body).await.unwrap();
+        let body_bytes = test_conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap();
         let collect_resp = Collection::<FixedSize>::get_decoded(body_bytes.as_ref()).unwrap();
 
         assert_eq!(
@@ -392,13 +392,19 @@ async fn collection_job_success_fixed_size() {
     // ought to fail.
     let collection_job_id: CollectionJobId = random();
 
-    let mut response = test_case
+    let mut test_conn = test_case
         .put_collection_job(&collection_job_id, &request)
-        .await
-        .into_response();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    let problem_details: serde_json::Value =
-        serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        .await;
+    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    let problem_details: serde_json::Value = serde_json::from_slice(
+        &test_conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(
         problem_details,
         json!({
@@ -430,7 +436,7 @@ async fn collection_job_put_idempotence_time_interval() {
         let response = test_case
             .put_collection_job(&collection_job_id, &request)
             .await;
-        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(response.status(), Some(Status::Created));
     }
 
     // There should only be a single collection job despite two successful PUTs
@@ -475,7 +481,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
     let response = test_case
         .put_collection_job(&collection_job_id, &request)
         .await;
-    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.status(), Some(Status::Created));
 
     let mutated_request = CollectionReq::new(
         Query::new_time_interval(
@@ -491,7 +497,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
     let response = test_case
         .put_collection_job(&collection_job_id, &mutated_request)
         .await;
-    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response.status(), Some(Status::Conflict));
 }
 
 #[tokio::test]
@@ -513,7 +519,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param()
     let response = test_case
         .put_collection_job(&collection_job_id, &request)
         .await;
-    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.status(), Some(Status::Created));
 
     let mutated_request = CollectionReq::new(
         Query::new_time_interval(
@@ -529,7 +535,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param()
     let response = test_case
         .put_collection_job(&collection_job_id, &mutated_request)
         .await;
-    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response.status(), Some(Status::Conflict));
 }
 
 #[tokio::test]
@@ -549,7 +555,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch() {
             .put_collection_job(&collection_job_id, &request)
             .await;
 
-        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(response.status(), Some(Status::Created));
 
         // Make sure that there is only ever a single collection job, and that it uses the same
         // batch ID after each PUT
@@ -598,7 +604,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch_mutate_aggregat
         .put_collection_job(&collection_job_id, &request)
         .await;
 
-    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.status(), Some(Status::Created));
 
     let mutated_request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
@@ -608,7 +614,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch_mutate_aggregat
     let response = test_case
         .put_collection_job(&collection_job_id, &mutated_request)
         .await;
-    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response.status(), Some(Status::Conflict));
 }
 
 #[tokio::test]
@@ -630,7 +636,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id() {
             .put_collection_job(&collection_job_id, &request)
             .await;
 
-        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(response.status(), Some(Status::Created));
     }
 }
 
@@ -652,7 +658,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_batch_id()
         .put_collection_job(&collection_job_id, &request)
         .await;
 
-    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.status(), Some(Status::Created));
 
     let mutated_request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::ByBatchId {
@@ -664,7 +670,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_batch_id()
     let response = test_case
         .put_collection_job(&collection_job_id, &mutated_request)
         .await;
-    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response.status(), Some(Status::Conflict));
 }
 
 #[tokio::test]
@@ -685,7 +691,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_aggregatio
         .put_collection_job(&collection_job_id, &request)
         .await;
 
-    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.status(), Some(Status::Created));
 
     let mutated_request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::ByBatchId {
@@ -697,5 +703,5 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_aggregatio
     let response = test_case
         .put_collection_job(&collection_job_id, &mutated_request)
         .await;
-    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response.status(), Some(Status::Conflict));
 }

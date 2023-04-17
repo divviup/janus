@@ -28,6 +28,7 @@ version = "0.4.5"
 # https://docs.rs/chrono/latest/chrono/#duration
 chrono = { version = "0.4", default-features = false }
 janus_aggregator = { version = "0.4", path = "aggregator" }
+janus_aggregator_api = { version = "0.4", path = "aggregator_api" }
 janus_aggregator_core = { version = "0.4", path = "aggregator_core" }
 janus_build_script_utils = { version = "0.4", path = "build_script_utils" }
 janus_client = { version = "0.4", path = "client" }
@@ -41,6 +42,7 @@ kube = { version = "0.82.0", default-features = false, features = ["client", "ru
 prio = { version = "0.12.0", features = ["multithreaded"] }
 trillium = "0.2.8"
 trillium-api = { version = "0.2.0-rc.2", default-features = false }
+trillium-caching-headers = "0.2.1"
 trillium-head = "0.2.0"
 trillium-opentelemetry = "0.0.1"
 trillium-router = "0.3.5"

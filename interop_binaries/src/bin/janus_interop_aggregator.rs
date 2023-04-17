@@ -2,7 +2,7 @@ use anyhow::Context;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
 use janus_aggregator::{
-    aggregator::{self, aggregator_filter},
+    aggregator::{self, http_handlers::aggregator_handler},
     binary_utils::{janus_main, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
 };
@@ -14,7 +14,7 @@ use janus_aggregator_core::{
 use janus_core::{task::AuthenticationToken, time::RealClock};
 use janus_interop_binaries::{
     status::{ERROR, SUCCESS},
-    AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole, HpkeConfigRegistry,
+    AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole, HpkeConfigRegistry, Keyring,
 };
 use janus_messages::{Duration, HpkeConfig, Time};
 use prio::codec::Decode;
@@ -22,12 +22,14 @@ use serde::{Deserialize, Serialize};
 use sqlx::{migrate::Migrator, Connection, PgConnection};
 use std::{net::SocketAddr, path::Path, sync::Arc};
 use tokio::sync::Mutex;
-use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
+use trillium::{Conn, Handler};
+use trillium_api::{api, Json};
+use trillium_router::Router;
 
 #[derive(Debug, Serialize)]
-struct EndpointResponse<'a> {
-    status: &'a str,
-    endpoint: &'a str,
+struct EndpointResponse {
+    status: &'static str,
+    endpoint: String,
 }
 
 async fn handle_add_task(
@@ -111,12 +113,12 @@ async fn handle_add_task(
         .context("error adding task to database")
 }
 
-fn make_filter(
+fn make_handler(
     datastore: Arc<Datastore<RealClock>>,
     dap_serving_prefix: String,
-) -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
-    let keyring = Arc::new(Mutex::new(HpkeConfigRegistry::new()));
-    let dap_filter = aggregator_filter(
+) -> anyhow::Result<impl Handler> {
+    let keyring = Keyring::new();
+    let dap_handler = aggregator_handler(
         Arc::clone(&datastore),
         RealClock::default(),
         aggregator::Config {
@@ -126,61 +128,38 @@ fn make_filter(
         },
     )?;
 
-    // Respect dap_serving_prefix.
-    let dap_filter = dap_serving_prefix
-        .split('/')
-        .filter_map(|s| (!s.is_empty()).then(|| warp::path(s.to_owned()).boxed()))
-        .reduce(|x, y| x.and(y).boxed())
-        .unwrap_or_else(|| warp::any().boxed())
-        .and(dap_filter);
-
-    let ready_filter = warp::path!("ready").map(|| {
-        warp::reply::with_status(warp::reply::json(&serde_json::json!({})), StatusCode::OK)
-            .into_response()
-    });
-    let endpoint_filter = warp::path!("endpoint_for_task").map(move || {
-        warp::reply::with_status(
-            warp::reply::json(&EndpointResponse {
+    let handler = Router::new()
+        .all(format!("{dap_serving_prefix}/*"), dap_handler)
+        .post("internal/test/ready", Json(serde_json::Map::new()))
+        .post(
+            "internal/test/endpoint_for_task",
+            Json(EndpointResponse {
                 status: "success",
-                endpoint: &dap_serving_prefix,
+                endpoint: dap_serving_prefix,
             }),
-            StatusCode::OK,
         )
-        .into_response()
-    });
-    let add_task_filter = warp::path!("add_task").and(warp::body::json()).then({
-        let datastore = Arc::clone(&datastore);
-        move |request: AggregatorAddTaskRequest| {
-            let datastore = Arc::clone(&datastore);
-            let keyring = Arc::clone(&keyring);
-            async move {
-                let response = match handle_add_task(&datastore, &keyring, request).await {
-                    Ok(()) => AddTaskResponse {
-                        status: SUCCESS.to_string(),
-                        error: None,
-                    },
-                    Err(e) => AddTaskResponse {
-                        status: ERROR.to_string(),
-                        error: Some(format!("{e:?}")),
-                    },
-                };
-                warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
-                    .into_response()
-            }
-        }
-    });
-
-    Ok(warp::path!("internal" / "test" / ..)
-        .and(warp::post())
-        .and(
-            ready_filter
-                .or(endpoint_filter)
-                .unify()
-                .or(add_task_filter)
-                .unify(),
-        )
-        .or(dap_filter.map(Reply::into_response))
-        .unify())
+        .post(
+            "internal/test/add_task",
+            api(
+                move |_conn: &mut Conn, Json(request): Json<AggregatorAddTaskRequest>| {
+                    let datastore = Arc::clone(&datastore);
+                    let keyring = keyring.clone();
+                    async move {
+                        match handle_add_task(&datastore, &keyring.0, request).await {
+                            Ok(()) => Json(AddTaskResponse {
+                                status: SUCCESS.to_string(),
+                                error: None,
+                            }),
+                            Err(e) => Json(AddTaskResponse {
+                                status: ERROR.to_string(),
+                                error: Some(format!("{e:?}")),
+                            }),
+                        }
+                    }
+                },
+            ),
+        );
+    Ok(handler)
 }
 
 #[derive(Debug, Parser)]
@@ -246,9 +225,13 @@ async fn main() -> anyhow::Result<()> {
 
         // Run an HTTP server with both the DAP aggregator endpoints and the interoperation test
         // endpoints.
-        let filter = make_filter(Arc::clone(&datastore), ctx.config.dap_serving_prefix)?;
-        let server = warp::serve(filter);
-        server.bind(ctx.config.listen_address).await;
+        let handler = make_handler(Arc::clone(&datastore), ctx.config.dap_serving_prefix)?;
+        trillium_tokio::config()
+            .with_host(&ctx.config.listen_address.ip().to_string())
+            .with_port(ctx.config.listen_address.port())
+            .without_signals()
+            .run_async(handler)
+            .await;
 
         Ok(())
     })
