@@ -159,6 +159,7 @@ mod tests {
                         *report.metadata().id(),
                         client_timestamp,
                         0,
+                        None,
                         ReportAggregationState::Start,
                     );
                     tx.put_report_aggregation(&report_aggregation)
@@ -320,6 +321,7 @@ mod tests {
                         *report_share.metadata().id(),
                         client_timestamp,
                         0,
+                        None,
                         ReportAggregationState::Start,
                     );
                     tx.put_report_aggregation(&report_aggregation)
@@ -477,6 +479,7 @@ mod tests {
                         *report.metadata().id(),
                         client_timestamp,
                         0,
+                        None,
                         ReportAggregationState::Start,
                     );
                     tx.put_report_aggregation(&report_aggregation)
@@ -642,6 +645,7 @@ mod tests {
                         *report_share.metadata().id(),
                         client_timestamp,
                         0,
+                        None,
                         ReportAggregationState::Start,
                     );
                     tx.put_report_aggregation(&report_aggregation)

@@ -570,6 +570,7 @@ mod tests {
                         *report.metadata().id(),
                         *report.metadata().time(),
                         0,
+                        None,
                         ReportAggregationState::Finished(OutputShare()),
                     ))
                     .await?;
@@ -698,6 +699,7 @@ mod tests {
                         *report.metadata().id(),
                         *report.metadata().time(),
                         0,
+                        None,
                         ReportAggregationState::Finished(OutputShare()),
                     ))
                     .await?;

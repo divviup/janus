@@ -9,7 +9,7 @@ use janus_aggregator_core::{
         self,
         models::{
             AcquiredAggregationJob, AggregationJob, AggregationJobState, LeaderStoredReport, Lease,
-            PrepareMessageOrShare, ReportAggregation, ReportAggregationState,
+            ReportAggregation, ReportAggregationState,
         },
         Datastore,
     },
@@ -437,9 +437,25 @@ impl AggregationJobDriver {
             if let ReportAggregationState::Waiting(prep_state, prep_msg) =
                 report_aggregation.state()
             {
-                let prep_msg = prep_msg
-                    .get_leader_prepare_message()
-                    .context("report aggregation missing prepare message")?;
+                let prep_msg = match prep_msg.as_ref() {
+                    Some(prep_msg) => prep_msg,
+                    None => {
+                        // This error indicates programmer/system error (i.e. it cannot possibly be
+                        // the fault of our co-aggregator). We still record this failure against a
+                        // single report, rather than failing the entire request, to minimize impact
+                        // if we ever encounter this bug.
+                        info!(report_id = %report_aggregation.report_id(), "Report aggregation is missing prepare message");
+                        self.aggregate_step_failure_counter.add(
+                            &Context::current(),
+                            1,
+                            &[KeyValue::new("type", "missing_prepare_message")],
+                        );
+                        report_aggregations_to_write.push(report_aggregation.with_state(
+                            ReportAggregationState::Failed(ReportShareError::VdafPrepError),
+                        ));
+                        continue;
+                    }
+                };
 
                 // Step our own state.
                 let leader_transition = match vdaf
@@ -572,10 +588,9 @@ impl AggregationJobDriver {
                                 )
                         });
                         match prep_msg {
-                            Ok(prep_msg) => ReportAggregationState::Waiting(
-                                leader_prep_state,
-                                PrepareMessageOrShare::Leader(prep_msg),
-                            ),
+                            Ok(prep_msg) => {
+                                ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg))
+                            }
                             Err(error) => {
                                 info!(report_id = %report_aggregation.report_id(), ?error, "Couldn't compute prepare message");
                                 self.aggregate_step_failure_counter.add(
@@ -859,7 +874,7 @@ mod tests {
         datastore::{
             models::{
                 AggregationJob, AggregationJobState, BatchAggregation, LeaderStoredReport,
-                PrepareMessageOrShare, ReportAggregation, ReportAggregationState,
+                ReportAggregation, ReportAggregationState,
             },
             test_util::ephemeral_datastore,
         },
@@ -980,6 +995,7 @@ mod tests {
                         *report.metadata().id(),
                         *report.metadata().time(),
                         0,
+                        None,
                         ReportAggregationState::Start,
                     ),
                 )
@@ -1090,6 +1106,7 @@ mod tests {
             *report.metadata().id(),
             *report.metadata().time(),
             0,
+            None,
             ReportAggregationState::Finished(transcript.output_share(Role::Leader).clone()),
         );
 
@@ -1223,6 +1240,7 @@ mod tests {
                         *report.metadata().id(),
                         *report.metadata().time(),
                         0,
+                        None,
                         ReportAggregationState::Start,
                     ))
                     .await?;
@@ -1235,6 +1253,7 @@ mod tests {
                         *repeated_extension_report.metadata().id(),
                         *repeated_extension_report.metadata().time(),
                         1,
+                        None,
                         ReportAggregationState::Start,
                     ))
                     .await?;
@@ -1345,10 +1364,8 @@ mod tests {
             *report.metadata().id(),
             *report.metadata().time(),
             0,
-            ReportAggregationState::Waiting(
-                leader_prep_state,
-                PrepareMessageOrShare::Leader(prep_msg),
-            ),
+            None,
+            ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
         );
         let want_repeated_extension_report_aggregation =
             ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
@@ -1357,6 +1374,7 @@ mod tests {
                 *repeated_extension_report.metadata().id(),
                 *repeated_extension_report.metadata().time(),
                 1,
+                None,
                 ReportAggregationState::Failed(ReportShareError::UnrecognizedMessage),
             );
 
@@ -1501,6 +1519,7 @@ mod tests {
                         *report.metadata().id(),
                         *report.metadata().time(),
                         0,
+                        None,
                         ReportAggregationState::Start,
                     ))
                     .await?;
@@ -1609,9 +1628,10 @@ mod tests {
             *report.metadata().id(),
             *report.metadata().time(),
             0,
+            None,
             ReportAggregationState::Waiting(
                 transcript.leader_prep_state(0).clone(),
-                PrepareMessageOrShare::Leader(transcript.prepare_messages[0].clone()),
+                Some(transcript.prepare_messages[0].clone()),
             ),
         );
 
@@ -1739,10 +1759,8 @@ mod tests {
                         *report.metadata().id(),
                         *report.metadata().time(),
                         0,
-                        ReportAggregationState::Waiting(
-                            leader_prep_state,
-                            PrepareMessageOrShare::Leader(prep_msg),
-                        ),
+                        None,
+                        ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
                     ))
                     .await?;
 
@@ -1844,6 +1862,7 @@ mod tests {
             *report.metadata().id(),
             *report.metadata().time(),
             0,
+            None,
             ReportAggregationState::Finished(transcript.output_share(Role::Leader).clone()),
         );
         let batch_interval_start = report
@@ -2031,10 +2050,8 @@ mod tests {
                         *report.metadata().id(),
                         *report.metadata().time(),
                         0,
-                        ReportAggregationState::Waiting(
-                            leader_prep_state,
-                            PrepareMessageOrShare::Leader(prep_msg),
-                        ),
+                        None,
+                        ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
                     ))
                     .await?;
 
@@ -2137,6 +2154,7 @@ mod tests {
             *report.metadata().id(),
             *report.metadata().time(),
             0,
+            None,
             ReportAggregationState::Finished(leader_output_share.clone()),
         );
         let want_batch_aggregations = Vec::from([BatchAggregation::<
@@ -2270,6 +2288,7 @@ mod tests {
             *report.metadata().id(),
             *report.metadata().time(),
             0,
+            None,
             ReportAggregationState::Start,
         );
 
@@ -2472,6 +2491,7 @@ mod tests {
                         *report.metadata().id(),
                         *report.metadata().time(),
                         0,
+                        None,
                         ReportAggregationState::Start,
                     ),
                 )
