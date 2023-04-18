@@ -637,7 +637,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         let time_precision = Duration::from_seconds(500);
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
@@ -904,7 +904,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         let (_, lease, collection_job) =
             setup_collection_job_test_case(&mut server, clock, Arc::clone(&ds), true).await;
@@ -959,7 +959,7 @@ mod tests {
         let clock = MockClock::default();
         let mut runtime_manager = TestRuntimeManager::new();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         let (task, _, collection_job) =
             setup_collection_job_test_case(&mut server, clock.clone(), Arc::clone(&ds), false)
@@ -1052,7 +1052,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         let (task, lease, collection_job) =
             setup_collection_job_test_case(&mut server, clock, Arc::clone(&ds), true).await;
