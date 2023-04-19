@@ -1,5 +1,15 @@
 //! This crate contains core functionality for Janus aggregator crates.
 
+// Workaround lint suppression but in older clippy by allowing this lint at module-level.
+// https://github.com/rust-lang/rust-clippy/issues/8768
+// https://github.com/rust-lang/rust-clippy/pull/9879
+#![allow(clippy::single_component_path_imports)]
+
+// We must import `rstest_reuse` at the top of the crate
+// https://docs.rs/rstest_reuse/0.5.0/rstest_reuse/#use-rstest_reuse-at-the-top-of-your-crate
+#[cfg(test)]
+use rstest_reuse;
+
 #[cfg(feature = "test-util")]
 use janus_core::test_util::dummy_vdaf;
 

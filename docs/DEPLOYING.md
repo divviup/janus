@@ -114,6 +114,10 @@ This will generate two new migration scripts. Fill the `*.up.sql` file with the
 migration you want to run and the `*.down.sql` file with a script that reverses
 the first script.
 
+After adding a migration, you must add its version number to
+`datastore::SUPPORTED_SCHEMA_VERSIONS` as Janus will refuse to run if it does
+not recognize the database schema version.
+
 [sqlx-cli]: https://crates.io/crates/sqlx-cli
 
 ## `janus_cli provision-tasks`
