@@ -19,17 +19,17 @@ jobs:
       with:
         workload_identity_provider: ${{ secrets.GCP_ARTIFACT_PUBLISHER_WORKLOAD_IDENTITY_PROVIDER }}
         service_account: ${{ secrets.GCP_ARTIFACT_PUBLISHER_DEPLOY_SERVICE_ACCOUNT }}
-    - name: "Set up Google Cloud SDK"
-      uses: "google-github-actions/setup-gcloud@v1"
-      with:
-        # We opt into the alpha components so we can use the storage subcommand of gcloud, which
-        # uses Workload Identity Federation more reliably than gsutil.
-        install_components: "alpha"
     - name: Get the version
       id: get_version
-      run: echo VERSION=${GITHUB_REF/refs\/tags\//} >> $GITHUB_OUTPUT
+      run: |
+        VERSION=${GITHUB_REF/refs\/tags\//}
+        echo VERSION=${VERSION} >> $GITHUB_OUTPUT
+        echo "MINOR_VERSION=$(echo ${VERSION} | awk -F'.' '{if (NF != 3) {exit 1}; printf "%s.%s", $1, $2}')" >> $GITHUB_OUTPUT
     - name: "Upload schema file(s)"
       run: |-
         gcloud alpha storage cp --recursive \
           db \
           gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.VERSION }}/
+        gcloud alpha storage cp --recursive \
+          db \
+          gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.MINOR_VERSION }}/

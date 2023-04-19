@@ -1731,11 +1731,12 @@ impl<C: Clock> Transaction<'_, C> {
     {
         let stmt = self
             .prepare_cached(
-                "SELECT client_reports.report_id, client_reports.client_timestamp,
-                report_aggregations.ord, report_aggregations.state, report_aggregations.prep_state,
-                report_aggregations.prep_msg, report_aggregations.last_prep_step,
-                report_aggregations.out_share, report_aggregations.error_code,
-                aggregation_jobs.aggregation_param
+                "SELECT
+                    client_reports.report_id, client_reports.client_timestamp,
+                    report_aggregations.ord, report_aggregations.state,
+                    report_aggregations.prep_state, report_aggregations.prep_msg,
+                    report_aggregations.out_share, report_aggregations.error_code,
+                    report_aggregations.last_prep_step, aggregation_jobs.aggregation_param
                 FROM report_aggregations
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
                 JOIN aggregation_jobs
@@ -1785,11 +1786,12 @@ impl<C: Clock> Transaction<'_, C> {
     {
         let stmt = self
             .prepare_cached(
-                "SELECT client_reports.report_id, client_reports.client_timestamp,
-                report_aggregations.ord, report_aggregations.state, report_aggregations.prep_state,
-                report_aggregations.prep_msg, report_aggregations.last_prep_step,
-                report_aggregations.out_share, report_aggregations.error_code,
-                aggregation_jobs.aggregation_param
+                "SELECT
+                    client_reports.report_id, client_reports.client_timestamp,
+                    report_aggregations.ord, report_aggregations.state,
+                    report_aggregations.prep_state, report_aggregations.prep_msg,
+                    report_aggregations.out_share, report_aggregations.error_code,
+                    report_aggregations.last_prep_step, aggregation_jobs.aggregation_param
                 FROM report_aggregations
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
                 JOIN aggregation_jobs
@@ -1842,8 +1844,8 @@ impl<C: Clock> Transaction<'_, C> {
                     aggregation_jobs.aggregation_job_id, client_reports.report_id,
                     client_reports.client_timestamp, report_aggregations.ord,
                     report_aggregations.state, report_aggregations.prep_state,
-                    report_aggregations.prep_msg, report_aggregations.last_prep_step,
-                    report_aggregations.out_share, report_aggregations.error_code,
+                    report_aggregations.prep_msg, report_aggregations.out_share,
+                    report_aggregations.error_code, report_aggregations.last_prep_step,
                     aggregation_jobs.aggregation_param
                 FROM report_aggregations
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
@@ -1884,9 +1886,9 @@ impl<C: Clock> Transaction<'_, C> {
         let state: ReportAggregationStateCode = row.get("state");
         let prep_state_bytes: Option<Vec<u8>> = row.get("prep_state");
         let prep_msg_bytes: Option<Vec<u8>> = row.get("prep_msg");
-        let last_prep_step_bytes: Option<Vec<u8>> = row.get("last_prep_step");
         let out_share_bytes: Option<Vec<u8>> = row.get("out_share");
         let error_code: Option<i16> = row.get("error_code");
+        let last_prep_step_bytes: Option<Vec<u8>> = row.get("last_prep_step");
         let aggregation_param_bytes = row.get("aggregation_param");
 
         let error_code = match error_code {
@@ -1907,6 +1909,7 @@ impl<C: Clock> Transaction<'_, C> {
 
         let agg_state = match state {
             ReportAggregationStateCode::Start => ReportAggregationState::Start,
+
             ReportAggregationStateCode::Waiting => {
                 let agg_index = role.index().ok_or_else(|| {
                     Error::User(anyhow!("unexpected role: {}", role.as_str()).into())
@@ -1925,6 +1928,7 @@ impl<C: Clock> Transaction<'_, C> {
                     .transpose()?;
                 ReportAggregationState::Waiting(prep_state, prep_msg)
             }
+
             ReportAggregationStateCode::Finished => {
                 let aggregation_param = A::AggregationParam::get_decoded(aggregation_param_bytes)?;
                 let output_share = A::OutputShare::get_decoded_with_param(
@@ -1938,6 +1942,7 @@ impl<C: Clock> Transaction<'_, C> {
                 )?;
                 ReportAggregationState::Finished(output_share)
             }
+
             ReportAggregationStateCode::Failed => {
                 ReportAggregationState::Failed(error_code.ok_or_else(|| {
                     Error::DbState(
@@ -1945,6 +1950,7 @@ impl<C: Clock> Transaction<'_, C> {
                     )
                 })?)
             }
+
             ReportAggregationStateCode::Invalid => ReportAggregationState::Invalid,
         };
 
@@ -1979,8 +1985,8 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "INSERT INTO report_aggregations
-                (aggregation_job_id, client_report_id, ord, state, prep_state, prep_msg, out_share,
-                    error_code, last_prep_step)
+                    (aggregation_job_id, client_report_id, ord, state, prep_state, prep_msg,
+                    out_share, error_code, last_prep_step)
                 VALUES ((SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1),
                         (SELECT id FROM client_reports
                             WHERE task_id = (SELECT id FROM tasks WHERE task_id = $2)
@@ -2026,8 +2032,9 @@ impl<C: Clock> Transaction<'_, C> {
 
         let stmt = self
             .prepare_cached(
-                "UPDATE report_aggregations SET ord = $1, state = $2, prep_state = $3,
-                prep_msg = $4, out_share = $5, error_code = $6, last_prep_step = $7
+                "UPDATE report_aggregations SET
+                    ord = $1, state = $2, prep_state = $3, prep_msg = $4, out_share = $5,
+                    error_code = $6, last_prep_step = $7
                 WHERE aggregation_job_id = (SELECT id FROM aggregation_jobs WHERE
                     aggregation_job_id = $8)
                 AND client_report_id = (SELECT id FROM client_reports
@@ -4403,8 +4410,8 @@ pub mod models {
         report_id: ReportId,
         time: Time,
         ord: u64,
-        state: ReportAggregationState<SEED_SIZE, A>,
         last_prep_step: Option<PrepareStep>,
+        state: ReportAggregationState<SEED_SIZE, A>,
     }
 
     impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> ReportAggregation<SEED_SIZE, A> {
@@ -4459,10 +4466,13 @@ pub mod models {
             self.ord
         }
 
+        /// Returns the last preparation step returned by the Helper, if any.
         pub fn last_prep_step(&self) -> Option<&PrepareStep> {
             self.last_prep_step.as_ref()
         }
 
+        /// Returns a new [`ReportAggregation`] corresponding to this report aggregation updated to
+        /// have the given state.
         pub fn with_last_prep_step(self, last_prep_step: Option<PrepareStep>) -> Self {
             Self {
                 last_prep_step,
@@ -4475,7 +4485,7 @@ pub mod models {
             &self.state
         }
 
-        /// Returns a new [`ReportAggregation`] corresponding to this aggregation job updated to
+        /// Returns a new [`ReportAggregation`] corresponding to this report aggregation updated to
         /// have the given state.
         pub fn with_state(self, state: ReportAggregationState<SEED_SIZE, A>) -> Self {
             Self { state, ..self }
@@ -7176,7 +7186,6 @@ mod tests {
             ),
             ReportAggregationState::Waiting(leader_prep_state.clone(), None),
             ReportAggregationState::Finished(vdaf_transcript.output_share(Role::Leader).clone()),
-            ReportAggregationState::Finished(vdaf_transcript.output_share(Role::Helper).clone()),
             ReportAggregationState::Failed(ReportShareError::VdafPrepError),
             ReportAggregationState::Invalid,
         ]
@@ -7238,7 +7247,7 @@ mod tests {
                             aggregation_job_id,
                             report_id,
                             time,
-                            0,
+                            ord.try_into().unwrap(),
                             Some(PrepareStep::new(
                                 report_id,
                                 PrepareStepResult::Continued {
@@ -7272,6 +7281,7 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap();
+
             assert_eq!(want_report_aggregation, got_report_aggregation);
 
             let want_report_aggregation = ReportAggregation::new(
@@ -7283,6 +7293,7 @@ mod tests {
                 want_report_aggregation.last_prep_step().cloned(),
                 want_report_aggregation.state().clone(),
             );
+
             ds.run_tx(|tx| {
                 let want_report_aggregation = want_report_aggregation.clone();
                 Box::pin(

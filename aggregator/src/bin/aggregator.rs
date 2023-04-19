@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use http::HeaderMap;
 use janus_aggregator::{
     aggregator::{self, aggregator_server},
     binary_utils::{janus_main, setup_signal_handler, BinaryOptions, CommonBinaryOptions},
@@ -10,6 +9,7 @@ use janus_core::time::RealClock;
 use serde::{Deserialize, Serialize};
 use std::{iter::Iterator, net::SocketAddr, sync::Arc, time::Duration};
 use tracing::info;
+use trillium::Headers;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -23,10 +23,11 @@ async fn main() -> Result<()> {
             ctx.config.aggregator_config(),
             ctx.config.listen_address,
             ctx.config
-                .response_header_map()
+                .response_headers()
                 .context("failed to parse response headers")?,
             shutdown_signal,
         )
+        .await
         .context("failed to create aggregator server")?;
         info!(?bound_address, "Running aggregator");
 
@@ -112,13 +113,13 @@ struct Config {
 }
 
 impl Config {
-    fn response_header_map(&self) -> anyhow::Result<HeaderMap> {
+    fn response_headers(&self) -> anyhow::Result<Headers> {
         self.response_headers
             .iter()
             .map(|entry| {
                 Ok((
-                    entry.name.as_str().try_into()?,
-                    entry.value.as_str().try_into()?,
+                    entry.name.as_str().to_owned(),
+                    entry.value.as_str().to_owned(),
                 ))
             })
             .collect()

@@ -1,5 +1,6 @@
 //! Functionality for tests interacting with Janus (<https://github.com/divviup/janus>).
 
+use crate::interop_api;
 use janus_aggregator::{
     binary_utils::{database_pool, datastore},
     config::DbConfig,
@@ -11,13 +12,11 @@ use janus_core::{
 };
 use janus_interop_binaries::{
     log_export_path, test_util::await_http_server, testcontainer::Aggregator,
-    AggregatorAddTaskRequest,
 };
 use janus_messages::Role;
 use k8s_openapi::api::core::v1::Secret;
 use portpicker::pick_unused_port;
 use std::{
-    collections::HashMap,
     path::Path,
     process::{Command, Stdio},
     thread::panicking,
@@ -68,21 +67,7 @@ impl<'a> Janus<'a> {
         await_http_server(port).await;
 
         // Write the given task to the Janus instance we started.
-        let http_client = reqwest::Client::default();
-        let resp = http_client
-            .post(Url::parse(&format!("http://127.0.0.1:{port}/internal/test/add_task")).unwrap())
-            .json(&AggregatorAddTaskRequest::from(task.clone()))
-            .send()
-            .await
-            .unwrap();
-        assert!(resp.status().is_success());
-        let resp: HashMap<String, Option<String>> = resp.json().await.unwrap();
-        assert_eq!(
-            resp.get("status"),
-            Some(&Some("success".to_string())),
-            "error: {:?}",
-            resp.get("error")
-        );
+        interop_api::aggregator_add_task(port, task.clone()).await;
 
         Self::Container {
             role: *task.role(),

@@ -387,16 +387,15 @@ impl VdafOps {
 
     /// Construct an AggregationJobResp from a given set of Helper report aggregations.
     pub(super) fn aggregation_job_resp_for<const SEED_SIZE: usize, A>(
-        report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
+        report_aggregations: impl IntoIterator<Item = ReportAggregation<SEED_SIZE, A>>,
     ) -> AggregationJobResp
     where
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     {
         AggregationJobResp::new(
             report_aggregations
-                .iter()
-                .filter_map(ReportAggregation::last_prep_step)
-                .cloned()
+                .into_iter()
+                .filter_map(|ra| ra.last_prep_step().cloned())
                 .collect(),
         )
     }
@@ -405,49 +404,55 @@ impl VdafOps {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use http::{header::CONTENT_TYPE, StatusCode};
-    use hyper::{body, Body};
     use janus_aggregator_core::task::Task;
     use janus_messages::{AggregationJobContinueReq, AggregationJobId, AggregationJobResp};
     use prio::codec::{Decode, Encode};
     use serde_json::json;
-    use warp::{filters::BoxedFilter, reply::Response, Reply};
+    use trillium::{Handler, KnownHeaderName, Status};
+    use trillium_testing::{prelude::post, TestConn};
 
     async fn post_aggregation_job(
         task: &Task,
         aggregation_job_id: &AggregationJobId,
         request: &AggregationJobContinueReq,
-        filter: &BoxedFilter<(impl Reply + 'static,)>,
-    ) -> Response {
-        warp::test::request()
-            .method("POST")
-            .path(task.aggregation_job_uri(aggregation_job_id).unwrap().path())
-            .header(
+        handler: &impl Handler,
+    ) -> TestConn {
+        post(task.aggregation_job_uri(aggregation_job_id).unwrap().path())
+            .with_request_header(
                 "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref(),
+                task.primary_aggregator_auth_token().as_ref().to_owned(),
             )
-            .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(filter)
+            .with_request_header(
+                KnownHeaderName::ContentType,
+                AggregationJobContinueReq::MEDIA_TYPE,
+            )
+            .with_request_body(request.get_encoded())
+            .run_async(handler)
             .await
-            .unwrap()
-            .into_response()
     }
 
     pub async fn post_aggregation_job_and_decode(
         task: &Task,
         aggregation_job_id: &AggregationJobId,
         request: &AggregationJobContinueReq,
-        filter: &BoxedFilter<(impl Reply + 'static,)>,
+        handler: &impl Handler,
     ) -> AggregationJobResp {
-        let mut response = post_aggregation_job(task, aggregation_job_id, request, filter).await;
+        let mut test_conn = post_aggregation_job(task, aggregation_job_id, request, handler).await;
 
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_eq!(
-            response.headers().get(CONTENT_TYPE).unwrap(),
+            test_conn
+                .response_headers()
+                .get(KnownHeaderName::ContentType)
+                .unwrap(),
             AggregationJobResp::MEDIA_TYPE
         );
-        let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
+        let body_bytes = test_conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap();
         AggregationJobResp::get_decoded(&body_bytes).unwrap()
     }
 
@@ -455,24 +460,22 @@ pub mod test_util {
         task: &Task,
         aggregation_job_id: &AggregationJobId,
         request: &AggregationJobContinueReq,
-        filter: &BoxedFilter<(impl Reply + 'static,)>,
-        want_status: StatusCode,
-    ) -> Body {
-        let (parts, body) = post_aggregation_job(task, aggregation_job_id, request, filter)
-            .await
-            .into_parts();
+        handler: &impl Handler,
+        want_status: Status,
+    ) -> Option<trillium::Body> {
+        let mut test_conn = post_aggregation_job(task, aggregation_job_id, request, handler).await;
 
-        assert_eq!(want_status, parts.status);
+        assert_eq!(want_status, test_conn.status().unwrap());
 
-        body
+        test_conn.take_response_body()
     }
 
     pub async fn post_aggregation_job_expecting_error(
         task: &Task,
         aggregation_job_id: &AggregationJobId,
         request: &AggregationJobContinueReq,
-        filter: &BoxedFilter<(impl Reply + 'static,)>,
-        want_status: StatusCode,
+        handler: &impl Handler,
+        want_status: Status,
         want_error_type: &str,
         want_error_title: &str,
     ) {
@@ -480,17 +483,17 @@ pub mod test_util {
             task,
             aggregation_job_id,
             request,
-            filter,
+            handler,
             want_status,
         )
         .await;
 
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body.unwrap().into_bytes().await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": want_status.as_u16(),
+                "status": want_status as u16,
                 "type": want_error_type,
                 "title": want_error_title,
                 "taskid": format!("{}", task.id()),
@@ -507,10 +510,9 @@ mod tests {
             post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
             post_aggregation_job_expecting_status,
         },
-        aggregator_filter,
+        aggregator_handler,
         tests::default_aggregator_config,
     };
-    use http::StatusCode;
     use janus_aggregator_core::{
         datastore::{
             models::{
@@ -541,9 +543,9 @@ mod tests {
     };
     use rand::random;
     use std::sync::Arc;
-    use warp::{filters::BoxedFilter, Reply};
+    use trillium::{Handler, Status};
 
-    struct AggregationJobContinueTestCase<R, V>
+    struct AggregationJobContinueTestCase<V>
     where
         V: Vdaf,
     {
@@ -553,14 +555,14 @@ mod tests {
         aggregation_job_id: AggregationJobId,
         first_continue_request: AggregationJobContinueReq,
         first_continue_response: Option<AggregationJobResp>,
-        filter: BoxedFilter<(R,)>,
+        handler: Box<dyn Handler>,
         _ephemeral_datastore: EphemeralDatastore,
     }
 
     /// Set up a helper with an aggregation job in round 0
     #[allow(clippy::unit_arg)]
     async fn setup_aggregation_job_continue_test(
-    ) -> AggregationJobContinueTestCase<impl Reply + 'static, Poplar1<PrgSha3, 16>> {
+    ) -> AggregationJobContinueTestCase<Poplar1<PrgSha3, 16>> {
         // Prepare datastore & request.
         install_test_trace_subscriber();
 
@@ -650,9 +652,9 @@ mod tests {
             )]),
         );
 
-        // Create aggregator filter.
-        let filter =
-            aggregator_filter(datastore.clone(), clock, default_aggregator_config()).unwrap();
+        // Create aggregator handler.
+        let handler =
+            aggregator_handler(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
 
         AggregationJobContinueTestCase {
             task,
@@ -661,7 +663,7 @@ mod tests {
             aggregation_job_id,
             first_continue_request,
             first_continue_response: None,
-            filter,
+            handler: Box::new(handler),
             _ephemeral_datastore: ephemeral_datastore,
         }
     }
@@ -669,14 +671,14 @@ mod tests {
     /// Set up a helper with an aggregation job in round 1.
     #[allow(clippy::unit_arg)]
     async fn setup_aggregation_job_continue_round_recovery_test(
-    ) -> AggregationJobContinueTestCase<impl Reply + 'static, Poplar1<PrgSha3, 16>> {
+    ) -> AggregationJobContinueTestCase<Poplar1<PrgSha3, 16>> {
         let mut test_case = setup_aggregation_job_continue_test().await;
 
         let first_continue_response = post_aggregation_job_and_decode(
             &test_case.task,
             &test_case.aggregation_job_id,
             &test_case.first_continue_request,
-            &test_case.filter,
+            &test_case.handler,
         )
         .await;
 
@@ -717,8 +719,8 @@ mod tests {
             &test_case.task,
             &test_case.aggregation_job_id,
             &round_zero_request,
-            &test_case.filter,
-            StatusCode::BAD_REQUEST,
+            &test_case.handler,
+            Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
             "The message type for a response was incorrect or the payload was malformed.",
         )
@@ -735,7 +737,7 @@ mod tests {
             &test_case.task,
             &test_case.aggregation_job_id,
             &test_case.first_continue_request,
-            &test_case.filter,
+            &test_case.handler,
         )
         .await;
         assert_eq!(
@@ -806,8 +808,8 @@ mod tests {
             &test_case.task,
             &test_case.aggregation_job_id,
             &modified_request,
-            &test_case.filter,
-            StatusCode::CONFLICT,
+            &test_case.handler,
+            Status::Conflict,
         )
         .await;
 
@@ -888,8 +890,8 @@ mod tests {
             &test_case.task,
             &test_case.aggregation_job_id,
             &past_round_request,
-            &test_case.filter,
-            StatusCode::BAD_REQUEST,
+            &test_case.handler,
+            Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:roundMismatch",
             "The leader and helper are not on the same round of VDAF preparation.",
         )
@@ -911,8 +913,8 @@ mod tests {
             &test_case.task,
             &test_case.aggregation_job_id,
             &future_round_request,
-            &test_case.filter,
-            StatusCode::BAD_REQUEST,
+            &test_case.handler,
+            Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:roundMismatch",
             "The leader and helper are not on the same round of VDAF preparation.",
         )

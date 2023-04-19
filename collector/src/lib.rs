@@ -610,7 +610,11 @@ impl<V: vdaf::Collector> Collector<V> {
                 // Check if sleeping for as long as the Retry-After header recommends would result
                 // in exceeding the maximum elapsed time, and return a timeout error if so.
                 if let Some(deadline) = deadline {
-                    if Instant::now() + retry_after_duration > deadline {
+                    let recommendation_is_past_deadline = Instant::now()
+                        .checked_add(retry_after_duration)
+                        .map_or(true, |recommendation| recommendation > deadline);
+
+                    if recommendation_is_past_deadline {
                         return Err(Error::CollectPollTimeout);
                     }
                 }

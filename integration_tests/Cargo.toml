@@ -9,7 +9,10 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-kube-openssl = ["kube/openssl-tls"]
+# This feature is deprecated, and will be removed in the future, once janus-ops
+# no longer depends on it. Rustls is now used unconditionally for Kubernetes
+# connections.
+kube-openssl = []
 
 [dependencies]
 anyhow = "1"
@@ -29,7 +32,7 @@ portpicker = "0.1"
 prio.workspace = true
 rand = "0.8"
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
-serde_json = "1.0.95"
+serde_json = "1.0.96"
 testcontainers = "0.14.0"
 tokio = { version = "1", features = ["full", "tracing"] }
 tracing = "0.1.37"

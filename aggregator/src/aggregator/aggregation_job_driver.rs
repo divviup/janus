@@ -446,8 +446,8 @@ impl AggregationJobDriver {
                     None => {
                         // This error indicates programmer/system error (i.e. it cannot possibly be
                         // the fault of our co-aggregator). We still record this failure against a
-                        // single report, rather than failing the entire request, to (safely)
-                        // minimize impact if we ever encounter this bug.
+                        // single report, rather than failing the entire request, to minimize impact
+                        // if we ever encounter this bug.
                         info!(report_id = %report_aggregation.report_id(), "Report aggregation is missing prepare message");
                         self.aggregate_step_failure_counter.add(
                             &Context::current(),

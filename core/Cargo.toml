@@ -47,9 +47,9 @@ prio.workspace = true
 rand = "0.8"
 reqwest = { version = "0.11.16", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.16.20"
-serde = { version = "1.0.159", features = ["derive"] }
-serde_json = { version = "1.0.95", optional = true }
-serde_yaml = "0.9.19"
+serde = { version = "1.0.160", features = ["derive"] }
+serde_json = { version = "1.0.96", optional = true }
+serde_yaml = "0.9.21"
 tempfile = { version = "3", optional = true }
 testcontainers = { version = "0.14", optional = true }
 thiserror = "1.0"
@@ -63,11 +63,7 @@ url = "2"
 fixed = "1.23"
 hex = { version = "0.4", features = ["serde"] }  # ensure this remains compatible with the non-dev dependency
 janus_core = { path = ".", features = ["test-util"] }
-# Enable `kube`'s `openssl-tls` feature (which takes precedence over the
-# `rustls-tls` feature when creating a default client) to work around rustls's
-# lack of support for connecting to servers by IP addresses, which affects many
-# Kubernetes clusters.
-kube = { workspace = true, features = ["openssl-tls"] }
+kube.workspace = true
 mockito = "1.0.2"
-serde_test = "1.0.159"
+serde_test = "1.0.160"
 url = "2.3.1"

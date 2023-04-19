@@ -84,15 +84,6 @@ its configuration and operation.
 
 * `jaeger`: Enables tracing support and a Jaeger exporter; see the
   [documentation](docs/CONFIGURING_TRACING.md) for configuration instructions.
-* `kube-rustls`: Sets the `kube/rustls-tls` feature. This is enabled by default.
-  Note that if both `kube/rustls-tls` and `kube/openssl-tls` are set, OpenSSL
-  will take precedence.
-* `kube-openssl`: Sets the `kube/openssl-tls` feature. Note that if both
-  `kube/rustls-tls` and `kube/openssl-tls` are set, OpenSSL will take
-  precedence. Enable this feature if you need to communicate with a Kind
-  cluster, i.e. `cargo run --bin janus_cli --features kube-openssl --
-  <SUBCOMMAND> ...`. (this works around an issue with rustls and IP addresses as
-  names in certificates)
 * `otlp`: Enables OTLP exporter support for both metrics and tracing. See the
   [metrics](docs/CONFIGURING_METRICS.md) and
   [tracing](docs/CONFIGURING_TRACING.md) documentation for configuration

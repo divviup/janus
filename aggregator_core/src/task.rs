@@ -783,6 +783,12 @@ pub mod test_util {
             })
         }
 
+        /// Returns a view of the task that would currently be built.
+        pub fn task(&self) -> &Task {
+            self.0.validate().unwrap();
+            &self.0
+        }
+
         /// Consumes this task builder & produces a [`Task`] with the given specifications.
         pub fn build(self) -> Task {
             self.0.validate().unwrap();

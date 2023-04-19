@@ -34,11 +34,6 @@ impl<'a> JanusPair<'a> {
     /// is spawned. In either case, the Janus aggregators' API endpoints will be available on the
     /// local loopback interface, at the URLs in `Self.leader_task.aggregator_endpoints`.
     ///
-    /// If connecting to the Kubernetes cluster API (k8s API, not DAP API) at an IP address over
-    /// HTTPS (e.g., "https://127.0.0.1:42356"), then the `integration_tests` package must be built
-    /// with the `kube-openssl` feature, as the default rustls can't validate IP addresses in
-    /// certificates. e.g., `cargo test --features kube-openssl --package integration_tests`
-    ///
     /// Environment variables:
     ///  - `JANUS_E2E_KUBE_CONFIG_PATH`: The path to a `kubectl` configuration file containing
     ///    the information needed to connect to the Kubernetes cluster where the test is to be run.

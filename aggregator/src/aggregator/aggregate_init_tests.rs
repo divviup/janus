@@ -1,5 +1,4 @@
-use crate::aggregator::{aggregator_filter, tests::generate_helper_report_init, Config};
-use http::{header::CONTENT_TYPE, StatusCode};
+use crate::aggregator::{aggregator_handler, tests::generate_helper_report_init, Config};
 use janus_aggregator_core::{
     datastore::{
         test_util::{ephemeral_datastore, EphemeralDatastore},
@@ -19,7 +18,8 @@ use janus_messages::{
 use prio::{codec::Encode, vdaf};
 use rand::random;
 use std::sync::Arc;
-use warp::{filters::BoxedFilter, reply::Response, Reply};
+use trillium::{Handler, KnownHeaderName, Status};
+use trillium_testing::{prelude::put, TestConn};
 
 pub(super) struct ReportInitGenerator<const SEED_SIZE: usize, V>
 where
@@ -88,20 +88,19 @@ where
     }
 }
 
-pub(super) struct AggregationJobInitTestCase<const SEED_SIZE: usize, R, V: vdaf::Vdaf> {
+pub(super) struct AggregationJobInitTestCase<const SEED_SIZE: usize, V: vdaf::Vdaf> {
     pub(super) clock: MockClock,
     pub(super) task: Task,
     pub(super) report_init_generator: ReportInitGenerator<SEED_SIZE, V>,
     pub(super) report_inits: Vec<ReportPrepInit>,
     pub(super) aggregation_job_id: AggregationJobId,
     pub(super) aggregation_param: V::AggregationParam,
-    pub(super) filter: BoxedFilter<(R,)>,
+    pub(super) handler: Box<dyn Handler>,
     pub(super) datastore: Arc<Datastore<MockClock>>,
     _ephemeral_datastore: EphemeralDatastore,
 }
 
-pub(super) async fn setup_aggregate_init_test(
-) -> AggregationJobInitTestCase<0, impl Reply + 'static, dummy_vdaf::Vdaf> {
+pub(super) async fn setup_aggregate_init_test() -> AggregationJobInitTestCase<0, dummy_vdaf::Vdaf> {
     install_test_trace_subscriber();
 
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
@@ -111,8 +110,8 @@ pub(super) async fn setup_aggregate_init_test(
 
     datastore.put_task(&task).await.unwrap();
 
-    let filter =
-        aggregator_filter(Arc::clone(&datastore), clock.clone(), Config::default()).unwrap();
+    let handler =
+        aggregator_handler(Arc::clone(&datastore), clock.clone(), Config::default()).unwrap();
 
     let aggregation_param = dummy_vdaf::AggregationParam(0);
 
@@ -139,10 +138,10 @@ pub(super) async fn setup_aggregate_init_test(
         &task,
         &aggregation_job_id,
         &aggregation_job_init_req,
-        &filter,
+        &handler,
     )
     .await;
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.status(), Some(Status::Ok));
 
     AggregationJobInitTestCase {
         clock,
@@ -151,7 +150,7 @@ pub(super) async fn setup_aggregate_init_test(
         report_init_generator,
         aggregation_job_id,
         aggregation_param,
-        filter,
+        handler: Box::new(handler),
         datastore,
         _ephemeral_datastore: ephemeral_datastore,
     }
@@ -161,24 +160,20 @@ pub(crate) async fn put_aggregation_job(
     task: &Task,
     aggregation_job_id: &AggregationJobId,
     aggregation_job: &AggregationJobInitializeReq<TimeInterval>,
-    filter: &BoxedFilter<(impl Reply + 'static,)>,
-) -> Response {
-    warp::test::request()
-        .method("PUT")
-        .path(task.aggregation_job_uri(aggregation_job_id).unwrap().path())
-        .header(
+    handler: &impl Handler,
+) -> TestConn {
+    put(task.aggregation_job_uri(aggregation_job_id).unwrap().path())
+        .with_request_header(
             "DAP-Auth-Token",
-            task.primary_aggregator_auth_token().as_ref(),
+            task.primary_aggregator_auth_token().as_ref().to_owned(),
         )
-        .header(
-            CONTENT_TYPE,
+        .with_request_header(
+            KnownHeaderName::ContentType,
             AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
         )
-        .body(aggregation_job.get_encoded())
-        .filter(filter)
+        .with_request_body(aggregation_job.get_encoded())
+        .run_async(handler)
         .await
-        .unwrap()
-        .into_response()
 }
 
 #[tokio::test]
@@ -196,10 +191,10 @@ async fn aggregation_job_mutation_aggregation_job() {
         &test_case.task,
         &test_case.aggregation_job_id,
         &mutated_aggregation_job_init_req,
-        &test_case.filter,
+        &test_case.handler,
     )
     .await;
-    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response.status(), Some(Status::Conflict));
 }
 
 #[tokio::test]
@@ -235,10 +230,10 @@ async fn aggregation_job_mutation_report_shares() {
             &test_case.task,
             &test_case.aggregation_job_id,
             &mutated_aggregation_job_init_req,
-            &test_case.filter,
+            &test_case.handler,
         )
         .await;
-        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(response.status(), Some(Status::Conflict));
     }
 }
 
@@ -269,8 +264,8 @@ async fn aggregation_job_mutation_report_aggregations() {
         &test_case.task,
         &test_case.aggregation_job_id,
         &mutated_aggregation_job_init_req,
-        &test_case.filter,
+        &test_case.handler,
     )
     .await;
-    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response.status(), Some(Status::Conflict));
 }
