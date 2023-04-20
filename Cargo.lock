@@ -257,7 +257,7 @@ dependencies = [
  "log",
  "parking",
  "polling",
- "rustix 0.37.3",
+ "rustix",
  "slab",
  "socket2 0.4.9",
  "waker-fn",

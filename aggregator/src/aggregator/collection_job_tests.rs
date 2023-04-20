@@ -1,4 +1,4 @@
-use crate::aggregator::{aggregator_handler, Config};
+use crate::aggregator::{http_handlers::aggregator_handler, Config};
 use http::StatusCode;
 use janus_aggregator_core::{
     datastore::{

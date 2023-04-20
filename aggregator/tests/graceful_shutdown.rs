@@ -234,10 +234,18 @@ async fn aggregator_shutdown() {
     let aggregator_port = select_open_port().await.unwrap();
     let aggregator_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, aggregator_port));
 
+    let aggregator_api_port = select_open_port().await.unwrap();
+    let aggregator_api_listen_address =
+        SocketAddr::from((Ipv4Addr::LOCALHOST, aggregator_api_port));
+
     let mut config = Mapping::new();
     config.insert(
         "listen_address".into(),
         format!("{aggregator_listen_address}").into(),
+    );
+    config.insert(
+        "aggregator_api_listen_address".into(),
+        format!("{aggregator_api_listen_address}").into(),
     );
     config.insert("max_upload_batch_size".into(), 100.into());
     config.insert("max_upload_batch_write_delay_ms".into(), 250.into());
