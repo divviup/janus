@@ -678,41 +678,56 @@ impl AggregationJobDriver {
             )
         };
 
-        let aggregation_job_to_write = leader_aggregation_job
-            .with_round(next_round)
-            .with_state(next_state);
+        let aggregation_job_to_write = Arc::new(
+            leader_aggregation_job
+                .with_round(next_round)
+                .with_state(next_state),
+        );
         let report_aggregations_to_write = Arc::new(report_aggregations_to_write);
-        let aggregation_job_to_write = Arc::new(aggregation_job_to_write);
         let accumulator = Arc::new(accumulator);
         datastore
             .run_tx_with_name("step_aggregation_job_2", |tx| {
                 let (
                     vdaf,
-                    report_aggregations_to_write,
                     aggregation_job_to_write,
+                    report_aggregations_to_write,
                     accumulator,
                     lease,
                 ) = (
                     Arc::clone(&vdaf),
-                    Arc::clone(&report_aggregations_to_write),
                     Arc::clone(&aggregation_job_to_write),
+                    Arc::clone(&report_aggregations_to_write),
                     Arc::clone(&accumulator),
                     Arc::clone(&lease),
                 );
                 Box::pin(async move {
-                    let report_aggregations_future =
-                        try_join_all(report_aggregations_to_write.iter().map(
-                            |report_aggregation| tx.update_report_aggregation(report_aggregation),
-                        ));
-                    let aggregation_job_future =
-                        tx.update_aggregation_job(&aggregation_job_to_write);
-                    let batch_aggregations_future = accumulator.flush_to_datastore(tx, &vdaf);
+                    let unwritable_reports = accumulator.flush_to_datastore(tx, &vdaf).await?;
 
                     try_join!(
                         tx.release_aggregation_job(&lease),
-                        report_aggregations_future,
-                        aggregation_job_future,
-                        batch_aggregations_future,
+                        tx.update_aggregation_job(&aggregation_job_to_write),
+                        try_join_all(report_aggregations_to_write.iter().map(|ra| {
+                            let report_is_unwritable = unwritable_reports.contains(ra.report_id());
+                            async move {
+                                if report_is_unwritable {
+                                    tx.update_report_aggregation(
+                                        &ra.clone()
+                                            .with_state(ReportAggregationState::Failed(
+                                                ReportShareError::BatchCollected,
+                                            ))
+                                            .with_last_prep_step(Some(PrepareStep::new(
+                                                *ra.report_id(),
+                                                PrepareStepResult::Failed(
+                                                    ReportShareError::BatchCollected,
+                                                ),
+                                            ))),
+                                    )
+                                    .await
+                                } else {
+                                    tx.update_report_aggregation(ra).await
+                                }
+                            }
+                        })),
                     )?;
                     Ok(())
                 })
@@ -873,8 +888,8 @@ mod tests {
     use janus_aggregator_core::{
         datastore::{
             models::{
-                AggregationJob, AggregationJobState, BatchAggregation, LeaderStoredReport,
-                ReportAggregation, ReportAggregationState,
+                AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
+                LeaderStoredReport, ReportAggregation, ReportAggregationState,
             },
             test_util::ephemeral_datastore,
         },
@@ -1879,7 +1894,8 @@ mod tests {
             Interval::new(batch_interval_start, *task.time_precision()).unwrap(),
             (),
             0,
-            leader_aggregate_share,
+            BatchAggregationState::Aggregating,
+            Some(leader_aggregate_share),
             1,
             Interval::from_time(report.metadata().time()).unwrap(),
             ReportIdChecksum::for_report_id(report.metadata().id()),
@@ -1943,7 +1959,8 @@ mod tests {
                     *agg.batch_identifier(),
                     (),
                     0,
-                    agg.aggregate_share().clone(),
+                    *agg.state(),
+                    agg.aggregate_share().cloned(),
                     agg.report_count(),
                     *agg.client_timestamp_interval(),
                     *agg.checksum(),
@@ -2166,7 +2183,8 @@ mod tests {
             batch_id,
             (),
             0,
-            leader_aggregate_share,
+            BatchAggregationState::Aggregating,
+            Some(leader_aggregate_share),
             1,
             Interval::from_time(report.metadata().time()).unwrap(),
             ReportIdChecksum::for_report_id(report.metadata().id()),
@@ -2216,7 +2234,8 @@ mod tests {
                     *agg.batch_identifier(),
                     (),
                     0,
-                    agg.aggregate_share().clone(),
+                    *agg.state(),
+                    agg.aggregate_share().cloned(),
                     agg.report_count(),
                     *agg.client_timestamp_interval(),
                     *agg.checksum(),

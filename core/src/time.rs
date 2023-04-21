@@ -279,6 +279,13 @@ impl IntervalExt for Interval {
     }
 
     fn merge(&self, other: &Self) -> Result<Self, Error> {
+        if self.duration() == &Duration::ZERO {
+            return Ok(*other);
+        }
+        if other.duration() == &Duration::ZERO {
+            return Ok(*self);
+        }
+
         let max_time = std::cmp::max(self.end(), other.end());
         let min_time = std::cmp::min(self.start(), other.start());
 

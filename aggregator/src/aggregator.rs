@@ -16,14 +16,16 @@ use fixed::{
     types::extra::{U15, U31, U63},
     FixedI16, FixedI32, FixedI64,
 };
+use futures::future::try_join_all;
 use http::{header::CONTENT_TYPE, Method};
+use itertools::iproduct;
 use janus_aggregator_core::{
     datastore::{
         self,
         models::{
             AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
-            CollectionJob, CollectionJobState, LeaderStoredReport, ReportAggregation,
-            ReportAggregationState,
+            BatchAggregationState, CollectionJob, CollectionJobState, LeaderStoredReport,
+            ReportAggregation, ReportAggregationState,
         },
         Datastore, Transaction,
     },
@@ -45,7 +47,8 @@ use janus_messages::{
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobRound,
     BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, HpkeCiphertext,
     HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
-    PrepareStep, PrepareStepResult, Report, ReportShare, ReportShareError, Role, TaskId,
+    PrepareStep, PrepareStepResult, Report, ReportIdChecksum, ReportShare, ReportShareError, Role,
+    TaskId,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter},
@@ -418,7 +421,12 @@ impl<C: Clock> Aggregator<C> {
         }
 
         task_aggregator
-            .handle_aggregate_share(&self.datastore, &self.clock, req_bytes)
+            .handle_aggregate_share(
+                &self.datastore,
+                &self.clock,
+                self.cfg.batch_aggregation_shard_count,
+                req_bytes,
+            )
             .await
     }
 
@@ -672,10 +680,17 @@ impl<C: Clock> TaskAggregator<C> {
         &self,
         datastore: &Datastore<C>,
         clock: &C,
+        batch_aggregation_shard_count: u64,
         req_bytes: &[u8],
     ) -> Result<AggregateShare, Error> {
         self.vdaf_ops
-            .handle_aggregate_share(datastore, clock, Arc::clone(&self.task), req_bytes)
+            .handle_aggregate_share(
+                datastore,
+                clock,
+                Arc::clone(&self.task),
+                batch_aggregation_shard_count,
+                req_bytes,
+            )
             .await
     }
 }
@@ -1497,36 +1512,16 @@ impl VdafOps {
                         Err(e) => return Err(e),
                     };
 
-                    // Construct a response and write any new report shares and report aggregations
-                    // as we go.
                     if !replayed_request {
+                        // Accumulate any finished report aggregations, and write accumulated
+                        // aggregation values back to the datastore; mark any reports that can't be
+                        // aggregated because the batch is collected with error BatchCollected.
                         let mut accumulator = Accumulator::<SEED_SIZE, Q, A>::new(
                             Arc::clone(&task),
                             batch_aggregation_shard_count,
                             aggregation_job.aggregation_parameter().clone(),
                         );
-
-                        for report_share_data in &mut report_share_data
-                        {
-                            // Write client report & report aggregation.
-                            if let Err(err) = tx.put_report_share(task.id(), &report_share_data.report_share).await {
-                                match err {
-                                    datastore::Error::MutationTargetAlreadyExists => {
-                                        report_share_data.report_aggregation =
-                                            report_share_data.report_aggregation
-                                                .clone()
-                                                .with_state(ReportAggregationState::Failed(
-                                                    ReportShareError::ReportReplayed))
-                                                .with_last_prep_step(Some(PrepareStep::new(
-                                                    *report_share_data.report_share.metadata().id(),
-                                                    PrepareStepResult::Failed(ReportShareError::ReportReplayed))
-                                                ));
-                                    },
-                                    err => return Err(err),
-                                }
-                            }
-                            tx.put_report_aggregation(&report_share_data.report_aggregation).await?;
-
+                        for report_share_data in &mut report_share_data {
                             if let ReportAggregationState::Finished(output_share) = report_share_data.report_aggregation.state()
                             {
                                 accumulator.update(
@@ -1537,8 +1532,40 @@ impl VdafOps {
                                 )?;
                             }
                         }
+                        let unwritable_reports = accumulator.flush_to_datastore(tx, &vdaf).await?;
+                        for report_share_data in &mut report_share_data {
+                            if unwritable_reports.contains(report_share_data.report_aggregation.report_id()) {
+                                report_share_data.report_aggregation = report_share_data.report_aggregation.clone()
+                                    .with_state(ReportAggregationState::Failed(ReportShareError::BatchCollected))
+                                    .with_last_prep_step(Some(PrepareStep::new(
+                                        *report_share_data.report_aggregation.report_id(),
+                                        PrepareStepResult::Failed(ReportShareError::BatchCollected)
+                                    )));
+                            }
+                        }
 
-                        accumulator.flush_to_datastore(tx, &vdaf).await?;
+                        // Write report shares & aggregations.
+                        report_share_data = try_join_all(report_share_data.into_iter()
+                            .map(|mut rsd| { let task = Arc::clone(&task); async move {
+                                if let Err(err) = tx.put_report_share(task.id(), &rsd.report_share).await {
+                                    match err {
+                                        datastore::Error::MutationTargetAlreadyExists => {
+                                            rsd.report_aggregation =
+                                                rsd.report_aggregation
+                                                    .clone()
+                                                    .with_state(ReportAggregationState::Failed(
+                                                        ReportShareError::ReportReplayed))
+                                                    .with_last_prep_step(Some(PrepareStep::new(
+                                                        *rsd.report_share.metadata().id(),
+                                                        PrepareStepResult::Failed(ReportShareError::ReportReplayed))
+                                                    ));
+                                        },
+                                        err => return Err(err),
+                                    }
+                                }
+                                tx.put_report_aggregation(&rsd.report_aggregation).await?;
+                                Ok(rsd)
+                            }})).await?;
                     }
 
                     Ok(Self::aggregation_job_resp_for(report_share_data.into_iter().map(|data| data.report_aggregation)))
@@ -2083,6 +2110,7 @@ impl VdafOps {
         datastore: &Datastore<C>,
         clock: &C,
         task: Arc<Task>,
+        batch_aggregation_shard_count: u64,
         req_bytes: &[u8],
     ) -> Result<AggregateShare, Error> {
         match task.query_type() {
@@ -2093,7 +2121,7 @@ impl VdafOps {
                         TimeInterval,
                         VdafType,
                         _,
-                    >(datastore, clock, task, Arc::clone(vdaf), req_bytes)
+                    >(datastore, clock, task, Arc::clone(vdaf), req_bytes, batch_aggregation_shard_count)
                     .await
                 })
             }
@@ -2104,7 +2132,7 @@ impl VdafOps {
                         FixedSize,
                         VdafType,
                         _,
-                    >(datastore, clock, task, Arc::clone(vdaf), req_bytes)
+                    >(datastore, clock, task, Arc::clone(vdaf), req_bytes, batch_aggregation_shard_count)
                     .await
                 })
             }
@@ -2122,6 +2150,7 @@ impl VdafOps {
         task: Arc<Task>,
         vdaf: Arc<A>,
         req_bytes: &[u8],
+        batch_aggregation_shard_count: u64,
     ) -> Result<AggregateShare, Error>
     where
         A::AggregationParam: Send + Sync,
@@ -2214,6 +2243,40 @@ impl VdafOps {
                                 )
                             )?;
 
+                            // To ensure that concurrent aggregations don't write into a
+                            // currently-nonexistent batch aggregation, we write (empty) batch
+                            // aggregations for any that have not already been written to storage.
+                            let existing_batch_aggregations: HashSet<_> = batch_aggregations
+                                .iter()
+                                .map(|ba| (ba.batch_identifier(), ba.ord()))
+                                .collect();
+                            let empty_batch_aggregations: Vec<_> = iproduct!(
+                                Q::batch_identifiers_for_collect_identifier(
+                                    &task,
+                                    aggregate_share_req.batch_selector().batch_identifier()
+                                ),
+                                0..batch_aggregation_shard_count
+                            )
+                            .filter_map(|(batch_identifier, ord)| {
+                                if !existing_batch_aggregations.contains(&(&batch_identifier, ord))
+                                {
+                                    Some(BatchAggregation::<SEED_SIZE, Q, A>::new(
+                                        *task.id(),
+                                        batch_identifier,
+                                        aggregation_param.clone(),
+                                        ord,
+                                        BatchAggregationState::Collected,
+                                        None,
+                                        0,
+                                        Interval::EMPTY,
+                                        ReportIdChecksum::default(),
+                                    ))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+
                             let (helper_aggregate_share, report_count, checksum) =
                                 compute_aggregate_share::<SEED_SIZE, Q, A>(
                                     &task,
@@ -2236,7 +2299,20 @@ impl VdafOps {
                                 report_count,
                                 checksum,
                             );
-                            tx.put_aggregate_share_job(&aggregate_share_job).await?;
+                            try_join!(
+                                tx.put_aggregate_share_job(&aggregate_share_job),
+                                try_join_all(batch_aggregations.into_iter().map(|ba| async move {
+                                    tx.update_batch_aggregation(
+                                        &ba.with_state(BatchAggregationState::Collected),
+                                    )
+                                    .await
+                                })),
+                                try_join_all(
+                                    empty_batch_aggregations
+                                        .iter()
+                                        .map(|ba| tx.put_batch_aggregation(ba))
+                                ),
+                            )?;
                             aggregate_share_job
                         }
                     };

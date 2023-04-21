@@ -230,6 +230,23 @@ impl VdafOps {
             })
             .with_last_continue_request_hash(request_hash);
 
+        // Write accumulated aggregation values back to the datastore; mark any reports that can't
+        // be aggregated because the batch is collected with error BatchCollected.
+        let unwritable_reports = accumulator.flush_to_datastore(tx, &vdaf).await?;
+        for report_aggregation in &mut report_aggregations {
+            if unwritable_reports.contains(report_aggregation.report_id()) {
+                *report_aggregation = report_aggregation
+                    .clone()
+                    .with_state(ReportAggregationState::Failed(
+                        ReportShareError::BatchCollected,
+                    ))
+                    .with_last_prep_step(Some(PrepareStep::new(
+                        *report_aggregation.report_id(),
+                        PrepareStepResult::Failed(ReportShareError::BatchCollected),
+                    )));
+            }
+        }
+
         try_join!(
             tx.update_aggregation_job(&helper_aggregation_job),
             try_join_all(
@@ -237,7 +254,6 @@ impl VdafOps {
                     .iter()
                     .map(|ra| tx.update_report_aggregation(ra))
             ),
-            accumulator.flush_to_datastore(tx, &vdaf),
         )?;
 
         Ok(Self::aggregation_job_resp_for(report_aggregations))
