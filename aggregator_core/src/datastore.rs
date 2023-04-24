@@ -63,7 +63,7 @@ pub mod test_util;
 
 /// List of schema versions that this version of Janus can safely run on. If any other schema
 /// version is seen, [`Datastore::new`] fails.
-const SUPPORTED_SCHEMA_VERSIONS: &[i64] = &[20230405185602, 20230417204528];
+const SUPPORTED_SCHEMA_VERSIONS: &[i64] = &[20230405185602, 20230417204528, 20230424220336];
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -1802,8 +1802,7 @@ impl<C: Clock> Transaction<'_, C> {
                     client_reports.report_id, client_reports.client_timestamp,
                     report_aggregations.ord, report_aggregations.state,
                     report_aggregations.prep_state, report_aggregations.prep_msg,
-                    report_aggregations.out_share, report_aggregations.error_code,
-                    report_aggregations.last_prep_step, aggregation_jobs.aggregation_param
+                    report_aggregations.error_code, report_aggregations.last_prep_step
                 FROM report_aggregations
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
                 JOIN aggregation_jobs
@@ -1857,8 +1856,7 @@ impl<C: Clock> Transaction<'_, C> {
                     client_reports.report_id, client_reports.client_timestamp,
                     report_aggregations.ord, report_aggregations.state,
                     report_aggregations.prep_state, report_aggregations.prep_msg,
-                    report_aggregations.out_share, report_aggregations.error_code,
-                    report_aggregations.last_prep_step, aggregation_jobs.aggregation_param
+                    report_aggregations.error_code, report_aggregations.last_prep_step
                 FROM report_aggregations
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
                 JOIN aggregation_jobs
@@ -1911,9 +1909,8 @@ impl<C: Clock> Transaction<'_, C> {
                     aggregation_jobs.aggregation_job_id, client_reports.report_id,
                     client_reports.client_timestamp, report_aggregations.ord,
                     report_aggregations.state, report_aggregations.prep_state,
-                    report_aggregations.prep_msg, report_aggregations.out_share,
-                    report_aggregations.error_code, report_aggregations.last_prep_step,
-                    aggregation_jobs.aggregation_param
+                    report_aggregations.prep_msg, report_aggregations.error_code,
+                    report_aggregations.last_prep_step
                 FROM report_aggregations
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
                 JOIN aggregation_jobs
@@ -1953,10 +1950,8 @@ impl<C: Clock> Transaction<'_, C> {
         let state: ReportAggregationStateCode = row.get("state");
         let prep_state_bytes: Option<Vec<u8>> = row.get("prep_state");
         let prep_msg_bytes: Option<Vec<u8>> = row.get("prep_msg");
-        let out_share_bytes: Option<Vec<u8>> = row.get("out_share");
         let error_code: Option<i16> = row.get("error_code");
         let last_prep_step_bytes: Option<Vec<u8>> = row.get("last_prep_step");
-        let aggregation_param_bytes = row.get("aggregation_param");
 
         let error_code = match error_code {
             Some(c) => {
@@ -1997,18 +1992,7 @@ impl<C: Clock> Transaction<'_, C> {
                 ReportAggregationState::Waiting(prep_state, prep_msg)
             }
 
-            ReportAggregationStateCode::Finished => {
-                let aggregation_param = A::AggregationParam::get_decoded(aggregation_param_bytes)?;
-                ReportAggregationState::Finished(A::OutputShare::get_decoded_with_param(
-                    &(vdaf, &aggregation_param),
-                    &out_share_bytes.ok_or_else(|| {
-                        Error::DbState(
-                            "report aggregation in state FINISHED but out_share is NULL"
-                                .to_string(),
-                        )
-                    })?,
-                )?)
-            }
+            ReportAggregationStateCode::Finished => ReportAggregationState::Finished,
 
             ReportAggregationStateCode::Failed => {
                 ReportAggregationState::Failed(error_code.ok_or_else(|| {
@@ -2053,12 +2037,12 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "INSERT INTO report_aggregations
                     (aggregation_job_id, client_report_id, ord, state, prep_state, prep_msg,
-                    out_share, error_code, last_prep_step)
+                    error_code, last_prep_step)
                 VALUES ((SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1),
                         (SELECT id FROM client_reports
                             WHERE task_id = (SELECT id FROM tasks WHERE task_id = $2)
                             AND report_id = $3),
-                        $4, $5, $6, $7, $8, $9, $10)",
+                        $4, $5, $6, $7, $8, $9)",
             )
             .await?;
         self.execute(
@@ -2072,7 +2056,6 @@ impl<C: Clock> Transaction<'_, C> {
                 /* state */ &report_aggregation.state().state_code(),
                 /* prep_state */ &encoded_state_values.prep_state,
                 /* prep_msg */ &encoded_state_values.prep_msg,
-                /* out_share */ &encoded_state_values.output_share,
                 /* error_code */ &encoded_state_values.report_share_err,
                 /* last_prep_step */ &encoded_last_prep_step,
             ],
@@ -2100,13 +2083,13 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "UPDATE report_aggregations SET
-                    ord = $1, state = $2, prep_state = $3, prep_msg = $4, out_share = $5,
-                    error_code = $6, last_prep_step = $7
+                    ord = $1, state = $2, prep_state = $3, prep_msg = $4, error_code = $5,
+                    last_prep_step = $6
                 WHERE aggregation_job_id = (SELECT id FROM aggregation_jobs WHERE
-                    aggregation_job_id = $8)
+                    aggregation_job_id = $7)
                 AND client_report_id = (SELECT id FROM client_reports
-                    WHERE task_id = (SELECT id FROM tasks WHERE task_id = $9)
-                    AND report_id = $10)",
+                    WHERE task_id = (SELECT id FROM tasks WHERE task_id = $8)
+                    AND report_id = $9)",
             )
             .await?;
         check_single_row_mutation(
@@ -2117,7 +2100,6 @@ impl<C: Clock> Transaction<'_, C> {
                     /* state */ &report_aggregation.state().state_code(),
                     /* prep_state */ &encoded_state_values.prep_state,
                     /* prep_msg */ &encoded_state_values.prep_msg,
-                    /* out_share */ &encoded_state_values.output_share,
                     /* error_code */ &encoded_state_values.report_share_err,
                     /* last_prep_step */ &encoded_last_prep_step,
                     /* aggregation_job_id */
@@ -4598,7 +4580,7 @@ pub mod models {
             #[derivative(Debug = "ignore")] A::PrepareState,
             #[derivative(Debug = "ignore")] Option<A::PrepareMessage>,
         ),
-        Finished(#[derivative(Debug = "ignore")] A::OutputShare),
+        Finished,
         Failed(ReportShareError),
         Invalid,
     }
@@ -4610,7 +4592,7 @@ pub mod models {
             match self {
                 ReportAggregationState::Start => ReportAggregationStateCode::Start,
                 ReportAggregationState::Waiting(_, _) => ReportAggregationStateCode::Waiting,
-                ReportAggregationState::Finished(_) => ReportAggregationStateCode::Finished,
+                ReportAggregationState::Finished => ReportAggregationStateCode::Finished,
                 ReportAggregationState::Failed(_) => ReportAggregationStateCode::Failed,
                 ReportAggregationState::Invalid => ReportAggregationStateCode::Invalid,
             }
@@ -4632,12 +4614,7 @@ pub mod models {
                         ..Default::default()
                     }
                 }
-                ReportAggregationState::Finished(output_share) => {
-                    EncodedReportAggregationStateValues {
-                        output_share: Some(output_share.get_encoded()),
-                        ..Default::default()
-                    }
-                }
+                ReportAggregationState::Finished => EncodedReportAggregationStateValues::default(),
                 ReportAggregationState::Failed(report_share_err) => {
                     EncodedReportAggregationStateValues {
                         report_share_err: Some(*report_share_err as i16),
@@ -4653,7 +4630,6 @@ pub mod models {
     pub(super) struct EncodedReportAggregationStateValues {
         pub(super) prep_state: Option<Vec<u8>>,
         pub(super) prep_msg: Option<Vec<u8>>,
-        pub(super) output_share: Option<Vec<u8>>,
         pub(super) report_share_err: Option<i16>,
     }
 
@@ -4690,9 +4666,6 @@ pub mod models {
                     Self::Waiting(lhs_prep_state, lhs_prep_msg),
                     Self::Waiting(rhs_prep_state, rhs_prep_msg),
                 ) => lhs_prep_state == rhs_prep_state && lhs_prep_msg == rhs_prep_msg,
-                (Self::Finished(lhs_out_share), Self::Finished(rhs_out_share)) => {
-                    lhs_out_share == rhs_out_share
-                }
                 (Self::Failed(lhs_report_share_err), Self::Failed(rhs_report_share_err)) => {
                     lhs_report_share_err == rhs_report_share_err
                 }
@@ -7272,7 +7245,7 @@ mod tests {
                 Some(vdaf_transcript.prepare_messages[0].clone()),
             ),
             ReportAggregationState::Waiting(leader_prep_state.clone(), None),
-            ReportAggregationState::Finished(vdaf_transcript.output_share(Role::Leader).clone()),
+            ReportAggregationState::Finished,
             ReportAggregationState::Failed(ReportShareError::VdafPrepError),
             ReportAggregationState::Invalid,
         ]
@@ -7596,11 +7569,10 @@ mod tests {
 
         let want_report_aggregations = ds
             .run_tx(|tx| {
-                let (task, prep_msg, prep_state, output_share) = (
+                let (task, prep_msg, prep_state) = (
                     task.clone(),
                     vdaf_transcript.prepare_messages[0].clone(),
                     vdaf_transcript.leader_prep_state(0).clone(),
-                    vdaf_transcript.output_share(Role::Leader).clone(),
                 );
                 Box::pin(async move {
                     tx.put_task(&task).await?;
@@ -7624,7 +7596,7 @@ mod tests {
                     for (ord, state) in [
                         ReportAggregationState::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::Start,
                         ReportAggregationState::Waiting(prep_state.clone(), Some(prep_msg)),
-                        ReportAggregationState::Finished(output_share),
+                        ReportAggregationState::Finished,
                         ReportAggregationState::Failed(ReportShareError::VdafPrepError),
                         ReportAggregationState::Invalid,
                     ]
@@ -9523,7 +9495,7 @@ mod tests {
                         clock.now(),
                         0,
                         None,
-                        ReportAggregationState::Finished(dummy_vdaf::OutputShare()), // Counted among min_size and max_size.
+                        ReportAggregationState::Finished, // Counted among min_size and max_size.
                     );
                     let report_aggregation_1_1 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
@@ -9532,7 +9504,7 @@ mod tests {
                         clock.now(),
                         1,
                         None,
-                        ReportAggregationState::Finished(dummy_vdaf::OutputShare()), // Counted among min_size and max_size.
+                        ReportAggregationState::Finished, // Counted among min_size and max_size.
                     );
                     let report_aggregation_1_2 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),

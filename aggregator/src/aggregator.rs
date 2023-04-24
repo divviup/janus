@@ -2,7 +2,6 @@
 
 pub use crate::aggregator::error::Error;
 use crate::aggregator::{
-    accumulator::Accumulator,
     aggregate_share::compute_aggregate_share,
     error::BatchMismatch,
     http_handlers::aggregator_handler,
@@ -281,7 +280,6 @@ impl<C: Clock> Aggregator<C> {
             .handle_aggregate_init(
                 &self.datastore,
                 &self.aggregate_step_failure_counter,
-                self.cfg.batch_aggregation_shard_count,
                 aggregation_job_id,
                 req_bytes,
             )
@@ -594,7 +592,6 @@ impl<C: Clock> TaskAggregator<C> {
         &self,
         datastore: &Datastore<C>,
         aggregate_step_failure_counter: &Counter<u64>,
-        batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
     ) -> Result<AggregationJobResp, Error> {
@@ -603,7 +600,6 @@ impl<C: Clock> TaskAggregator<C> {
                 datastore,
                 aggregate_step_failure_counter,
                 Arc::clone(&self.task),
-                batch_aggregation_shard_count,
                 aggregation_job_id,
                 req_bytes,
             )
@@ -853,7 +849,6 @@ impl VdafOps {
         datastore: &Datastore<C>,
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<Task>,
-        batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
     ) -> Result<AggregationJobResp, Error> {
@@ -865,7 +860,6 @@ impl VdafOps {
                         vdaf,
                         aggregate_step_failure_counter,
                         task,
-                        batch_aggregation_shard_count,
                         aggregation_job_id,
                         verify_key,
                         req_bytes,
@@ -880,7 +874,6 @@ impl VdafOps {
                         vdaf,
                         aggregate_step_failure_counter,
                         task,
-                        batch_aggregation_shard_count,
                         aggregation_job_id,
                         verify_key,
                         req_bytes,
@@ -1203,7 +1196,6 @@ impl VdafOps {
         vdaf: &A,
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<Task>,
-        batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         verify_key: &VerifyKey<SEED_SIZE>,
         req_bytes: &[u8],
@@ -1500,12 +1492,6 @@ impl VdafOps {
                     // Construct a response and write any new report shares and report aggregations
                     // as we go.
                     if !replayed_request {
-                        let mut accumulator = Accumulator::<SEED_SIZE, Q, A>::new(
-                            Arc::clone(&task),
-                            batch_aggregation_shard_count,
-                            aggregation_job.aggregation_parameter().clone(),
-                        );
-
                         for report_share_data in &mut report_share_data
                         {
                             // Write client report & report aggregation.
@@ -1526,19 +1512,7 @@ impl VdafOps {
                                 }
                             }
                             tx.put_report_aggregation(&report_share_data.report_aggregation).await?;
-
-                            if let ReportAggregationState::Finished(output_share) = report_share_data.report_aggregation.state()
-                            {
-                                accumulator.update(
-                                    aggregation_job.partial_batch_identifier(),
-                                    report_share_data.report_share.metadata().id(),
-                                    report_share_data.report_share.metadata().time(),
-                                    output_share,
-                                )?;
-                            }
                         }
-
-                        accumulator.flush_to_datastore(tx, &vdaf).await?;
                     }
 
                     Ok(Self::aggregation_job_resp_for(report_share_data.into_iter().map(|data| data.report_aggregation)))

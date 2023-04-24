@@ -218,7 +218,7 @@ impl AggregationJobDriver {
             match report_aggregation.state() {
                 ReportAggregationState::Start => saw_start = true,
                 ReportAggregationState::Waiting(_, _) => saw_waiting = true,
-                ReportAggregationState::Finished(_) => saw_finished = true,
+                ReportAggregationState::Finished => saw_finished = true,
                 ReportAggregationState::Failed(_) | ReportAggregationState::Invalid => (), // ignore failure aggregation states
             }
         }
@@ -622,7 +622,7 @@ impl AggregationJobDriver {
                             report_aggregation.time(),
                             out_share,
                         ) {
-                            Ok(_) => ReportAggregationState::Finished(out_share.clone()),
+                            Ok(_) => ReportAggregationState::Finished,
                             Err(error) => {
                                 warn!(report_id = %report_aggregation.report_id(), ?error, "Could not update batch aggregation");
                                 self.aggregate_step_failure_counter.add(
@@ -1107,7 +1107,7 @@ mod tests {
             *report.metadata().time(),
             0,
             None,
-            ReportAggregationState::Finished(transcript.output_share(Role::Leader).clone()),
+            ReportAggregationState::Finished,
         );
 
         let (got_aggregation_job, got_report_aggregation) = ds
@@ -1863,7 +1863,7 @@ mod tests {
             *report.metadata().time(),
             0,
             None,
-            ReportAggregationState::Finished(transcript.output_share(Role::Leader).clone()),
+            ReportAggregationState::Finished,
         );
         let batch_interval_start = report
             .metadata()
@@ -2147,7 +2147,6 @@ mod tests {
                 AggregationJobState::Finished,
                 AggregationJobRound::from(1),
             );
-        let leader_output_share = transcript.output_share(Role::Leader);
         let want_report_aggregation = ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
             *task.id(),
             aggregation_job_id,
@@ -2155,7 +2154,7 @@ mod tests {
             *report.metadata().time(),
             0,
             None,
-            ReportAggregationState::Finished(leader_output_share.clone()),
+            ReportAggregationState::Finished,
         );
         let want_batch_aggregations = Vec::from([BatchAggregation::<
             PRIO3_VERIFY_KEY_LENGTH,

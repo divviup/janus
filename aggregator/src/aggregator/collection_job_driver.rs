@@ -484,7 +484,7 @@ mod tests {
     use janus_core::{
         task::VdafInstance,
         test_util::{
-            dummy_vdaf::{self, AggregationParam, OutputShare},
+            dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber,
             runtime::TestRuntimeManager,
         },
@@ -571,7 +571,7 @@ mod tests {
                         *report.metadata().time(),
                         0,
                         None,
-                        ReportAggregationState::Finished(OutputShare()),
+                        ReportAggregationState::Finished,
                     ))
                     .await?;
 
@@ -700,7 +700,7 @@ mod tests {
                         *report.metadata().time(),
                         0,
                         None,
-                        ReportAggregationState::Finished(OutputShare()),
+                        ReportAggregationState::Finished,
                     ))
                     .await?;
 
