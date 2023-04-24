@@ -433,7 +433,7 @@ mod tests {
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         let report_generator = ReportShareGenerator::new(
             clock.clone(),

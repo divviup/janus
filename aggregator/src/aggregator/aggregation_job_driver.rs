@@ -940,7 +940,7 @@ mod tests {
         let clock = MockClock::default();
         let mut runtime_manager = TestRuntimeManager::new();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -1164,7 +1164,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
         let task = TaskBuilder::new(
@@ -1458,7 +1458,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
         let task = TaskBuilder::new(
@@ -1690,7 +1690,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
         let task = TaskBuilder::new(
@@ -1981,7 +1981,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
         let task = TaskBuilder::new(
@@ -2254,7 +2254,7 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
         let task = TaskBuilder::new(
@@ -2440,7 +2440,7 @@ mod tests {
         let clock = MockClock::default();
         let mut runtime_manager = TestRuntimeManager::new();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,

@@ -102,11 +102,10 @@ pub struct EphemeralDatastore {
 impl EphemeralDatastore {
     /// Creates a Datastore instance based on this EphemeralDatastore. All returned Datastore
     /// instances will refer to the same underlying durable state.
-    pub fn datastore<C: Clock>(&self, clock: C) -> Datastore<C> {
-        let datastore_key =
-            LessSafeKey::new(UnboundKey::new(&AES_128_GCM, &self.datastore_key_bytes).unwrap());
-        let crypter = Crypter::new(Vec::from([datastore_key]));
-        Datastore::new(self.pool(), crypter, clock)
+    pub async fn datastore<C: Clock>(&self, clock: C) -> Datastore<C> {
+        Datastore::new(self.pool(), self.crypter(), clock)
+            .await
+            .unwrap()
     }
 
     /// Retrieves the connection pool used for this EphemeralDatastore. Typically, this would be
@@ -123,6 +122,13 @@ impl EphemeralDatastore {
     /// Get the bytes of the key used to encrypt sensitive datastore values.
     pub fn datastore_key_bytes(&self) -> &[u8] {
         &self.datastore_key_bytes
+    }
+
+    /// Construct a [`Crypter`] for managing encrypted values in this datastore.
+    pub fn crypter(&self) -> Crypter {
+        let datastore_key =
+            LessSafeKey::new(UnboundKey::new(&AES_128_GCM, &self.datastore_key_bytes).unwrap());
+        Crypter::new(Vec::from([datastore_key]))
     }
 }
 

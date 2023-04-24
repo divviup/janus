@@ -126,10 +126,11 @@ pub async fn database_pool(db_config: &DbConfig, db_password: Option<&str>) -> R
 /// Connects to a datastore, given a connection pool to the underlying database. `datastore_keys`
 /// is a list of AES-128-GCM keys, encoded in base64 with no padding, used to protect secret values
 /// stored in the datastore; it must not be empty.
-pub fn datastore<C: Clock>(
+pub async fn datastore<C: Clock>(
     pool: Pool,
     clock: C,
     datastore_keys: &[String],
+    check_schema_version: bool,
 ) -> Result<Datastore<C>> {
     let datastore_keys = datastore_keys
         .iter()
@@ -150,7 +151,13 @@ pub fn datastore<C: Clock>(
         return Err(anyhow!("datastore_keys is empty"));
     }
 
-    Ok(Datastore::new(pool, Crypter::new(datastore_keys), clock))
+    let datastore = if check_schema_version {
+        Datastore::new(pool, Crypter::new(datastore_keys), clock).await?
+    } else {
+        Datastore::new_without_supported_versions(pool, Crypter::new(datastore_keys), clock).await
+    };
+
+    Ok(datastore)
 }
 
 /// Options for Janus binaries.
@@ -303,7 +310,9 @@ where
         pool,
         clock.clone(),
         &options.common_options().datastore_keys,
+        config.common_config().database.check_schema_version,
     )
+    .await
     .context("couldn't create datastore")?;
 
     let logging_config = config.common_config().logging_config.clone();

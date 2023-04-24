@@ -812,7 +812,7 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(clock.clone());
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // TODO(#234): consider using tokio::time::pause() to make time deterministic, and allow
@@ -913,7 +913,7 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(clock.clone());
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
         let vdaf = dummy_vdaf::Vdaf::new();
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
@@ -1009,7 +1009,7 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(clock.clone());
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
         let vdaf = dummy_vdaf::Vdaf::new();
         let task = Arc::new(
             TaskBuilder::new(
@@ -1121,7 +1121,7 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(clock.clone());
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
         let vdaf = dummy_vdaf::Vdaf::new();
 
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
@@ -1240,7 +1240,7 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(clock.clone());
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         const MAX_AGGREGATION_JOB_SIZE: usize = 10;
 

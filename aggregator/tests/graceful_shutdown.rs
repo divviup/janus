@@ -110,7 +110,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
     // This datastore will be used indirectly by the child process, which
     // will connect to its backing database separately.
     let ephemeral_datastore = ephemeral_datastore().await;
-    let datastore = ephemeral_datastore.datastore(RealClock::default());
+    let datastore = ephemeral_datastore.datastore(RealClock::default()).await;
 
     let health_check_port = select_open_port().await.unwrap();
     let health_check_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, health_check_port));

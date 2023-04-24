@@ -406,7 +406,7 @@ mod tests {
         install_test_trace_subscriber();
         let ephemeral_datastore = ephemeral_datastore().await;
         let handler = aggregator_api_handler(
-            ephemeral_datastore.datastore(MockClock::default()),
+            ephemeral_datastore.datastore(MockClock::default()).await,
             Config {
                 auth_tokens: Vec::from([SecretBytes::new(AUTH_TOKEN.as_bytes().to_vec())]),
             },
@@ -419,7 +419,7 @@ mod tests {
     async fn get_task_ids() {
         // Setup: write a few tasks to the datastore.
         let (handler, ephemeral_datastore) = setup_api_test().await;
-        let ds = ephemeral_datastore.datastore(MockClock::default());
+        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let mut task_ids: Vec<_> = ds
             .run_tx(|tx| {
@@ -497,7 +497,7 @@ mod tests {
     async fn post_task() {
         // Setup: create a datastore & handler.
         let (handler, ephemeral_datastore) = setup_api_test().await;
-        let ds = ephemeral_datastore.datastore(MockClock::default());
+        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         // Verify: posting a task creates a new task which matches the request.
         let req = PostTaskReq {
@@ -581,7 +581,7 @@ mod tests {
     async fn get_task() {
         // Setup: write a task to the datastore.
         let (handler, ephemeral_datastore) = setup_api_test().await;
-        let ds = ephemeral_datastore.datastore(MockClock::default());
+        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let task =
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
@@ -638,7 +638,7 @@ mod tests {
     async fn delete_task() {
         // Setup: write a task to the datastore.
         let (handler, ephemeral_datastore) = setup_api_test().await;
-        let ds = ephemeral_datastore.datastore(MockClock::default());
+        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let task_id = ds
             .run_tx(|tx| {
@@ -711,7 +711,7 @@ mod tests {
         const REPORT_AGGREGATION_COUNT: usize = 4;
 
         let (handler, ephemeral_datastore) = setup_api_test().await;
-        let ds = ephemeral_datastore.datastore(MockClock::default());
+        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
         let task_id = ds
             .run_tx(|tx| {
                 Box::pin(async move {
