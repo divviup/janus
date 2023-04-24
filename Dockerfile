@@ -1,4 +1,4 @@
-FROM rust:1.68.2-alpine as builder
+FROM rust:1.69.0-alpine as builder
 ARG BINARY=aggregator
 ARG GIT_REVISION=unknown
 RUN apk add libc-dev protobuf-dev protoc
