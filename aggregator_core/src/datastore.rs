@@ -63,7 +63,7 @@ pub mod test_util;
 
 /// List of schema versions that this version of Janus can safely run on. If any other schema
 /// version is seen, [`Datastore::new`] fails.
-const SUPPORTED_SCHEMA_VERSIONS: &[i64] = &[20230405185602, 20230417204528];
+const SUPPORTED_SCHEMA_VERSIONS: &[i64] = &[20230417204528, 20230420210648];
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
