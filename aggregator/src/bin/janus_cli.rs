@@ -341,7 +341,9 @@ async fn datastore_from_opts(
         &kubernetes_secret_options
             .datastore_keys(&command_line_options.common_options, kube_client)
             .await?,
+        true,
     )
+    .await
 }
 
 #[derive(Debug, Parser)]
@@ -586,7 +588,12 @@ mod tests {
     #[tokio::test]
     async fn write_schema() {
         let ephemeral_datastore = ephemeral_datastore_no_schema().await;
-        let ds = ephemeral_datastore.datastore(RealClock::default());
+        let ds = Datastore::new_without_supported_versions(
+            ephemeral_datastore.pool(),
+            ephemeral_datastore.crypter(),
+            RealClock::default(),
+        )
+        .await;
 
         // Verify that the query we will run later returns an error if there is no database schema written.
         ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
@@ -607,7 +614,12 @@ mod tests {
     #[tokio::test]
     async fn write_schema_dry_run() {
         let ephemeral_datastore = ephemeral_datastore_no_schema().await;
-        let ds = ephemeral_datastore.datastore(RealClock::default());
+        let ds = Datastore::new_without_supported_versions(
+            ephemeral_datastore.pool(),
+            ephemeral_datastore.crypter(),
+            RealClock::default(),
+        )
+        .await;
 
         ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
             .await
@@ -648,7 +660,7 @@ mod tests {
     #[tokio::test]
     async fn provision_tasks() {
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(RealClock::default());
+        let ds = ephemeral_datastore.datastore(RealClock::default()).await;
 
         let tasks = Vec::from([
             TaskBuilder::new(
@@ -682,7 +694,7 @@ mod tests {
     #[tokio::test]
     async fn provision_task_dry_run() {
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(RealClock::default());
+        let ds = ephemeral_datastore.datastore(RealClock::default()).await;
 
         let tasks = Vec::from([TaskBuilder::new(
             QueryType::TimeInterval,
@@ -722,7 +734,7 @@ mod tests {
         ]);
 
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(RealClock::default());
+        let ds = ephemeral_datastore.datastore(RealClock::default()).await;
 
         let mut tasks_file = NamedTempFile::new().unwrap();
         tasks_file
@@ -828,7 +840,7 @@ mod tests {
 "#;
 
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(RealClock::default());
+        let ds = ephemeral_datastore.datastore(RealClock::default()).await;
 
         let mut tasks_file = NamedTempFile::new().unwrap();
         tasks_file

@@ -113,7 +113,7 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // Setup.
@@ -267,7 +267,7 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // Setup.
@@ -434,7 +434,7 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // Setup.
@@ -592,7 +592,7 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // Setup.

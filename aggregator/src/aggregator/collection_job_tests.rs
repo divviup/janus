@@ -124,7 +124,7 @@ pub(crate) async fn setup_collection_job_test_case(
         .build();
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
-    let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
+    let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
     datastore.put_task(&task).await.unwrap();
 

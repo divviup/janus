@@ -2548,7 +2548,7 @@ mod tests {
         .build();
 
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         datastore.put_task(&task).await.unwrap();
 
