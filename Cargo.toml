@@ -21,7 +21,7 @@ version = "0.2.19"
 
 [workspace.dependencies]
 k8s-openapi = { version = "0.18.0", features = ["v1_20"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
-kube = { version = "0.82.1", default-features = false, features = ["client", "rustls-tls"] }
+kube = { version = "0.82.2", default-features = false, features = ["client", "rustls-tls"] }
 
 [profile.dev]
 # Disabling debug info improves build speeds & reduces
