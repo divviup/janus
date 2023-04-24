@@ -1922,7 +1922,7 @@ dependencies = [
  "tracing",
  "trillium",
  "trillium-api",
- "trillium-macros",
+ "trillium-macros 0.0.3",
  "trillium-opentelemetry",
  "trillium-router",
  "trillium-testing",
@@ -4582,14 +4582,14 @@ dependencies = [
 
 [[package]]
 name = "trillium"
-version = "0.2.8"
+version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79b4d1605a08d6bda5d3023035007fad7f220aa4aeefb24caac3856c0dfdede8"
+checksum = "3f06392b9c819adcd9416b88d26244603e73ca84d40b191e7a751524b30bb3a9"
 dependencies = [
  "async-trait",
  "futures-lite",
  "log",
- "trillium-http",
+ "trillium-http 0.3.0",
 ]
 
 [[package]]
@@ -4605,7 +4605,7 @@ dependencies = [
  "serde_path_to_error",
  "thiserror",
  "trillium",
- "trillium-http",
+ "trillium-http 0.2.14",
 ]
 
 [[package]]
@@ -4650,10 +4650,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "trillium-http"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ebe2d7f65b0f99e2b138650addffb1075a859aaf08accbcdd850e48357cbb77f"
+dependencies = [
+ "encoding_rs",
+ "futures-lite",
+ "hashbrown 0.13.2",
+ "httparse",
+ "httpdate",
+ "log",
+ "memmem",
+ "mime",
+ "smallvec",
+ "smartcow",
+ "smartstring",
+ "stopper",
+ "thiserror",
+ "trillium-macros 0.0.4",
+]
+
+[[package]]
 name = "trillium-macros"
 version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6aeb704a6816c9b6319a0bffbeab5807ecb9a2c4ff8a9385e04cf7a130c8a2f2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.10",
+]
+
+[[package]]
+name = "trillium-macros"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d19bf7f37bc3e66beae9792c0f7a0e3500465cf431da63fdb6af593b0e353a4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4705,7 +4738,7 @@ dependencies = [
  "pin-project-lite",
  "rlimit",
  "trillium",
- "trillium-http",
+ "trillium-http 0.2.14",
  "trillium-tls-common",
 ]
 
@@ -4721,7 +4754,7 @@ dependencies = [
  "futures-lite",
  "portpicker",
  "trillium",
- "trillium-http",
+ "trillium-http 0.2.14",
  "trillium-server-common",
  "trillium-tokio",
  "url",
@@ -4751,7 +4784,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "trillium",
- "trillium-http",
+ "trillium-http 0.2.14",
  "trillium-server-common",
 ]
 
