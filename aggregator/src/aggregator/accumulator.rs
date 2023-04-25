@@ -146,24 +146,21 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
                     .await?
                 {
                     Some(batch_aggregation) => {
-                        match tx
-                            .update_batch_aggregation(
-                                &batch_aggregation.merged_with(&data.batch_aggregation)?,
-                            )
-                            .await
-                        {
-                            Ok(()) => (),
-                            Err(datastore::Error::AlreadyCollected) => {
-                                // Unwrap safety: this only panics if the mutex is poisoned. If
-                                // it is, one of the other futures also panicked, so we can
-                                // panic too.
-                                let mut unmergeable_report_ids =
-                                    unmergeable_report_ids.lock().unwrap();
-                                unmergeable_report_ids.extend(&data.included_report_ids);
-                            }
-                            Err(err) => Err(err)?,
-                        };
-                        Ok(())
+                        let batch_aggregation =
+                            match batch_aggregation.merged_with(&data.batch_aggregation) {
+                                Ok(batch_aggregation) => batch_aggregation,
+                                Err(datastore::Error::AlreadyCollected) => {
+                                    // Unwrap safety: this only panics if the mutex is poisoned. If
+                                    // it is, one of the other futures also panicked, so we can
+                                    // panic too.
+                                    let mut unmergeable_report_ids =
+                                        unmergeable_report_ids.lock().unwrap();
+                                    unmergeable_report_ids.extend(&data.included_report_ids);
+                                    return Ok(());
+                                }
+                                Err(err) => Err(err)?,
+                            };
+                        tx.update_batch_aggregation(&batch_aggregation).await
                     }
 
                     None => {

@@ -2246,36 +2246,13 @@ impl VdafOps {
                             // To ensure that concurrent aggregations don't write into a
                             // currently-nonexistent batch aggregation, we write (empty) batch
                             // aggregations for any that have not already been written to storage.
-                            let existing_batch_aggregations: HashSet<_> = batch_aggregations
-                                .iter()
-                                .map(|ba| (ba.batch_identifier(), ba.ord()))
-                                .collect();
-                            let empty_batch_aggregations: Vec<_> = iproduct!(
-                                Q::batch_identifiers_for_collect_identifier(
-                                    &task,
-                                    aggregate_share_req.batch_selector().batch_identifier()
-                                ),
-                                0..batch_aggregation_shard_count
-                            )
-                            .filter_map(|(batch_identifier, ord)| {
-                                if !existing_batch_aggregations.contains(&(&batch_identifier, ord))
-                                {
-                                    Some(BatchAggregation::<SEED_SIZE, Q, A>::new(
-                                        *task.id(),
-                                        batch_identifier,
-                                        aggregation_param.clone(),
-                                        ord,
-                                        BatchAggregationState::Collected,
-                                        None,
-                                        0,
-                                        Interval::EMPTY,
-                                        ReportIdChecksum::default(),
-                                    ))
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
+                            let empty_batch_aggregations = empty_batch_aggregations(
+                                &task,
+                                batch_aggregation_shard_count,
+                                aggregate_share_req.batch_selector().batch_identifier(),
+                                &aggregation_param,
+                                &batch_aggregations,
+                            );
 
                             let (helper_aggregate_share, report_count, checksum) =
                                 compute_aggregate_share::<SEED_SIZE, Q, A>(
@@ -2353,6 +2330,45 @@ impl VdafOps {
 
         Ok(AggregateShare::new(encrypted_aggregate_share))
     }
+}
+
+fn empty_batch_aggregations<
+    const SEED_SIZE: usize,
+    Q: CollectableQueryType,
+    A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+>(
+    task: &Task,
+    batch_aggregation_shard_count: u64,
+    batch_identifier: &Q::BatchIdentifier,
+    aggregation_param: &A::AggregationParam,
+    batch_aggregations: &[BatchAggregation<SEED_SIZE, Q, A>],
+) -> Vec<BatchAggregation<SEED_SIZE, Q, A>> {
+    let existing_batch_aggregations: HashSet<_> = batch_aggregations
+        .iter()
+        .map(|ba| (ba.batch_identifier(), ba.ord()))
+        .collect();
+    iproduct!(
+        Q::batch_identifiers_for_collect_identifier(task, batch_identifier,),
+        0..batch_aggregation_shard_count
+    )
+    .filter_map(move |(batch_identifier, ord)| {
+        if !existing_batch_aggregations.contains(&(&batch_identifier, ord)) {
+            Some(BatchAggregation::<SEED_SIZE, Q, A>::new(
+                *task.id(),
+                batch_identifier,
+                aggregation_param.clone(),
+                ord,
+                BatchAggregationState::Collected,
+                None,
+                0,
+                Interval::EMPTY,
+                ReportIdChecksum::default(),
+            ))
+        } else {
+            None
+        }
+    })
+    .collect()
 }
 
 /// Construct a DAP aggregator server, listening on the provided [`SocketAddr`]. If the

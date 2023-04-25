@@ -1,16 +1,15 @@
 //! Implements portions of collect sub-protocol for DAP leader and helper.
 
 use crate::aggregator::{
-    aggregate_share::compute_aggregate_share, query_type::CollectableQueryType,
-    send_request_to_helper, Error,
+    aggregate_share::compute_aggregate_share, empty_batch_aggregations,
+    query_type::CollectableQueryType, send_request_to_helper, Error,
 };
 use derivative::Derivative;
 use futures::future::{try_join_all, BoxFuture};
-use itertools::iproduct;
 use janus_aggregator_core::{
     datastore::{
         self,
-        models::{AcquiredCollectionJob, BatchAggregation, BatchAggregationState},
+        models::{AcquiredCollectionJob, BatchAggregationState},
         models::{CollectionJobState, Lease},
         Datastore,
     },
@@ -20,7 +19,7 @@ use janus_core::time::Clock;
 use janus_core::vdaf_dispatch;
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
-    AggregateShare, AggregateShareReq, BatchSelector, Interval, ReportIdChecksum,
+    AggregateShare, AggregateShareReq, BatchSelector,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -31,7 +30,7 @@ use prio::{
     vdaf,
 };
 use reqwest::Method;
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio::try_join;
 use tracing::{info, warn};
 
@@ -219,37 +218,13 @@ impl CollectionJobDriver {
         // To ensure that concurrent aggregations don't write into a currently-nonexistent batch
         // aggregation, we write (empty) batch aggregations for any that have not already been
         // written to storage.
-        let existing_batch_aggregations: HashSet<_> = batch_aggregations
-            .iter()
-            .map(|ba| (ba.batch_identifier(), ba.ord()))
-            .collect();
-        let empty_batch_aggregations: Arc<Vec<_>> = Arc::new(
-            iproduct!(
-                Q::batch_identifiers_for_collect_identifier(
-                    &task,
-                    collection_job.batch_identifier()
-                ),
-                0..self.batch_aggregation_shard_count
-            )
-            .filter_map(|(batch_identifier, ord)| {
-                if !existing_batch_aggregations.contains(&(&batch_identifier, ord)) {
-                    Some(BatchAggregation::<SEED_SIZE, Q, A>::new(
-                        *task.id(),
-                        batch_identifier,
-                        collection_job.aggregation_parameter().clone(),
-                        ord,
-                        BatchAggregationState::Collected,
-                        None,
-                        0,
-                        Interval::EMPTY,
-                        ReportIdChecksum::default(),
-                    ))
-                } else {
-                    None
-                }
-            })
-            .collect(),
-        );
+        let empty_batch_aggregations = Arc::new(empty_batch_aggregations(
+            &task,
+            self.batch_aggregation_shard_count,
+            collection_job.batch_identifier(),
+            collection_job.aggregation_parameter(),
+            &batch_aggregations,
+        ));
 
         datastore
             .run_tx_with_name("step_collection_job_2", |tx| {

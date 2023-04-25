@@ -31,7 +31,7 @@ use prio::{
     vdaf::{self, PrepareTransition},
 };
 use reqwest::Method;
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{borrow::Cow, collections::HashSet, sync::Arc, time::Duration};
 use tokio::try_join;
 use tracing::{info, warn};
 
@@ -660,74 +660,76 @@ impl AggregationJobDriver {
             report_aggregations_to_write.push(report_aggregation.clone().with_state(new_state));
         }
 
-        // Determine if we've finished the aggregation job (i.e. if all report aggregations are in
-        // a terminal state), then write everything back to storage.
-        let aggregation_job_is_finished = report_aggregations_to_write
-            .iter()
-            .all(|ra| !matches!(ra.state(), ReportAggregationState::Waiting(_, _)));
-        let (next_round, next_state) = if aggregation_job_is_finished {
-            (
-                leader_aggregation_job.round(),
-                AggregationJobState::Finished,
-            )
-        } else {
-            (
-                // Advance self to next VDAF preparation round
-                leader_aggregation_job.round().increment(),
-                AggregationJobState::InProgress,
-            )
-        };
-
-        let aggregation_job_to_write = Arc::new(
-            leader_aggregation_job
-                .with_round(next_round)
-                .with_state(next_state),
-        );
+        // Write everything back to storage.
+        let leader_aggregation_job = Arc::new(leader_aggregation_job);
         let report_aggregations_to_write = Arc::new(report_aggregations_to_write);
         let accumulator = Arc::new(accumulator);
         datastore
             .run_tx_with_name("step_aggregation_job_2", |tx| {
                 let (
                     vdaf,
-                    aggregation_job_to_write,
+                    leader_aggregation_job,
                     report_aggregations_to_write,
                     accumulator,
                     lease,
                 ) = (
                     Arc::clone(&vdaf),
-                    Arc::clone(&aggregation_job_to_write),
+                    Arc::clone(&leader_aggregation_job),
                     Arc::clone(&report_aggregations_to_write),
                     Arc::clone(&accumulator),
                     Arc::clone(&lease),
                 );
+
                 Box::pin(async move {
+                    // Compute final report aggregations to write, based on whether the reports
+                    // can be flushed to the datastore.
                     let unwritable_reports = accumulator.flush_to_datastore(tx, &vdaf).await?;
+                    let report_aggregations_to_write: Vec<_> = report_aggregations_to_write
+                        .iter()
+                        .map(|ra| {
+                            if unwritable_reports.contains(ra.report_id()) {
+                                Cow::Owned(
+                                    ra.clone()
+                                        .with_state(ReportAggregationState::Failed(
+                                            ReportShareError::BatchCollected,
+                                        ))
+                                        .with_last_prep_step(Some(PrepareStep::new(
+                                            *ra.report_id(),
+                                            PrepareStepResult::Failed(
+                                                ReportShareError::BatchCollected,
+                                            ),
+                                        ))),
+                                )
+                            } else {
+                                Cow::Borrowed(ra)
+                            }
+                        })
+                        .collect();
+
+                    // Determine if we've finished the aggregation job (i.e. if all report
+                    // aggregations are in a terminal state), then write everything back to storage.
+                    let aggregation_job_to_write = leader_aggregation_job
+                        .as_ref()
+                        .clone()
+                        .with_round(leader_aggregation_job.round().increment())
+                        .with_state(
+                            if report_aggregations_to_write.iter().all(|ra| {
+                                !matches!(ra.state(), ReportAggregationState::Waiting(_, _))
+                            }) {
+                                AggregationJobState::Finished
+                            } else {
+                                AggregationJobState::InProgress
+                            },
+                        );
 
                     try_join!(
                         tx.release_aggregation_job(&lease),
                         tx.update_aggregation_job(&aggregation_job_to_write),
-                        try_join_all(report_aggregations_to_write.iter().map(|ra| {
-                            let report_is_unwritable = unwritable_reports.contains(ra.report_id());
-                            async move {
-                                if report_is_unwritable {
-                                    tx.update_report_aggregation(
-                                        &ra.clone()
-                                            .with_state(ReportAggregationState::Failed(
-                                                ReportShareError::BatchCollected,
-                                            ))
-                                            .with_last_prep_step(Some(PrepareStep::new(
-                                                *ra.report_id(),
-                                                PrepareStepResult::Failed(
-                                                    ReportShareError::BatchCollected,
-                                                ),
-                                            ))),
-                                    )
-                                    .await
-                                } else {
-                                    tx.update_report_aggregation(ra).await
-                                }
-                            }
-                        })),
+                        try_join_all(
+                            report_aggregations_to_write
+                                .iter()
+                                .map(|ra| tx.update_report_aggregation(ra))
+                        ),
                     )?;
                     Ok(())
                 })
@@ -1113,7 +1115,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
-                AggregationJobRound::from(1),
+                AggregationJobRound::from(2),
             );
         let want_report_aggregation = ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
             *task.id(),
@@ -1869,7 +1871,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
-                AggregationJobRound::from(1),
+                AggregationJobRound::from(2),
             );
         let want_report_aggregation = ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
             *task.id(),
@@ -2162,7 +2164,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
-                AggregationJobRound::from(1),
+                AggregationJobRound::from(2),
             );
         let leader_output_share = transcript.output_share(Role::Leader);
         let want_report_aggregation = ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
