@@ -39,16 +39,16 @@ janus_integration_tests = { version = "0.4", path = "integration_tests" }
 janus_interop_binaries = { version = "0.4", path = "interop_binaries" }
 janus_messages = { version = "0.4", path = "messages" }
 k8s-openapi = { version = "0.18.0", features = ["v1_24"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
-kube = { version = "0.82.1", default-features = false, features = ["client", "rustls-tls"] }
+kube = { version = "0.82.2", default-features = false, features = ["client", "rustls-tls"] }
 prio = { version = "0.12.1", features = ["multithreaded"] }
-trillium = "0.2.8"
-trillium-api = { version = "0.2.0-rc.2", default-features = false }
+trillium = "0.2.9"
+trillium-api = { version = "0.2.0-rc.3", default-features = false }
 trillium-caching-headers = "0.2.1"
 trillium-head = "0.2.0"
 trillium-opentelemetry = "0.0.1"
 trillium-router = "0.3.5"
-trillium-testing = "0.4.2"
-trillium-tokio = "0.2.1"
+trillium-testing = "0.5.0"
+trillium-tokio = "0.3.0"
 
 [profile.dev]
 # Disabling debug info improves build speeds & reduces build artifact sizes, which helps CI caching.

@@ -1,6 +1,7 @@
 //! This crate implements the Janus Aggregator API.
 
 use crate::models::{GetTaskIdsResp, PostTaskReq};
+use base64::{engine::general_purpose::STANDARD, Engine};
 use janus_aggregator_core::{
     datastore::{self, Datastore},
     task::Task,
@@ -53,8 +54,14 @@ pub fn aggregator_api_handler<C: Clock>(ds: Datastore<C>, cfg: Config) -> impl H
 async fn auth_check(conn: &mut Conn, State(cfg): State<Arc<Config>>) -> impl Handler {
     if let Some(authorization_value) = conn.headers().get("authorization") {
         if let Some(received_token) = authorization_value.as_ref().strip_prefix(b"Bearer ") {
+            let decoded = match STANDARD.decode(received_token) {
+                Ok(decoded) => decoded,
+                Err(_) => {
+                    return Some((Status::Unauthorized, Halt));
+                }
+            };
             if cfg.auth_tokens.iter().any(|key| {
-                constant_time::verify_slices_are_equal(received_token, key.as_ref()).is_ok()
+                constant_time::verify_slices_are_equal(decoded.as_ref(), key.as_ref()).is_ok()
             }) {
                 // Authorization succeeds.
                 return None;
@@ -366,6 +373,7 @@ mod tests {
         models::{GetTaskIdsResp, GetTaskMetricsResp, PostTaskReq, TaskResp},
         Config,
     };
+    use base64::{engine::general_purpose::STANDARD, Engine};
     use futures::future::try_join_all;
     use janus_aggregator_core::{
         datastore::{
@@ -451,7 +459,10 @@ mod tests {
         // Verify: we can get the task IDs we wrote back from the API.
         assert_response!(
             get("/task_ids")
-                .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
+                .with_request_header(
+                    "Authorization",
+                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
+                )
                 .run_async(&handler)
                 .await,
             Status::Ok,
@@ -464,7 +475,10 @@ mod tests {
                 "/task_ids?pagination_token={}",
                 task_ids.first().unwrap()
             ))
-            .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
+            .with_request_header(
+                "Authorization",
+                format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
+            )
             .run_async(&handler)
             .await,
             Status::Ok,
@@ -478,7 +492,10 @@ mod tests {
                 "/task_ids?pagination_token={}",
                 task_ids.last().unwrap()
             ))
-            .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
+            .with_request_header(
+                "Authorization",
+                format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
+            )
             .run_async(&handler)
             .await,
             Status::Ok,
@@ -523,7 +540,10 @@ mod tests {
         };
         let mut conn = post("/tasks")
             .with_request_body(serde_json::to_vec(&req).unwrap())
-            .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
+            .with_request_header(
+                "Authorization",
+                format!("Bearer {}", STANDARD.encode(AUTH_TOKEN)),
+            )
             .run_async(&handler)
             .await;
         assert_status!(conn, Status::Ok);
@@ -599,7 +619,10 @@ mod tests {
         // Verify: getting the task returns the expected result.
         let want_task_resp = TaskResp::from(&task);
         let mut conn = get(&format!("/tasks/{}", task.id()))
-            .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
+            .with_request_header(
+                "Authorization",
+                format!("Bearer {}", STANDARD.encode(AUTH_TOKEN)),
+            )
             .run_async(&handler)
             .await;
         assert_status!(conn, Status::Ok);
@@ -617,7 +640,10 @@ mod tests {
         // Verify: getting a nonexistent task returns NotFound.
         assert_response!(
             get(&format!("/tasks/{}", random::<TaskId>()))
-                .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
+                .with_request_header(
+                    "Authorization",
+                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
+                )
                 .run_async(&handler)
                 .await,
             Status::NotFound,
@@ -658,7 +684,10 @@ mod tests {
         // Verify: deleting a task succeeds (and actually deletes the task).
         assert_response!(
             delete(&format!("/tasks/{}", &task_id))
-                .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
+                .with_request_header(
+                    "Authorization",
+                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
+                )
                 .run_async(&handler)
                 .await,
             Status::NoContent,
@@ -677,7 +706,10 @@ mod tests {
         // Verify: deleting a task twice returns NotFound.
         assert_response!(
             delete(&format!("/tasks/{}", &task_id))
-                .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
+                .with_request_header(
+                    "Authorization",
+                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
+                )
                 .run_async(&handler)
                 .await,
             Status::NotFound,
@@ -687,7 +719,10 @@ mod tests {
         // Verify: deleting an arbitrary nonexistent task ID returns NotFound.
         assert_response!(
             delete(&format!("/tasks/{}", &random::<TaskId>()))
-                .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
+                .with_request_header(
+                    "Authorization",
+                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
+                )
                 .run_async(&handler)
                 .await,
             Status::NotFound,
@@ -780,7 +815,10 @@ mod tests {
         // Verify: requesting metrics on a task returns the correct result.
         assert_response!(
             get(&format!("/tasks/{}/metrics", &task_id))
-                .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
+                .with_request_header(
+                    "Authorization",
+                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
+                )
                 .run_async(&handler)
                 .await,
             Status::Ok,
@@ -794,7 +832,10 @@ mod tests {
         // Verify: requesting metrics on a nonexistent task returns NotFound.
         assert_response!(
             delete(&format!("/tasks/{}", &random::<TaskId>()))
-                .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
+                .with_request_header(
+                    "Authorization",
+                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
+                )
                 .run_async(&handler)
                 .await,
             Status::NotFound,
