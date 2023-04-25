@@ -61,9 +61,32 @@ pub mod test_util;
 
 // TODO(#196): retry network-related & other transient failures once we know what they look like
 
-/// List of schema versions that this version of Janus can safely run on. If any other schema
-/// version is seen, [`Datastore::new`] fails.
-const SUPPORTED_SCHEMA_VERSIONS: &[i64] = &[20230405185602, 20230417204528, 20230424220336];
+/// This macro stamps out an array of schema versions supported by this version of Janus and an
+/// [`rstest_reuse`][1] template that can be applied to tests to have them run against all supported
+/// schema versions.
+///
+/// [1]: https://docs.rs/rstest_reuse/latest/rstest_reuse/
+macro_rules! supported_schema_versions {
+    ($( $i:literal ),*) => {
+        const SUPPORTED_SCHEMA_VERSIONS: &[i64] = &[$($i),*];
+
+        #[cfg(test)]
+        #[rstest_reuse::template]
+        #[rstest::rstest]
+        $(#[case(ephemeral_datastore_max_schema_version($i))])*
+        async fn schema_versions_template(
+            #[future(awt)]
+            #[case]
+            ephemeral_datastore: EphemeralDatastore,
+        ) {
+            // This is an rstest template and never gets run.
+        }
+    }
+}
+
+// List of schema versions that this version of Janus can safely run on. If any other schema
+// version is seen, [`Datastore::new`] fails.
+supported_schema_versions!(20230417204528, 20230424220336);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -5381,7 +5404,10 @@ mod tests {
                 LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
                 ReportAggregationState, SqlInterval,
             },
-            test_util::{ephemeral_datastore, generate_aead_key},
+            schema_versions_template,
+            test_util::{
+                ephemeral_datastore_max_schema_version, generate_aead_key, EphemeralDatastore,
+            },
             Crypter, Datastore, Error, Transaction,
         },
         query_type::CollectableQueryType,
@@ -5420,10 +5446,10 @@ mod tests {
         time::Duration as StdDuration,
     };
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn reject_unsupported_schema_version() {
+    async fn reject_unsupported_schema_version(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let error = Datastore::new_with_supported_versions(
             ephemeral_datastore.pool(),
             ephemeral_datastore.crypter(),
@@ -5436,10 +5462,10 @@ mod tests {
         assert_matches!(error, Error::DbState(_));
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn roundtrip_task() {
+    async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         // Insert tasks, check that they can be retrieved by ID.
@@ -5549,10 +5575,10 @@ mod tests {
         assert_eq!(want_tasks, got_tasks);
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn get_task_metrics() {
+    async fn get_task_metrics(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         ds.run_tx(|tx| {
@@ -5684,10 +5710,10 @@ mod tests {
         .unwrap();
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn get_task_ids() {
+    async fn get_task_ids(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         ds.run_tx(|tx| {
@@ -5724,10 +5750,10 @@ mod tests {
         .unwrap();
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn roundtrip_report() {
+    async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let task = TaskBuilder::new(
@@ -5825,10 +5851,10 @@ mod tests {
         assert_matches!(result, Err(Error::MutationTargetAlreadyExists));
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn report_not_found() {
+    async fn report_not_found(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let rslt = ds
@@ -5848,10 +5874,10 @@ mod tests {
         assert_eq!(rslt, None);
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn get_unaggregated_client_report_ids_for_task() {
+    async fn get_unaggregated_client_report_ids_for_task(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let time_precision = Duration::from_seconds(1000);
@@ -6006,10 +6032,12 @@ mod tests {
         );
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn get_unaggregated_client_report_ids_with_agg_param_for_task() {
+    async fn get_unaggregated_client_report_ids_with_agg_param_for_task(
+        ephemeral_datastore: EphemeralDatastore,
+    ) {
         install_test_trace_subscriber();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let task = TaskBuilder::new(
@@ -6268,10 +6296,10 @@ mod tests {
         assert_eq!(got_reports, expected_reports);
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn count_client_reports_for_interval() {
+    async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let task = TaskBuilder::new(
@@ -6379,10 +6407,10 @@ mod tests {
         assert_eq!(no_reports_task_report_count, 0);
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn count_client_reports_for_batch_id() {
+    async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let task = TaskBuilder::new(
@@ -6517,10 +6545,10 @@ mod tests {
         assert_eq!(report_count, 2);
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn roundtrip_report_share() {
+    async fn roundtrip_report_share(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let task = TaskBuilder::new(
@@ -6613,10 +6641,10 @@ mod tests {
         .unwrap();
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn roundtrip_aggregation_job() {
+    async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         // We use a dummy VDAF & fixed-size task for this test, to better exercise the
@@ -6792,12 +6820,12 @@ mod tests {
         .unwrap();
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn aggregation_job_acquire_release() {
+    async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore) {
         // Setup: insert a few aggregation jobs.
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         const AGGREGATION_JOB_COUNT: usize = 10;
@@ -7080,10 +7108,10 @@ mod tests {
         .unwrap();
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn aggregation_job_not_found() {
+    async fn aggregation_job_not_found(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let rslt = ds
@@ -7125,11 +7153,11 @@ mod tests {
         assert_matches!(rslt, Err(Error::MutationTargetNotFound));
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn get_aggregation_jobs_for_task() {
+    async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) {
         // Setup.
         install_test_trace_subscriber();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         // We use a dummy VDAF & fixed-size task for this test, to better exercise the
@@ -7226,10 +7254,10 @@ mod tests {
         assert_eq!(want_agg_jobs, got_agg_jobs);
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn roundtrip_report_aggregation() {
+    async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
@@ -7377,10 +7405,10 @@ mod tests {
         }
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn check_report_aggregation_exists() {
+    async fn check_report_aggregation_exists(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
@@ -7502,10 +7530,10 @@ mod tests {
         .unwrap();
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn report_aggregation_not_found() {
+    async fn report_aggregation_not_found(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let vdaf = Arc::new(dummy_vdaf::Vdaf::default());
@@ -7547,10 +7575,10 @@ mod tests {
         assert_matches!(rslt, Err(Error::MutationTargetNotFound));
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn get_report_aggregations_for_aggregation_job() {
+    async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
@@ -7694,8 +7722,9 @@ mod tests {
             .is_err());
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn get_collection_job() {
+    async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
         let task = TaskBuilder::new(
@@ -7716,7 +7745,6 @@ mod tests {
         .unwrap();
         let aggregation_param = AggregationParam(13);
 
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         ds.run_tx(|tx| {
@@ -7809,12 +7837,12 @@ mod tests {
         .unwrap();
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn update_collection_jobs() {
+    async fn update_collection_jobs(ephemeral_datastore: EphemeralDatastore) {
         // Setup: write collection jobs to the datastore.
         install_test_trace_subscriber();
 
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let task = TaskBuilder::new(
@@ -8072,11 +8100,13 @@ mod tests {
         .unwrap()
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn time_interval_collection_job_acquire_release_happy_path() {
+    async fn time_interval_collection_job_acquire_release_happy_path(
+        ephemeral_datastore: EphemeralDatastore,
+    ) {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task_id = random();
@@ -8209,11 +8239,13 @@ mod tests {
         .unwrap();
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn fixed_size_collection_job_acquire_release_happy_path() {
+    async fn fixed_size_collection_job_acquire_release_happy_path(
+        ephemeral_datastore: EphemeralDatastore,
+    ) {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task_id = random();
@@ -8335,11 +8367,13 @@ mod tests {
         .unwrap();
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn collection_job_acquire_no_aggregation_job_with_task_id() {
+    async fn collection_job_acquire_no_aggregation_job_with_task_id(
+        ephemeral_datastore: EphemeralDatastore,
+    ) {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task_id = random();
@@ -8386,11 +8420,13 @@ mod tests {
         .await;
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn collection_job_acquire_no_aggregation_job_with_agg_param() {
+    async fn collection_job_acquire_no_aggregation_job_with_agg_param(
+        ephemeral_datastore: EphemeralDatastore,
+    ) {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task_id = random();
@@ -8440,11 +8476,13 @@ mod tests {
         .await;
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn collection_job_acquire_report_shares_outside_interval() {
+    async fn collection_job_acquire_report_shares_outside_interval(
+        ephemeral_datastore: EphemeralDatastore,
+    ) {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task_id = random();
@@ -8504,11 +8542,11 @@ mod tests {
         .await;
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn collection_job_acquire_release_job_finished() {
+    async fn collection_job_acquire_release_job_finished(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task_id = random();
@@ -8568,11 +8606,13 @@ mod tests {
         .await;
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn collection_job_acquire_release_aggregation_job_in_progress() {
+    async fn collection_job_acquire_release_aggregation_job_in_progress(
+        ephemeral_datastore: EphemeralDatastore,
+    ) {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task_id = random();
@@ -8655,11 +8695,11 @@ mod tests {
         .await;
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn collection_job_acquire_job_max() {
+    async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task_id = random();
@@ -8810,11 +8850,11 @@ mod tests {
         .unwrap();
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn collection_job_acquire_state_filtering() {
+    async fn collection_job_acquire_state_filtering(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task_id = random();
@@ -8948,11 +8988,11 @@ mod tests {
         .unwrap();
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn roundtrip_batch_aggregation_time_interval() {
+    async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         ds.run_tx(|tx| {
@@ -9165,11 +9205,11 @@ mod tests {
         .unwrap();
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn roundtrip_batch_aggregation_fixed_size() {
+    async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         ds.run_tx(|tx| {
@@ -9295,11 +9335,11 @@ mod tests {
         .unwrap();
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn roundtrip_aggregate_share_job() {
+    async fn roundtrip_aggregate_share_job(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         ds.run_tx(|tx| {
@@ -9404,12 +9444,12 @@ mod tests {
         .unwrap();
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn roundtrip_outstanding_batch() {
+    async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let (task_id, batch_id) = ds
@@ -9692,12 +9732,12 @@ mod tests {
         }
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn delete_expired_client_reports() {
+    async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
         let vdaf = dummy_vdaf::Vdaf::new();
 
@@ -9823,12 +9863,12 @@ mod tests {
         assert_eq!(want_report_ids, got_report_ids);
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn delete_expired_aggregation_artifacts() {
+    async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
         let vdaf = dummy_vdaf::Vdaf::new();
 
@@ -10567,12 +10607,12 @@ mod tests {
         assert_eq!(want_report_ids, got_report_ids);
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn delete_expired_collection_artifacts() {
+    async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         // Setup.
@@ -11122,9 +11162,10 @@ mod tests {
         assert_eq!(want_outstanding_batch_ids, got_outstanding_batch_ids);
     }
 
+    #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn roundtrip_interval_sql() {
-        let ephemeral_datastore = ephemeral_datastore().await;
+    async fn roundtrip_interval_sql(ephemeral_datastore: EphemeralDatastore) {
+        install_test_trace_subscriber();
         let datastore = ephemeral_datastore.datastore(MockClock::default()).await;
 
         datastore
