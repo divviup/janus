@@ -154,7 +154,7 @@ impl VdafOps {
                     )?;
                     *report_aggregation = report_aggregation
                         .clone()
-                        .with_state(ReportAggregationState::Finished(output_share))
+                        .with_state(ReportAggregationState::Finished)
                         .with_last_prep_step(Some(PrepareStep::new(
                             *prep_step.report_id(),
                             PrepareStepResult::Finished,
