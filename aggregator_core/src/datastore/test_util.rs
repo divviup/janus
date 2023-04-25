@@ -163,8 +163,7 @@ pub async fn ephemeral_datastore_no_schema() -> EphemeralDatastore {
     }
 }
 
-/// Creates a new, empty EphemeralDatastore with all schema migrations applied to it.
-pub async fn ephemeral_datastore() -> EphemeralDatastore {
+pub async fn ephemeral_datastore_max_schema_version(max_schema_version: i64) -> EphemeralDatastore {
     let ephemeral_datastore = ephemeral_datastore_no_schema().await;
 
     let mut connection = PgConnection::connect(&ephemeral_datastore.connection_string)
@@ -176,10 +175,23 @@ pub async fn ephemeral_datastore() -> EphemeralDatastore {
     let migrations_path = PathBuf::from_str(env!("CARGO_MANIFEST_DIR"))
         .unwrap()
         .join("../db");
-    let migrator = Migrator::new(migrations_path).await.unwrap();
+    let mut migrator = Migrator::new(migrations_path).await.unwrap();
+
+    migrator.migrations = migrator
+        .migrations
+        .iter()
+        .filter(|migration| migration.version <= max_schema_version)
+        .cloned()
+        .collect();
+
     migrator.run(&mut connection).await.unwrap();
 
     ephemeral_datastore
+}
+
+/// Creates a new, empty EphemeralDatastore with all schema migrations applied to it.
+pub async fn ephemeral_datastore() -> EphemeralDatastore {
+    ephemeral_datastore_max_schema_version(i64::MAX).await
 }
 
 pub fn generate_aead_key_bytes() -> Vec<u8> {
