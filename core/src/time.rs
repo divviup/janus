@@ -343,36 +343,54 @@ mod tests {
 
     #[test]
     fn merge_interval() {
-        for (
-            label,
-            lhs_start,
-            lhs_duration,
-            rhs_start,
-            rhs_duration,
-            expected_start,
-            expected_duration,
-        ) in [
-            ("non-overlapping intervals", 0, 10, 20, 10, 0, 30),
-            ("overlapping intervals", 0, 10, 5, 10, 0, 15),
-            ("one interval contains the other", 0, 10, 2, 8, 0, 10),
-            ("equal intervals", 0, 10, 0, 10, 0, 10),
+        fn interval(start: u64, duration: u64) -> Interval {
+            Interval::new(
+                Time::from_seconds_since_epoch(start),
+                Duration::from_seconds(duration),
+            )
+            .unwrap()
+        }
+
+        for (label, lhs, rhs, want) in [
+            (
+                "non-overlapping intervals",
+                interval(0, 10),
+                interval(20, 10),
+                interval(0, 30),
+            ),
+            (
+                "overlapping intervals",
+                interval(0, 10),
+                interval(5, 10),
+                interval(0, 15),
+            ),
+            (
+                "one interval contains the other",
+                interval(0, 10),
+                interval(2, 8),
+                interval(0, 10),
+            ),
+            (
+                "equal intervals",
+                interval(0, 10),
+                interval(0, 10),
+                interval(0, 10),
+            ),
+            (
+                "lhs empty",
+                Interval::EMPTY,
+                interval(0, 10),
+                interval(0, 10),
+            ),
+            (
+                "rhs empty",
+                interval(0, 10),
+                Interval::EMPTY,
+                interval(0, 10),
+            ),
+            ("empty", Interval::EMPTY, Interval::EMPTY, Interval::EMPTY),
         ] {
-            let lhs = Interval::new(
-                Time::from_seconds_since_epoch(lhs_start),
-                Duration::from_seconds(lhs_duration),
-            )
-            .unwrap();
-            let rhs = Interval::new(
-                Time::from_seconds_since_epoch(rhs_start),
-                Duration::from_seconds(rhs_duration),
-            )
-            .unwrap();
-            let expected = Interval::new(
-                Time::from_seconds_since_epoch(expected_start),
-                Duration::from_seconds(expected_duration),
-            )
-            .unwrap();
-            assert_eq!(expected, lhs.merge(&rhs).unwrap(), "{label}");
+            assert_eq!(want, lhs.merge(&rhs).unwrap(), "{label}");
         }
     }
 
