@@ -2056,7 +2056,7 @@ dependencies = [
  "tracing",
  "trillium",
  "trillium-api",
- "trillium-macros 0.0.3",
+ "trillium-macros",
  "trillium-opentelemetry",
  "trillium-router",
  "trillium-testing",
@@ -4777,18 +4777,7 @@ dependencies = [
  "smartstring",
  "stopper",
  "thiserror",
- "trillium-macros 0.0.4",
-]
-
-[[package]]
-name = "trillium-macros"
-version = "0.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6aeb704a6816c9b6319a0bffbeab5807ecb9a2c4ff8a9385e04cf7a130c8a2f2"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.15",
+ "trillium-macros",
 ]
 
 [[package]]
@@ -4864,7 +4853,7 @@ dependencies = [
  "portpicker",
  "trillium",
  "trillium-http",
- "trillium-macros 0.0.4",
+ "trillium-macros",
  "trillium-server-common",
  "trillium-tokio",
  "url",
@@ -4884,7 +4873,7 @@ dependencies = [
  "tokio-stream",
  "trillium",
  "trillium-http",
- "trillium-macros 0.0.4",
+ "trillium-macros",
  "trillium-server-common",
 ]
 
