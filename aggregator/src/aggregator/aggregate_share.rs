@@ -54,7 +54,6 @@ pub(crate) async fn compute_aggregate_share<
         total_report_count += batch_aggregation.report_count();
 
         match &mut total_aggregate_share {
-            //Some(share) => share.merge(batch_aggregation.aggregate_share())?,
             Some(share) => {
                 batch_aggregation
                     .aggregate_share()
