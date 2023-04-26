@@ -154,7 +154,7 @@ impl VdafOps {
                     )?;
                     *report_aggregation = report_aggregation
                         .clone()
-                        .with_state(ReportAggregationState::Finished(output_share))
+                        .with_state(ReportAggregationState::Finished)
                         .with_last_prep_step(Some(PrepareStep::new(
                             *prep_step.report_id(),
                             PrepareStepResult::Finished,
@@ -384,7 +384,7 @@ mod tests {
             post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
             post_aggregation_job_expecting_status,
         },
-        aggregator_handler,
+        http_handlers::aggregator_handler,
         tests::default_aggregator_config,
     };
     use janus_aggregator_core::{

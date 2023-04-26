@@ -29,10 +29,10 @@ pub struct Config {
 
 /// Returns a new handler for an instance of the aggregator API, backed by the given datastore,
 /// according to the given configuration.
-pub fn aggregator_api_handler<C: Clock>(ds: Datastore<C>, cfg: Config) -> impl Handler {
+pub fn aggregator_api_handler<C: Clock>(ds: Arc<Datastore<C>>, cfg: Config) -> impl Handler {
     (
         // State used by endpoint handlers.
-        State(Arc::new(ds)),
+        State(ds),
         State(Arc::new(cfg)),
         // Metrics.
         metrics("janus_aggregator_api").with_route(|conn| conn.route().map(ToString::to_string)),
@@ -401,7 +401,7 @@ mod tests {
     };
     use rand::random;
     use serde_test::{assert_ser_tokens, assert_tokens, Token};
-    use std::iter;
+    use std::{iter, sync::Arc};
     use trillium::{Handler, Status};
     use trillium_testing::{
         assert_response, assert_status,
@@ -414,7 +414,7 @@ mod tests {
         install_test_trace_subscriber();
         let ephemeral_datastore = ephemeral_datastore().await;
         let handler = aggregator_api_handler(
-            ephemeral_datastore.datastore(MockClock::default()).await,
+            Arc::new(ephemeral_datastore.datastore(MockClock::default()).await),
             Config {
                 auth_tokens: Vec::from([SecretBytes::new(AUTH_TOKEN.as_bytes().to_vec())]),
             },

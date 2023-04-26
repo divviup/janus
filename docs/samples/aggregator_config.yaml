@@ -59,6 +59,10 @@ metrics_config:
 # Socket address for DAP requests. (required)
 listen_address: "0.0.0.0:80"
 
+# Socket address for Janus aggregator API requests. If not set, Janus aggregator API is not served.
+# (optional)
+aggregator_api_listen_address: "0.0.0.0:8081"
+
 # Maximum number of uploaded reports per batching transaction. (required)
 max_upload_batch_size: 100
 

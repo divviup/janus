@@ -2325,9 +2325,7 @@ mod tests {
                         *report_metadata_0.id(),
                         PrepareStepResult::Finished
                     )),
-                    ReportAggregationState::Finished(
-                        transcript_0.output_share(Role::Helper).clone()
-                    ),
+                    ReportAggregationState::Finished,
                 ),
                 ReportAggregation::new(
                     *task.id(),
