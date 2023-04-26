@@ -2301,10 +2301,10 @@ fn empty_batch_aggregations<
         .map(|ba| (ba.batch_identifier(), ba.ord()))
         .collect();
     iproduct!(
-        Q::batch_identifiers_for_collect_identifier(task, batch_identifier,),
+        Q::batch_identifiers_for_collect_identifier(task, batch_identifier),
         0..batch_aggregation_shard_count
     )
-    .filter_map(move |(batch_identifier, ord)| {
+    .filter_map(|(batch_identifier, ord)| {
         if !existing_batch_aggregations.contains(&(&batch_identifier, ord)) {
             Some(BatchAggregation::<SEED_SIZE, Q, A>::new(
                 *task.id(),

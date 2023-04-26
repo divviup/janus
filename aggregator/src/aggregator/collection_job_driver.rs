@@ -124,7 +124,10 @@ impl CollectionJobDriver {
     {
         let (task, collection_job, batch_aggregations) = datastore
             .run_tx_with_name("step_collection_job_1", |tx| {
-                let (vdaf, lease) = (Arc::clone(&vdaf), Arc::clone(&lease));
+                let vdaf = Arc::clone(&vdaf);
+                let lease = Arc::clone(&lease);
+                let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
+
                 Box::pin(async move {
                     // TODO(#224): Consider fleshing out `AcquiredCollectionJob` to include a `Task`,
                     // `A::AggregationParam`, etc. so that we don't have to do more DB queries here.
@@ -152,6 +155,8 @@ impl CollectionJobDriver {
                             )
                         })?;
 
+                    // Read batch aggregations, and mark them as read-for-collection to avoid
+                    // further aggregation.
                     let batch_aggregations: Vec<_> =
                         Q::get_batch_aggregations_for_collect_identifier(
                             tx,
@@ -164,6 +169,30 @@ impl CollectionJobDriver {
                         .into_iter()
                         .map(|ba| ba.with_state(BatchAggregationState::Collected))
                         .collect();
+
+                    // To ensure that concurrent aggregations don't write into a
+                    // currently-nonexistent batch aggregation, we write (empty) batch aggregations
+                    // for any that have not already been written to storage.
+                    let empty_batch_aggregations = empty_batch_aggregations(
+                        &task,
+                        batch_aggregation_shard_count,
+                        collection_job.batch_identifier(),
+                        collection_job.aggregation_parameter(),
+                        &batch_aggregations,
+                    );
+
+                    try_join!(
+                        try_join_all(
+                            batch_aggregations
+                                .iter()
+                                .map(|ba| tx.update_batch_aggregation(ba))
+                        ),
+                        try_join_all(
+                            empty_batch_aggregations
+                                .iter()
+                                .map(|ba| tx.put_batch_aggregation(ba))
+                        ),
+                    )?;
 
                     Ok((task, collection_job, batch_aggregations))
                 })
@@ -213,26 +242,12 @@ impl CollectionJobDriver {
                 leader_aggregate_share,
             }),
         );
-        let batch_aggregations = Arc::new(batch_aggregations);
-
-        // To ensure that concurrent aggregations don't write into a currently-nonexistent batch
-        // aggregation, we write (empty) batch aggregations for any that have not already been
-        // written to storage.
-        let empty_batch_aggregations = Arc::new(empty_batch_aggregations(
-            &task,
-            self.batch_aggregation_shard_count,
-            collection_job.batch_identifier(),
-            collection_job.aggregation_parameter(),
-            &batch_aggregations,
-        ));
 
         datastore
             .run_tx_with_name("step_collection_job_2", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let lease = Arc::clone(&lease);
                 let collection_job = Arc::clone(&collection_job);
-                let batch_aggregations = Arc::clone(&batch_aggregations);
-                let empty_batch_aggregations = Arc::clone(&empty_batch_aggregations);
                 let metrics = self.metrics.clone();
 
                 Box::pin(async move {
@@ -249,8 +264,6 @@ impl CollectionJobDriver {
                         CollectionJobState::Start => {
                             try_join!(
                                 tx.update_collection_job::<SEED_SIZE, Q, A>(&collection_job),
-                                try_join_all(batch_aggregations.iter().map(|ba| tx.update_batch_aggregation(ba))),
-                                try_join_all(empty_batch_aggregations.iter().map(|ba| tx.put_batch_aggregation(ba))),
                                 tx.release_collection_job(&lease),
                             )?;
                             metrics.jobs_finished_counter.add(&Context::current(), 1, &[]);
@@ -777,7 +790,7 @@ mod tests {
         ds.run_tx(|tx| {
             let (clock, task) = (clock.clone(), task.clone());
             Box::pin(async move {
-                tx.put_batch_aggregation(
+                tx.update_batch_aggregation(
                     &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         Interval::new(clock.now(), time_precision).unwrap(),
@@ -792,7 +805,7 @@ mod tests {
                 )
                 .await?;
 
-                tx.put_batch_aggregation(
+                tx.update_batch_aggregation(
                     &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         Interval::new(
