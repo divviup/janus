@@ -64,5 +64,6 @@ hex = { version = "0.4", features = ["serde"] }  # ensure this remains compatibl
 janus_core = { path = ".", features = ["test-util"] }
 kube.workspace = true
 mockito = "1.0.2"
+quickcheck = "1.0.3"
 serde_test = "1.0.160"
 url = "2.3.1"

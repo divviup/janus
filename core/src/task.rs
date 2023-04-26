@@ -4,6 +4,8 @@ use reqwest::Url;
 use ring::constant_time;
 use serde::{Deserialize, Serialize};
 
+mod message_sizes;
+
 /// HTTP header where auth tokens are provided in messages between participants.
 pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
 
