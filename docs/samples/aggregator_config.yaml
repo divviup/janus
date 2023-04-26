@@ -69,5 +69,6 @@ max_upload_batch_size: 100
 # Maximum delay before writing a batch of uploaded reports. (required)
 max_upload_batch_write_delay_ms: 250
 
-# Number of sharded database records per batch aggregation.
+# Number of sharded database records per batch aggregation. Must not be greater
+# than the equivalent setting in the collection job driver.
 batch_aggregation_shard_count: 32
