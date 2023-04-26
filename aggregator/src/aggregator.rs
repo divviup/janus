@@ -2565,13 +2565,15 @@ mod tests {
 
     pub(super) const DUMMY_VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
 
+    pub(crate) const BATCH_AGGREGATION_SHARD_COUNT: u64 = 32;
+
     pub(crate) fn default_aggregator_config() -> Config {
         // Enable upload write batching & batch aggregation sharding by default, in hopes that we
         // can shake out any bugs.
         Config {
             max_upload_batch_size: 5,
             max_upload_batch_write_delay: StdDuration::from_millis(100),
-            batch_aggregation_shard_count: 32,
+            batch_aggregation_shard_count: BATCH_AGGREGATION_SHARD_COUNT,
         }
     }
 

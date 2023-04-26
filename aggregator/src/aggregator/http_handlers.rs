@@ -536,15 +536,16 @@ mod tests {
             post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
         },
         collection_job_tests::setup_collection_job_test_case,
+        empty_batch_aggregations,
         http_handlers::aggregator_handler,
         tests::{
             create_report, create_report_with_id, default_aggregator_config,
             generate_helper_report_share, generate_helper_report_share_for_plaintext,
-            DUMMY_VERIFY_KEY_LENGTH,
+            BATCH_AGGREGATION_SHARD_COUNT, DUMMY_VERIFY_KEY_LENGTH,
         },
     };
     use assert_matches::assert_matches;
-    use itertools::Itertools;
+    use futures::future::try_join_all;
     use janus_aggregator_core::{
         datastore::{
             models::{
@@ -2435,7 +2436,8 @@ mod tests {
             &transcript_1.input_shares[1],
         );
 
-        // report share 2 aggregates successfully, but into a distinct batch aggregation.
+        // report_share_2 aggregates successfully, but into a distinct batch aggregation which has
+        // already been collected.
         let report_metadata_2 = ReportMetadata::new(
             random(),
             second_batch_interval_clock
@@ -2451,7 +2453,6 @@ mod tests {
             &0,
         );
         let (prep_state_2, _) = transcript_2.helper_prep_state(0);
-        let out_share_2 = transcript_2.output_share(Role::Helper);
         let prep_msg_2 = transcript_2.prepare_messages[0].clone();
         let report_share_2 = generate_helper_report_share::<Prio3Count>(
             *task.id(),
@@ -2461,6 +2462,22 @@ mod tests {
             Vec::new(),
             &transcript_2.input_shares[1],
         );
+
+        let second_batch_want_batch_aggregations =
+            empty_batch_aggregations::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                &task,
+                BATCH_AGGREGATION_SHARD_COUNT,
+                &Interval::new(
+                    report_metadata_2
+                        .time()
+                        .to_batch_interval_start(task.time_precision())
+                        .unwrap(),
+                    *task.time_precision(),
+                )
+                .unwrap(),
+                &(),
+                &[],
+            );
 
         datastore
             .run_tx(|tx| {
@@ -2480,6 +2497,8 @@ mod tests {
                     report_metadata_1.clone(),
                     report_metadata_2.clone(),
                 );
+                let second_batch_want_batch_aggregations =
+                    second_batch_want_batch_aggregations.clone();
 
                 Box::pin(async move {
                     tx.put_task(&task).await?;
@@ -2544,6 +2563,13 @@ mod tests {
                     ))
                     .await?;
 
+                    try_join_all(
+                        second_batch_want_batch_aggregations
+                            .iter()
+                            .map(|ba| tx.put_batch_aggregation(ba)),
+                    )
+                    .await?;
+
                     Ok(())
                 })
             })
@@ -2580,7 +2606,7 @@ mod tests {
             post_aggregation_job_and_decode(&task, &aggregation_job_id_0, &request, &handler).await;
 
         // Map the batch aggregation ordinal value to 0, as it may vary due to sharding.
-        let batch_aggregations: Vec<_> = datastore
+        let first_batch_got_batch_aggregations: Vec<_> = datastore
             .run_tx(|tx| {
                 let (task, vdaf, report_metadata_0) =
                     (task.clone(), vdaf.clone(), report_metadata_0.clone());
@@ -2598,8 +2624,7 @@ mod tests {
                                 .time()
                                 .to_batch_interval_start(task.time_precision())
                                 .unwrap(),
-                            // Make interval big enough to capture both batch aggregations
-                            Duration::from_seconds(task.time_precision().as_seconds() * 2),
+                            Duration::from_seconds(task.time_precision().as_seconds()),
                         )
                         .unwrap(),
                         &(),
@@ -2632,45 +2657,58 @@ mod tests {
             .updated_with(report_metadata_1.id());
 
         assert_eq!(
-            batch_aggregations,
-            Vec::from([
-                BatchAggregation::new(
-                    *task.id(),
-                    Interval::new(
-                        report_metadata_0
-                            .time()
-                            .to_batch_interval_start(task.time_precision())
-                            .unwrap(),
-                        *task.time_precision()
+            first_batch_got_batch_aggregations,
+            Vec::from([BatchAggregation::new(
+                *task.id(),
+                Interval::new(
+                    report_metadata_0
+                        .time()
+                        .to_batch_interval_start(task.time_precision())
+                        .unwrap(),
+                    *task.time_precision()
+                )
+                .unwrap(),
+                (),
+                0,
+                BatchAggregationState::Aggregating,
+                Some(aggregate_share),
+                2,
+                Interval::from_time(report_metadata_0.time()).unwrap(),
+                checksum,
+            ),])
+        );
+
+        let second_batch_got_batch_aggregations = datastore
+            .run_tx(|tx| {
+                let (task, vdaf, report_metadata_2) =
+                    (task.clone(), vdaf.clone(), report_metadata_2.clone());
+                Box::pin(async move {
+                    TimeInterval::get_batch_aggregations_for_collect_identifier::<
+                        PRIO3_VERIFY_KEY_LENGTH,
+                        Prio3Count,
+                        _,
+                    >(
+                        tx,
+                        &task,
+                        &vdaf,
+                        &Interval::new(
+                            report_metadata_2
+                                .time()
+                                .to_batch_interval_start(task.time_precision())
+                                .unwrap(),
+                            Duration::from_seconds(task.time_precision().as_seconds()),
+                        )
+                        .unwrap(),
+                        &(),
                     )
-                    .unwrap(),
-                    (),
-                    0,
-                    BatchAggregationState::Aggregating,
-                    Some(aggregate_share),
-                    2,
-                    Interval::from_time(report_metadata_0.time()).unwrap(),
-                    checksum,
-                ),
-                BatchAggregation::new(
-                    *task.id(),
-                    Interval::new(
-                        report_metadata_2
-                            .time()
-                            .to_batch_interval_start(task.time_precision())
-                            .unwrap(),
-                        *task.time_precision()
-                    )
-                    .unwrap(),
-                    (),
-                    0,
-                    BatchAggregationState::Aggregating,
-                    Some(AggregateShare::from(out_share_2.clone())),
-                    1,
-                    Interval::from_time(report_metadata_2.time()).unwrap(),
-                    ReportIdChecksum::for_report_id(report_metadata_2.id()),
-                ),
-            ])
+                    .await
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            second_batch_got_batch_aggregations,
+            second_batch_want_batch_aggregations
         );
 
         // Aggregate some more reports, which should get accumulated into the
@@ -2702,7 +2740,8 @@ mod tests {
             &transcript_3.input_shares[1],
         );
 
-        // report_share_4 gets aggregated into the second batch interval
+        // report_share_4 gets aggregated into the second batch interval (which has already been
+        // collected).
         let report_metadata_4 = ReportMetadata::new(
             random(),
             second_batch_interval_clock
@@ -2718,7 +2757,6 @@ mod tests {
             &0,
         );
         let (prep_state_4, _) = transcript_4.helper_prep_state(0);
-        let out_share_4 = transcript_4.output_share(Role::Helper);
         let prep_msg_4 = transcript_4.prepare_messages[0].clone();
         let report_share_4 = generate_helper_report_share::<Prio3Count>(
             *task.id(),
@@ -2729,7 +2767,8 @@ mod tests {
             &transcript_4.input_shares[1],
         );
 
-        // report share 5 also gets aggregated into the second batch interval
+        // report_share_5 also gets aggregated into the second batch interval (which has already
+        // been collected).
         let report_metadata_5 = ReportMetadata::new(
             random(),
             second_batch_interval_clock
@@ -2745,7 +2784,6 @@ mod tests {
             &0,
         );
         let (prep_state_5, _) = transcript_5.helper_prep_state(0);
-        let out_share_5 = transcript_5.output_share(Role::Helper);
         let prep_msg_5 = transcript_5.prepare_messages[0].clone();
         let report_share_5 = generate_helper_report_share::<Prio3Count>(
             *task.id(),
@@ -2874,7 +2912,7 @@ mod tests {
         // Map the batch aggregation ordinal value to 0, as it may vary due to sharding, and merge
         // batch aggregations over the same interval. (the task & aggregation parameter will always
         // be the same)
-        let mut batch_aggregations: Vec<_> = datastore
+        let merged_first_batch_aggregation = datastore
             .run_tx(|tx| {
                 let (task, vdaf, report_metadata_0) =
                     (task.clone(), vdaf.clone(), report_metadata_0.clone());
@@ -2892,8 +2930,7 @@ mod tests {
                                 .time()
                                 .to_batch_interval_start(task.time_precision())
                                 .unwrap(),
-                            // Make interval big enough to capture both batch aggregations
-                            Duration::from_seconds(task.time_precision().as_seconds() * 2),
+                            Duration::from_seconds(task.time_precision().as_seconds()),
                         )
                         .unwrap(),
                         &(),
@@ -2917,11 +2954,8 @@ mod tests {
                     *agg.checksum(),
                 )
             })
-            .into_grouping_map_by(|agg| *agg.batch_interval())
-            .fold_first(|left, _, right| left.merged_with(&right).unwrap())
-            .into_values()
-            .collect();
-        batch_aggregations.sort_by_key(|agg| *agg.batch_interval().start());
+            .reduce(|left, right| left.merged_with(&right).unwrap())
+            .unwrap();
 
         let first_aggregate_share = vdaf
             .aggregate(
@@ -2933,56 +2967,59 @@ mod tests {
             .updated_with(report_metadata_1.id())
             .updated_with(report_metadata_3.id());
 
-        let second_aggregate_share = vdaf
-            .aggregate(
-                &(),
-                [out_share_2, out_share_4, out_share_5].into_iter().cloned(),
-            )
-            .unwrap();
-        let second_checksum = ReportIdChecksum::for_report_id(report_metadata_2.id())
-            .updated_with(report_metadata_4.id())
-            .updated_with(report_metadata_5.id());
-
         assert_eq!(
-            batch_aggregations,
-            Vec::from([
-                BatchAggregation::new(
-                    *task.id(),
-                    Interval::new(
-                        report_metadata_0
-                            .time()
-                            .to_batch_interval_start(task.time_precision())
-                            .unwrap(),
-                        *task.time_precision()
+            merged_first_batch_aggregation,
+            BatchAggregation::new(
+                *task.id(),
+                Interval::new(
+                    report_metadata_0
+                        .time()
+                        .to_batch_interval_start(task.time_precision())
+                        .unwrap(),
+                    *task.time_precision()
+                )
+                .unwrap(),
+                (),
+                0,
+                BatchAggregationState::Aggregating,
+                Some(first_aggregate_share),
+                3,
+                Interval::from_time(report_metadata_0.time()).unwrap(),
+                first_checksum,
+            ),
+        );
+
+        let second_batch_got_batch_aggregations = datastore
+            .run_tx(|tx| {
+                let (task, vdaf, report_metadata_2) =
+                    (task.clone(), vdaf.clone(), report_metadata_2.clone());
+                Box::pin(async move {
+                    TimeInterval::get_batch_aggregations_for_collect_identifier::<
+                        PRIO3_VERIFY_KEY_LENGTH,
+                        Prio3Count,
+                        _,
+                    >(
+                        tx,
+                        &task,
+                        &vdaf,
+                        &Interval::new(
+                            report_metadata_2
+                                .time()
+                                .to_batch_interval_start(task.time_precision())
+                                .unwrap(),
+                            Duration::from_seconds(task.time_precision().as_seconds()),
+                        )
+                        .unwrap(),
+                        &(),
                     )
-                    .unwrap(),
-                    (),
-                    0,
-                    BatchAggregationState::Aggregating,
-                    Some(first_aggregate_share),
-                    3,
-                    Interval::from_time(report_metadata_0.time()).unwrap(),
-                    first_checksum,
-                ),
-                BatchAggregation::new(
-                    *task.id(),
-                    Interval::new(
-                        report_metadata_2
-                            .time()
-                            .to_batch_interval_start(task.time_precision())
-                            .unwrap(),
-                        *task.time_precision()
-                    )
-                    .unwrap(),
-                    (),
-                    0,
-                    BatchAggregationState::Aggregating,
-                    Some(second_aggregate_share),
-                    3,
-                    Interval::from_time(report_metadata_2.time()).unwrap(),
-                    second_checksum,
-                ),
-            ])
+                    .await
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            second_batch_got_batch_aggregations,
+            second_batch_want_batch_aggregations
         );
     }
 
