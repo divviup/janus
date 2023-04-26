@@ -4544,7 +4544,7 @@ pub mod models {
         }
 
         /// Returns a new [`ReportAggregation`] corresponding to this report aggregation updated to
-        /// have the given state.
+        /// have the given last preparation step.
         pub fn with_last_prep_step(self, last_prep_step: Option<PrepareStep>) -> Self {
             Self {
                 last_prep_step,
