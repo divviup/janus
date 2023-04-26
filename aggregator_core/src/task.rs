@@ -470,7 +470,7 @@ impl SerializedTask {
                 random(),
                 HpkeKemId::X25519HkdfSha256,
                 HpkeKdfId::HkdfSha256,
-                HpkeAeadId::ChaCha20Poly1305,
+                HpkeAeadId::Aes128Gcm,
             );
 
             self.hpke_keys = Vec::from([hpke_keypair]);
