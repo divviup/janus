@@ -193,7 +193,7 @@ impl Task {
             return Err(Error::InvalidParameter("vdaf_verify_keys"));
         }
         if self.hpke_keys.is_empty() {
-            return Err(Error::InvalidParameter("hpke_configs"));
+            return Err(Error::InvalidParameter("hpke_keys"));
         }
         Ok(())
     }
