@@ -172,7 +172,9 @@ impl CollectionJobDriver {
 
                     // To ensure that concurrent aggregations don't write into a
                     // currently-nonexistent batch aggregation, we write (empty) batch aggregations
-                    // for any that have not already been written to storage.
+                    // for any that have not already been written to storage. We do this
+                    // transactionally to avoid the possibility of overwriting other transactions'
+                    // updates to batch aggregations.
                     let empty_batch_aggregations = empty_batch_aggregations(
                         &task,
                         batch_aggregation_shard_count,
