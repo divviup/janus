@@ -368,7 +368,7 @@ mod tests {
             post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
             post_aggregation_job_expecting_status,
         },
-        aggregator_handler,
+        http_handlers::aggregator_handler,
         tests::default_aggregator_config,
     };
     use janus_aggregator_core::{

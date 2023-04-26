@@ -24,14 +24,18 @@ use std::{
     fs,
     future::Future,
     net::SocketAddr,
+    panic,
     path::PathBuf,
     str::FromStr,
     time::Duration,
 };
+use tokio::sync::oneshot;
 use tokio_postgres::NoTls;
 use tracing::{debug, info};
+use trillium::{Handler, Headers, Info, Init};
 use trillium_head::Head;
 use trillium_router::Router;
+use trillium_tokio::Stopper;
 
 /// Reads, parses, and returns the config referenced by the given options, or None if no config file
 /// path was set.
@@ -382,6 +386,56 @@ pub fn setup_signal_handler() -> Result<impl Future<Output = ()>, std::io::Error
         // is owned by will not terminate before that happens.
         receiver.await.unwrap_or_default()
     })
+}
+
+/// Construct a server that listens on the provided [`SocketAddr`] and services requests with
+/// `handler`. If the `SocketAddr`'s port is 0, an ephemeral port is used. Returns a `SocketAddr`
+/// representing the address and port the server are listening on and a future that can be `await`ed
+/// to wait until the server shuts down.
+pub async fn setup_server(
+    listen_address: SocketAddr,
+    response_headers: Headers,
+    shutdown_signal: impl Future<Output = ()> + Send + 'static,
+    handler: impl Handler,
+) -> anyhow::Result<(SocketAddr, impl Future<Output = ()> + 'static)> {
+    let stopper = Stopper::new();
+    tokio::spawn({
+        let stopper = stopper.clone();
+        async move {
+            shutdown_signal.await;
+            stopper.stop();
+        }
+    });
+
+    let (sender, receiver) = oneshot::channel();
+    let init = Init::new(|info: Info| async move {
+        // Ignore error if the receiver is dropped.
+        let _ = sender.send(info.tcp_socket_addr().copied());
+    });
+
+    let server_config = trillium_tokio::config()
+        .with_port(listen_address.port())
+        .with_host(&listen_address.ip().to_string())
+        .with_stopper(stopper)
+        .without_signals();
+    let handler = (init, response_headers, handler);
+
+    let task_handle = tokio::spawn(server_config.run_async(handler));
+
+    let address = receiver
+        .await
+        .map_err(|err| anyhow!("error waiting for socket address: {err}"))?
+        .ok_or_else(|| anyhow!("could not get server's socket address"))?;
+
+    let future = async {
+        if let Err(err) = task_handle.await {
+            if let Ok(reason) = err.try_into_panic() {
+                panic::resume_unwind(reason);
+            }
+        }
+    };
+
+    Ok((address, future))
 }
 
 #[cfg(test)]

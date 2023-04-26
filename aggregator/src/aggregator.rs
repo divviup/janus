@@ -4,7 +4,6 @@ pub use crate::aggregator::error::Error;
 use crate::aggregator::{
     aggregate_share::compute_aggregate_share,
     error::BatchMismatch,
-    http_handlers::aggregator_handler,
     query_type::{CollectableQueryType, UploadableQueryType},
     report_writer::{ReportWriteBatcher, WritableReport},
 };
@@ -67,19 +66,12 @@ use std::{
     borrow::Borrow,
     collections::{HashMap, HashSet},
     fmt::Debug,
-    future::Future,
-    net::SocketAddr,
     panic,
     sync::Arc,
     time::{Duration as StdDuration, Instant},
 };
-use tokio::{
-    sync::{oneshot, Mutex},
-    try_join,
-};
+use tokio::{sync::Mutex, try_join};
 use tracing::{debug, info, warn};
-use trillium::{Headers, Info, Init};
-use trillium_tokio::Stopper;
 use url::Url;
 
 pub mod accumulator;
@@ -2251,62 +2243,6 @@ impl VdafOps {
 
         Ok(AggregateShare::new(encrypted_aggregate_share))
     }
-}
-
-/// Construct a DAP aggregator server, listening on the provided [`SocketAddr`]. If the
-/// `SocketAddr`'s `port` is 0, an ephemeral port is used. Returns a `SocketAddr` representing the
-/// address and port the server are listening on and a future that can be `await`ed to wait until
-/// the server shuts down.
-pub async fn aggregator_server<C: Clock>(
-    datastore: Arc<Datastore<C>>,
-    clock: C,
-    cfg: Config,
-    listen_address: SocketAddr,
-    response_headers: Headers,
-    shutdown_signal: impl Future<Output = ()> + Send + 'static,
-) -> Result<(SocketAddr, impl Future<Output = ()> + 'static), Error> {
-    let stopper = Stopper::new();
-    tokio::spawn({
-        let stopper = stopper.clone();
-        async move {
-            shutdown_signal.await;
-            stopper.stop();
-        }
-    });
-
-    let (sender, receiver) = oneshot::channel();
-    let init = Init::new(|info: Info| async move {
-        // Ignore error if the receiver is dropped.
-        let _ = sender.send(info.tcp_socket_addr().copied());
-    });
-
-    let server_config = trillium_tokio::config()
-        .with_port(listen_address.port())
-        .with_host(&listen_address.ip().to_string())
-        .with_stopper(stopper)
-        .without_signals();
-    let handler = (
-        init,
-        response_headers,
-        aggregator_handler(datastore, clock, cfg)?,
-    );
-
-    let task_handle = tokio::spawn(server_config.run_async(handler));
-
-    let address = receiver
-        .await
-        .map_err(|err| Error::Internal(format!("error waiting for socket address: {err}")))?
-        .ok_or_else(|| Error::Internal("could not get server's socket address".to_string()))?;
-
-    let future = async {
-        if let Err(err) = task_handle.await {
-            if let Ok(reason) = err.try_into_panic() {
-                panic::resume_unwind(reason);
-            }
-        }
-    };
-
-    Ok((address, future))
 }
 
 /// Convenience method to perform an HTTP request to the helper. This includes common

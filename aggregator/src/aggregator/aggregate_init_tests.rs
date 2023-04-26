@@ -1,4 +1,6 @@
-use crate::aggregator::{aggregator_handler, tests::generate_helper_report_share, Config};
+use crate::aggregator::{
+    http_handlers::aggregator_handler, tests::generate_helper_report_share, Config,
+};
 use janus_aggregator_core::{
     datastore::{
         test_util::{ephemeral_datastore, EphemeralDatastore},
