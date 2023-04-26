@@ -299,10 +299,10 @@ struct Options {
         display_order = 0
     )]
     vdaf: VdafType,
-    /// Number of vector elements, for use with --vdaf=countvec
+    /// Number of vector elements, for use with --vdaf=countvec and --vdaf=sumvec
     #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
     length: Option<usize>,
-    /// Bit length of measurements, for use with --vdaf=sum
+    /// Bit length of measurements, for use with --vdaf=sum and --vdaf=sumvec
     #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
     bits: Option<usize>,
     /// Comma-separated list of bucket boundaries, for use with --vdaf=histogram
@@ -428,6 +428,13 @@ where
         }
         (VdafType::Sum, None, Some(bits), None) => {
             let vdaf = Prio3::new_sum(2, bits).map_err(|err| Error::Anyhow(err.into()))?;
+            run_collection_generic(parameters, vdaf, http_client, query, &())
+                .await
+                .map_err(|err| Error::Anyhow(err.into()))
+        }
+        (VdafType::SumVec, Some(length), Some(bits), None) => {
+            let vdaf =
+                Prio3::new_sum_vec(2, bits, length).map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
@@ -775,6 +782,14 @@ mod tests {
 
         let mut good_arguments = base_arguments.clone();
         good_arguments.extend(["--vdaf=sum".to_string(), "--bits=8".to_string()]);
+        Options::try_parse_from(good_arguments).unwrap();
+
+        let mut good_arguments = base_arguments.clone();
+        good_arguments.extend([
+            "--vdaf=sumvec".to_string(),
+            "--bits=8".to_string(),
+            "--length=10".to_string(),
+        ]);
         Options::try_parse_from(good_arguments).unwrap();
 
         let mut good_arguments = base_arguments.clone();
