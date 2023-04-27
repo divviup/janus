@@ -1,13 +1,14 @@
 //! This crate implements the Janus Aggregator API.
 
 use crate::models::{GetTaskIdsResp, PostTaskReq};
-use base64::{engine::general_purpose::STANDARD, Engine};
 use janus_aggregator_core::{
     datastore::{self, Datastore},
     task::Task,
     SecretBytes,
 };
-use janus_core::{hpke::generate_hpke_config_and_private_key, time::Clock};
+use janus_core::{
+    hpke::generate_hpke_config_and_private_key, http::extract_bearer_token, time::Clock,
+};
 use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, Role, TaskId, Time};
 use models::{GetTaskMetricsResp, TaskResp};
 use querystring::querify;
@@ -52,21 +53,18 @@ pub fn aggregator_api_handler<C: Clock>(ds: Arc<Datastore<C>>, cfg: Config) -> i
 }
 
 async fn auth_check(conn: &mut Conn, State(cfg): State<Arc<Config>>) -> impl Handler {
-    if let Some(authorization_value) = conn.headers().get("authorization") {
-        if let Some(received_token) = authorization_value.as_ref().strip_prefix(b"Bearer ") {
-            let decoded = match STANDARD.decode(received_token) {
-                Ok(decoded) => decoded,
-                Err(_) => {
-                    return Some((Status::Unauthorized, Halt));
-                }
-            };
-            if cfg.auth_tokens.iter().any(|key| {
-                constant_time::verify_slices_are_equal(decoded.as_ref(), key.as_ref()).is_ok()
-            }) {
-                // Authorization succeeds.
-                return None;
-            }
+    let bearer_token = match extract_bearer_token(conn) {
+        Ok(Some(t)) => t,
+        _ => {
+            return Some((Status::Unauthorized, Halt));
         }
+    };
+
+    if cfg.auth_tokens.iter().any(|key| {
+        constant_time::verify_slices_are_equal(bearer_token.as_ref(), key.as_ref()).is_ok()
+    }) {
+        // Authorization succeeds.
+        return None;
     }
 
     // Authorization fails.

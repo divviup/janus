@@ -1,7 +1,9 @@
+use base64::{engine::general_purpose::STANDARD, Engine};
 use rand::{distributions::Standard, prelude::Distribution};
 use reqwest::Url;
 use ring::constant_time;
 use serde::{Deserialize, Serialize};
+use std::str;
 
 /// HTTP header where auth tokens are provided in messages between participants.
 pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
@@ -535,6 +537,13 @@ macro_rules! vdaf_dispatch {
 #[derive(Clone)]
 pub struct AuthenticationToken(Vec<u8>);
 
+impl AuthenticationToken {
+    /// Constructs a bearer token string suitable for use as the value in an HTTP `Authorization`
+    /// header.
+    pub fn bearer_token(&self) -> String {
+        format!("Bearer {}", STANDARD.encode(self.as_ref()))
+    }
+}
 impl AsRef<[u8]> for AuthenticationToken {
     fn as_ref(&self) -> &[u8] {
         &self.0

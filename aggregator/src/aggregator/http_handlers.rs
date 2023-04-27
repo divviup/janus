@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use janus_aggregator_api::instrumented;
 use janus_aggregator_core::datastore::Datastore;
 use janus_core::{
+    http::extract_bearer_token,
     task::{AuthenticationToken, DAP_AUTH_HEADER},
     time::Clock,
 };
@@ -358,7 +359,7 @@ async fn aggregation_jobs_put<C: Clock>(
 
     let task_id = parse_task_id(&captures)?;
     let aggregation_job_id = parse_aggregation_job_id(&captures)?;
-    let auth_token = parse_auth_token(conn);
+    let auth_token = parse_auth_token(&task_id, conn)?;
     let response = aggregator
         .handle_aggregate_init(&task_id, &aggregation_job_id, &body, auth_token)
         .await?;
@@ -379,7 +380,7 @@ async fn aggregation_jobs_post<C: Clock>(
 
     let task_id = parse_task_id(&captures)?;
     let aggregation_job_id = parse_aggregation_job_id(&captures)?;
-    let auth_token = parse_auth_token(conn);
+    let auth_token = parse_auth_token(&task_id, conn)?;
     let response = aggregator
         .handle_aggregate_continue(&task_id, &aggregation_job_id, &body, auth_token)
         .await?;
@@ -400,7 +401,7 @@ async fn collection_jobs_put<C: Clock>(
 
     let task_id = parse_task_id(&captures)?;
     let collection_job_id = parse_collection_job_id(&captures)?;
-    let auth_token = parse_auth_token(conn);
+    let auth_token = parse_auth_token(&task_id, conn)?;
     aggregator
         .handle_create_collection_job(&task_id, &collection_job_id, &body, auth_token)
         .await?;
@@ -418,7 +419,7 @@ async fn collection_jobs_post<C: Clock>(
 ) -> Result<(), Error> {
     let task_id = parse_task_id(&captures)?;
     let collection_job_id = parse_collection_job_id(&captures)?;
-    let auth_token = parse_auth_token(conn);
+    let auth_token = parse_auth_token(&task_id, conn)?;
     let response_opt = aggregator
         .handle_get_collection_job(&task_id, &collection_job_id, auth_token)
         .await?;
@@ -446,7 +447,7 @@ async fn collection_jobs_delete<C: Clock>(
 ) -> Result<Status, Error> {
     let task_id = parse_task_id(&captures)?;
     let collection_job_id = parse_collection_job_id(&captures)?;
-    let auth_token = parse_auth_token(conn);
+    let auth_token = parse_auth_token(&task_id, conn)?;
     aggregator
         .handle_delete_collection_job(&task_id, &collection_job_id, auth_token)
         .await?;
@@ -465,7 +466,7 @@ async fn aggregate_shares<C: Clock>(
     validate_content_type(conn, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)?;
 
     let task_id = parse_task_id(&captures)?;
-    let auth_token = parse_auth_token(conn);
+    let auth_token = parse_auth_token(&task_id, conn)?;
     let share = aggregator
         .handle_aggregate_share(&task_id, &body, auth_token)
         .await?;
@@ -521,11 +522,19 @@ fn parse_collection_job_id(captures: &Captures) -> Result<CollectionJobId, Error
         .map_err(|_| Error::BadRequest("invalid CollectionJobId".to_owned()))
 }
 
-/// Get the value of the DAP-Auth-Token header from the request.
-fn parse_auth_token(conn: &Conn) -> Option<AuthenticationToken> {
-    conn.request_headers()
+/// Get the authorization token header from the request.
+fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<AuthenticationToken>, Error> {
+    // Prefer a bearer token, then fall back to DAP-Auth-Token
+    let bearer_token =
+        extract_bearer_token(conn).map_err(|_| Error::UnauthorizedRequest(*task_id))?;
+    if bearer_token.is_some() {
+        return Ok(bearer_token);
+    }
+
+    Ok(conn
+        .request_headers()
         .get(DAP_AUTH_HEADER)
-        .map(|value| value.as_ref().to_owned().into())
+        .map(|value| value.as_ref().to_owned().into()))
 }
 
 #[cfg(test)]

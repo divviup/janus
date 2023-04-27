@@ -2011,6 +2011,7 @@ dependencies = [
  "reqwest",
  "ring",
  "routefinder",
+ "rstest",
  "rustc_version",
  "serde",
  "serde_json",
@@ -2185,6 +2186,7 @@ dependencies = [
 name = "janus_core"
 version = "0.4.7"
 dependencies = [
+ "anyhow",
  "assert_matches",
  "backoff",
  "base64 0.21.0",
@@ -2216,6 +2218,7 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
+ "trillium",
  "url",
 ]
 

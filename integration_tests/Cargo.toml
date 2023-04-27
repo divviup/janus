@@ -15,7 +15,7 @@ version.workspace = true
 kube-openssl = []
 
 [dependencies]
-anyhow = "1"
+anyhow.workspace = true
 backoff = { version = "0.4", features = ["tokio"] }
 base64 = "0.21.0"
 futures = "0.3.28"
