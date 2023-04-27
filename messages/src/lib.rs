@@ -139,6 +139,11 @@ pub struct Interval {
 }
 
 impl Interval {
+    pub const EMPTY: Self = Self {
+        start: Time::from_seconds_since_epoch(0),
+        duration: Duration::ZERO,
+    };
+
     /// Create a new [`Interval`] from the provided start and duration. Returns an error if the end
     /// of the interval cannot be represented as a [`Time`].
     pub fn new(start: Time, duration: Duration) -> Result<Self, Error> {

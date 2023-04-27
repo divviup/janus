@@ -3,7 +3,11 @@
 use derivative::Derivative;
 use futures::future::try_join_all;
 use janus_aggregator_core::{
-    datastore::{self, models::BatchAggregation, Transaction},
+    datastore::{
+        self,
+        models::{BatchAggregation, BatchAggregationState},
+        Transaction,
+    },
     query_type::AccumulableQueryType,
     task::Task,
 };
@@ -14,7 +18,10 @@ use janus_core::{
 use janus_messages::{Interval, ReportId, ReportIdChecksum, Time};
 use prio::vdaf;
 use rand::{thread_rng, Rng};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex},
+};
 
 /// Accumulates output shares in memory and eventually flushes accumulations to a datastore. We
 /// accumulate output shares into a [`HashMap`] mapping the batch identifier at which the batch
@@ -30,7 +37,17 @@ pub struct Accumulator<
     shard_count: u64,
     #[derivative(Debug = "ignore")]
     aggregation_parameter: A::AggregationParam,
-    aggregations: HashMap<Q::BatchIdentifier, BatchAggregation<SEED_SIZE, Q, A>>,
+    aggregations: HashMap<Q::BatchIdentifier, BatchData<SEED_SIZE, Q, A>>,
+}
+
+#[derive(Debug)]
+struct BatchData<
+    const SEED_SIZE: usize,
+    Q: AccumulableQueryType,
+    A: vdaf::Aggregator<SEED_SIZE, 16>,
+> {
+    batch_aggregation: BatchAggregation<SEED_SIZE, Q, A>,
+    included_report_ids: HashSet<ReportId>,
 }
 
 impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
@@ -68,7 +85,8 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
                 batch_identifier.clone(),
                 self.aggregation_parameter.clone(),
                 thread_rng().gen_range(0..self.shard_count),
-                A::AggregateShare::from(output_share.clone()),
+                BatchAggregationState::Aggregating,
+                Some(A::AggregateShare::from(output_share.clone())),
                 1,
                 client_timestamp_interval,
                 ReportIdChecksum::for_report_id(report_id),
@@ -80,71 +98,114 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
         let mut rslt = Ok(());
         self.aggregations
             .entry(batch_identifier.clone())
-            .and_modify(|agg| match batch_aggregation_fn().merged_with(agg) {
-                Ok(batch_aggregation) => *agg = batch_aggregation,
-                Err(err) => rslt = Err(err),
+            .and_modify(|data| {
+                data.batch_aggregation =
+                    match batch_aggregation_fn().merged_with(&data.batch_aggregation) {
+                        Ok(batch_aggregation) => batch_aggregation,
+                        Err(err) => {
+                            rslt = Err(err);
+                            return;
+                        }
+                    };
+                data.included_report_ids.insert(*report_id);
             })
-            .or_insert_with(batch_aggregation_fn);
+            .or_insert_with(|| BatchData {
+                batch_aggregation: batch_aggregation_fn(),
+                included_report_ids: HashSet::from([*report_id]),
+            });
         rslt
     }
 
     /// Write the accumulated aggregate shares, report counts and checksums to the datastore. If a
     /// batch aggregation already exists for some accumulator, it is updated. If no batch
     /// aggregation exists, one is created and initialized with the accumulated values.
+    ///
+    /// This operation may discover that some batch aggregations had been concurrently collected. If
+    /// so, a set of unmergeable report IDs is returned; the contribution of the reports
+    /// corresponding to these IDs was not written back to the datastore because it is too late to
+    /// do so.
     #[tracing::instrument(skip(self, tx), err)]
     pub async fn flush_to_datastore<C: Clock>(
         &self,
         tx: &Transaction<'_, C>,
         vdaf: &A,
-    ) -> Result<(), datastore::Error> {
-        try_join_all(self.aggregations.values().map(|agg| async move {
-            match tx
-                .get_batch_aggregation::<SEED_SIZE, Q, A>(
-                    vdaf,
-                    agg.task_id(),
-                    agg.batch_identifier(),
-                    agg.aggregation_parameter(),
-                    agg.ord(),
-                )
-                .await?
-            {
-                Some(batch_aggregation) => {
-                    tx.update_batch_aggregation(&batch_aggregation.merged_with(agg)?)
-                        .await
-                }
-                None => {
-                    let rslt = tx.put_batch_aggregation(agg).await;
-                    if matches!(rslt, Err(datastore::Error::MutationTargetAlreadyExists)) {
-                        // This codepath can be taken due to a quirk of how the Repeatable Read
-                        // isolation level works. It cannot occur at the Serializable isolation
-                        // level.
-                        //
-                        // For this codepath to be taken, two writers must concurrently choose to
-                        // write the same batch aggregation shard (by task, batch, aggregation
-                        // parameter, and shard), and this batch aggregation shard must not already
-                        // exist in the datastore.
-                        //
-                        // Both writers will receive `None` from the `get_batch_aggregation` call,
-                        // and then both will try to `put_batch_aggregation`. One of the writers
-                        // will succeed. The other will fail with a unique constraint violation on
-                        // (task_id, batch_identifier, aggregation_param, ord), since unique
-                        // constraints are still enforced even in the presence of snapshot
-                        // isolation, which will be translated to a MutationTargetAlreadyExists
-                        // error.
-                        //
-                        // The failing writer, in this case, can't do anything about this problem
-                        // while in its current transaction: further attempts to read the batch
-                        // aggregation will continue to return `None` (since all reads in the same
-                        // transaction are from the same snapshot), so it can't update the
-                        // now-written batch aggregation. All it can do is give up on this
-                        // transaction and try again, by calling `retry` and returning an error.
-                        tx.retry();
+    ) -> Result<HashSet<ReportId>, datastore::Error> {
+        let unmergeable_report_ids = Arc::new(Mutex::new(HashSet::new()));
+
+        try_join_all(self.aggregations.values().map(|data| {
+            let unmergeable_report_ids = Arc::clone(&unmergeable_report_ids);
+            async move {
+                match tx
+                    .get_batch_aggregation::<SEED_SIZE, Q, A>(
+                        vdaf,
+                        data.batch_aggregation.task_id(),
+                        data.batch_aggregation.batch_identifier(),
+                        data.batch_aggregation.aggregation_parameter(),
+                        data.batch_aggregation.ord(),
+                    )
+                    .await?
+                {
+                    Some(batch_aggregation) => {
+                        let batch_aggregation =
+                            match batch_aggregation.merged_with(&data.batch_aggregation) {
+                                Ok(batch_aggregation) => batch_aggregation,
+                                Err(datastore::Error::AlreadyCollected) => {
+                                    // Unwrap safety: this only panics if the mutex is poisoned. If
+                                    // it is, one of the other futures also panicked, so we can
+                                    // panic too.
+                                    let mut unmergeable_report_ids =
+                                        unmergeable_report_ids.lock().unwrap();
+                                    unmergeable_report_ids.extend(&data.included_report_ids);
+                                    return Ok(());
+                                }
+                                Err(err) => Err(err)?,
+                            };
+                        tx.update_batch_aggregation(&batch_aggregation).await
                     }
-                    rslt
+
+                    None => {
+                        let rslt = tx.put_batch_aggregation(&data.batch_aggregation).await;
+                        if matches!(rslt, Err(datastore::Error::MutationTargetAlreadyExists)) {
+                            // This codepath can be taken due to a quirk of how the Repeatable Read
+                            // isolation level works. It cannot occur at the Serializable isolation
+                            // level.
+                            //
+                            // For this codepath to be taken, two writers must concurrently choose
+                            // to write the same batch aggregation shard (by task, batch,
+                            // aggregation parameter, and shard), and this batch aggregation shard
+                            // must not already exist in the datastore.
+                            //
+                            // Both writers will receive `None` from the `get_batch_aggregation`
+                            // call, and then both will try to `put_batch_aggregation`. One of the
+                            // writers will succeed. The other will fail with a unique constraint
+                            // violation on (task_id, batch_identifier, aggregation_param, ord),
+                            // since unique constraints are still enforced even in the presence of
+                            // snapshot isolation, which will be translated to a
+                            // MutationTargetAlreadyExists error.
+                            //
+                            // The failing writer, in this case, can't do anything about this
+                            // problem while in its current transaction: further attempts to read
+                            // the batch aggregation will continue to return `None` (since all reads
+                            // in the same transaction are from the same snapshot), so it can't
+                            // update the now-written batch aggregation. All it can do is give up on
+                            // this transaction and try again, by calling `retry` and returning an
+                            // error.
+                            tx.retry();
+                        }
+                        rslt
+                    }
                 }
             }
         }))
         .await?;
-        Ok(())
+
+        // Unwrap safety: at this point, `unmergeable_report_ids` is the only instance of this Arc,
+        // so `try_unwrap().unwrap()` will succeed. `into_inner().unwrap()` can only panic if code
+        // that held this mutex panicked; but in this case, we would have panicked already while
+        // awaiting the above future (and if not, we do want to panic now).
+        Ok(Arc::try_unwrap(unmergeable_report_ids)
+            .unwrap()
+            .into_inner()
+            .unwrap())
     }
 }

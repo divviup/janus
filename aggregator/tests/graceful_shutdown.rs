@@ -300,6 +300,7 @@ async fn collection_job_driver_shutdown() {
         60u64.into(),
     );
     config.insert("maximum_attempts_before_failure".into(), 5u64.into());
+    config.insert("batch_aggregation_shard_count".into(), 32u64.into());
 
     graceful_shutdown(trycmd::cargo::cargo_bin!("collection_job_driver"), config).await;
 }

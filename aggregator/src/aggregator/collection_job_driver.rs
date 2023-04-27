@@ -1,15 +1,15 @@
 //! Implements portions of collect sub-protocol for DAP leader and helper.
 
 use crate::aggregator::{
-    aggregate_share::compute_aggregate_share, query_type::CollectableQueryType,
-    send_request_to_helper, Error,
+    aggregate_share::compute_aggregate_share, empty_batch_aggregations,
+    query_type::CollectableQueryType, send_request_to_helper, Error,
 };
 use derivative::Derivative;
-use futures::future::BoxFuture;
+use futures::future::{try_join_all, BoxFuture};
 use janus_aggregator_core::{
     datastore::{
         self,
-        models::AcquiredCollectionJob,
+        models::{AcquiredCollectionJob, BatchAggregationState},
         models::{CollectionJobState, Lease},
         Datastore,
     },
@@ -38,17 +38,26 @@ use tracing::{info, warn};
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct CollectionJobDriver {
+    // Dependencies.
     http_client: reqwest::Client,
     #[derivative(Debug = "ignore")]
     metrics: CollectionJobDriverMetrics,
+
+    // Configuration.
+    batch_aggregation_shard_count: u64,
 }
 
 impl CollectionJobDriver {
     /// Create a new [`CollectionJobDriver`].
-    pub fn new(http_client: reqwest::Client, meter: &Meter) -> Self {
+    pub fn new(
+        http_client: reqwest::Client,
+        meter: &Meter,
+        batch_aggregation_shard_count: u64,
+    ) -> Self {
         Self {
             http_client,
             metrics: CollectionJobDriverMetrics::new(meter),
+            batch_aggregation_shard_count,
         }
     }
 
@@ -115,7 +124,10 @@ impl CollectionJobDriver {
     {
         let (task, collection_job, batch_aggregations) = datastore
             .run_tx_with_name("step_collection_job_1", |tx| {
-                let (vdaf, lease) = (Arc::clone(&vdaf), Arc::clone(&lease));
+                let vdaf = Arc::clone(&vdaf);
+                let lease = Arc::clone(&lease);
+                let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
+
                 Box::pin(async move {
                     // TODO(#224): Consider fleshing out `AcquiredCollectionJob` to include a `Task`,
                     // `A::AggregationParam`, etc. so that we don't have to do more DB queries here.
@@ -143,14 +155,46 @@ impl CollectionJobDriver {
                             )
                         })?;
 
-                    let batch_aggregations = Q::get_batch_aggregations_for_collect_identifier(
-                        tx,
+                    // Read batch aggregations, and mark them as read-for-collection to avoid
+                    // further aggregation.
+                    let batch_aggregations: Vec<_> =
+                        Q::get_batch_aggregations_for_collect_identifier(
+                            tx,
+                            &task,
+                            vdaf.as_ref(),
+                            collection_job.batch_identifier(),
+                            collection_job.aggregation_parameter(),
+                        )
+                        .await?
+                        .into_iter()
+                        .map(|ba| ba.with_state(BatchAggregationState::Collected))
+                        .collect();
+
+                    // To ensure that concurrent aggregations don't write into a
+                    // currently-nonexistent batch aggregation, we write (empty) batch aggregations
+                    // for any that have not already been written to storage. We do this
+                    // transactionally to avoid the possibility of overwriting other transactions'
+                    // updates to batch aggregations.
+                    let empty_batch_aggregations = empty_batch_aggregations(
                         &task,
-                        vdaf.as_ref(),
+                        batch_aggregation_shard_count,
                         collection_job.batch_identifier(),
                         collection_job.aggregation_parameter(),
-                    )
-                    .await?;
+                        &batch_aggregations,
+                    );
+
+                    try_join!(
+                        try_join_all(
+                            batch_aggregations
+                                .iter()
+                                .map(|ba| tx.update_batch_aggregation(ba))
+                        ),
+                        try_join_all(
+                            empty_batch_aggregations
+                                .iter()
+                                .map(|ba| tx.put_batch_aggregation(ba))
+                        ),
+                    )?;
 
                     Ok((task, collection_job, batch_aggregations))
                 })
@@ -200,9 +244,12 @@ impl CollectionJobDriver {
                 leader_aggregate_share,
             }),
         );
+
         datastore
             .run_tx_with_name("step_collection_job_2", |tx| {
-                let (vdaf, lease, collection_job) = (Arc::clone(&vdaf), Arc::clone(&lease), Arc::clone(&collection_job));
+                let vdaf = Arc::clone(&vdaf);
+                let lease = Arc::clone(&lease);
+                let collection_job = Arc::clone(&collection_job);
                 let metrics = self.metrics.clone();
 
                 Box::pin(async move {
@@ -217,16 +264,18 @@ impl CollectionJobDriver {
 
                     match maybe_updated_collection_job.state() {
                         CollectionJobState::Start => {
-                            tx.update_collection_job::<SEED_SIZE, Q, A>(&collection_job).await?;
-                            tx.release_collection_job(&lease).await?;
+                            try_join!(
+                                tx.update_collection_job::<SEED_SIZE, Q, A>(&collection_job),
+                                tx.release_collection_job(&lease),
+                            )?;
                             metrics.jobs_finished_counter.add(&Context::current(), 1, &[]);
                         }
 
                         CollectionJobState::Deleted => {
-                            // If the collection job was deleted between when we acquired it and now, discard
-                            // the aggregate shares and leave the job in the deleted state so that
-                            // appropriate status can be returned from polling the collection job URI and GC
-                            // can run (#313).
+                            // If the collection job was deleted between when we acquired it and
+                            // now, discard the aggregate shares and leave the job in the deleted
+                            // state so that appropriate status can be returned from polling the
+                            // collection job URI and GC can run (#313).
                             info!(
                                 collection_job_id = %collection_job.collection_job_id(),
                                 "collection job was deleted while lease was held. Discarding aggregate results.",
@@ -235,8 +284,9 @@ impl CollectionJobDriver {
                         }
 
                         state => {
-                            // It shouldn't be possible for a collection job to move to the abandoned
-                            // or finished state while this collection job driver held its lease.
+                            // It shouldn't be possible for a collection job to move to the
+                            // abandoned or finished state while this collection job driver held its
+                            // lease.
                             metrics.unexpected_job_state_counter.add(&Context::current(), 1, &[KeyValue::new("state", Value::from(format!("{state}")))]);
                             panic!(
                                 "collection job {} unexpectedly in state {}",
@@ -473,8 +523,8 @@ mod tests {
         datastore::{
             models::{
                 AcquiredCollectionJob, AggregationJob, AggregationJobState, BatchAggregation,
-                CollectionJob, CollectionJobState, LeaderStoredReport, Lease, ReportAggregation,
-                ReportAggregationState,
+                BatchAggregationState, CollectionJob, CollectionJobState, LeaderStoredReport,
+                Lease, ReportAggregation, ReportAggregationState,
             },
             test_util::ephemeral_datastore,
             Datastore,
@@ -581,7 +631,8 @@ mod tests {
                             Interval::new(clock.now(), time_precision).unwrap(),
                             aggregation_param,
                             0,
-                            dummy_vdaf::AggregateShare(0),
+                            BatchAggregationState::Aggregating,
+                            Some(dummy_vdaf::AggregateShare(0)),
                             5,
                             Interval::from_time(&report_timestamp).unwrap(),
                             ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
@@ -598,7 +649,8 @@ mod tests {
                             .unwrap(),
                             aggregation_param,
                             0,
-                            dummy_vdaf::AggregateShare(0),
+                            BatchAggregationState::Aggregating,
+                            Some(dummy_vdaf::AggregateShare(0)),
                             5,
                             Interval::from_time(&report_timestamp).unwrap(),
                             ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
@@ -724,6 +776,7 @@ mod tests {
         let collection_job_driver = CollectionJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
             &meter("collection_job_driver"),
+            1,
         );
 
         // No batch aggregations inserted yet.
@@ -739,13 +792,14 @@ mod tests {
         ds.run_tx(|tx| {
             let (clock, task) = (clock.clone(), task.clone());
             Box::pin(async move {
-                tx.put_batch_aggregation(
+                tx.update_batch_aggregation(
                     &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         Interval::new(clock.now(), time_precision).unwrap(),
                         aggregation_param,
                         0,
-                        dummy_vdaf::AggregateShare(0),
+                        BatchAggregationState::Aggregating,
+                        Some(dummy_vdaf::AggregateShare(0)),
                         5,
                         Interval::from_time(&report_timestamp).unwrap(),
                         ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
@@ -753,7 +807,7 @@ mod tests {
                 )
                 .await?;
 
-                tx.put_batch_aggregation(
+                tx.update_batch_aggregation(
                     &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         Interval::new(
@@ -763,7 +817,8 @@ mod tests {
                         .unwrap(),
                         aggregation_param,
                         0,
-                        dummy_vdaf::AggregateShare(0),
+                        BatchAggregationState::Aggregating,
+                        Some(dummy_vdaf::AggregateShare(0)),
                         5,
                         Interval::from_time(&report_timestamp).unwrap(),
                         ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
@@ -912,6 +967,7 @@ mod tests {
         let collection_job_driver = CollectionJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
             &meter("collection_job_driver"),
+            1,
         );
 
         // Run: abandon the collection job.
@@ -968,7 +1024,7 @@ mod tests {
         // Set up the collection job driver
         let meter = meter("collection_job_driver");
         let collection_job_driver =
-            Arc::new(CollectionJobDriver::new(reqwest::Client::new(), &meter));
+            Arc::new(CollectionJobDriver::new(reqwest::Client::new(), &meter, 1));
         let job_driver = Arc::new(JobDriver::new(
             clock.clone(),
             runtime_manager.with_label("stepper"),
@@ -1088,6 +1144,7 @@ mod tests {
         let collection_job_driver = CollectionJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
             &meter("collection_job_driver"),
+            1,
         );
 
         // Step the collection job. The driver should successfully run the job, but then discard the

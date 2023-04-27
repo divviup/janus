@@ -40,6 +40,6 @@ url = { version = "2.3.1", features = ["serde"] }
 
 [dev-dependencies]
 http = "0.2"
-itertools = "0.10"
+itertools.workspace = true
 janus_collector = { workspace = true, features = ["test-util"] }
 tempfile = "3"
