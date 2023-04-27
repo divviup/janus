@@ -2358,6 +2358,10 @@ async fn send_request_to_helper<T: Encode>(
     let response_result = http_client
         .request(method, url)
         .header(CONTENT_TYPE, content_type)
+        // TODO(#472): We want to be able to communicate with new Janus (prefers bearer token but
+        // supports `DAP-Auth-Token`) as well as older Janus and Daphne (which require
+        // `DAP-Auth-Token`) so for the moment, we send `DAP-Auth-Token`. But eventually we should
+        // determine the appropriate token header to send for a given task.
         .header(DAP_AUTH_HEADER, auth_token.as_ref())
         .body(request_body)
         .send()

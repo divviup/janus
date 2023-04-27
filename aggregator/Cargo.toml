@@ -35,7 +35,7 @@ test-util = [
 
 [dependencies]
 async-trait = "0.1"
-anyhow = "1"
+anyhow.workspace = true
 atty = "0.2"
 backoff = { version = "0.4.0", features = ["tokio"] }
 base64 = "0.21.0"
@@ -110,6 +110,7 @@ hyper = "0.14.26"
 janus_aggregator = { path = ".", features = ["fpvec_bounded_l2", "test-util"] }
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
 mockito = "1.0.2"
+rstest.workspace = true
 tempfile = "3.5.0"
 tokio = { version = "1", features = ["test-util"] } # ensure this remains compatible with the non-dev dependency
 trillium-testing.workspace = true

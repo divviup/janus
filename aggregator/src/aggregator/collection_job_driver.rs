@@ -15,8 +15,7 @@ use janus_aggregator_core::{
     },
     task,
 };
-use janus_core::time::Clock;
-use janus_core::vdaf_dispatch;
+use janus_core::{time::Clock, vdaf_dispatch};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     AggregateShare, AggregateShareReq, BatchSelector,

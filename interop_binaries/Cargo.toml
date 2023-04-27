@@ -23,7 +23,7 @@ testcontainer = [
 ]
 
 [dependencies]
-anyhow = "1"
+anyhow.workspace = true
 backoff = { version = "0.4", features = ["tokio"] }
 base64 = "0.21.0"
 clap = "4.2.4"

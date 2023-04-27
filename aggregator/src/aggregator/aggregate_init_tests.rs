@@ -9,7 +9,7 @@ use janus_aggregator_core::{
     task::{test_util::TaskBuilder, QueryType, Task},
 };
 use janus_core::{
-    task::VdafInstance,
+    task::{VdafInstance, DAP_AUTH_HEADER},
     test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf, VdafTranscript},
     time::{Clock, MockClock, TimeExt as _},
 };
@@ -89,6 +89,7 @@ pub(super) struct AggregationJobInitTestCase {
     pub(super) report_share_generator: ReportShareGenerator,
     pub(super) report_shares: Vec<ReportShare>,
     pub(super) aggregation_job_id: AggregationJobId,
+    aggregation_job_init_req: AggregationJobInitializeReq<TimeInterval>,
     pub(super) aggregation_param: dummy_vdaf::AggregationParam,
     pub(super) handler: Box<dyn Handler>,
     pub(super) datastore: Arc<Datastore<MockClock>>,
@@ -96,6 +97,21 @@ pub(super) struct AggregationJobInitTestCase {
 }
 
 pub(super) async fn setup_aggregate_init_test() -> AggregationJobInitTestCase {
+    let test_case = setup_aggregate_init_test_without_sending_request().await;
+
+    let response = put_aggregation_job(
+        &test_case.task,
+        &test_case.aggregation_job_id,
+        &test_case.aggregation_job_init_req,
+        &test_case.handler,
+    )
+    .await;
+    assert_eq!(response.status(), Some(Status::Ok));
+
+    test_case
+}
+
+async fn setup_aggregate_init_test_without_sending_request() -> AggregationJobInitTestCase {
     install_test_trace_subscriber();
 
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
@@ -125,21 +141,13 @@ pub(super) async fn setup_aggregate_init_test() -> AggregationJobInitTestCase {
         report_shares.clone(),
     );
 
-    let response = put_aggregation_job(
-        &task,
-        &aggregation_job_id,
-        &aggregation_job_init_req,
-        &handler,
-    )
-    .await;
-    assert_eq!(response.status(), Some(Status::Ok));
-
     AggregationJobInitTestCase {
         clock,
         task,
         report_shares,
         report_share_generator,
         aggregation_job_id,
+        aggregation_job_init_req,
         aggregation_param,
         handler: Box::new(handler),
         datastore,
@@ -155,7 +163,7 @@ pub(crate) async fn put_aggregation_job(
 ) -> TestConn {
     put(task.aggregation_job_uri(aggregation_job_id).unwrap().path())
         .with_request_header(
-            "DAP-Auth-Token",
+            DAP_AUTH_HEADER,
             task.primary_aggregator_auth_token().as_ref().to_owned(),
         )
         .with_request_header(
@@ -165,6 +173,69 @@ pub(crate) async fn put_aggregation_job(
         .with_request_body(aggregation_job.get_encoded())
         .run_async(handler)
         .await
+}
+
+#[tokio::test]
+async fn aggregation_job_init_authorization_bearer_header() {
+    let test_case = setup_aggregate_init_test_without_sending_request().await;
+
+    let response = put(test_case
+        .task
+        .aggregation_job_uri(&test_case.aggregation_job_id)
+        .unwrap()
+        .path())
+    // Authenticate using an "Authorization: Bearer <token>" header instead of "DAP-Auth-Token"
+    .with_request_header(
+        KnownHeaderName::Authorization,
+        test_case
+            .task
+            .primary_aggregator_auth_token()
+            .bearer_token(),
+    )
+    .with_request_header(
+        KnownHeaderName::ContentType,
+        AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+    )
+    .with_request_body(test_case.aggregation_job_init_req.get_encoded())
+    .run_async(&test_case.handler)
+    .await;
+
+    assert_eq!(response.status(), Some(Status::Ok));
+}
+
+#[rstest::rstest]
+#[case::not_bearer_token("wrong kind of token")]
+#[case::not_base64("Bearer: ")]
+#[tokio::test]
+async fn aggregation_job_init_malformed_authorization_header(#[case] header_value: &'static str) {
+    let test_case = setup_aggregate_init_test_without_sending_request().await;
+
+    let response = put(test_case
+        .task
+        .aggregation_job_uri(&test_case.aggregation_job_id)
+        .unwrap()
+        .path())
+    // Authenticate using a malformed "Authorization: Bearer <token>" header and a `DAP-Auth-Token`
+    // header. The presence of the former should cause an error despite the latter being present and
+    // well formed.
+    .with_request_header(KnownHeaderName::Authorization, header_value.to_string())
+    .with_request_header(
+        DAP_AUTH_HEADER,
+        test_case
+            .task
+            .primary_aggregator_auth_token()
+            .as_ref()
+            .to_owned(),
+    )
+    .with_request_header(
+        KnownHeaderName::ContentType,
+        AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+    )
+    .with_request_body(test_case.aggregation_job_init_req.get_encoded())
+    .run_async(&test_case.handler)
+    .await;
+
+    assert_eq!(response.status(), Some(Status::BadRequest));
 }
 
 #[tokio::test]
