@@ -86,7 +86,7 @@ macro_rules! supported_schema_versions {
 
 // List of schema versions that this version of Janus can safely run on. If any other schema
 // version is seen, [`Datastore::new`] fails.
-supported_schema_versions!(20230420210648, 20230424220336);
+supported_schema_versions!(4);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -1599,12 +1599,14 @@ impl<C: Clock> Transaction<'_, C> {
                     lease_attempts = lease_attempts + 1
                 FROM tasks
                 WHERE tasks.id = aggregation_jobs.task_id
-                AND aggregation_jobs.id IN (SELECT aggregation_jobs.id FROM aggregation_jobs
+                AND aggregation_jobs.id IN (
+                    SELECT aggregation_jobs.id FROM aggregation_jobs
                     JOIN tasks on tasks.id = aggregation_jobs.task_id
                     WHERE tasks.aggregator_role = 'LEADER'
                     AND aggregation_jobs.state = 'IN_PROGRESS'
                     AND aggregation_jobs.lease_expiry <= $2
-                    ORDER BY aggregation_jobs.id DESC LIMIT $3)
+                    FOR UPDATE SKIP LOCKED LIMIT $3
+                )
                 RETURNING tasks.task_id, tasks.query_type, tasks.vdaf,
                           aggregation_jobs.aggregation_job_id, aggregation_jobs.lease_token,
                           aggregation_jobs.lease_attempts",
@@ -4560,7 +4562,7 @@ pub mod models {
         }
 
         /// Returns a new [`ReportAggregation`] corresponding to this report aggregation updated to
-        /// have the given state.
+        /// have the given last preparation step.
         pub fn with_last_prep_step(self, last_prep_step: Option<PrepareStep>) -> Self {
             Self {
                 last_prep_step,
@@ -6904,23 +6906,30 @@ mod tests {
                 // Write a few aggregation jobs we expect to be able to retrieve with
                 // acquire_incomplete_aggregation_jobs().
                 tx.put_task(&task).await?;
-                for aggregation_job_id in aggregation_job_ids {
-                    tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        Prio3Count,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        (),
-                        (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                try_join_all(aggregation_job_ids.into_iter().map(|aggregation_job_id| {
+                    let task_id = *task.id();
+                    async move {
+                        tx.put_aggregation_job(&AggregationJob::<
+                            PRIO3_VERIFY_KEY_LENGTH,
+                            TimeInterval,
+                            Prio3Count,
+                        >::new(
+                            task_id,
+                            aggregation_job_id,
+                            (),
+                            (),
+                            Interval::new(
+                                Time::from_seconds_since_epoch(0),
+                                Duration::from_seconds(1),
+                            )
                             .unwrap(),
-                        AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
-                    ))
-                    .await?;
-                }
+                            AggregationJobState::InProgress,
+                            AggregationJobRound::from(0),
+                        ))
+                        .await
+                    }
+                }))
+                .await?;
 
                 // Write an aggregation job that is finished. We don't want to retrieve this one.
                 tx.put_aggregation_job(&AggregationJob::<
