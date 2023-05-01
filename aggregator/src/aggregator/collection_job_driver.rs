@@ -2,7 +2,8 @@
 
 use crate::aggregator::{
     aggregate_share::compute_aggregate_share, empty_batch_aggregations,
-    query_type::CollectableQueryType, send_request_to_helper, Error,
+    http_handlers::AGGREGATE_SHARES_ROUTE, query_type::CollectableQueryType,
+    send_request_to_helper, Error,
 };
 use derivative::Derivative;
 use futures::future::{try_join_all, BoxFuture};
@@ -225,6 +226,7 @@ impl CollectionJobDriver {
             &self.http_client,
             Method::POST,
             task.aggregate_shares_uri()?,
+            AGGREGATE_SHARES_ROUTE,
             AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
             req,
             task.primary_aggregator_auth_token(),

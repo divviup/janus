@@ -2341,17 +2341,13 @@ async fn send_request_to_helper<T: Encode>(
     http_client: &Client,
     method: Method,
     url: Url,
+    route_label: &'static str,
     content_type: &str,
     request: T,
     auth_token: &AuthenticationToken,
     http_request_duration_histogram: &Histogram<f64>,
 ) -> Result<Bytes, Error> {
     let domain = url.domain().unwrap_or_default().to_string();
-    let endpoint = url
-        .path_segments()
-        .and_then(|mut split| split.next_back())
-        .unwrap_or_default()
-        .to_string();
     let request_body = request.get_encoded();
 
     let start = Instant::now();
@@ -2375,7 +2371,7 @@ async fn send_request_to_helper<T: Encode>(
                 &[
                     KeyValue::new("status", "error"),
                     KeyValue::new("domain", domain),
-                    KeyValue::new("endpoint", endpoint),
+                    KeyValue::new("endpoint", route_label),
                 ],
             );
             return Err(error.into());
@@ -2390,7 +2386,7 @@ async fn send_request_to_helper<T: Encode>(
             &[
                 KeyValue::new("status", "error"),
                 KeyValue::new("domain", domain),
-                KeyValue::new("endpoint", endpoint),
+                KeyValue::new("endpoint", route_label),
             ],
         );
         let problem_details = response_to_problem_details(response).await;
@@ -2412,7 +2408,7 @@ async fn send_request_to_helper<T: Encode>(
                 &[
                     KeyValue::new("status", "success"),
                     KeyValue::new("domain", domain),
-                    KeyValue::new("endpoint", endpoint),
+                    KeyValue::new("endpoint", route_label),
                 ],
             );
             Ok(response_body)
@@ -2424,7 +2420,7 @@ async fn send_request_to_helper<T: Encode>(
                 &[
                     KeyValue::new("status", "error"),
                     KeyValue::new("domain", domain),
-                    KeyValue::new("endpoint", endpoint),
+                    KeyValue::new("endpoint", route_label),
                 ],
             );
             Err(error.into())

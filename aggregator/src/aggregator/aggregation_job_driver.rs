@@ -1,5 +1,6 @@
 use crate::aggregator::{
-    accumulator::Accumulator, aggregate_step_failure_counter, send_request_to_helper,
+    accumulator::Accumulator, aggregate_step_failure_counter, http_handlers::AGGREGATION_JOB_ROUTE,
+    send_request_to_helper,
 };
 use anyhow::{anyhow, Context as _, Result};
 use derivative::Derivative;
@@ -384,6 +385,7 @@ impl AggregationJobDriver {
             &self.http_client,
             Method::PUT,
             task.aggregation_job_uri(aggregation_job.id())?,
+            AGGREGATION_JOB_ROUTE,
             AggregationJobInitializeReq::<Q>::MEDIA_TYPE,
             req,
             task.primary_aggregator_auth_token(),
@@ -496,6 +498,7 @@ impl AggregationJobDriver {
             &self.http_client,
             Method::POST,
             task.aggregation_job_uri(aggregation_job.id())?,
+            AGGREGATION_JOB_ROUTE,
             AggregationJobContinueReq::MEDIA_TYPE,
             req,
             task.primary_aggregator_auth_token(),
