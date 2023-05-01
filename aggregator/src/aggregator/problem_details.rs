@@ -239,6 +239,7 @@ mod tests {
                         &Client::new(),
                         Method::POST,
                         server.url().parse().unwrap(),
+                        "test",
                         "text/plain",
                         (),
                         &AuthenticationToken::from("auth".as_bytes().to_vec()),

@@ -196,6 +196,10 @@ impl Handler for StatusCounter {
     }
 }
 
+pub(crate) static AGGREGATION_JOB_ROUTE: &str =
+    "tasks/:task_id/aggregation_jobs/:aggregation_job_id";
+pub(crate) static AGGREGATE_SHARES_ROUTE: &str = "tasks/:task_id/aggregate_shares";
+
 /// Constructs a Trillium handler for the aggregator.
 pub fn aggregator_handler<C: Clock>(
     datastore: Arc<Datastore<C>>,
@@ -223,11 +227,11 @@ pub fn aggregator_handler<C: Clock>(
                 upload_cors_preflight,
             )
             .put(
-                "tasks/:task_id/aggregation_jobs/:aggregation_job_id",
+                AGGREGATION_JOB_ROUTE,
                 instrumented(api(aggregation_jobs_put::<C>)),
             )
             .post(
-                "tasks/:task_id/aggregation_jobs/:aggregation_job_id",
+                AGGREGATION_JOB_ROUTE,
                 instrumented(api(aggregation_jobs_post::<C>)),
             )
             .put(
@@ -243,7 +247,7 @@ pub fn aggregator_handler<C: Clock>(
                 instrumented(api(collection_jobs_delete::<C>)),
             )
             .post(
-                "tasks/:task_id/aggregate_shares",
+                AGGREGATE_SHARES_ROUTE,
                 instrumented(api(aggregate_shares::<C>)),
             ),
         StatusCounter::new(&meter),
