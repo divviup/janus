@@ -2,9 +2,9 @@
 
 use self::models::{
     AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
-    AggregatorRole, BatchAggregation, CollectionJob, CollectionJobState, CollectionJobStateCode,
-    LeaderStoredReport, Lease, LeaseToken, OutstandingBatch, ReportAggregation,
-    ReportAggregationState, ReportAggregationStateCode, SqlInterval,
+    AggregatorRole, Batch, BatchAggregation, CollectionJob, CollectionJobState,
+    CollectionJobStateCode, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
+    ReportAggregation, ReportAggregationState, ReportAggregationStateCode, SqlInterval,
 };
 #[cfg(feature = "test-util")]
 use crate::VdafHasAggregationParameter;
@@ -86,7 +86,7 @@ macro_rules! supported_schema_versions {
 
 // List of schema versions that this version of Janus can safely run on. If any other schema
 // version is seen, [`Datastore::new`] fails.
-supported_schema_versions!(4);
+supported_schema_versions!(5);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -1447,8 +1447,8 @@ impl<C: Clock> Transaction<'_, C> {
                     WHERE excluded.client_timestamp = client_reports.client_timestamp",
             )
             .await?;
-        let rows_modified = self
-            .execute(
+        check_insert(
+            self.execute(
                 &stmt,
                 &[
                     /* task_id */ &task_id.get_encoded(),
@@ -1457,13 +1457,8 @@ impl<C: Clock> Transaction<'_, C> {
                     &report_share.metadata().time().as_naive_date_time()?,
                 ],
             )
-            .await?;
-
-        if rows_modified == 0 {
-            Err(Error::MutationTargetAlreadyExists)
-        } else {
-            Ok(())
-        }
+            .await?,
+        )
     }
 
     /// get_aggregation_job retrieves an aggregation job by ID.
@@ -1702,8 +1697,8 @@ impl<C: Clock> Transaction<'_, C> {
                 ON CONFLICT DO NOTHING",
             )
             .await?;
-        let rows_affected = self
-            .execute(
+        check_insert(
+            self.execute(
                 &stmt,
                 &[
                     /* task_id */ &aggregation_job.task_id().as_ref(),
@@ -1720,13 +1715,8 @@ impl<C: Clock> Transaction<'_, C> {
                     &aggregation_job.last_continue_request_hash(),
                 ],
             )
-            .await?;
-
-        if rows_affected == 0 {
-            return Err(Error::MutationTargetAlreadyExists);
-        }
-
-        Ok(())
+            .await?,
+        )
     }
 
     /// update_aggregation_job updates a stored aggregation job.
@@ -2934,8 +2924,8 @@ ORDER BY id DESC
                 ON CONFLICT DO NOTHING",
             )
             .await?;
-        let rows_affected = self
-            .execute(
+        check_insert(
+            self.execute(
                 &stmt,
                 &[
                     /* task_id */ &batch_aggregation.task_id().as_ref(),
@@ -2955,12 +2945,8 @@ ORDER BY id DESC
                     /* checksum */ &batch_aggregation.checksum().get_encoded(),
                 ],
             )
-            .await?;
-
-        if rows_affected == 0 {
-            return Err(Error::MutationTargetAlreadyExists);
-        }
-        Ok(())
+            .await?,
+        )
     }
 
     /// Update an existing `batch_aggregations` row with the values from the provided batch
@@ -3468,6 +3454,120 @@ ORDER BY id DESC
         .transpose()
     }
 
+    /// Puts a `batch` into the datastore. Returns `MutationTargetAlreadyExists` if the batch is
+    /// already stored.
+    pub async fn put_batch<
+        const SEED_SIZE: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+    >(
+        &self,
+        batch: &Batch<SEED_SIZE, Q, A>,
+    ) -> Result<(), Error> {
+        let stmt = self
+            .prepare_cached(
+                "INSERT INTO batches
+                    (task_id, batch_identifier, aggregation_param, state,
+                    outstanding_aggregation_jobs)
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5)
+                ON CONFLICT DO NOTHING",
+            )
+            .await?;
+        check_insert(
+            self.execute(
+                &stmt,
+                &[
+                    /* task_id */ &batch.task_id().as_ref(),
+                    /* batch_identifier */ &batch.batch_identifier().get_encoded(),
+                    /* aggregation_param */ &batch.aggregation_parameter().get_encoded(),
+                    /* state */ &batch.state(),
+                    /* outstanding_aggregation_jobs */
+                    &i64::try_from(batch.outstanding_aggregation_jobs())?,
+                ],
+            )
+            .await?,
+        )
+    }
+
+    /// Updates a given `batch` in the datastore. Returns `MutationTargetNotFound` if no such batch
+    /// is currently stored.
+    pub async fn update_batch<
+        const SEED_SIZE: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+    >(
+        &self,
+        batch: &Batch<SEED_SIZE, Q, A>,
+    ) -> Result<(), Error> {
+        let stmt = self
+            .prepare_cached(
+                "UPDATE batches SET state = $1, outstanding_aggregation_jobs = $2
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $3)
+                  AND batch_identifier = $4
+                  AND aggregation_param = $5",
+            )
+            .await?;
+        check_single_row_mutation(
+            self.execute(
+                &stmt,
+                &[
+                    /* state */ &batch.state(),
+                    /* outstanding_aggregation_jobs */
+                    &i64::try_from(batch.outstanding_aggregation_jobs())?,
+                    /* task_id */ &batch.task_id().as_ref(),
+                    /* batch_identifier */ &batch.batch_identifier().get_encoded(),
+                    /* aggregation_param */ &batch.aggregation_parameter().get_encoded(),
+                ],
+            )
+            .await?,
+        )
+    }
+
+    /// Gets a given `batch` from the datastore, based on the primary key. Returns `None` if no such
+    /// batch is stored in the datastore.
+    pub async fn get_batch<
+        const SEED_SIZE: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+    >(
+        &self,
+        task_id: &TaskId,
+        batch_identifier: &Q::BatchIdentifier,
+        aggregation_parameter: &A::AggregationParam,
+    ) -> Result<Option<Batch<SEED_SIZE, Q, A>>, Error> {
+        let stmt = self
+            .prepare_cached(
+                "SELECT state, outstanding_aggregation_jobs FROM batches
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                  AND batch_identifier = $2
+                  AND aggregation_param = $3",
+            )
+            .await?;
+        self.query_opt(
+            &stmt,
+            &[
+                /* task_id */ task_id.as_ref(),
+                /* batch_identifier */ &batch_identifier.get_encoded(),
+                /* aggregation_param */ &aggregation_parameter.get_encoded(),
+            ],
+        )
+        .await?
+        .map(|row| {
+            let state = row.get("state");
+            let outstanding_aggregation_jobs = row
+                .get::<_, i64>("outstanding_aggregation_jobs")
+                .try_into()?;
+            Ok(Batch::new(
+                *task_id,
+                batch_identifier.clone(),
+                aggregation_parameter.clone(),
+                state,
+                outstanding_aggregation_jobs,
+            ))
+        })
+        .transpose()
+    }
+
     /// Deletes old client reports for a given task, that is, client reports whose timestamp is
     /// older than a given timestamp which are not included in any report aggregations.
     #[tracing::instrument(skip(self), err)]
@@ -3674,6 +3774,16 @@ ORDER BY id DESC
         )
         .await?;
         Ok(())
+    }
+}
+
+fn check_insert(row_count: u64) -> Result<(), Error> {
+    match row_count {
+        0 => Err(Error::MutationTargetAlreadyExists),
+        1 => Ok(()),
+        _ => panic!(
+            "insert which should have affected at most one row instead affected {row_count} rows"
+        ),
     }
 }
 
@@ -5321,6 +5431,115 @@ pub mod models {
         }
     }
 
+    /// Represents the state of a `Batch`.
+    #[derive(Copy, Clone, Debug, FromSql, ToSql, PartialEq, Eq)]
+    #[postgres(name = "batch_state")]
+    pub enum BatchState {
+        /// This batch can accept the creation of additional aggregation jobs.
+        #[postgres(name = "OPEN")]
+        Open,
+        /// This batch can accept the creation of additional aggregation jobs, but will transition
+        /// to state `CLOSED` once there are no outstanding aggregation jobs remaining.
+        #[postgres(name = "CLOSING")]
+        Closing,
+        /// This batch can no longer accept the creation of additional aggregation jobs.
+        #[postgres(name = "CLOSED")]
+        Closed,
+    }
+
+    /// Represents the state of a given batch (and aggregation parameter).
+    #[derive(Clone, Debug)]
+    pub struct Batch<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> {
+        task_id: TaskId,
+        batch_identifier: Q::BatchIdentifier,
+        aggregation_parameter: A::AggregationParam,
+        state: BatchState,
+        outstanding_aggregation_jobs: u64,
+    }
+
+    impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
+        Batch<SEED_SIZE, Q, A>
+    {
+        /// Creates a new [`Batch`].
+        pub fn new(
+            task_id: TaskId,
+            batch_identifier: Q::BatchIdentifier,
+            aggregation_parameter: A::AggregationParam,
+            state: BatchState,
+            outstanding_aggregation_jobs: u64,
+        ) -> Self {
+            Self {
+                task_id,
+                batch_identifier,
+                aggregation_parameter,
+                state,
+                outstanding_aggregation_jobs,
+            }
+        }
+
+        /// Gets the task ID associated with this batch.
+        pub fn task_id(&self) -> &TaskId {
+            &self.task_id
+        }
+
+        /// Gets the batch identifier associated with this batch.
+        pub fn batch_identifier(&self) -> &Q::BatchIdentifier {
+            &self.batch_identifier
+        }
+
+        /// Gets the aggregation parameter associated with this batch.
+        pub fn aggregation_parameter(&self) -> &A::AggregationParam {
+            &self.aggregation_parameter
+        }
+
+        /// Gets the state associated with this batch.
+        pub fn state(&self) -> &BatchState {
+            &self.state
+        }
+
+        /// Returns a new batch equivalent to the current batch, but with the given state.
+        pub fn with_state(self, state: BatchState) -> Self {
+            Self { state, ..self }
+        }
+
+        /// Gets the count of outstanding aggregation jobs associated with this batch.
+        pub fn outstanding_aggregation_jobs(&self) -> u64 {
+            self.outstanding_aggregation_jobs
+        }
+
+        /// Returns a new batch equivalent to the current batch, but with the given count of
+        /// outstanding aggregation jobs.
+        pub fn with_outstanding_aggregation_jobs(self, outstanding_aggregation_jobs: u64) -> Self {
+            Self {
+                outstanding_aggregation_jobs,
+                ..self
+            }
+        }
+    }
+
+    impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
+        for Batch<SEED_SIZE, Q, A>
+    where
+        Q::BatchIdentifier: PartialEq,
+        A::AggregationParam: PartialEq,
+    {
+        fn eq(&self, other: &Self) -> bool {
+            self.task_id == other.task_id
+                && self.batch_identifier == other.batch_identifier
+                && self.aggregation_parameter == other.aggregation_parameter
+                && self.state == other.state
+                && self.outstanding_aggregation_jobs == other.outstanding_aggregation_jobs
+        }
+    }
+
+    impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
+        for Batch<SEED_SIZE, Q, A>
+    where
+        Q::BatchIdentifier: Eq,
+        A::AggregationParam: Eq,
+    {
+    }
+
     /// The SQL timestamp epoch, midnight UTC on 2000-01-01.
     const SQL_EPOCH_TIME: Time = Time::from_seconds_since_epoch(946_684_800);
 
@@ -5459,9 +5678,9 @@ mod tests {
         datastore::{
             models::{
                 AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
-                AggregationJobState, BatchAggregation, BatchAggregationState, CollectionJob,
-                CollectionJobState, LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
-                ReportAggregationState, SqlInterval,
+                AggregationJobState, Batch, BatchAggregation, BatchAggregationState, BatchState,
+                CollectionJob, CollectionJobState, LeaderStoredReport, Lease, OutstandingBatch,
+                ReportAggregation, ReportAggregationState, SqlInterval,
             },
             schema_versions_template,
             test_util::{
@@ -9729,6 +9948,100 @@ mod tests {
             .await
             .unwrap();
         assert!(outstanding_batches.is_empty());
+    }
+
+    #[rstest_reuse::apply(schema_versions_template)]
+    #[tokio::test]
+    async fn roundtrip_batch(ephemeral_datastore: EphemeralDatastore) {
+        install_test_trace_subscriber();
+
+        let clock = MockClock::default();
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
+
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                let want_batch = Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                    random(),
+                    random(),
+                    AggregationParam(2),
+                    BatchState::Closing,
+                    1,
+                );
+
+                tx.put_task(
+                    &TaskBuilder::new(
+                        task::QueryType::FixedSize { max_batch_size: 10 },
+                        VdafInstance::Fake,
+                        Role::Leader,
+                    )
+                    .with_id(*want_batch.task_id())
+                    .build(),
+                )
+                .await?;
+                tx.put_batch(&want_batch).await?;
+
+                // Try reading the batch back, and verify that modifying any of the primary key
+                // attributes causes None to be returned.
+                assert_eq!(
+                    tx.get_batch(
+                        want_batch.task_id(),
+                        want_batch.batch_identifier(),
+                        want_batch.aggregation_parameter()
+                    )
+                    .await?
+                    .as_ref(),
+                    Some(&want_batch)
+                );
+                assert_eq!(
+                    tx.get_batch::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        &random(),
+                        want_batch.batch_identifier(),
+                        want_batch.aggregation_parameter()
+                    )
+                    .await?,
+                    None
+                );
+                assert_eq!(
+                    tx.get_batch::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        want_batch.task_id(),
+                        &random(),
+                        want_batch.aggregation_parameter()
+                    )
+                    .await?,
+                    None
+                );
+                assert_eq!(
+                    tx.get_batch::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        want_batch.task_id(),
+                        want_batch.batch_identifier(),
+                        &AggregationParam(3)
+                    )
+                    .await?,
+                    None
+                );
+
+                // Update the batch, then read it again, verifying that the changes are reflected.
+                let want_batch = want_batch
+                    .with_state(BatchState::Closed)
+                    .with_outstanding_aggregation_jobs(0);
+                tx.update_batch(&want_batch).await?;
+
+                assert_eq!(
+                    tx.get_batch(
+                        want_batch.task_id(),
+                        want_batch.batch_identifier(),
+                        want_batch.aggregation_parameter()
+                    )
+                    .await?
+                    .as_ref(),
+                    Some(&want_batch)
+                );
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
     }
 
     #[async_trait]
