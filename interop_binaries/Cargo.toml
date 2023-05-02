@@ -38,7 +38,7 @@ opentelemetry = { version = "0.18", features = ["metrics"] }
 prio = { version = "0.10.0", features = ["multithreaded"] }
 rand = "0.8"
 regex = { version = "1", optional = true }
-reqwest = { version = "0.11.16", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.11.17", default-features = false, features = ["rustls-tls"] }
 ring = "0.16.20"
 serde = { version = "1.0.160", features = ["derive"] }
 serde_json = "1.0.96"
@@ -55,7 +55,7 @@ zstd = { version = "0.12", optional = true }
 [dev-dependencies]
 janus_interop_binaries = { path = ".", features = ["testcontainer", "test-util"] }
 janus_core = { path = "../core", features = ["test-util"] }
-reqwest = { version = "0.11.16", default-features = false, features = ["json"] }
+reqwest = { version = "0.11.17", default-features = false, features = ["json"] }
 
 [build-dependencies]
 janus_build_script_utils = { path = "../build_script_utils", optional = true }
