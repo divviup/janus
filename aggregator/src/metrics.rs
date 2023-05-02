@@ -147,10 +147,13 @@ pub async fn install_metrics_exporter(
         }) => {
             let exporter = Arc::new(
                 opentelemetry_prometheus::exporter(
-                    controllers::basic(processors::factory(
-                        CustomAggregatorSelector,
-                        stateless_temporality_selector(),
-                    ))
+                    controllers::basic(
+                        processors::factory(
+                            CustomAggregatorSelector,
+                            stateless_temporality_selector(),
+                        )
+                        .with_memory(true),
+                    )
                     .build(),
                 )
                 .try_init()?,

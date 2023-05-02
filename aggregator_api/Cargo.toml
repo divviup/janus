@@ -33,5 +33,5 @@ url = { version = "2.3.1", features = ["serde"] }
 [dev-dependencies]
 futures = "0.3.28"
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
-tokio = "1.27"
+tokio = "1.28"
 trillium-testing = { workspace = true, features = ["tokio"] }
