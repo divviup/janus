@@ -60,7 +60,7 @@ postgres-types = { version = "0.2.5", features = ["derive", "array-impls"] }
 prio = { version = "0.10.0", features = ["multithreaded"] }
 prometheus = { version = "0.13.3", optional = true }
 rand = { version = "0.8", features = ["min_const_gen"] }
-reqwest = { version = "0.11.16", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.11.17", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.16.20"
 serde = { version = "1.0.160", features = ["derive"] }
 serde_json = "1.0.96"
