@@ -5504,6 +5504,7 @@ mod tests {
         sync::Arc,
         time::Duration as StdDuration,
     };
+    use tokio::time::timeout;
 
     #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
@@ -6885,7 +6886,7 @@ mod tests {
         // Setup: insert a few aggregation jobs.
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ds = ephemeral_datastore.datastore(clock.clone()).await;
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         const AGGREGATION_JOB_COUNT: usize = 10;
         let task = TaskBuilder::new(
@@ -6980,7 +6981,7 @@ mod tests {
         // Run: run several transactions that all call acquire_incomplete_aggregation_jobs
         // concurrently. (We do things concurrently in an attempt to make sure the
         // mutual-exclusivity works properly.)
-        const TX_COUNT: usize = 10;
+        const CONCURRENT_TX_COUNT: usize = 10;
         const LEASE_DURATION: StdDuration = StdDuration::from_secs(300);
         const MAXIMUM_ACQUIRE_COUNT: usize = 4;
 
@@ -6990,28 +6991,14 @@ mod tests {
         #[allow(clippy::assertions_on_constants)]
         {
             assert!(MAXIMUM_ACQUIRE_COUNT < AGGREGATION_JOB_COUNT);
-            assert!(MAXIMUM_ACQUIRE_COUNT.checked_mul(TX_COUNT).unwrap() >= AGGREGATION_JOB_COUNT);
+            assert!(
+                MAXIMUM_ACQUIRE_COUNT
+                    .checked_mul(CONCURRENT_TX_COUNT)
+                    .unwrap()
+                    >= AGGREGATION_JOB_COUNT
+            );
         }
 
-        let results = try_join_all(
-            iter::repeat_with(|| {
-                ds.run_tx(|tx| {
-                    Box::pin(async move {
-                        tx.acquire_incomplete_aggregation_jobs(
-                            &LEASE_DURATION,
-                            MAXIMUM_ACQUIRE_COUNT,
-                        )
-                        .await
-                    })
-                })
-            })
-            .take(TX_COUNT),
-        )
-        .await
-        .unwrap();
-
-        // Verify: check that we got all of the desired aggregation jobs, with no duplication, and
-        // the expected lease expiry.
         let want_expiry_time = clock.now().as_naive_date_time().unwrap()
             + chrono::Duration::from_std(LEASE_DURATION).unwrap();
         let want_aggregation_jobs: Vec<_> = aggregation_job_ids
@@ -7028,11 +7015,49 @@ mod tests {
                 )
             })
             .collect();
-        let mut got_leases = Vec::new();
-        for result in results {
-            assert!(result.len() <= MAXIMUM_ACQUIRE_COUNT);
-            got_leases.extend(result.into_iter());
-        }
+
+        let got_leases = timeout(StdDuration::from_secs(10), {
+            let ds = Arc::clone(&ds);
+            let want_lease_count = want_aggregation_jobs.len();
+            async move {
+                let mut got_leases = Vec::new();
+                loop {
+                    // Rarely, due to Postgres locking semantics, an aggregation job that could be
+                    // returned will instead be skipped by all concurrent aggregation attempts. Retry
+                    // for a little while to keep this from affecting test outcome.
+                    let results = try_join_all(
+                        iter::repeat_with(|| {
+                            ds.run_tx(|tx| {
+                                Box::pin(async move {
+                                    tx.acquire_incomplete_aggregation_jobs(
+                                        &LEASE_DURATION,
+                                        MAXIMUM_ACQUIRE_COUNT,
+                                    )
+                                    .await
+                                })
+                            })
+                        })
+                        .take(CONCURRENT_TX_COUNT),
+                    )
+                    .await
+                    .unwrap();
+
+                    for result in results {
+                        assert!(result.len() <= MAXIMUM_ACQUIRE_COUNT);
+                        got_leases.extend(result.into_iter());
+                    }
+
+                    if got_leases.len() >= want_lease_count {
+                        break got_leases;
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        // Verify: check that we got all of the desired aggregation jobs, with no duplication, and
+        // the expected lease expiry.
         let mut got_aggregation_jobs: Vec<_> = got_leases
             .iter()
             .map(|lease| {
