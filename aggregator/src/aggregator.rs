@@ -1905,6 +1905,8 @@ impl VdafOps {
                 Ok(None)
             }
 
+            CollectionJobState::Collectable => todo!(),
+
             CollectionJobState::Finished {
                 report_count,
                 encrypted_helper_aggregate_share,

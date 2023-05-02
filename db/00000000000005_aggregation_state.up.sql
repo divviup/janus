@@ -17,3 +17,5 @@ CREATE TABLE batches(
     CONSTRAINT batches_unique_id UNIQUE(task_id, batch_identifier, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
+
+ALTER TYPE COLLECTION_JOB_STATE ADD VALUE 'COLLECTABLE';

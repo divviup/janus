@@ -2375,6 +2375,8 @@ impl<C: Clock> Transaction<'_, C> {
         let state = match state {
             CollectionJobStateCode::Start => CollectionJobState::Start,
 
+            CollectionJobStateCode::Collectable => CollectionJobState::Collectable,
+
             CollectionJobStateCode::Finished => {
                 let report_count = u64::try_from(report_count.ok_or_else(|| {
                     Error::DbState(
@@ -2689,7 +2691,9 @@ ORDER BY id DESC
 
                 (report_count, leader_aggregate_share, helper_aggregate_share)
             }
-            CollectionJobState::Abandoned | CollectionJobState::Deleted => (None, None, None),
+            CollectionJobState::Collectable
+            | CollectionJobState::Abandoned
+            | CollectionJobState::Deleted => (None, None, None),
         };
 
         let stmt = self
@@ -5172,6 +5176,7 @@ pub mod models {
     #[derivative(Debug)]
     pub enum CollectionJobState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
         Start,
+        Collectable,
         Finished {
             /// The number of reports included in this collection job.
             report_count: u64,
@@ -5192,6 +5197,7 @@ pub mod models {
         pub fn collection_job_state_code(&self) -> CollectionJobStateCode {
             match self {
                 Self::Start => CollectionJobStateCode::Start,
+                Self::Collectable => CollectionJobStateCode::Collectable,
                 Self::Finished { .. } => CollectionJobStateCode::Finished,
                 Self::Abandoned => CollectionJobStateCode::Abandoned,
                 Self::Deleted => CollectionJobStateCode::Deleted,
@@ -5209,6 +5215,7 @@ pub mod models {
                 "{}",
                 match self {
                     Self::Start => "start",
+                    Self::Collectable => "collectable",
                     Self::Finished { .. } => "finished",
                     Self::Abandoned => "abandoned",
                     Self::Deleted => "deleted",
@@ -5257,6 +5264,8 @@ pub mod models {
     pub enum CollectionJobStateCode {
         #[postgres(name = "START")]
         Start,
+        #[postgres(name = "COLLECTABLE")]
+        Collectable,
         #[postgres(name = "FINISHED")]
         Finished,
         #[postgres(name = "ABANDONED")]
