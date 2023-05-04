@@ -62,6 +62,6 @@ To create a new migration:
     (for example, a newtype over an array of bytes might implement
     `From<Vec<u8>>`).
 
-* Follow documented best practices of the crates Janus depends on. For exmaple,
+* Follow documented best practices of the crates Janus depends on. For example,
   the `rand` crate suggests using `random()` to generate random data, falling
   back to `thread_rng()` to gain more control as-needed.
