@@ -77,7 +77,7 @@ use prio::{
 };
 use rand::random;
 use reqwest::{
-    header::{HeaderValue, ToStrError, CONTENT_TYPE, RETRY_AFTER},
+    header::{HeaderValue, ToStrError, AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER},
     Response, StatusCode,
 };
 use retry_after::FromHeaderValueError;
@@ -158,6 +158,9 @@ static COLLECTOR_USER_AGENT: &str = concat!(
 pub enum Authentication {
     /// Bearer token authentication, via the `DAP-Auth-Token` header.
     DapAuthToken(#[derivative(Debug = "ignore")] AuthenticationToken),
+    /// Bearer token authentication, via a header of the form `Authorization: Bearer <base64-encoded
+    /// value>`.
+    AuthorizationBearerToken(#[derivative(Debug = "ignore")] AuthenticationToken),
 }
 
 /// The DAP collector's view of task parameters.
@@ -187,10 +190,32 @@ pub struct CollectorParameters {
 
 impl CollectorParameters {
     /// Creates a new set of collector task parameters.
+    ///
+    /// This constructor is deprecated, because it always uses the `DAP-Auth-Token` header for
+    /// authentication. See [CollectorParameters::new_with_authentication] for a more flexible
+    /// constructor.
+    #[deprecated]
     pub fn new(
         task_id: TaskId,
-        mut leader_endpoint: Url,
+        leader_endpoint: Url,
         authentication_token: AuthenticationToken,
+        hpke_config: HpkeConfig,
+        hpke_private_key: HpkePrivateKey,
+    ) -> CollectorParameters {
+        Self::new_with_authentication(
+            task_id,
+            leader_endpoint,
+            Authentication::DapAuthToken(authentication_token),
+            hpke_config,
+            hpke_private_key,
+        )
+    }
+
+    /// Creates a new set of collector task parameters.
+    pub fn new_with_authentication(
+        task_id: TaskId,
+        mut leader_endpoint: Url,
+        authentication: Authentication,
         hpke_config: HpkeConfig,
         hpke_private_key: HpkePrivateKey,
     ) -> CollectorParameters {
@@ -200,7 +225,7 @@ impl CollectorParameters {
         CollectorParameters {
             task_id,
             leader_endpoint,
-            authentication: Authentication::DapAuthToken(authentication_token),
+            authentication,
             hpke_config,
             hpke_private_key,
             http_request_retry_parameters: http_request_exponential_backoff(),
@@ -418,6 +443,9 @@ impl<V: vdaf::Collector> Collector<V> {
                     Authentication::DapAuthToken(token) => {
                         request = request.header(DAP_AUTH_HEADER, token.as_ref())
                     }
+                    Authentication::AuthorizationBearerToken(token) => {
+                        request = request.header(AUTHORIZATION, token.bearer_token())
+                    }
                 }
                 request.send().await
             },
@@ -465,6 +493,9 @@ impl<V: vdaf::Collector> Collector<V> {
                 match &self.parameters.authentication {
                     Authentication::DapAuthToken(token) => {
                         request = request.header(DAP_AUTH_HEADER, token.as_ref())
+                    }
+                    Authentication::AuthorizationBearerToken(token) => {
+                        request = request.header(AUTHORIZATION, token.bearer_token())
                     }
                 }
                 request.send().await
@@ -671,8 +702,8 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use crate::{
-        default_http_client, Collection, CollectionJob, Collector, CollectorParameters, Error,
-        PollResult,
+        default_http_client, Authentication, Collection, CollectionJob, Collector,
+        CollectorParameters, Error, PollResult,
     };
     use assert_matches::assert_matches;
     use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
@@ -700,7 +731,10 @@ mod tests {
         vdaf::{self, prio3::Prio3, AggregateShare, OutputShare},
     };
     use rand::random;
-    use reqwest::{header::CONTENT_TYPE, StatusCode, Url};
+    use reqwest::{
+        header::{AUTHORIZATION, CONTENT_TYPE},
+        StatusCode, Url,
+    };
     use retry_after::RetryAfter;
 
     fn setup_collector<V: vdaf::Collector>(
@@ -709,10 +743,10 @@ mod tests {
     ) -> Collector<V> {
         let server_url = Url::parse(&server.url()).unwrap();
         let hpke_keypair = generate_test_hpke_config_and_private_key();
-        let parameters = CollectorParameters::new(
+        let parameters = CollectorParameters::new_with_authentication(
             random(),
             server_url,
-            AuthenticationToken::from(b"token".to_vec()),
+            Authentication::DapAuthToken(AuthenticationToken::from(b"token".to_vec())),
             hpke_keypair.config().clone(),
             hpke_keypair.private_key().clone(),
         )
@@ -810,10 +844,10 @@ mod tests {
     #[test]
     fn leader_endpoint_end_in_slash() {
         let hpke_keypair = generate_test_hpke_config_and_private_key();
-        let collector_parameters = CollectorParameters::new(
+        let collector_parameters = CollectorParameters::new_with_authentication(
             random(),
             "http://example.com/dap".parse().unwrap(),
-            AuthenticationToken::from(b"token".to_vec()),
+            Authentication::DapAuthToken(AuthenticationToken::from(b"token".to_vec())),
             hpke_keypair.config().clone(),
             hpke_keypair.private_key().clone(),
         );
@@ -823,10 +857,10 @@ mod tests {
             "http://example.com/dap/",
         );
 
-        let collector_parameters = CollectorParameters::new(
+        let collector_parameters = CollectorParameters::new_with_authentication(
             random(),
             "http://example.com".parse().unwrap(),
-            AuthenticationToken::from(b"token".to_vec()),
+            Authentication::DapAuthToken(AuthenticationToken::from(b"token".to_vec())),
             hpke_keypair.config().clone(),
             hpke_keypair.private_key().clone(),
         );
@@ -870,6 +904,7 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 CollectionReq::<TimeInterval>::MEDIA_TYPE,
             )
+            .match_header("DAP-Auth-Token", "token")
             .with_status(201)
             .expect(1)
             .create_async()
@@ -898,6 +933,7 @@ mod tests {
             .await;
         let mocked_collect_complete = server
             .mock("POST", job.collection_job_url.path())
+            .match_header("DAP-Auth-Token", "token")
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1209,6 +1245,87 @@ mod tests {
                     chrono::Duration::seconds(1),
                 ),
                 1
+            )
+        );
+
+        mocked_collect_complete.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn successful_collect_authentication_bearer() {
+        install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
+        let vdaf = Prio3::new_count(2).unwrap();
+        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &1);
+        let server_url = Url::parse(&server.url()).unwrap();
+        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let parameters = CollectorParameters::new_with_authentication(
+            random(),
+            server_url,
+            Authentication::AuthorizationBearerToken(AuthenticationToken::from([0u8; 16].to_vec())),
+            hpke_keypair.config().clone(),
+            hpke_keypair.private_key().clone(),
+        )
+        .with_http_request_backoff(test_http_request_exponential_backoff())
+        .with_collect_poll_backoff(test_http_request_exponential_backoff());
+        let collector = Collector::new(parameters, vdaf, default_http_client().unwrap());
+
+        let batch_interval = Interval::new(
+            Time::from_seconds_since_epoch(1_000_000),
+            Duration::from_seconds(3600),
+        )
+        .unwrap();
+        let collect_resp =
+            build_collect_response_time(&transcript, &collector.parameters, batch_interval);
+        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
+
+        let mocked_collect_start_success = server
+            .mock("PUT", matcher)
+            .match_header(
+                CONTENT_TYPE.as_str(),
+                CollectionReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .match_header(AUTHORIZATION.as_str(), "Bearer AAAAAAAAAAAAAAAAAAAAAA==")
+            .with_status(201)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let job = collector
+            .start_collection(Query::new_time_interval(batch_interval), &())
+            .await
+            .unwrap();
+        assert_eq!(job.query.batch_interval(), &batch_interval);
+
+        mocked_collect_start_success.assert_async().await;
+
+        let mocked_collect_complete = server
+            .mock("POST", job.collection_job_url.path())
+            .match_header(AUTHORIZATION.as_str(), "Bearer AAAAAAAAAAAAAAAAAAAAAA==")
+            .with_status(200)
+            .with_header(
+                CONTENT_TYPE.as_str(),
+                CollectionMessage::<TimeInterval>::MEDIA_TYPE,
+            )
+            .with_body(collect_resp.get_encoded())
+            .expect(1)
+            .create_async()
+            .await;
+
+        let agg_result = collector.poll_until_complete(&job).await.unwrap();
+        assert_eq!(
+            agg_result,
+            Collection::new(
+                PartialBatchSelector::new_time_interval(),
+                1,
+                (
+                    DateTime::<Utc>::from_utc(
+                        NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
+                        Utc
+                    ),
+                    chrono::Duration::seconds(3600),
+                ),
+                1,
             )
         );
 
