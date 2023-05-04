@@ -3539,7 +3539,7 @@ ORDER BY id DESC
         batch_identifier: &Q::BatchIdentifier,
         aggregation_parameter: &A::AggregationParam,
     ) -> Result<Option<Batch<SEED_SIZE, Q, A>>, Error> {
-        let stmt = self
+        let stmt: Statement = self
             .prepare_cached(
                 "SELECT state, outstanding_aggregation_jobs FROM batches
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
@@ -3557,19 +3557,62 @@ ORDER BY id DESC
         )
         .await?
         .map(|row| {
-            let state = row.get("state");
-            let outstanding_aggregation_jobs = row
-                .get::<_, i64>("outstanding_aggregation_jobs")
-                .try_into()?;
-            Ok(Batch::new(
+            Self::batch_from_row(
                 *task_id,
                 batch_identifier.clone(),
                 aggregation_parameter.clone(),
-                state,
-                outstanding_aggregation_jobs,
-            ))
+                row,
+            )
         })
         .transpose()
+    }
+
+    #[cfg(feature = "test-util")]
+    pub async fn get_batches_for_task<
+        const SEED_SIZE: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+    >(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Vec<Batch<SEED_SIZE, Q, A>>, Error> {
+        let stmt: Statement = self
+            .prepare_cached(
+                "SELECT batch_identifier, aggregation_param, state, outstanding_aggregation_jobs
+            FROM batches
+            WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+            )
+            .await?;
+        self.query(&stmt, &[/* task_id */ task_id.as_ref()])
+            .await?
+            .into_iter()
+            .map(|row| {
+                let batch_identifier =
+                    Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
+                let aggregation_parameter =
+                    A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
+                Self::batch_from_row(*task_id, batch_identifier, aggregation_parameter, row)
+            })
+            .collect()
+    }
+
+    fn batch_from_row<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>(
+        task_id: TaskId,
+        batch_identifier: Q::BatchIdentifier,
+        aggregation_parameter: A::AggregationParam,
+        row: Row,
+    ) -> Result<Batch<SEED_SIZE, Q, A>, Error> {
+        let state = row.get("state");
+        let outstanding_aggregation_jobs = row
+            .get::<_, i64>("outstanding_aggregation_jobs")
+            .try_into()?;
+        Ok(Batch::new(
+            task_id,
+            batch_identifier.clone(),
+            aggregation_parameter.clone(),
+            state,
+            outstanding_aggregation_jobs,
+        ))
     }
 
     /// Deletes old client reports for a given task, that is, client reports whose timestamp is
@@ -4086,8 +4129,11 @@ pub mod models {
         vdaf::{self, Aggregatable},
     };
     use rand::{distributions::Standard, prelude::Distribution};
-    use std::fmt::{Debug, Formatter};
-    use std::{fmt::Display, ops::RangeInclusive};
+    use std::{
+        fmt::{Debug, Display, Formatter},
+        hash::{Hash, Hasher},
+        ops::RangeInclusive,
+    };
 
     // We have to manually implement [Partial]Eq for a number of types because the derived
     // implementations don't play nice with generic fields, even if those fields are constrained to
@@ -4392,9 +4438,26 @@ pub mod models {
     {
     }
 
+    impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Hash
+        for AggregationJob<SEED_SIZE, Q, A>
+    where
+        A::AggregationParam: Hash,
+    {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.task_id.hash(state);
+            self.aggregation_job_id.hash(state);
+            self.aggregation_parameter.hash(state);
+            self.batch_id.hash(state);
+            self.client_timestamp_interval.hash(state);
+            self.state.hash(state);
+            self.round.hash(state);
+            self.last_continue_request_hash.hash(state);
+        }
+    }
+
     /// AggregationJobState represents the state of an aggregation job. It corresponds to the
     /// AGGREGATION_JOB_STATE enum in the schema.
-    #[derive(Copy, Clone, Debug, PartialEq, Eq, ToSql, FromSql)]
+    #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, ToSql, FromSql)]
     #[postgres(name = "aggregation_job_state")]
     pub enum AggregationJobState {
         #[postgres(name = "IN_PROGRESS")]
@@ -5441,7 +5504,7 @@ pub mod models {
     }
 
     /// Represents the state of a `Batch`.
-    #[derive(Copy, Clone, Debug, FromSql, ToSql, PartialEq, Eq)]
+    #[derive(Copy, Clone, Debug, FromSql, ToSql, PartialEq, Eq, Hash)]
     #[postgres(name = "batch_state")]
     pub enum BatchState {
         /// This batch can accept the creation of additional aggregation jobs.
@@ -5547,6 +5610,20 @@ pub mod models {
         Q::BatchIdentifier: Eq,
         A::AggregationParam: Eq,
     {
+    }
+
+    impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Hash
+        for Batch<SEED_SIZE, Q, A>
+    where
+        A::AggregationParam: Hash,
+    {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.task_id.hash(state);
+            self.batch_identifier.hash(state);
+            self.aggregation_parameter.hash(state);
+            self.state.hash(state);
+            self.outstanding_aggregation_jobs.hash(state);
+        }
     }
 
     /// The SQL timestamp epoch, midnight UTC on 2000-01-01.
