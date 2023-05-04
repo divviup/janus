@@ -282,6 +282,42 @@ struct AuthenticationOptions {
     authorization_bearer_token: Option<AuthenticationToken>,
 }
 
+#[derive(Debug, Args, PartialEq, Eq)]
+#[group(required = true)]
+struct QueryOptions {
+    /// Start of the collection batch interval, as the number of seconds since the Unix epoch
+    #[clap(
+        long,
+        requires = "batch_interval_duration",
+        help_heading = "Collect Request Parameters (Time Interval)"
+    )]
+    batch_interval_start: Option<u64>,
+    /// Duration of the collection batch interval, in seconds
+    #[clap(
+        long,
+        requires = "batch_interval_start",
+        help_heading = "Collect Request Parameters (Time Interval)"
+    )]
+    batch_interval_duration: Option<u64>,
+
+    /// Batch identifier, encoded with base64url
+    #[clap(
+        long,
+        value_parser = BatchIdValueParser::new(),
+        conflicts_with_all = ["batch_interval_start", "batch_interval_duration", "current_batch"],
+        help_heading = "Collect Request Parameters (Fixed Size)",
+    )]
+    batch_id: Option<BatchId>,
+    /// Have the aggregator select a batch that has not yet been collected
+    #[clap(
+        long,
+        action = ArgAction::SetTrue,
+        conflicts_with_all = ["batch_interval_start", "batch_interval_duration", "batch_id"],
+        help_heading = "Collect Request Parameters (Fixed Size)",
+    )]
+    current_batch: bool,
+}
+
 #[derive(Derivative, Parser, PartialEq, Eq)]
 #[derivative(Debug)]
 #[clap(
@@ -349,37 +385,8 @@ struct Options {
     )]
     buckets: Option<Buckets>,
 
-    /// Start of the collection batch interval, as the number of seconds since the Unix epoch
-    #[clap(
-        long,
-        requires = "batch_interval_duration",
-        help_heading = "Collect Request Parameters (Time Interval)"
-    )]
-    batch_interval_start: Option<u64>,
-    /// Duration of the collection batch interval, in seconds
-    #[clap(
-        long,
-        requires = "batch_interval_start",
-        help_heading = "Collect Request Parameters (Time Interval)"
-    )]
-    batch_interval_duration: Option<u64>,
-
-    /// Batch identifier, encoded with base64url
-    #[clap(
-        long,
-        value_parser = BatchIdValueParser::new(),
-        conflicts_with_all = ["batch_interval_start", "batch_interval_duration", "current_batch"],
-        help_heading = "Collect Request Parameters (Fixed Size)",
-    )]
-    batch_id: Option<BatchId>,
-    /// Have the aggregator select a batch that has not yet been collected
-    #[clap(
-        long,
-        action = ArgAction::SetTrue,
-        conflicts_with_all = ["batch_interval_start", "batch_interval_duration", "batch_id"],
-        help_heading = "Collect Request Parameters (Fixed Size)",
-    )]
-    current_batch: bool,
+    #[clap(flatten)]
+    query: QueryOptions,
 }
 
 #[tokio::main]
@@ -406,10 +413,10 @@ async fn main() -> anyhow::Result<()> {
 // This function is broken out from `main()` for the sake of testing its argument handling.
 async fn run(options: Options) -> Result<(), Error> {
     match (
-        &options.batch_interval_start,
-        &options.batch_interval_duration,
-        &options.batch_id,
-        options.current_batch,
+        &options.query.batch_interval_start,
+        &options.query.batch_interval_duration,
+        &options.query.batch_id,
+        options.query.current_batch,
     ) {
         (Some(batch_interval_start), Some(batch_interval_duration), None, false) => {
             let batch_interval = Interval::new(
@@ -599,7 +606,7 @@ impl QueryTypeExt for FixedSize {
 
 #[cfg(test)]
 mod tests {
-    use crate::{run, AuthenticationOptions, Error, Options, VdafType};
+    use crate::{run, AuthenticationOptions, Error, Options, QueryOptions, VdafType};
     use assert_matches::assert_matches;
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use clap::{error::ErrorKind, CommandFactory, Parser};
@@ -639,10 +646,12 @@ mod tests {
             length: None,
             bits: None,
             buckets: None,
-            batch_interval_start: Some(1_000_000),
-            batch_interval_duration: Some(1_000),
-            batch_id: None,
-            current_batch: false,
+            query: QueryOptions {
+                batch_interval_start: Some(1_000_000),
+                batch_interval_duration: Some(1_000),
+                batch_id: None,
+                current_batch: false,
+            },
         };
         let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
         let correct_arguments = [
@@ -866,6 +875,20 @@ mod tests {
             ]);
             Options::try_parse_from(good_arguments).unwrap();
         }
+    }
+
+    #[test]
+    fn batch_arguments() {
+        let task_id: TaskId = random();
+        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
+
+        let leader = Url::parse("https://example.com/dap/").unwrap();
+
+        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let encoded_hpke_config = URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded());
+        let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
+
+        let auth_token = AuthenticationToken::from(b"collector-authentication-token".to_vec());
 
         // Check parsing arguments for a current batch query.
         let expected = Options {
@@ -881,10 +904,12 @@ mod tests {
             length: None,
             bits: None,
             buckets: None,
-            batch_interval_start: None,
-            batch_interval_duration: None,
-            batch_id: None,
-            current_batch: true,
+            query: QueryOptions {
+                batch_interval_start: None,
+                batch_interval_duration: None,
+                batch_id: None,
+                current_batch: true,
+            },
         };
         let correct_arguments = [
             "collect",
@@ -904,6 +929,7 @@ mod tests {
             Err(e) => panic!("{}\narguments were {:?}", e, correct_arguments),
         }
 
+        // Check parsing arguments for a by-batch-id query.
         let batch_id: BatchId = random();
         let batch_id_encoded = URL_SAFE_NO_PAD.encode(batch_id.as_ref());
         let expected = Options {
@@ -919,10 +945,12 @@ mod tests {
             length: None,
             bits: None,
             buckets: None,
-            batch_interval_start: None,
-            batch_interval_duration: None,
-            batch_id: Some(batch_id),
-            current_batch: false,
+            query: QueryOptions {
+                batch_interval_start: None,
+                batch_interval_duration: None,
+                batch_id: Some(batch_id),
+                current_batch: false,
+            },
         };
         let correct_arguments = [
             "collect",
@@ -942,37 +970,47 @@ mod tests {
             Err(e) => panic!("{}\narguments were {:?}", e, correct_arguments),
         }
 
-        // Check that clap enforces all the constraints we need on combinations of query arguments.
-        // This allows us to treat a default match branch as `unreachable!()` when unpacking the
-        // argument matches.
         let base_arguments = Vec::from([
             "collect".to_string(),
             format!("--task-id={task_id_encoded}"),
             "--leader".to_string(),
-            leader.to_string(),
+            "https://example.com/dap/".to_string(),
             "--dap-auth-token".to_string(),
             "collector-authentication-token".to_string(),
             format!("--hpke-config={encoded_hpke_config}"),
             format!("--hpke-private-key={encoded_private_key}"),
+            "--vdaf=count".to_string(),
         ]);
+
+        let mut good_arguments = base_arguments.clone();
+        good_arguments.push("--current-batch".to_string());
+        Options::try_parse_from(good_arguments).unwrap();
+
+        // Check that clap enforces all the constraints we need on combinations of query arguments.
+        // This allows us to treat a default match branch as `unreachable!()` when unpacking the
+        // argument matches.
+
         assert_eq!(
             Options::try_parse_from(base_arguments.clone())
                 .unwrap_err()
                 .kind(),
             ErrorKind::MissingRequiredArgument
         );
+
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.push("--batch-interval-start=1".to_string());
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::MissingRequiredArgument
         );
+
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.push("--batch-interval-duration=1".to_string());
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::MissingRequiredArgument
         );
+
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.extend([
             "--batch-interval-start=1".to_string(),
@@ -983,6 +1021,7 @@ mod tests {
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ArgumentConflict
         );
+
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.extend([
             "--batch-interval-start=1".to_string(),
@@ -992,6 +1031,7 @@ mod tests {
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ArgumentConflict
         );
+
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.extend([
             "--batch-interval-duration=1".to_string(),
@@ -1001,6 +1041,7 @@ mod tests {
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ArgumentConflict
         );
+
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.extend([
             "--batch-interval-start=1".to_string(),
@@ -1010,6 +1051,7 @@ mod tests {
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ArgumentConflict
         );
+
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.extend([
             "--batch-interval-duration=1".to_string(),
@@ -1019,6 +1061,7 @@ mod tests {
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ArgumentConflict
         );
+
         let mut bad_arguments = base_arguments;
         bad_arguments.extend([
             "--batch-id=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string(),
