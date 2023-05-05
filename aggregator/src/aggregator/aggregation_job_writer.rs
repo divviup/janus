@@ -29,15 +29,18 @@ pub struct AggregationJobWriter<
     Q: AccumulableQueryType,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
 > {
-    task: Arc<Task>,                            // could this be a &Task instead?
-    aggregation_parameter: A::AggregationParam, // could this be a &A::AggregationParam instead?
-    by_aggregation_job: HashMap<
-        AggregationJobId,
-        (
-            AggregationJob<SEED_SIZE, Q, A>,
-            Vec<ReportAggregation<SEED_SIZE, A>>,
-        ),
-    >,
+    task: Arc<Task>,                            // XXX: could this be a &Task instead?
+    aggregation_parameter: A::AggregationParam, // XXX: could this be a &A::AggregationParam instead?
+    by_aggregation_job: HashMap<AggregationJobId, AggregationJobInfo<SEED_SIZE, Q, A>>,
+}
+
+struct AggregationJobInfo<
+    const SEED_SIZE: usize,
+    Q: AccumulableQueryType,
+    A: vdaf::Aggregator<SEED_SIZE, 16>,
+> {
+    aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
+    report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
 }
 
 impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
@@ -68,7 +71,10 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
         );
         self.by_aggregation_job.insert(
             *aggregation_job.id(),
-            (aggregation_job, report_aggregations),
+            AggregationJobInfo {
+                aggregation_job,
+                report_aggregations,
+            },
         );
     }
 
@@ -85,25 +91,22 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
         let mut by_aggregation_job: HashMap<_, _> = self
             .by_aggregation_job
             .iter()
-            .map(
-                |(aggregation_job_id, (aggregation_job, report_aggregations))| {
+            .map(|(aggregation_job_id, info)| {
+                (
+                    *aggregation_job_id,
                     (
-                        *aggregation_job_id,
-                        (
-                            Cow::Borrowed(aggregation_job),
-                            report_aggregations
-                                .iter()
-                                .map(Cow::Borrowed)
-                                .collect::<Vec<_>>(),
-                        ),
-                    )
-                },
-            )
+                        Cow::Borrowed(&info.aggregation_job),
+                        info.report_aggregations
+                            .iter()
+                            .map(Cow::Borrowed)
+                            .collect::<Vec<_>>(),
+                    ),
+                )
+            })
             .collect();
         let by_batch_identifier = {
             let mut by_batch_identifier = HashMap::new();
-            for (aggregation_job_id, (aggregation_job, report_aggregations)) in
-                &self.by_aggregation_job
+            for (aggregation_job_id, (aggregation_job, report_aggregations)) in &by_aggregation_job
             {
                 for (ord, report_aggregation) in report_aggregations.iter().enumerate() {
                     let batch_identifier = Q::to_batch_identifier(
@@ -168,7 +171,7 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
         // Update in-memory state of aggregation jobs: any aggregation jobs whose report
         // aggregations are all in a terminal state should be considered Finished (unless the
         // aggregation job was already in a terminal state).
-        for (_, (aggregation_job, report_aggregations)) in &mut by_aggregation_job {
+        for (aggregation_job, report_aggregations) in by_aggregation_job.values_mut() {
             if matches!(
                 aggregation_job.state(),
                 AggregationJobState::Finished | AggregationJobState::Abandoned

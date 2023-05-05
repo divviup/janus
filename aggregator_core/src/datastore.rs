@@ -3608,8 +3608,8 @@ ORDER BY id DESC
             .try_into()?;
         Ok(Batch::new(
             task_id,
-            batch_identifier.clone(),
-            aggregation_parameter.clone(),
+            batch_identifier,
+            aggregation_parameter,
             state,
             outstanding_aggregation_jobs,
         ))
