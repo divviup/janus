@@ -364,8 +364,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         .await?;
 
                     // Generate aggregation jobs & report aggregations based on the reports we read.
-                    let mut aggregation_job_writer =
-                        AggregationJobWriter::new(Arc::clone(&task), ());
+                    let mut aggregation_job_writer = AggregationJobWriter::new(Arc::clone(&task));
                     for agg_job_reports in
                         report_ids_and_times.chunks(this.max_aggregation_job_size)
                     {
@@ -487,7 +486,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     // an aggregation job, assigning it to an existing batch which has need of
                     // reports, or a new batch if no existing batch needs reports.
                     let mut aggregation_job_writer =
-                        AggregationJobWriter::<SEED_SIZE, FixedSize, A>::new(Arc::clone(&task), ());
+                        AggregationJobWriter::<SEED_SIZE, FixedSize, A>::new(Arc::clone(&task));
                     let mut new_batches = Vec::new();
                     let (mut is_batch_new, mut batch) = batch_iter.next().unwrap(); // unwrap safety: infinite iterator
                     let mut batch_max_size = *batch.size().end();
