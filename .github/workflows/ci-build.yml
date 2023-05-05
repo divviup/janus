@@ -20,7 +20,6 @@ jobs:
     env:
       CARGO_INCREMENTAL: 0
       CARGO_TERM_COLOR: always
-      DAPHNE_INTEROP_CONTAINER: prebuilt=${{ secrets.DAPHNE_PREBUILT_IMAGE_NAME_AND_TAG }}
       RUSTFLAGS: "-D warnings"
     steps:
     - name: Set default input values
@@ -96,7 +95,6 @@ jobs:
     env:
       CARGO_INCREMENTAL: 0
       CARGO_TERM_COLOR: always
-      DAPHNE_INTEROP_CONTAINER: skip
       JANUS_INTEROP_CONTAINER: skip
       RUSTDOCFLAGS: "-D warnings"
       RUSTFLAGS: "-D warnings"

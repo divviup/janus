@@ -3,8 +3,6 @@
 use janus_messages::{BatchId, TaskId};
 
 pub mod client;
-#[cfg(feature = "daphne")]
-pub mod daphne;
 pub mod janus;
 
 /// Provides access to find which batch identifiers have been assigned in a fixed-size task.
