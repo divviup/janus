@@ -30,7 +30,7 @@ use prio::{
     codec::Encode,
     vdaf::{
         self,
-        prio3::{Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec, Prio3SumVecMultithreaded},
+        prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVecMultithreaded},
     },
 };
 use rand::{random, thread_rng, Rng};
@@ -233,102 +233,163 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     ) -> anyhow::Result<bool> {
         match (task.query_type(), task.vdaf()) {
             (task::QueryType::TimeInterval, VdafInstance::Prio3Count) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(task)
+                let vdaf = Arc::new(Prio3::new_count(2)?);
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(task, vdaf)
                     .await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3CountVec { .. }) => {
+            (task::QueryType::TimeInterval, VdafInstance::Prio3CountVec { length }) => {
+                let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(2, 1, *length)?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<
                     PRIO3_VERIFY_KEY_LENGTH,
                     Prio3SumVecMultithreaded
-                >(task).await
+                >(task, vdaf).await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3Sum { .. }) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Sum>(task)
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Sum { bits }) => {
+                let vdaf = Arc::new(Prio3::new_sum(2, *bits)?);
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Sum>(task, vdaf)
                     .await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3SumVec { .. }) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3SumVec>(task)
+            (task::QueryType::TimeInterval, VdafInstance::Prio3SumVec { bits, length }) => {
+                let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(2, *bits, *length)?);
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3SumVecMultithreaded>(task, vdaf)
                     .await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3Histogram { .. }) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Histogram>(task)
-                    .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (task::QueryType::TimeInterval, VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { .. }) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>>(task)
-                    .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (task::QueryType::TimeInterval, VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { .. }) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>>(task)
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Histogram { buckets }) => {
+                let vdaf = Arc::new(Prio3::new_histogram(2, buckets)?);
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Histogram>(task, vdaf)
                     .await
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
-            (task::QueryType::TimeInterval, VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { .. }) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>>(task)
+            (
+                task::QueryType::TimeInterval,
+                VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { length },
+            ) => {
+                let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>> =
+                    Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
+                        2, *length,
+                    )?);
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>>(task, vdaf)
                     .await
             }
 
-            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Count) => {
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (
+                task::QueryType::TimeInterval,
+                VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { length },
+            ) => {
+                let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>> =
+                    Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
+                        2, *length,
+                    )?);
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>>(task, vdaf)
+                    .await
+            }
+
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (
+                task::QueryType::TimeInterval,
+                VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { length },
+            ) => {
+                let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>> =
+                    Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
+                        2, *length,
+                    )?);
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>>(task, vdaf)
+                    .await
+            }
+
+            (task::QueryType::FixedSize { max_batch_size }, VdafInstance::Prio3Count) => {
+                let vdaf = Arc::new(Prio3::new_count(2)?);
                 let max_batch_size = *max_batch_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(task, max_batch_size)
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(task, vdaf, max_batch_size)
                     .await
             }
 
-            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3CountVec { .. }) => {
+            (
+                task::QueryType::FixedSize { max_batch_size },
+                VdafInstance::Prio3CountVec { length },
+            ) => {
+                let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(2, 1, *length)?);
                 let max_batch_size = *max_batch_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
                     PRIO3_VERIFY_KEY_LENGTH,
                     Prio3SumVecMultithreaded
-                >(task, max_batch_size).await
+                >(task, vdaf, max_batch_size).await
             }
 
-            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Sum { .. }) => {
+            (task::QueryType::FixedSize { max_batch_size }, VdafInstance::Prio3Sum { bits }) => {
+                let vdaf = Arc::new(Prio3::new_sum(2, *bits)?);
                 let max_batch_size = *max_batch_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Sum>(task, max_batch_size)
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Sum>(task, vdaf, max_batch_size)
                     .await
             }
 
-            (task::QueryType::FixedSize { max_batch_size }, VdafInstance::Prio3SumVec { .. }) => {
+            (
+                task::QueryType::FixedSize { max_batch_size },
+                VdafInstance::Prio3SumVec { bits, length },
+            ) => {
+                let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(2, *bits, *length)?);
                 let max_batch_size = *max_batch_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
                     PRIO3_VERIFY_KEY_LENGTH,
-                    Prio3SumVec,
-                >(task, max_batch_size).await
+                    Prio3SumVecMultithreaded,
+                >(task, vdaf, max_batch_size).await
             }
 
-            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Histogram { .. }) => {
+            (
+                task::QueryType::FixedSize { max_batch_size },
+                VdafInstance::Prio3Histogram { buckets },
+            ) => {
+                let vdaf = Arc::new(Prio3::new_histogram(2, buckets)?);
                 let max_batch_size = *max_batch_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Histogram>(task, max_batch_size)
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Histogram>(task, vdaf, max_batch_size)
                     .await
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
-            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { .. }) => {
+            (
+                task::QueryType::FixedSize { max_batch_size },
+                VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { length },
+            ) => {
+                let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>> =
+                    Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
+                        2, *length,
+                    )?);
                 let max_batch_size = *max_batch_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>>(task, max_batch_size)
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>>(task, vdaf, max_batch_size)
                     .await
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
-            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { .. }) => {
+            (
+                task::QueryType::FixedSize { max_batch_size },
+                VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { length },
+            ) => {
+                let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>> =
+                    Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
+                        2, *length,
+                    )?);
                 let max_batch_size = *max_batch_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>>(task, max_batch_size)
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>>(task, vdaf, max_batch_size)
                     .await
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
-            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { .. }) => {
+            (
+                task::QueryType::FixedSize { max_batch_size },
+                VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { length },
+            ) => {
+                let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>> =
+                    Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
+                        2, *length,
+                    )?);
                 let max_batch_size = *max_batch_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>>(task, max_batch_size)
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>>(task, vdaf, max_batch_size)
                     .await
             }
 
@@ -346,8 +407,11 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     >(
         self: Arc<Self>,
         task: Arc<Task>,
+        vdaf: Arc<A>,
     ) -> anyhow::Result<bool>
     where
+        A: Send + Sync + 'static,
+        A::AggregateShare: Send + Sync,
         A::PrepareMessage: Send + Sync,
         A::PrepareShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
@@ -356,7 +420,10 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         Ok(self
             .datastore
             .run_tx_with_name("aggregation_job_creator_time_no_param", |tx| {
-                let (this, task) = (Arc::clone(&self), Arc::clone(&task));
+                let this = Arc::clone(&self);
+                let task = Arc::clone(&task);
+                let vdaf = Arc::clone(&vdaf);
+
                 Box::pin(async move {
                     // Find some unaggregated client reports.
                     let report_ids_and_times = tx
@@ -428,7 +495,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     }
 
                     // Write the aggregation jobs & report aggregations we created.
-                    aggregation_job_writer.write(tx).await?;
+                    aggregation_job_writer.write(tx, vdaf).await?;
                     Ok(!aggregation_job_writer.is_empty())
                 })
             })
@@ -442,9 +509,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     >(
         self: Arc<Self>,
         task: Arc<Task>,
+        vdaf: Arc<A>,
         task_max_batch_size: u64,
     ) -> anyhow::Result<bool>
     where
+        A: Send + Sync + 'static,
+        A::AggregateShare: Send + Sync,
         A::PrepareMessage: Send + Sync,
         A::PrepareShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
@@ -457,7 +527,10 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         Ok(self
             .datastore
             .run_tx_with_name("aggregation_job_creator_fixed_no_param", |tx| {
-                let (this, task) = (Arc::clone(&self), Arc::clone(&task));
+                let this = Arc::clone(&self);
+                let task = Arc::clone(&task);
+                let vdaf = Arc::clone(&vdaf);
+
                 Box::pin(async move {
                     // Find unaggregated client reports & existing unfilled batches.
                     let (mut unaggregated_report_ids, outstanding_batches) = try_join!(
@@ -599,7 +672,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     // Write the outstanding batches, aggregation jobs, & report aggregations we
                     // created.
                     try_join!(
-                        aggregation_job_writer.write(tx),
+                        aggregation_job_writer.write(tx, vdaf),
                         try_join_all(
                             new_batches
                                 .iter()

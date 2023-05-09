@@ -2449,7 +2449,7 @@ impl<C: Clock> Transaction<'_, C> {
         self.execute(
             &stmt,
             &[
-                /* collection_job_id */ collection_job.collection_job_id().as_ref(),
+                /* collection_job_id */ collection_job.id().as_ref(),
                 /* task_id */ collection_job.task_id().as_ref(),
                 /* batch_identifier */ &collection_job.batch_identifier().get_encoded(),
                 /* batch_interval */ &batch_interval,
@@ -2715,7 +2715,7 @@ ORDER BY id DESC
                     /* report_count */ &report_count,
                     /* leader_aggregate_share */ &leader_aggregate_share,
                     /* helper_aggregate_share */ &helper_aggregate_share,
-                    /* collection_job_id */ &collection_job.collection_job_id().as_ref(),
+                    /* collection_job_id */ &collection_job.id().as_ref(),
                 ],
             )
             .await?,
@@ -5164,7 +5164,7 @@ pub mod models {
         }
 
         /// Returns the collection job ID associated with this collection job.
-        pub fn collection_job_id(&self) -> &CollectionJobId {
+        pub fn id(&self) -> &CollectionJobId {
             &self.collection_job_id
         }
 
@@ -8170,7 +8170,7 @@ mod tests {
                 let first_collection_job_again = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &vdaf,
-                        first_collection_job.collection_job_id(),
+                        first_collection_job.id(),
                     )
                     .await
                     .unwrap()
@@ -8180,7 +8180,7 @@ mod tests {
                 let second_collection_job_again = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &vdaf,
-                        second_collection_job.collection_job_id(),
+                        second_collection_job.id(),
                     )
                     .await
                     .unwrap()
@@ -8219,7 +8219,7 @@ mod tests {
                 let updated_first_collection_job = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &vdaf,
-                        first_collection_job.collection_job_id(),
+                        first_collection_job.id(),
                     )
                     .await
                     .unwrap()
@@ -8288,7 +8288,7 @@ mod tests {
                 let abandoned_collection_job_again = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &vdaf,
-                        abandoned_collection_job.collection_job_id(),
+                        abandoned_collection_job.id(),
                     )
                     .await?
                     .unwrap();
@@ -8314,7 +8314,7 @@ mod tests {
                 let abandoned_collection_job_again = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &vdaf,
-                        abandoned_collection_job.collection_job_id(),
+                        abandoned_collection_job.id(),
                     )
                     .await?
                     .unwrap();
@@ -8322,7 +8322,7 @@ mod tests {
                 let deleted_collection_job_again = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &vdaf,
-                        deleted_collection_job.collection_job_id(),
+                        deleted_collection_job.id(),
                     )
                     .await?
                     .unwrap();
@@ -8427,7 +8427,7 @@ mod tests {
                         },
                     );
                     tx.put_collection_job(&collection_job).await?;
-                    test_case.collection_job_id = Some(*collection_job.collection_job_id());
+                    test_case.collection_job_id = Some(*collection_job.id());
                 }
 
                 Ok(test_case)
@@ -11174,11 +11174,7 @@ mod tests {
                 let outstanding_batch_id =
                     Q::write_outstanding_batch(tx, task.id(), &batch_identifier).await;
 
-                return (
-                    Some(*collection_job.collection_job_id()),
-                    None,
-                    outstanding_batch_id,
-                );
+                return (Some(*collection_job.id()), None, outstanding_batch_id);
             } else {
                 let aggregate_share_job = AggregateShareJob::new(
                     *task.id(),
@@ -11519,7 +11515,7 @@ mod tests {
                         .await
                         .unwrap()
                         .into_iter()
-                        .map(|collection_job| *collection_job.collection_job_id());
+                        .map(|collection_job| *collection_job.id());
                     let helper_time_interval_collection_job_ids = tx
                         .get_collection_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
                             &vdaf,
@@ -11528,7 +11524,7 @@ mod tests {
                         .await
                         .unwrap()
                         .into_iter()
-                        .map(|collection_job| *collection_job.collection_job_id());
+                        .map(|collection_job| *collection_job.id());
                     let leader_fixed_size_collection_job_ids = tx
                         .get_collection_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
                             &vdaf,
@@ -11537,7 +11533,7 @@ mod tests {
                         .await
                         .unwrap()
                         .into_iter()
-                        .map(|collection_job| *collection_job.collection_job_id());
+                        .map(|collection_job| *collection_job.id());
                     let helper_fixed_size_collection_job_ids = tx
                         .get_collection_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
                             &vdaf,
@@ -11546,7 +11542,7 @@ mod tests {
                         .await
                         .unwrap()
                         .into_iter()
-                        .map(|collection_job| *collection_job.collection_job_id());
+                        .map(|collection_job| *collection_job.id());
                     let other_task_collection_job_ids = tx
                         .get_collection_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
                             &vdaf,
@@ -11555,7 +11551,7 @@ mod tests {
                         .await
                         .unwrap()
                         .into_iter()
-                        .map(|collection_job| *collection_job.collection_job_id());
+                        .map(|collection_job| *collection_job.id());
                     let got_collection_job_ids = leader_time_interval_collection_job_ids
                         .chain(helper_time_interval_collection_job_ids)
                         .chain(leader_fixed_size_collection_job_ids)

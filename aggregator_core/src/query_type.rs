@@ -1,7 +1,7 @@
 use crate::{
     datastore::{
         self,
-        models::{AggregateShareJob, BatchAggregation},
+        models::{AggregateShareJob, BatchAggregation, CollectionJob},
         Transaction,
     },
     task::Task,
@@ -38,6 +38,18 @@ pub trait AccumulableQueryType: QueryType {
         partial_batch_identifier: &Self::PartialBatchIdentifier,
         report_metadata: &ReportMetadata,
     ) -> Result<Vec<AggregateShareJob<SEED_SIZE, Self, A>>, datastore::Error>;
+
+    /// Retrieves collection jobs which include the given batch identifier.
+    async fn get_collection_jobs_including<
+        const SEED_SIZE: usize,
+        C: Clock,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+    >(
+        tx: &Transaction<'_, C>,
+        vdaf: &A,
+        task_id: &TaskId,
+        batch_identifier: &Self::BatchIdentifier,
+    ) -> Result<Vec<CollectionJob<SEED_SIZE, Self, A>>, datastore::Error>;
 
     /// Some query types (e.g. [`TimeInterval`]) can represent their batch identifiers as an
     /// interval. This method extracts the interval from such identifiers, or returns `None` if the
@@ -91,6 +103,20 @@ impl AccumulableQueryType for TimeInterval {
         .await
     }
 
+    async fn get_collection_jobs_including<
+        const SEED_SIZE: usize,
+        C: Clock,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+    >(
+        tx: &Transaction<'_, C>,
+        vdaf: &A,
+        task_id: &TaskId,
+        batch_identifier: &Self::BatchIdentifier,
+    ) -> Result<Vec<CollectionJob<SEED_SIZE, Self, A>>, datastore::Error> {
+        tx.get_collection_jobs_intersecting_interval(vdaf, task_id, batch_identifier)
+            .await
+    }
+
     fn to_batch_interval(collect_identifier: &Self::BatchIdentifier) -> Option<&Interval> {
         Some(collect_identifier)
     }
@@ -134,6 +160,20 @@ impl AccumulableQueryType for FixedSize {
         _: &ReportMetadata,
     ) -> Result<Vec<AggregateShareJob<SEED_SIZE, Self, A>>, datastore::Error> {
         tx.get_aggregate_share_jobs_by_batch_identifier(vdaf, task_id, batch_id)
+            .await
+    }
+
+    async fn get_collection_jobs_including<
+        const SEED_SIZE: usize,
+        C: Clock,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+    >(
+        tx: &Transaction<'_, C>,
+        vdaf: &A,
+        task_id: &TaskId,
+        batch_id: &Self::BatchIdentifier,
+    ) -> Result<Vec<CollectionJob<SEED_SIZE, Self, A>>, datastore::Error> {
+        tx.get_collection_jobs_by_batch_identifier(vdaf, task_id, batch_id)
             .await
     }
 

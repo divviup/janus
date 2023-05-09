@@ -1,15 +1,15 @@
 //! In-memory accumulation of aggregation job (& report aggregation) updates.
 
-use futures::future::try_join_all;
+use crate::aggregator::query_type::CollectableQueryType;
+use futures::{future::try_join_all, TryFutureExt};
 use janus_aggregator_core::{
     datastore::{
         models::{
-            AggregationJob, AggregationJobState, Batch, BatchState, ReportAggregation,
-            ReportAggregationState,
+            AggregationJob, AggregationJobState, Batch, BatchState, CollectionJobState,
+            ReportAggregation, ReportAggregationState,
         },
         Error, Transaction,
     },
-    query_type::AccumulableQueryType,
     task::Task,
 };
 use janus_core::time::Clock;
@@ -26,7 +26,7 @@ use tokio::try_join;
 // XXX: docs
 pub struct AggregationJobWriter<
     const SEED_SIZE: usize,
-    Q: AccumulableQueryType,
+    Q: CollectableQueryType,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
 > {
     task: Arc<Task>,
@@ -35,7 +35,7 @@ pub struct AggregationJobWriter<
 
 struct AggregationJobInfo<
     const SEED_SIZE: usize,
-    Q: AccumulableQueryType,
+    Q: CollectableQueryType,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
 > {
     operation: Operation,
@@ -49,7 +49,7 @@ enum Operation {
     Update,
 }
 
-impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
+impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
     AggregationJobWriter<SEED_SIZE, Q, A>
 {
     pub fn new(task: Arc<Task>) -> Self {
@@ -107,8 +107,13 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
             .insert(*info.aggregation_job.id(), info);
     }
 
-    pub async fn write<C: Clock>(&self, tx: &Transaction<'_, C>) -> Result<HashSet<ReportId>, Error>
+    pub async fn write<C: Clock>(
+        &self,
+        tx: &Transaction<'_, C>,
+        vdaf: Arc<A>,
+    ) -> Result<HashSet<ReportId>, Error>
     where
+        A: Send + Sync,
         A::AggregationParam: PartialEq + Eq + Hash,
         A::PrepareState: Encode,
     {
@@ -145,6 +150,7 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
             })
             .collect();
 
+        // XXX: compute by_batch_identifier outside of this function, in `put`/`update`
         let by_batch_identifier = {
             let mut by_batch_identifier = HashMap::new();
             for (aggregation_job_id, (_, aggregation_job, report_aggregations)) in
@@ -242,10 +248,11 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
 
         // Update in-memory state of batches: outstanding job counts will change based on new or
         // completed aggregation jobs affecting each batch.
+        let mut newly_closed_batches = Vec::new();
         let batches: Vec<_> = by_batch_identifier
             .iter()
             .flat_map(|(batch_identifier, (agg_job_ids, _))| {
-                let (operation, batch) = match batches.remove(batch_identifier) {
+                let (operation, mut batch) = match batches.remove(batch_identifier) {
                     Some(batch) => (Operation::Update, batch),
                     None => (
                         Operation::Put,
@@ -284,6 +291,10 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
                         outstanding_aggregation_jobs -= 1;
                     }
                 }
+                if batch.state() == &BatchState::Closing && outstanding_aggregation_jobs == 0 {
+                    batch = batch.with_state(BatchState::Closed);
+                    newly_closed_batches.push(batch_identifier);
+                }
 
                 Some((
                     operation,
@@ -293,13 +304,15 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
             .collect();
 
         // Write batches, aggregation jobs, and report aggregations.
-        try_join!(
+        let (_, _, affected_collection_jobs) = try_join!(
+            // Write updated batches.
             try_join_all(batches.into_iter().map(|(op, batch)| async move {
                 match op {
                     Operation::Put => tx.put_batch(&batch).await,
                     Operation::Update => tx.update_batch(&batch).await,
                 }
             })),
+            // Write updated aggregation jobs & report aggregations.
             try_join_all(by_aggregation_job.values().map(
                 |(op, aggregation_job, report_aggregations)| async move {
                     match op {
@@ -330,8 +343,87 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
                     };
                     Ok(())
                 }
-            ))
+            )),
+            // Read any collection jobs associated with a batch which just transitioned to CLOSED
+            // state.
+            try_join_all(newly_closed_batches.into_iter().map(|batch_identifier| {
+                Q::get_collection_jobs_including(
+                    tx,
+                    vdaf.as_ref(),
+                    self.task.id(),
+                    batch_identifier,
+                )
+            }))
+            .map_ok(|collection_jobs| {
+                collection_jobs
+                    .into_iter()
+                    .flatten()
+                    .map(|job| (*job.id(), job)) // XXX: filter to only CollectionJobs in START?
+                    .collect::<HashMap<_, _>>()
+            })
         )?;
+
+        // Find all batches which are relevant to a collection job that just had a batch move into
+        // CLOSED state.
+        // XXX: don't load batches which we just wrote, pull them from `batches`?
+        let relevant_batch_identifiers = affected_collection_jobs
+            .values()
+            .flat_map(|collection_job| {
+                Q::batch_identifiers_for_collect_identifier(
+                    &self.task,
+                    collection_job.batch_identifier(),
+                )
+            })
+            .collect::<HashSet<_>>();
+        let relevant_batches: HashMap<_, _> =
+            try_join_all(relevant_batch_identifiers.into_iter().map(
+                |batch_identifier| async move {
+                    let batch = tx
+                        .get_batch::<SEED_SIZE, Q, A>(
+                            self.task.id(),
+                            &batch_identifier,
+                            aggregation_parameter,
+                        )
+                        .await?;
+                    Ok::<_, Error>((batch_identifier, batch))
+                },
+            ))
+            .await?
+            .into_iter()
+            .collect();
+
+        // For any collection jobs for which all relevant batches are now in CLOSED state, update
+        // the collection job's state to COLLECTABLE to allow the collection process to proceed.
+        let relevant_batches = Arc::new(relevant_batches);
+        try_join_all(
+            affected_collection_jobs
+                .into_values()
+                .map(|collection_job| {
+                    let relevant_batches = Arc::clone(&relevant_batches);
+                    async move {
+                        if Q::batch_identifiers_for_collect_identifier(
+                            &self.task,
+                            collection_job.batch_identifier(),
+                        )
+                        .all(|batch_identifier| {
+                            relevant_batches
+                                .get(&batch_identifier)
+                                .map_or(false, |batch| {
+                                    batch
+                                        .as_ref()
+                                        .map_or(false, |batch| batch.state() == &BatchState::Closed)
+                                })
+                        }) {
+                            tx.update_collection_job(
+                                &collection_job.with_state(CollectionJobState::Collectable),
+                            )
+                            .await?;
+                        }
+                        Ok::<_, Error>(())
+                    }
+                }),
+        )
+        .await?;
 
         Ok(unwritable_report_ids)
     }

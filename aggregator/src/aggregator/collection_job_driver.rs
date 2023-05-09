@@ -255,11 +255,11 @@ impl CollectionJobDriver {
 
                 Box::pin(async move {
                     let maybe_updated_collection_job = tx
-                        .get_collection_job::<SEED_SIZE, Q, A>(vdaf.as_ref(), collection_job.collection_job_id())
+                        .get_collection_job::<SEED_SIZE, Q, A>(vdaf.as_ref(), collection_job.id())
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
-                                Error::UnrecognizedCollectionJob(*collection_job.collection_job_id()).into(),
+                                Error::UnrecognizedCollectionJob(*collection_job.id()).into(),
                             )
                         })?;
 
@@ -278,7 +278,7 @@ impl CollectionJobDriver {
                             // state so that appropriate status can be returned from polling the
                             // collection job URI and GC can run (#313).
                             info!(
-                                collection_job_id = %collection_job.collection_job_id(),
+                                collection_job_id = %collection_job.id(),
                                 "collection job was deleted while lease was held. Discarding aggregate results.",
                             );
                             metrics.deleted_jobs_encountered_counter.add(&Context::current(), 1, &[]);
@@ -291,7 +291,7 @@ impl CollectionJobDriver {
                             metrics.unexpected_job_state_counter.add(&Context::current(), 1, &[KeyValue::new("state", Value::from(format!("{state}")))]);
                             panic!(
                                 "collection job {} unexpectedly in state {}",
-                                collection_job.collection_job_id(), state
+                                collection_job.id(), state
                             );
                         }
                     }
@@ -668,10 +668,7 @@ mod tests {
                             .await?
                             .remove(0);
                         assert_eq!(task.id(), lease.leased().task_id());
-                        assert_eq!(
-                            collection_job.collection_job_id(),
-                            lease.leased().collection_job_id()
-                        );
+                        assert_eq!(collection_job.id(), lease.leased().collection_job_id());
                         Ok(Some(lease))
                     } else {
                         Ok(None)
@@ -985,7 +982,7 @@ mod tests {
                     let abandoned_collection_job = tx
                         .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                             &dummy_vdaf::Vdaf::new(),
-                            collection_job.collection_job_id(),
+                            collection_job.id(),
                         )
                         .await?
                         .unwrap();
@@ -1088,7 +1085,7 @@ mod tests {
                 Box::pin(async move {
                     tx.get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &dummy_vdaf::Vdaf::new(),
-                        collection_job.collection_job_id(),
+                        collection_job.id(),
                     )
                     .await
                 })
@@ -1164,7 +1161,7 @@ mod tests {
                 let collection_job = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &dummy_vdaf::Vdaf::new(),
-                        collection_job.collection_job_id(),
+                        collection_job.id(),
                     )
                     .await
                     .unwrap()
