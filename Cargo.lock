@@ -2059,6 +2059,7 @@ dependencies = [
  "async-trait",
  "base64 0.21.0",
  "futures",
+ "http",
  "janus_aggregator_core",
  "janus_core",
  "janus_messages",
