@@ -112,14 +112,24 @@ async fn get_task_ids<C: Clock>(
 async fn post_task<C: Clock>(
     _: &mut Conn,
     (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PostTaskReq>),
-) -> Result<impl Handler, Status> {
+) -> Result<impl Handler, impl Handler> {
     let task_id = req.task_id.unwrap_or_else(random);
     let vdaf_verify_keys = if let Some(encoded) = req.vdaf_verify_key.as_ref() {
-        let bytes = URL_SAFE_NO_PAD
-            .decode(encoded)
-            .map_err(|_| Status::BadRequest)?;
+        let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|err| {
+            (
+                format!("Invalid base64 value for vdaf_verify_key: {err}"),
+                Status::BadRequest,
+            )
+        })?;
         if bytes.len() != req.vdaf.verify_key_length() {
-            return Err(Status::BadRequest);
+            return Err((
+                format!(
+                    "Wrong VDAF verify key length, expected {}, got {}",
+                    req.vdaf.verify_key_length(),
+                    bytes.len()
+                ),
+                Status::BadRequest,
+            ));
         }
         Vec::from([SecretBytes::new(bytes)])
     } else {
@@ -133,12 +143,20 @@ async fn post_task<C: Clock>(
     let task_expiration = Time::from_seconds_since_epoch(req.task_expiration);
     let time_precision = Duration::from_seconds(req.time_precision);
     let aggregator_auth_tokens = if let Some(encoded) = req.aggregator_auth_token.as_ref() {
-        let token_bytes = URL_SAFE_NO_PAD
-            .decode(encoded)
-            .map_err(|_| Status::BadRequest)?;
+        let token_bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|err| {
+            (
+                format!("Invalid base64 value for aggregator_auth_token: {err}"),
+                Status::BadRequest,
+            )
+        })?;
         // Check that the token value can be used in a DAP-Auth-Token header. (Authorization: Bearer
         // headers have no restrictions, since we base64-encode tokens in that case)
-        HeaderValue::try_from(token_bytes.as_slice()).map_err(|_| Status::BadRequest)?;
+        HeaderValue::try_from(token_bytes.as_slice()).map_err(|_| {
+            (
+                "Invalid HTTP header value in aggregator_auth_token".to_string(),
+                Status::BadRequest,
+            )
+        })?;
         Vec::from([AuthenticationToken::from(token_bytes)])
     } else {
         Vec::from([random()])
@@ -175,7 +193,12 @@ async fn post_task<C: Clock>(
             /* collector_auth_tokens */ collector_auth_tokens,
             /* hpke_keys */ hpke_keys,
         )
-        .map_err(|_| Status::BadRequest)?,
+        .map_err(|err| {
+            (
+                format!("Error constructing task: {err}"),
+                Status::BadRequest,
+            )
+        })?,
     );
 
     ds.run_tx_with_name("post_task", |tx| {
@@ -185,7 +208,10 @@ async fn post_task<C: Clock>(
     .await
     .map_err(|err| {
         error!(err = %err, "Database transaction error");
-        Status::InternalServerError
+        (
+            "Error storing task".to_string(),
+            Status::InternalServerError,
+        )
     })?;
 
     Ok(Json(TaskResp::from(task.as_ref())))
