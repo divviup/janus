@@ -205,7 +205,7 @@ pub trait CollectableQueryType: AccumulableQueryType {
     type Iter: Iterator<Item = Self::BatchIdentifier> + Send + Sync;
 
     /// Retrieves the batch identifier for a given query.
-    async fn batch_identifier_for_query<C: Clock>(
+    async fn collection_identifier_for_query<C: Clock>(
         tx: &Transaction<'_, C>,
         task: &Task,
         query: &Query<Self>,
@@ -214,15 +214,17 @@ pub trait CollectableQueryType: AccumulableQueryType {
     /// Some query types (e.g. [`TimeInterval`]) can receive a batch identifier in collect requests
     /// which refers to multiple batches. This method takes a batch identifier received in a collect
     /// request and provides an iterator over the individual batches' identifiers.
-    fn batch_identifiers_for_collect_identifier(
+    fn batch_identifiers_for_collection_identifier(
         _: &Task,
         collect_identifier: &Self::BatchIdentifier,
     ) -> Self::Iter;
 
     /// Validates a collect identifier, per the boundary checks in
     /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6>.
-    fn validate_collect_identifier(task: &Task, collect_identifier: &Self::BatchIdentifier)
-        -> bool;
+    fn validate_collection_identifier(
+        task: &Task,
+        collect_identifier: &Self::BatchIdentifier,
+    ) -> bool;
 
     /// Returns the number of client reports included in the given collect identifier, whether they
     /// have been aggregated or not.
@@ -250,7 +252,7 @@ pub trait CollectableQueryType: AccumulableQueryType {
         A::AggregateShare: Send + Sync,
     {
         Ok(try_join_all(
-            Self::batch_identifiers_for_collect_identifier(task, collect_identifier).map(
+            Self::batch_identifiers_for_collection_identifier(task, collect_identifier).map(
                 |batch_identifier| {
                     let (task_id, aggregation_param) = (*task.id(), aggregation_param.clone());
                     async move {
@@ -286,7 +288,7 @@ pub trait CollectableQueryType: AccumulableQueryType {
 impl CollectableQueryType for TimeInterval {
     type Iter = TimeIntervalBatchIdentifierIter;
 
-    async fn batch_identifier_for_query<C: Clock>(
+    async fn collection_identifier_for_query<C: Clock>(
         _: &Transaction<'_, C>,
         _: &Task,
         query: &Query<Self>,
@@ -294,14 +296,14 @@ impl CollectableQueryType for TimeInterval {
         Ok(Some(*query.batch_interval()))
     }
 
-    fn batch_identifiers_for_collect_identifier(
+    fn batch_identifiers_for_collection_identifier(
         task: &Task,
         batch_interval: &Self::BatchIdentifier,
     ) -> Self::Iter {
         TimeIntervalBatchIdentifierIter::new(task, batch_interval)
     }
 
-    fn validate_collect_identifier(
+    fn validate_collection_identifier(
         task: &Task,
         collect_identifier: &Self::BatchIdentifier,
     ) -> bool {
@@ -392,7 +394,7 @@ impl Iterator for TimeIntervalBatchIdentifierIter {
 impl CollectableQueryType for FixedSize {
     type Iter = iter::Once<Self::BatchIdentifier>;
 
-    async fn batch_identifier_for_query<C: Clock>(
+    async fn collection_identifier_for_query<C: Clock>(
         tx: &Transaction<'_, C>,
         task: &Task,
         query: &Query<Self>,
@@ -406,14 +408,14 @@ impl CollectableQueryType for FixedSize {
         }
     }
 
-    fn batch_identifiers_for_collect_identifier(
+    fn batch_identifiers_for_collection_identifier(
         _: &Task,
         batch_id: &Self::BatchIdentifier,
     ) -> Self::Iter {
         iter::once(*batch_id)
     }
 
-    fn validate_collect_identifier(_: &Task, _: &Self::BatchIdentifier) -> bool {
+    fn validate_collection_identifier(_: &Task, _: &Self::BatchIdentifier) -> bool {
         true
     }
 
@@ -506,7 +508,7 @@ mod tests {
         ]) {
             assert_eq!(
                 test_case.expected,
-                TimeInterval::validate_collect_identifier(&task, &test_case.input),
+                TimeInterval::validate_collection_identifier(&task, &test_case.input),
                 "test case: {}",
                 test_case.name
             );

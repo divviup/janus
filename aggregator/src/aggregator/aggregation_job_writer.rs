@@ -1,6 +1,6 @@
 //! In-memory accumulation of aggregation job (& report aggregation) updates.
 
-use crate::aggregator::query_type::CollectableQueryType;
+use crate::{aggregator::query_type::CollectableQueryType, Operation};
 use futures::{future::try_join_all, TryFutureExt};
 use janus_aggregator_core::{
     datastore::{
@@ -41,12 +41,6 @@ struct AggregationJobInfo<
     operation: Operation,
     aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
     report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum Operation {
-    Put,
-    Update,
 }
 
 impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
@@ -369,7 +363,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
         let relevant_batch_identifiers = affected_collection_jobs
             .values()
             .flat_map(|collection_job| {
-                Q::batch_identifiers_for_collect_identifier(
+                Q::batch_identifiers_for_collection_identifier(
                     &self.task,
                     collection_job.batch_identifier(),
                 )
@@ -401,7 +395,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                 .map(|collection_job| {
                     let relevant_batches = Arc::clone(&relevant_batches);
                     async move {
-                        if Q::batch_identifiers_for_collect_identifier(
+                        if Q::batch_identifiers_for_collection_identifier(
                             &self.task,
                             collection_job.batch_identifier(),
                         )

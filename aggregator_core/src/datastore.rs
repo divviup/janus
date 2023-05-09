@@ -5520,6 +5520,7 @@ pub mod models {
     }
 
     /// Represents the state of a given batch (and aggregation parameter).
+
     #[derive(Clone, Debug)]
     pub struct Batch<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> {
         task_id: TaskId,

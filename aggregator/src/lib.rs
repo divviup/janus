@@ -6,3 +6,9 @@ pub mod binary_utils;
 pub mod config;
 pub mod metrics;
 pub mod trace;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum Operation {
+    Put,
+    Update,
+}

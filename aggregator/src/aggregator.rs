@@ -1,11 +1,14 @@
 //! Common functionality for DAP aggregators.
 
 pub use crate::aggregator::error::Error;
-use crate::aggregator::{
-    aggregate_share::compute_aggregate_share,
-    error::BatchMismatch,
-    query_type::{CollectableQueryType, UploadableQueryType},
-    report_writer::{ReportWriteBatcher, WritableReport},
+use crate::{
+    aggregator::{
+        aggregate_share::compute_aggregate_share,
+        error::BatchMismatch,
+        query_type::{CollectableQueryType, UploadableQueryType},
+        report_writer::{ReportWriteBatcher, WritableReport},
+    },
+    Operation,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
@@ -21,9 +24,9 @@ use janus_aggregator_core::{
     datastore::{
         self,
         models::{
-            AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
-            BatchAggregationState, CollectionJob, CollectionJobState, LeaderStoredReport,
-            ReportAggregation, ReportAggregationState,
+            AggregateShareJob, AggregationJob, AggregationJobState, Batch, BatchAggregation,
+            BatchAggregationState, BatchState, CollectionJob, CollectionJobState,
+            LeaderStoredReport, ReportAggregation, ReportAggregationState,
         },
         Datastore, Transaction,
     },
@@ -1726,23 +1729,25 @@ impl VdafOps {
                     Arc::clone(&aggregation_param),
                 );
                 Box::pin(async move {
-                    let batch_identifier = Q::batch_identifier_for_query(tx, &task, req.query())
-                        .await?
-                        .ok_or_else(|| {
-                            datastore::Error::User(
-                                Error::BatchInvalid(
-                                    *task.id(),
-                                    "no batch ready for collection".to_string(),
+                    let collection_identifier =
+                        Q::collection_identifier_for_query(tx, &task, req.query())
+                            .await?
+                            .ok_or_else(|| {
+                                datastore::Error::User(
+                                    Error::BatchInvalid(
+                                        *task.id(),
+                                        "no batch ready for collection".to_string(),
+                                    )
+                                    .into(),
                                 )
-                                .into(),
-                            )
-                        })?;
+                            })?;
 
                     // Check that the batch interval is valid for the task
                     // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
-                    if !Q::validate_collect_identifier(&task, &batch_identifier) {
+                    if !Q::validate_collection_identifier(&task, &collection_identifier) {
                         return Err(datastore::Error::User(
-                            Error::BatchInvalid(*task.id(), format!("{batch_identifier}")).into(),
+                            Error::BatchInvalid(*task.id(), format!("{collection_identifier}"))
+                                .into(),
                         ));
                     }
 
@@ -1751,7 +1756,7 @@ impl VdafOps {
                         .get_collection_job::<SEED_SIZE, Q, A>(&vdaf, &collection_job_id)
                         .await?
                     {
-                        if collection_job.batch_identifier() == &batch_identifier
+                        if collection_job.batch_identifier() == &collection_identifier
                             && collection_job.aggregation_parameter() == aggregation_param.as_ref()
                         {
                             debug!(
@@ -1772,14 +1777,34 @@ impl VdafOps {
                     }
 
                     debug!(collect_request = ?req, "Cache miss, creating new collection job");
-                    let (_, report_count) = try_join!(
+                    let (_, report_count, batches) = try_join!(
                         Q::validate_query_count::<SEED_SIZE, C, A>(
                             tx,
                             &vdaf,
                             &task,
-                            &batch_identifier
+                            &collection_identifier
                         ),
-                        Q::count_client_reports(tx, &task, &batch_identifier),
+                        Q::count_client_reports(tx, &task, &collection_identifier),
+                        try_join_all(
+                            Q::batch_identifiers_for_collection_identifier(
+                                &task,
+                                &collection_identifier
+                            )
+                            .map(|batch_identifier| {
+                                let task_id = *task.id();
+                                let aggregation_param = Arc::clone(&aggregation_param);
+                                async move {
+                                    let batch = tx
+                                        .get_batch::<SEED_SIZE, Q, A>(
+                                            &task_id,
+                                            &batch_identifier,
+                                            &aggregation_param,
+                                        )
+                                        .await?;
+                                    Ok::<_, datastore::Error>((batch_identifier, batch))
+                                }
+                            }),
+                        )
                     )?;
 
                     // Batch size must be validated while handling CollectReq and hence before
@@ -1791,15 +1816,67 @@ impl VdafOps {
                         ));
                     }
 
-                    tx.put_collection_job(&CollectionJob::<SEED_SIZE, Q, A>::new(
+                    // Prepare to update all batches to CLOSING/CLOSED, as well as determining the
+                    // initial state of the collection job (which will be START, unless all batches
+                    // went to CLOSED, in which case the collection job will start at COLLECTABLE).
+                    let mut initial_collection_job_state = CollectionJobState::Collectable;
+                    let batches: Vec<_> = batches
+                        .into_iter()
+                        .flat_map(|(batch_identifier, batch)| match batch {
+                            Some(batch) => {
+                                match batch.state() {
+                                    // If the batch is open, start it closing or close it entirely
+                                    // based on the number of outstanding aggregation jobs.
+                                    BatchState::Open => {
+                                        let new_state = if batch.outstanding_aggregation_jobs() == 0
+                                        {
+                                            BatchState::Closed
+                                        } else {
+                                            initial_collection_job_state =
+                                                CollectionJobState::Start;
+                                            BatchState::Closing
+                                        };
+                                        Some((Operation::Update, batch.with_state(new_state)))
+                                    }
+
+                                    // If the batch is already closing/closed, we don't need to
+                                    // write anything for this batch.
+                                    _ => None,
+                                }
+                            }
+
+                            // If no batch has yet been written, immediately close it.
+                            None => Some((
+                                Operation::Put,
+                                Batch::<SEED_SIZE, Q, A>::new(
+                                    *task.id(),
+                                    batch_identifier,
+                                    aggregation_param.as_ref().clone(),
+                                    BatchState::Closed,
+                                    0,
+                                ),
+                            )),
+                        })
+                        .collect();
+
+                    let collection_job = CollectionJob::<SEED_SIZE, Q, A>::new(
                         *task.id(),
                         collection_job_id,
-                        batch_identifier,
+                        collection_identifier,
                         aggregation_param.as_ref().clone(),
-                        CollectionJobState::<SEED_SIZE, A>::Start,
-                    ))
-                    .await?;
+                        initial_collection_job_state,
+                    );
 
+                    // Write collection job & batches back to storage.
+                    try_join!(
+                        tx.put_collection_job(&collection_job),
+                        try_join_all(batches.into_iter().map(|(op, batch)| async move {
+                            match op {
+                                Operation::Put => tx.put_batch(&batch).await,
+                                Operation::Update => tx.update_batch(&batch).await,
+                            }
+                        }))
+                    )?;
                     Ok(())
                 })
             })
@@ -1901,12 +1978,10 @@ impl VdafOps {
             .await?;
 
         match collection_job.state() {
-            CollectionJobState::Start => {
+            CollectionJobState::Start | CollectionJobState::Collectable => {
                 debug!(%collection_job_id, task_id = %task.id(), "collection job has not run yet");
                 Ok(None)
             }
-
-            CollectionJobState::Collectable => todo!(),
 
             CollectionJobState::Finished {
                 report_count,
@@ -2117,7 +2192,7 @@ impl VdafOps {
         let aggregate_share_req = Arc::new(AggregateShareReq::<Q>::get_decoded(req_bytes)?);
 
         // §4.4.4.3: check that the batch interval meets the requirements from §4.6
-        if !Q::validate_collect_identifier(
+        if !Q::validate_collection_identifier(
             &task,
             aggregate_share_req.batch_selector().batch_identifier(),
         ) {
@@ -2304,7 +2379,7 @@ fn empty_batch_aggregations<
         .map(|ba| (ba.batch_identifier(), ba.ord()))
         .collect();
     iproduct!(
-        Q::batch_identifiers_for_collect_identifier(task, batch_identifier),
+        Q::batch_identifiers_for_collection_identifier(task, batch_identifier),
         0..batch_aggregation_shard_count
     )
     .filter_map(|(batch_identifier, ord)| {

@@ -562,13 +562,13 @@ mod tests {
     use janus_aggregator_core::{
         datastore::{
             models::{
-                AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
-                BatchAggregationState, CollectionJobState, ReportAggregation,
-                ReportAggregationState,
+                AggregateShareJob, AggregationJob, AggregationJobState, Batch, BatchAggregation,
+                BatchAggregationState, BatchState, CollectionJob, CollectionJobState,
+                ReportAggregation, ReportAggregationState,
             },
             test_util::ephemeral_datastore,
         },
-        query_type::CollectableQueryType,
+        query_type::{AccumulableQueryType, CollectableQueryType},
         task::{test_util::TaskBuilder, QueryType, VerifyKey},
     };
     use janus_core::{
@@ -4006,24 +4006,81 @@ mod tests {
     async fn collection_job_success_time_interval() {
         let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
 
-        let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(0),
-            *test_case.task.time_precision(),
+        let batch_interval = TimeInterval::to_batch_identifier(
+            &test_case.task,
+            &(),
+            &Time::from_seconds_since_epoch(0),
         )
         .unwrap();
 
+        let aggregation_param = dummy_vdaf::AggregationParam::default();
         let leader_aggregate_share = dummy_vdaf::AggregateShare(0);
         let helper_aggregate_share = dummy_vdaf::AggregateShare(1);
 
         let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
             Query::new_time_interval(batch_interval),
-            dummy_vdaf::AggregationParam::default().get_encoded(),
+            aggregation_param.get_encoded(),
         );
+
+        test_case
+            .datastore
+            .run_tx(|tx| {
+                let task_id = *test_case.task.id();
+
+                Box::pin(async move {
+                    tx.put_batch(&Batch::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                        task_id,
+                        batch_interval,
+                        aggregation_param,
+                        BatchState::Open,
+                        1,
+                    ))
+                    .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
 
         let test_conn = test_case
             .put_collection_job(&collection_job_id, &request)
             .await;
+
+        let want_collection_job = CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+            *test_case.task.id(),
+            collection_job_id,
+            batch_interval,
+            aggregation_param,
+            CollectionJobState::Start,
+        );
+        let want_batches = Vec::from([Batch::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+            *test_case.task.id(),
+            batch_interval,
+            aggregation_param,
+            BatchState::Closing,
+            1,
+        )]);
+
+        let (got_collection_job, got_batches) = test_case
+            .datastore
+            .run_tx(|tx| {
+                let task_id = *test_case.task.id();
+
+                Box::pin(async move {
+                    let got_collection_job = tx
+                        .get_collection_job(&dummy_vdaf::Vdaf::new(), &collection_job_id)
+                        .await?
+                        .unwrap();
+                    let got_batches = tx.get_batches_for_task(&task_id).await?;
+                    Ok((got_collection_job, got_batches))
+                })
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(want_collection_job, got_collection_job);
+        assert_eq!(want_batches, got_batches);
 
         assert_eq!(test_conn.status(), Some(Status::Created));
 
