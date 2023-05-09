@@ -2463,11 +2463,11 @@ impl<C: Clock> Transaction<'_, C> {
         Ok(())
     }
 
-    /// acquire_incomplete_time_interval_collection_jobs retrieves & acquires the IDs of unclaimed
-    /// incomplete collection jobs. At most `maximum_acquire_count` jobs are acquired. The job is
-    /// acquired with a "lease" that will time out; the desired duration of the lease is a
-    /// parameter, and the lease expiration time is returned. Applies only to time-interval tasks.
-    pub async fn acquire_incomplete_time_interval_collection_jobs(
+    /// acquire_incomplete_collection_jobs retrieves & acquires the IDs of unclaimed incomplete
+    /// collection jobs. At most `maximum_acquire_count` jobs are acquired. The job is acquired with
+    /// a "lease" that will time out; the desired duration of the lease is a parameter, and the
+    /// lease expiration time is returned.
+    pub async fn acquire_incomplete_collection_jobs(
         &self,
         lease_duration: &StdDuration,
         maximum_acquire_count: usize,
@@ -2478,45 +2478,25 @@ impl<C: Clock> Transaction<'_, C> {
 
         let stmt = self
             .prepare_cached(
-                "
-WITH updated as (
-    UPDATE collection_jobs
-    SET lease_expiry = $1,
-        lease_token = gen_random_bytes(16),
-        lease_attempts = lease_attempts + 1
-    FROM tasks
-    WHERE collection_jobs.id IN (
-        SELECT collection_jobs.id FROM collection_jobs
-        -- Join on aggregation jobs with matching task ID, matching aggregation parameter, and
-        -- subsets of the batch interval
-        INNER JOIN aggregation_jobs
-            ON collection_jobs.aggregation_param = aggregation_jobs.aggregation_param
-            AND collection_jobs.task_id = aggregation_jobs.task_id
-            AND collection_jobs.batch_interval && aggregation_jobs.client_timestamp_interval
-        WHERE
-            -- Constraint for tasks table in FROM position
-            tasks.id = collection_jobs.task_id
-            -- Only return time interval collection jobs.
-            AND tasks.query_type ? 'TimeInterval'
-            -- Only acquire collection jobs in a non-terminal state.
-            AND collection_jobs.state = 'START'
-            -- Do not acquire collection jobs with an unexpired lease
-            AND collection_jobs.lease_expiry <= $2
-        GROUP BY collection_jobs.id
-        -- Do not acquire collection jobs where any associated aggregation jobs are not finished
-        HAVING bool_and(aggregation_jobs.state != 'IN_PROGRESS')
-        -- Honor maximum_acquire_count *after* winnowing down to runnable collection jobs
-        LIMIT $3
-    )
-    RETURNING tasks.task_id, tasks.query_type, tasks.vdaf, collection_jobs.collection_job_id,
-              collection_jobs.id, collection_jobs.lease_token, collection_jobs.lease_attempts
-)
-SELECT task_id, query_type, vdaf, collection_job_id, lease_token, lease_attempts FROM updated
--- TODO (#174): revisit collection job queueing behavior implied by this ORDER BY
-ORDER BY id DESC
-",
+                "UPDATE collection_jobs SET
+                    lease_expiry = $1,
+                    lease_token = gen_random_bytes(16),
+                    lease_attempts = lease_attempts + 1
+                FROM tasks
+                WHERE tasks.id = collection_jobs.task_id
+                  AND collection_jobs.id IN (
+                    SELECT collection_jobs.id FROM collection_jobs
+                    JOIN tasks on tasks.id = collection_jobs.task_id
+                    WHERE tasks.aggregator_role = 'LEADER'
+                      AND collection_jobs.state = 'COLLECTABLE'
+                      AND collection_jobs.lease_expiry <= $2
+                    FOR UPDATE SKIP LOCKED LIMIT $3)
+                RETURNING tasks.task_id, tasks.query_type, tasks.vdaf,
+                          collection_jobs.collection_job_id, collection_jobs.id,
+                          collection_jobs.lease_token, collection_jobs.lease_attempts",
             )
             .await?;
+
         self.query(
             &stmt,
             &[
@@ -2545,90 +2525,8 @@ ORDER BY id DESC
         .collect()
     }
 
-    /// acquire_incomplete_fixed_size_collection_jobs retrieves & acquires the IDs of unclaimed
-    /// incomplete collection jobs. At most `maximum_acquire_count` jobs are acquired. The job is
-    /// acquired with a "lease" that will time out; the desired duration of the lease is a
-    /// parameter, and the lease expiration time is returned. Applies only to fixed-size tasks.
-    pub async fn acquire_incomplete_fixed_size_collection_jobs(
-        &self,
-        lease_duration: &StdDuration,
-        maximum_acquire_count: usize,
-    ) -> Result<Vec<Lease<AcquiredCollectionJob>>, Error> {
-        let now = self.clock.now().as_naive_date_time()?;
-        let lease_expiry_time = add_naive_date_time_duration(&now, lease_duration)?;
-        let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
-
-        let stmt = self
-            .prepare_cached(
-                "
-WITH updated as (
-    UPDATE collection_jobs
-    SET lease_expiry = $1,
-        lease_token = gen_random_bytes(16),
-        lease_attempts = lease_attempts + 1
-    FROM tasks
-    WHERE collection_jobs.id IN (
-        SELECT collection_jobs.id FROM collection_jobs
-        -- Join on aggregation jobs with matching task ID, matching aggregation parameter, and
-        -- matching batch identifier.
-        INNER JOIN aggregation_jobs
-            ON collection_jobs.aggregation_param = aggregation_jobs.aggregation_param
-            AND collection_jobs.task_id = aggregation_jobs.task_id
-            AND collection_jobs.batch_identifier = aggregation_jobs.batch_id
-        WHERE
-            -- Constraint for tasks table in FROM position
-            tasks.id = collection_jobs.task_id
-            -- Only return fixed-size collection jobs.
-            AND tasks.query_type ? 'FixedSize'
-            -- Only acquire collection jobs in a non-terminal state.
-            AND collection_jobs.state = 'START'
-            -- Do not acquire collection jobs with an unexpired lease
-            AND collection_jobs.lease_expiry <= $2
-        GROUP BY collection_jobs.id
-        -- Do not acquire collection jobs where any associated aggregation jobs are not finished
-        HAVING bool_and(aggregation_jobs.state != 'IN_PROGRESS')
-        -- Honor maximum_acquire_count *after* winnowing down to runnable collection jobs
-        LIMIT $3
-    )
-    RETURNING tasks.task_id, tasks.query_type, tasks.vdaf, collection_jobs.collection_job_id,
-              collection_jobs.id, collection_jobs.lease_token, collection_jobs.lease_attempts
-)
-SELECT task_id, query_type, vdaf, collection_job_id, lease_token, lease_attempts FROM updated
--- TODO (#174): revisit collection job queueing behavior implied by this ORDER BY
-ORDER BY id DESC
-",
-            )
-            .await?;
-        self.query(
-            &stmt,
-            &[
-                /* lease_expiry */ &lease_expiry_time,
-                /* now */ &now,
-                /* limit */ &maximum_acquire_count,
-            ],
-        )
-        .await?
-        .into_iter()
-        .map(|row| {
-            let task_id = TaskId::get_decoded(row.get("task_id"))?;
-            let collection_job_id =
-                row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-            let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
-            let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
-            let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
-            let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
-            Ok(Lease::new(
-                AcquiredCollectionJob::new(task_id, collection_job_id, query_type, vdaf),
-                lease_expiry_time,
-                lease_token,
-                lease_attempts,
-            ))
-        })
-        .collect()
-    }
-
-    /// release_collection_job releases an acquired (via e.g. acquire_incomplete_collection_jobs) collect
-    /// job. It returns an error if the collection job has no current lease.
+    /// release_collection_job releases an acquired (via e.g. acquire_incomplete_collection_jobs)
+    /// collect job. It returns an error if the collection job has no current lease.
     pub async fn release_collection_job(
         &self,
         lease: &Lease<AcquiredCollectionJob>,
@@ -8352,6 +8250,7 @@ mod tests {
     #[derive(Copy, Clone)]
     enum CollectionJobTestCaseState {
         Start,
+        Collectable,
         Finished,
         Deleted,
         Abandoned,
@@ -8414,6 +8313,9 @@ mod tests {
                         test_case.agg_param,
                         match test_case.state {
                             CollectionJobTestCaseState::Start => CollectionJobState::Start,
+                            CollectionJobTestCaseState::Collectable => {
+                                CollectionJobState::Collectable
+                            }
                             CollectionJobTestCaseState::Finished => CollectionJobState::Finished {
                                 report_count: 1,
                                 encrypted_helper_aggregate_share: HpkeCiphertext::new(
@@ -8449,19 +8351,12 @@ mod tests {
             let test_case = test_case.clone();
             let clock = clock.clone();
             Box::pin(async move {
-                let time_interval_leases = tx
-                    .acquire_incomplete_time_interval_collection_jobs(
-                        &StdDuration::from_secs(100),
-                        10,
-                    )
-                    .await?;
-                let fixed_size_leases = tx
-                    .acquire_incomplete_fixed_size_collection_jobs(&StdDuration::from_secs(100), 10)
+                let leases = tx
+                    .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
                     .await?;
 
-                let mut leased_collection_jobs: Vec<_> = time_interval_leases
+                let mut leased_collection_jobs: Vec<_> = leases
                     .iter()
-                    .chain(fixed_size_leases.iter())
                     .map(|lease| (lease.leased().clone(), *lease.lease_expiry_time()))
                     .collect();
                 leased_collection_jobs.sort();
@@ -8487,10 +8382,7 @@ mod tests {
 
                 assert_eq!(leased_collection_jobs, expected_collection_jobs);
 
-                Ok(time_interval_leases
-                    .into_iter()
-                    .chain(fixed_size_leases.into_iter())
-                    .collect())
+                Ok(leases)
             })
         })
         .await
@@ -8544,7 +8436,7 @@ mod tests {
             batch_identifier: batch_interval,
             agg_param: AggregationParam(0),
             collection_job_id: None,
-            state: CollectionJobTestCaseState::Start,
+            state: CollectionJobTestCaseState::Collectable,
         }]);
 
         let collection_job_leases = run_collection_job_acquire_test_case(
@@ -8567,10 +8459,7 @@ mod tests {
                     // Try to re-acquire collection jobs. Nothing should happen because the lease is still
                     // valid.
                     assert!(tx
-                        .acquire_incomplete_time_interval_collection_jobs(
-                            &StdDuration::from_secs(100),
-                            10
-                        )
+                        .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
                         .await
                         .unwrap()
                         .is_empty());
@@ -8581,10 +8470,7 @@ mod tests {
                         .unwrap();
 
                     let reacquired_leases = tx
-                        .acquire_incomplete_time_interval_collection_jobs(
-                            &StdDuration::from_secs(100),
-                            10,
-                        )
+                        .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
                         .await
                         .unwrap();
                     let reacquired_jobs: Vec<_> = reacquired_leases
@@ -8614,10 +8500,7 @@ mod tests {
             Box::pin(async move {
                 // Re-acquire the jobs whose lease should have lapsed.
                 let acquired_jobs = tx
-                    .acquire_incomplete_time_interval_collection_jobs(
-                        &StdDuration::from_secs(100),
-                        10,
-                    )
+                    .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
                     .await
                     .unwrap();
 
@@ -8685,7 +8568,7 @@ mod tests {
                     batch_identifier: batch_id,
                     agg_param: AggregationParam(0),
                     collection_job_id: None,
-                    state: CollectionJobTestCaseState::Start,
+                    state: CollectionJobTestCaseState::Collectable,
                 }]),
             },
         )
@@ -8698,10 +8581,7 @@ mod tests {
                     // Try to re-acquire collection jobs. Nothing should happen because the lease is still
                     // valid.
                     assert!(tx
-                        .acquire_incomplete_fixed_size_collection_jobs(
-                            &StdDuration::from_secs(100),
-                            10,
-                        )
+                        .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10,)
                         .await
                         .unwrap()
                         .is_empty());
@@ -8712,10 +8592,7 @@ mod tests {
                         .unwrap();
 
                     let reacquired_leases = tx
-                        .acquire_incomplete_fixed_size_collection_jobs(
-                            &StdDuration::from_secs(100),
-                            10,
-                        )
+                        .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
                         .await
                         .unwrap();
                     let reacquired_jobs: Vec<_> = reacquired_leases
@@ -8745,7 +8622,7 @@ mod tests {
             Box::pin(async move {
                 // Re-acquire the jobs whose lease should have lapsed.
                 let acquired_jobs = tx
-                    .acquire_incomplete_fixed_size_collection_jobs(&StdDuration::from_secs(100), 10)
+                    .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
                     .await
                     .unwrap();
 
@@ -9160,7 +9037,7 @@ mod tests {
                 batch_identifier: batch_interval,
                 agg_param: AggregationParam(0),
                 collection_job_id: None,
-                state: CollectionJobTestCaseState::Start,
+                state: CollectionJobTestCaseState::Collectable,
             },
             CollectionJobTestCase::<TimeInterval> {
                 should_be_acquired: true,
@@ -9172,7 +9049,7 @@ mod tests {
                 .unwrap(),
                 agg_param: AggregationParam(1),
                 collection_job_id: None,
-                state: CollectionJobTestCaseState::Start,
+                state: CollectionJobTestCaseState::Collectable,
             },
         ]);
 
@@ -9196,19 +9073,13 @@ mod tests {
                 // Acquire a single collection job, twice. Each call should yield one job. We don't
                 // care what order they are acquired in.
                 let mut acquired_collection_jobs = tx
-                    .acquire_incomplete_time_interval_collection_jobs(
-                        &StdDuration::from_secs(100),
-                        1,
-                    )
+                    .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 1)
                     .await?;
                 assert_eq!(acquired_collection_jobs.len(), 1);
 
                 acquired_collection_jobs.extend(
-                    tx.acquire_incomplete_time_interval_collection_jobs(
-                        &StdDuration::from_secs(100),
-                        1,
-                    )
-                    .await?,
+                    tx.acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 1)
+                        .await?,
                 );
 
                 assert_eq!(acquired_collection_jobs.len(), 2);
@@ -9371,10 +9242,7 @@ mod tests {
             Box::pin(async move {
                 // No collection jobs should be acquired because none of them are in the START state
                 let acquired_collection_jobs = tx
-                    .acquire_incomplete_time_interval_collection_jobs(
-                        &StdDuration::from_secs(100),
-                        10,
-                    )
+                    .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
                     .await?;
                 assert!(acquired_collection_jobs.is_empty());
 

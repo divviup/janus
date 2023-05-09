@@ -19,3 +19,7 @@ CREATE TABLE batches(
 );
 
 ALTER TYPE COLLECTION_JOB_STATE ADD VALUE 'COLLECTABLE';
+
+DROP INDEX collection_jobs_lease_expiry;
+-- CREATE INDEX collection_jobs_state_and_lease_expiry ON collection_jobs(state, lease_expiry) WHERE state = 'COLLECTABLE'; -- XXX: can't refer to new enum value in same transaction (i.e. migration) as it is introduced; phrase as two migrations?
+CREATE INDEX collection_jobs_state_and_lease_expiry ON collection_jobs(state, lease_expiry);
