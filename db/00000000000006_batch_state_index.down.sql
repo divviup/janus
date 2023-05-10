@@ -1,0 +1,2 @@
+CREATE INDEX collection_jobs_lease_expiry ON collection_jobs(lease_expiry);
+DROP INDEX collection_jobs_state_and_lease_expiry;
