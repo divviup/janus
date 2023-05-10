@@ -27,4 +27,4 @@ thiserror = "1.0"
 
 [dev-dependencies]
 assert_matches = "1"
-serde_test = "1.0.160"
+serde_test = "1.0.163"
