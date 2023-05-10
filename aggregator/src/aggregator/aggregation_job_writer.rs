@@ -23,7 +23,8 @@ use std::{
 };
 use tokio::try_join;
 
-// XXX: docs
+/// AggregationJobWriter contains the logic used to write aggregation jobs, both initially &
+/// on updates. It is used only by the Leader.
 pub struct AggregationJobWriter<
     const SEED_SIZE: usize,
     Q: CollectableQueryType,
@@ -50,6 +51,7 @@ struct AggregationJobInfo<
 impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
     AggregationJobWriter<SEED_SIZE, Q, A>
 {
+    /// Creates a new, empty aggregation job writer.
     pub fn new(task: Arc<Task>) -> Self {
         Self {
             task,
@@ -58,10 +60,14 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
         }
     }
 
+    /// Returns whether this aggregation job writer is empty, i.e. whether it contains any
+    /// aggregation jobs.
     pub fn is_empty(&self) -> bool {
         self.aggregation_jobs.is_empty()
     }
 
+    /// Queues a new aggregation job to be written to the datastore. Nothing is actually written
+    /// until `write` is called.
     pub fn put(
         &mut self,
         aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
@@ -77,6 +83,8 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
         })
     }
 
+    /// Queues an existing aggregation job to be updated in the datastore. Nothing is actually
+    /// written // until `write` is called.
     pub fn update(
         &mut self,
         aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
@@ -137,6 +145,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
         Ok(())
     }
 
+    /// Writes all queued aggregation jobs to the datastore.
     pub async fn write<C: Clock>(
         &self,
         tx: &Transaction<'_, C>,
