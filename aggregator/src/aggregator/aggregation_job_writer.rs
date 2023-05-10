@@ -383,7 +383,10 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                 collection_jobs
                     .into_iter()
                     .flatten()
-                    .map(|job| (*job.id(), job)) // XXX: filter to only CollectionJobs in START?
+                    .flat_map(|job| match job.state() {
+                        CollectionJobState::Start => Some((*job.id(), job)),
+                        _ => None,
+                    })
                     .collect::<HashMap<_, _>>()
             })
         )?;
@@ -392,7 +395,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
         // CLOSED state.
         let relevant_batches: Arc<HashMap<_, _>> = Arc::new({
             let batches = Arc::new(Mutex::new(batches));
-            let relevant_batch_identifiers: HashSet<Q::BatchIdentifier> = affected_collection_jobs
+            let relevant_batch_identifiers: HashSet<_> = affected_collection_jobs
                 .values()
                 .flat_map(|collection_job| {
                     Q::batch_identifiers_for_collection_identifier(
