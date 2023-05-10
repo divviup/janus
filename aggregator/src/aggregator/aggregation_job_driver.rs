@@ -669,7 +669,7 @@ impl AggregationJobDriver {
         aggregation_job_writer.update(
             aggregation_job.with_round(new_round),
             report_aggregations_to_write,
-        );
+        )?;
         let aggregation_job_writer = Arc::new(aggregation_job_writer);
         let accumulator = Arc::new(accumulator);
         datastore
@@ -797,7 +797,7 @@ impl AggregationJobDriver {
                         .await?;
 
                     let mut aggregation_job_writer = AggregationJobWriter::new(Arc::new(task));
-                    aggregation_job_writer.update(aggregation_job, report_aggregations);
+                    aggregation_job_writer.update(aggregation_job, report_aggregations)?;
 
                     try_join!(
                         aggregation_job_writer.write(tx, vdaf),

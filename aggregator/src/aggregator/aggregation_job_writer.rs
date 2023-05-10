@@ -31,6 +31,10 @@ pub struct AggregationJobWriter<
 > {
     task: Arc<Task>,
     aggregation_jobs: HashMap<AggregationJobId, AggregationJobInfo<SEED_SIZE, Q, A>>,
+
+    // batch identifier -> aggregation job -> ord of report aggregation; populated by all report
+    // aggregations pertaining to the batch.
+    by_batch_identifier_index: HashMap<Q::BatchIdentifier, HashMap<AggregationJobId, Vec<usize>>>,
 }
 
 struct AggregationJobInfo<
@@ -50,6 +54,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
         Self {
             task,
             aggregation_jobs: HashMap::new(),
+            by_batch_identifier_index: HashMap::new(),
         }
     }
 
@@ -61,7 +66,8 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
         &mut self,
         aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) where
+    ) -> Result<(), Error>
+    where
         A::AggregationParam: PartialEq + Eq,
     {
         self.insert_aggregation_job_info(AggregationJobInfo {
@@ -75,7 +81,8 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
         &mut self,
         aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) where
+    ) -> Result<(), Error>
+    where
         A::AggregationParam: PartialEq + Eq,
     {
         self.insert_aggregation_job_info(AggregationJobInfo {
@@ -85,7 +92,10 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
         })
     }
 
-    fn insert_aggregation_job_info(&mut self, info: AggregationJobInfo<SEED_SIZE, Q, A>)
+    fn insert_aggregation_job_info(
+        &mut self,
+        info: AggregationJobInfo<SEED_SIZE, Q, A>,
+    ) -> Result<(), Error>
     where
         A::AggregationParam: PartialEq + Eq,
     {
@@ -97,8 +107,34 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                 == i.aggregation_job.aggregation_parameter()
         }));
 
+        // Compute batch identifiers first, since computing the batch identifier is fallible and
+        // it's nicer not to have to unwind state modifications if we encounter an error.
+        let batch_identifiers: Vec<_> = info
+            .report_aggregations
+            .iter()
+            .map(|ra| {
+                Q::to_batch_identifier(
+                    &self.task,
+                    info.aggregation_job.partial_batch_identifier(),
+                    ra.report_metadata().time(),
+                )
+            })
+            .collect::<Result<_, _>>()?;
+        assert_eq!(batch_identifiers.len(), info.report_aggregations.len());
+
+        // Modify our state to record this aggregation job. (starting here, failure is not allowed)
+        for (ord, batch_identifier) in batch_identifiers.into_iter().enumerate() {
+            self.by_batch_identifier_index
+                .entry(batch_identifier)
+                .or_default()
+                .entry(*info.aggregation_job.id())
+                .or_default()
+                .push(ord);
+        }
+
         self.aggregation_jobs
             .insert(*info.aggregation_job.id(), info);
+        Ok(())
     }
 
     pub async fn write<C: Clock>(
@@ -144,71 +180,53 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
             })
             .collect();
 
-        // XXX: compute by_batch_identifier outside of this function, in `put`/`update`
-        let by_batch_identifier = {
-            let mut by_batch_identifier = HashMap::new();
-            for (aggregation_job_id, (_, aggregation_job, report_aggregations)) in
-                &by_aggregation_job
-            {
-                for (ord, report_aggregation) in report_aggregations.iter().enumerate() {
-                    let batch_identifier = Q::to_batch_identifier(
-                        &self.task,
-                        aggregation_job.partial_batch_identifier(),
-                        report_aggregation.report_metadata().time(),
-                    )?;
-                    let value = by_batch_identifier
-                        .entry(batch_identifier)
-                        .or_insert((HashSet::new(), Vec::new()));
-                    value.0.insert(*aggregation_job_id);
-                    value.1.push((*aggregation_job_id, ord));
-                }
-            }
-            by_batch_identifier
-        };
-
         // Read all relevant batches from the datastore.
-        let mut batches: HashMap<_, _> =
-            try_join_all(by_batch_identifier.keys().map(|batch_identifier| {
+        let mut batches: HashMap<_, _> = try_join_all(self.by_batch_identifier_index.keys().map(
+            |batch_identifier| {
                 tx.get_batch::<SEED_SIZE, Q, A>(
                     self.task.id(),
                     batch_identifier,
                     aggregation_parameter,
                 )
-            }))
-            .await?
-            .into_iter()
-            .flat_map(|batch: Option<Batch<SEED_SIZE, Q, A>>| {
-                batch.map(|b| (b.batch_identifier().clone(), b))
-            })
-            .collect();
+            },
+        ))
+        .await?
+        .into_iter()
+        .flat_map(|batch: Option<Batch<SEED_SIZE, Q, A>>| {
+            batch.map(|b| (b.batch_identifier().clone(), b))
+        })
+        .collect();
 
         // Update in-memory state of report aggregations: any report aggregations applying to a
         // closed batch instead fail with a BatchCollected error (unless they were already in an
         // failed state).
         let mut unwritable_report_ids = HashSet::new();
-        for (batch_identifier, (_, report_aggregations)) in &by_batch_identifier {
+        for (batch_identifier, by_aggregation_job_index) in &self.by_batch_identifier_index {
             if batches.get(batch_identifier).map(|b| *b.state()) != Some(BatchState::Closed) {
                 continue;
             }
-            for (aggregation_job_id, ord) in report_aggregations {
-                // unwrap safety: index lookup
-                let report_aggregation = by_aggregation_job
-                    .get_mut(aggregation_job_id)
-                    .unwrap()
-                    .2
-                    .get_mut(*ord)
-                    .unwrap();
-                if matches!(
-                    report_aggregation.state(),
-                    ReportAggregationState::Failed(_) | ReportAggregationState::Invalid
-                ) {
-                    continue;
-                }
+            for (aggregation_job_id, report_aggregation_ords) in by_aggregation_job_index {
+                for ord in report_aggregation_ords {
+                    // unwrap safety: index lookup
+                    let report_aggregation = by_aggregation_job
+                        .get_mut(aggregation_job_id)
+                        .unwrap()
+                        .2
+                        .get_mut(*ord)
+                        .unwrap();
+                    if matches!(
+                        report_aggregation.state(),
+                        ReportAggregationState::Failed(_) | ReportAggregationState::Invalid
+                    ) {
+                        continue;
+                    }
 
-                unwritable_report_ids.insert(*report_aggregation.report_id());
-                *report_aggregation = Cow::Owned(report_aggregation.as_ref().clone().with_state(
-                    ReportAggregationState::Failed(ReportShareError::BatchCollected),
-                ));
+                    unwritable_report_ids.insert(*report_aggregation.report_id());
+                    *report_aggregation =
+                        Cow::Owned(report_aggregation.as_ref().clone().with_state(
+                            ReportAggregationState::Failed(ReportShareError::BatchCollected),
+                        ));
+                }
             }
         }
 
@@ -243,9 +261,10 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
         // Update in-memory state of batches: outstanding job counts will change based on new or
         // completed aggregation jobs affecting each batch.
         let mut newly_closed_batches = Vec::new();
-        let batches: Vec<_> = by_batch_identifier
+        let batches: Vec<_> = self
+            .by_batch_identifier_index
             .iter()
-            .flat_map(|(batch_identifier, (agg_job_ids, _))| {
+            .flat_map(|(batch_identifier, by_aggregation_job_index)| {
                 let (operation, mut batch) = match batches.remove(batch_identifier) {
                     Some(batch) => (Operation::Update, batch),
                     None => (
@@ -272,9 +291,9 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                 // add code complexity & runtime cost to determine if we are in a
                 // repeated-terminal-write case.)
                 let mut outstanding_aggregation_jobs = batch.outstanding_aggregation_jobs();
-                for agg_job_id in agg_job_ids {
+                for aggregation_job_id in by_aggregation_job_index.keys() {
                     // unwrap safety: index lookup
-                    let (op, agg_job, _) = by_aggregation_job.get(agg_job_id).unwrap();
+                    let (op, agg_job, _) = by_aggregation_job.get(aggregation_job_id).unwrap();
                     if op == &Operation::Put
                         && matches!(agg_job.state(), AggregationJobState::InProgress)
                     {

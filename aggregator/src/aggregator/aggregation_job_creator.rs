@@ -491,7 +491,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             })
                             .collect::<Result<_, datastore::Error>>()?;
 
-                        aggregation_job_writer.put(aggregation_job, report_aggregations);
+                        aggregation_job_writer.put(aggregation_job, report_aggregations)?;
                     }
 
                     // Write the aggregation jobs & report aggregations we created.
@@ -660,7 +660,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             AggregationJobState::InProgress,
                             AggregationJobRound::from(0),
                         );
-                        aggregation_job_writer.put(aggregation_job, report_aggregations);
+                        aggregation_job_writer.put(aggregation_job, report_aggregations)?;
 
                         if is_batch_new {
                             new_batches.push(*batch.id())
