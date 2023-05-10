@@ -19,7 +19,7 @@ use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
     hash::Hash,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 use tokio::try_join;
 
@@ -261,7 +261,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
         // Update in-memory state of batches: outstanding job counts will change based on new or
         // completed aggregation jobs affecting each batch.
         let mut newly_closed_batches = Vec::new();
-        let batches: Vec<_> = self
+        let batches: HashMap<_, _> = self
             .by_batch_identifier_index
             .iter()
             .flat_map(|(batch_identifier, by_aggregation_job_index)| {
@@ -310,8 +310,11 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                 }
 
                 Some((
-                    operation,
-                    batch.with_outstanding_aggregation_jobs(outstanding_aggregation_jobs),
+                    batch_identifier,
+                    (
+                        operation,
+                        batch.with_outstanding_aggregation_jobs(outstanding_aggregation_jobs),
+                    ),
                 ))
             })
             .collect();
@@ -319,10 +322,10 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
         // Write batches, aggregation jobs, and report aggregations.
         let (_, _, affected_collection_jobs) = try_join!(
             // Write updated batches.
-            try_join_all(batches.into_iter().map(|(op, batch)| async move {
+            try_join_all(batches.values().map(|(op, batch)| async move {
                 match op {
-                    Operation::Put => tx.put_batch(&batch).await,
-                    Operation::Update => tx.update_batch(&batch).await,
+                    Operation::Put => tx.put_batch(batch).await,
+                    Operation::Update => tx.update_batch(batch).await,
                 }
             })),
             // Write updated aggregation jobs & report aggregations.
@@ -378,32 +381,45 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
 
         // Find all batches which are relevant to a collection job that just had a batch move into
         // CLOSED state.
-        // XXX: don't load batches which we just wrote, pull them from `batches`?
-        let relevant_batch_identifiers = affected_collection_jobs
-            .values()
-            .flat_map(|collection_job| {
-                Q::batch_identifiers_for_collection_identifier(
-                    &self.task,
-                    collection_job.batch_identifier(),
-                )
-            })
-            .collect::<HashSet<_>>();
-        let relevant_batches: HashMap<_, _> =
-            try_join_all(relevant_batch_identifiers.into_iter().map(
-                |batch_identifier| async move {
-                    let batch = tx
-                        .get_batch::<SEED_SIZE, Q, A>(
-                            self.task.id(),
-                            &batch_identifier,
-                            aggregation_parameter,
-                        )
-                        .await?;
-                    Ok::<_, Error>((batch_identifier, batch))
-                },
-            ))
+        let relevant_batches: Arc<HashMap<_, _>> = Arc::new({
+            let batches = Arc::new(Mutex::new(batches));
+            let relevant_batch_identifiers: HashSet<Q::BatchIdentifier> = affected_collection_jobs
+                .values()
+                .flat_map(|collection_job| {
+                    Q::batch_identifiers_for_collection_identifier(
+                        &self.task,
+                        collection_job.batch_identifier(),
+                    )
+                })
+                .collect();
+            try_join_all(
+                relevant_batch_identifiers
+                    .into_iter()
+                    .map(|batch_identifier| {
+                        let batches = Arc::clone(&batches);
+                        async move {
+                            // We put the lock/remove operation into its own statement to ensure the
+                            // lock is dropped by the time we call `get_batch`.
+                            let batch = batches.lock().unwrap().remove(&batch_identifier);
+                            let batch = match batch {
+                                Some((_, batch)) => Some(batch),
+                                None => {
+                                    tx.get_batch::<SEED_SIZE, Q, A>(
+                                        self.task.id(),
+                                        &batch_identifier,
+                                        aggregation_parameter,
+                                    )
+                                    .await?
+                                }
+                            };
+                            Ok::<_, Error>((batch_identifier, batch))
+                        }
+                    }),
+            )
             .await?
             .into_iter()
-            .collect();
+            .collect()
+        });
 
         // For any collection jobs for which all relevant batches are now in CLOSED state, update
         // the collection job's state to COLLECTABLE to allow the collection process to proceed.
