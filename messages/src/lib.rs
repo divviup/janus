@@ -945,7 +945,7 @@ impl Decode for HpkePublicKey {
 
 impl Debug for HpkePublicKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(&self.0))
+        write!(f, "HpkePublicKey({})", self)
     }
 }
 
