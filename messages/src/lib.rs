@@ -949,6 +949,12 @@ impl Debug for HpkePublicKey {
     }
 }
 
+impl Display for HpkePublicKey {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", Base64Display::new(&self.0, &URL_SAFE_NO_PAD))
+    }
+}
+
 /// This customized implementation serializes a [`HpkePublicKey`] as a base64url-encoded string,
 /// instead of as a byte array. This is more compact and ergonomic when serialized to YAML.
 impl Serialize for HpkePublicKey {
