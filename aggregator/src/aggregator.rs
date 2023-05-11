@@ -1820,6 +1820,15 @@ impl VdafOps {
                     // initial state of the collection job (which will be START, unless all batches
                     // went to CLOSED, in which case the collection job will start at COLLECTABLE).
                     let mut initial_collection_job_state = CollectionJobState::Collectable;
+
+                    // Rust 1.65's clippy complains about needless collection, but we need to
+                    // process through the iterator in order to update
+                    // `initial_collection_job_state` as a side-effect, since computing
+                    // `initial_collection_job_state` is necessary to compute the collection job we
+                    // are writing, and the collection job write occurs concurrently with the batch
+                    // writes. This appears to be fixed in Rust 1.69 -- we can likely remove this
+                    // annotation after the MSRV reaches that version.
+                    #[allow(clippy::needless_collect)]
                     let batches: Vec<_> = batches
                         .into_iter()
                         .flat_map(|(batch_identifier, batch)| match batch {
