@@ -338,6 +338,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "async_cell"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "834eee9ce518130a3b4d5af09ecc43e9d6b57ee76613f227a1ddd6b77c7a62bc"
+
+[[package]]
 name = "atoi"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4909,18 +4915,19 @@ dependencies = [
 
 [[package]]
 name = "trillium-server-common"
-version = "0.4.0"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aafafc4458fd5d18a7f237a7cca76a8bc254a98a234f306879f0b05a2f758d81"
+checksum = "004466f0e82f7467463d15b42f3f4c7a576895f3dadb828a858e838e7ae68237"
 dependencies = [
  "async-trait",
- "atomic-waker",
+ "async_cell",
  "futures-lite",
  "log",
  "rlimit",
  "trillium",
  "trillium-http",
  "url",
+ "waker-set",
 ]
 
 [[package]]
@@ -4944,9 +4951,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-tokio"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7432ae7a226f1e116ac0c9ef40f8f857de2d5845d2f3ded6319fce7141ea0b63"
+checksum = "bf84d604a6e6580cb6da72e8351d69b77613ce7059e1a64d35b77d43e758b308"
 dependencies = [
  "async-compat",
  "log",
