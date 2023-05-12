@@ -234,9 +234,8 @@ mod models {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use janus_aggregator_core::task::{QueryType, Task};
     use janus_core::task::VdafInstance;
-    use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId, Time};
+    use janus_messages::{Duration, HpkeConfig, Role, TaskId, Time};
     use serde::{Deserialize, Serialize};
-    use std::collections::HashMap;
     use url::Url;
 
     #[derive(Serialize)]
@@ -276,7 +275,7 @@ mod models {
         pub(crate) collector_hpke_config: HpkeConfig,
         pub(crate) aggregator_auth_tokens: Vec<String>,
         pub(crate) collector_auth_tokens: Vec<String>,
-        pub(crate) aggregator_hpke_configs: HashMap<HpkeConfigId, HpkeConfig>,
+        pub(crate) aggregator_hpke_configs: Vec<HpkeConfig>,
     }
 
     impl From<&Task> for TaskResp {
@@ -296,11 +295,12 @@ mod models {
                 .iter()
                 .map(|token| URL_SAFE_NO_PAD.encode(token))
                 .collect();
-            let aggregator_hpke_configs: HashMap<_, _> = task
+            let mut aggregator_hpke_configs: Vec<_> = task
                 .hpke_keys()
-                .iter()
-                .map(|(&config_id, keypair)| (config_id, keypair.config().clone()))
+                .values()
+                .map(|keypair| keypair.config().clone())
                 .collect();
+            aggregator_hpke_configs.sort_by_key(|config| *config.id());
 
             Self {
                 task_id: *task.id(),
@@ -1128,11 +1128,7 @@ mod tests {
                 Token::Str("Y29sbGVjdG9yLWFiY2RlZjAw"),
                 Token::SeqEnd,
                 Token::Str("aggregator_hpke_configs"),
-                Token::Map { len: Some(1) },
-                Token::NewtypeStruct {
-                    name: "HpkeConfigId",
-                },
-                Token::U8(13),
+                Token::Seq { len: Some(1) },
                 Token::Struct {
                     name: "HpkeConfig",
                     len: 5,
@@ -1160,7 +1156,7 @@ mod tests {
                 Token::Str("public_key"),
                 Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
                 Token::StructEnd,
-                Token::MapEnd,
+                Token::SeqEnd,
                 Token::StructEnd,
             ],
         );
