@@ -3578,7 +3578,7 @@ mod tests {
                         *report_metadata.time(),
                         0,
                         None,
-                        ReportAggregationState::Invalid,
+                        ReportAggregationState::Failed(ReportShareError::VdafPrepError),
                     ))
                     .await
                 })
