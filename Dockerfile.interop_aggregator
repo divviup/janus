@@ -30,8 +30,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp /src/target/$PROFILE/aggregation_job_driver /aggregation_job_driver && \
     cp /src/target/$PROFILE/collect_job_driver /collect_job_driver
 
-# TODO(#1359): switch back to postgres:14-alpine once possible
-FROM postgres:14.7-alpine
+FROM postgres:14-alpine
 RUN mkdir /logs && mkdir /etc/janus
 RUN apk add --update supervisor && rm -rf /tmp/* /var/cache/apk/*
 COPY db /etc/janus/migrations

@@ -5043,9 +5043,8 @@ pub mod test_util {
     /// schema and creates a datastore.
     pub fn ephemeral_db_handle() -> DbHandle {
         // Start an instance of Postgres running in a container.
-        // TODO(#1359): switch back to postgres:14-alpine once possible
         let db_container =
-            CONTAINER_CLIENT.run(RunnableImage::from(Postgres::default()).with_tag("14.7-alpine"));
+            CONTAINER_CLIENT.run(RunnableImage::from(Postgres::default()).with_tag("14-alpine"));
 
         // Compute the Postgres connection string.
         const POSTGRES_DEFAULT_PORT: u16 = 5432;
