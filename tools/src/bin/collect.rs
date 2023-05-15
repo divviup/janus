@@ -1,15 +1,18 @@
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    Engine,
+};
 use clap::{
     builder::{NonEmptyStringValueParser, StringValueParser, TypedValueParser},
     error::ErrorKind,
-    ArgAction, CommandFactory, FromArgMatches, Parser, ValueEnum,
+    ArgAction, Args, CommandFactory, FromArgMatches, Parser, ValueEnum,
 };
 use derivative::Derivative;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::types::extra::{U15, U31, U63};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32, FixedI64};
-use janus_collector::{default_http_client, Collector, CollectorParameters};
+use janus_collector::{default_http_client, Authentication, Collector, CollectorParameters};
 use janus_core::{hpke::HpkePrivateKey, task::AuthenticationToken};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
@@ -146,6 +149,12 @@ fn parse_authentication_token(value: String) -> AuthenticationToken {
     AuthenticationToken::from(value.into_bytes())
 }
 
+fn parse_authentication_token_base64(
+    value: String,
+) -> Result<AuthenticationToken, base64::DecodeError> {
+    STANDARD.decode(value).map(AuthenticationToken::from)
+}
+
 #[derive(Clone)]
 struct HpkeConfigValueParser {
     inner: NonEmptyStringValueParser,
@@ -242,80 +251,40 @@ impl TypedValueParser for BucketsValueParser {
     }
 }
 
-#[derive(Derivative, Parser, PartialEq, Eq)]
+#[derive(Derivative, Args, PartialEq, Eq)]
 #[derivative(Debug)]
-#[clap(
-    name = "collect",
-    version,
-    about = "Command-line DAP-PPM collector from ISRG's Divvi Up",
-    long_about = None,
-)]
-struct Options {
-    /// DAP task identifier, encoded with base64url
-    #[clap(
-        long,
-        value_parser = TaskIdValueParser::new(),
-        help_heading = "DAP Task Parameters",
-        display_order = 0
-    )]
-    task_id: TaskId,
-    /// The leader aggregator's endpoint URL
-    #[clap(long, help_heading = "DAP Task Parameters", display_order = 1)]
-    leader: Url,
+#[group(required = true)]
+struct AuthenticationOptions {
     /// Authentication token for the DAP-Auth-Token HTTP header
     #[clap(
         long,
+        required = false,
         value_parser = StringValueParser::new().map(parse_authentication_token),
         env,
-        help_heading = "DAP Task Parameters",
-        display_order = 2
+        help_heading = "Authorization",
+        display_order = 0,
+        conflicts_with = "authorization_bearer_token"
     )]
     #[derivative(Debug = "ignore")]
-    auth_token: AuthenticationToken,
-    /// DAP message for the collector's HPKE configuration, encoded with base64url
-    #[clap(
-        long,
-        value_parser = HpkeConfigValueParser::new(),
-        help_heading = "DAP Task Parameters",
-        display_order = 3
-    )]
-    hpke_config: HpkeConfig,
-    /// The collector's HPKE private key, encoded with base64url
-    #[clap(
-        long,
-        value_parser = PrivateKeyValueParser::new(),
-        env,
-        help_heading = "DAP Task Parameters",
-        display_order = 4
-    )]
-    #[derivative(Debug = "ignore")]
-    hpke_private_key: HpkePrivateKey,
+    dap_auth_token: Option<AuthenticationToken>,
 
-    /// VDAF algorithm
-    #[clap(
-        long,
-        value_enum,
-        help_heading = "VDAF Algorithm and Parameters",
-        display_order = 0
-    )]
-    vdaf: VdafType,
-    /// Number of vector elements, for use with --vdaf=countvec and --vdaf=sumvec
-    #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
-    length: Option<usize>,
-    /// Bit length of measurements, for use with --vdaf=sum and --vdaf=sumvec
-    #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
-    bits: Option<usize>,
-    /// Comma-separated list of bucket boundaries, for use with --vdaf=histogram
+    /// Authentication token for the "Authorization: Bearer ..." HTTP header, in base64
     #[clap(
         long,
         required = false,
-        num_args = 1,
-        action = ArgAction::Set,
-        value_parser = BucketsValueParser::new(),
-        help_heading = "VDAF Algorithm and Parameters"
+        value_parser = StringValueParser::new().try_map(parse_authentication_token_base64),
+        env,
+        help_heading = "Authorization",
+        display_order = 1,
+        conflicts_with = "dap_auth_token"
     )]
-    buckets: Option<Buckets>,
+    #[derivative(Debug = "ignore")]
+    authorization_bearer_token: Option<AuthenticationToken>,
+}
 
+#[derive(Debug, Args, PartialEq, Eq)]
+#[group(required = true)]
+struct QueryOptions {
     /// Start of the collection batch interval, as the number of seconds since the Unix epoch
     #[clap(
         long,
@@ -349,6 +318,77 @@ struct Options {
     current_batch: bool,
 }
 
+#[derive(Derivative, Parser, PartialEq, Eq)]
+#[derivative(Debug)]
+#[clap(
+    name = "collect",
+    version,
+    about = "Command-line DAP-PPM collector from ISRG's Divvi Up",
+    long_about = None,
+)]
+struct Options {
+    /// DAP task identifier, encoded with base64url
+    #[clap(
+        long,
+        value_parser = TaskIdValueParser::new(),
+        help_heading = "DAP Task Parameters",
+        display_order = 0
+    )]
+    task_id: TaskId,
+    /// The leader aggregator's endpoint URL
+    #[clap(long, help_heading = "DAP Task Parameters", display_order = 1)]
+    leader: Url,
+    /// DAP message for the collector's HPKE configuration, encoded with base64url
+    #[clap(
+        long,
+        value_parser = HpkeConfigValueParser::new(),
+        help_heading = "DAP Task Parameters",
+        display_order = 2
+    )]
+    hpke_config: HpkeConfig,
+    /// The collector's HPKE private key, encoded with base64url
+    #[clap(
+        long,
+        value_parser = PrivateKeyValueParser::new(),
+        env,
+        help_heading = "DAP Task Parameters",
+        display_order = 3
+    )]
+    #[derivative(Debug = "ignore")]
+    hpke_private_key: HpkePrivateKey,
+
+    #[clap(flatten)]
+    authentication: AuthenticationOptions,
+
+    /// VDAF algorithm
+    #[clap(
+        long,
+        value_enum,
+        help_heading = "VDAF Algorithm and Parameters",
+        display_order = 0
+    )]
+    vdaf: VdafType,
+    /// Number of vector elements, for use with --vdaf=countvec and --vdaf=sumvec
+    #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
+    length: Option<usize>,
+    /// Bit length of measurements, for use with --vdaf=sum and --vdaf=sumvec
+    #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
+    bits: Option<usize>,
+    /// Comma-separated list of bucket boundaries, for use with --vdaf=histogram
+    #[clap(
+        long,
+        required = false,
+        num_args = 1,
+        action = ArgAction::Set,
+        value_parser = BucketsValueParser::new(),
+        help_heading = "VDAF Algorithm and Parameters"
+    )]
+    buckets: Option<Buckets>,
+
+    #[clap(flatten)]
+    query: QueryOptions,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     install_tracing_subscriber()?;
@@ -373,10 +413,10 @@ async fn main() -> anyhow::Result<()> {
 // This function is broken out from `main()` for the sake of testing its argument handling.
 async fn run(options: Options) -> Result<(), Error> {
     match (
-        &options.batch_interval_start,
-        &options.batch_interval_duration,
-        &options.batch_id,
-        options.current_batch,
+        &options.query.batch_interval_start,
+        &options.query.batch_interval_duration,
+        &options.query.batch_id,
+        options.query.current_batch,
     ) {
         (Some(batch_interval_start), Some(batch_interval_duration), None, false) => {
             let batch_interval = Interval::new(
@@ -405,10 +445,18 @@ async fn run_with_query<Q: QueryType>(options: Options, query: Query<Q>) -> Resu
 where
     Q: QueryTypeExt,
 {
-    let parameters = CollectorParameters::new(
+    let authentication = match (
+        options.authentication.dap_auth_token,
+        options.authentication.authorization_bearer_token,
+    ) {
+        (None, Some(token)) => Authentication::AuthorizationBearerToken(token),
+        (Some(token), None) => Authentication::DapAuthToken(token),
+        (None, None) | (Some(_), Some(_)) => unreachable!(),
+    };
+    let parameters = CollectorParameters::new_with_authentication(
         options.task_id,
         options.leader,
-        options.auth_token,
+        authentication,
         options.hpke_config.clone(),
         options.hpke_private_key.clone(),
     );
@@ -558,14 +606,14 @@ impl QueryTypeExt for FixedSize {
 
 #[cfg(test)]
 mod tests {
-    use crate::{run, Error, Options, VdafType};
+    use crate::{run, AuthenticationOptions, Error, Options, QueryOptions, VdafType};
     use assert_matches::assert_matches;
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use clap::{error::ErrorKind, CommandFactory, Parser};
     use janus_core::{
         hpke::test_util::generate_test_hpke_config_and_private_key, task::AuthenticationToken,
     };
-    use janus_messages::BatchId;
+    use janus_messages::{BatchId, TaskId};
     use prio::codec::Encode;
     use rand::random;
     use reqwest::Url;
@@ -588,17 +636,22 @@ mod tests {
         let expected = Options {
             task_id,
             leader: leader.clone(),
-            auth_token: auth_token.clone(),
+            authentication: AuthenticationOptions {
+                dap_auth_token: Some(auth_token.clone()),
+                authorization_bearer_token: None,
+            },
             hpke_config: hpke_keypair.config().clone(),
             hpke_private_key: hpke_keypair.private_key().clone(),
             vdaf: VdafType::Count,
             length: None,
             bits: None,
             buckets: None,
-            batch_interval_start: Some(1_000_000),
-            batch_interval_duration: Some(1_000),
-            batch_id: None,
-            current_batch: false,
+            query: QueryOptions {
+                batch_interval_start: Some(1_000_000),
+                batch_interval_duration: Some(1_000),
+                batch_id: None,
+                current_batch: false,
+            },
         };
         let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
         let correct_arguments = [
@@ -606,7 +659,7 @@ mod tests {
             &format!("--task-id={task_id_encoded}"),
             "--leader",
             leader.as_str(),
-            "--auth-token",
+            "--dap-auth-token",
             "collector-authentication-token",
             &format!("--hpke-config={encoded_hpke_config}"),
             &format!("--hpke-private-key={encoded_private_key}"),
@@ -669,7 +722,7 @@ mod tests {
             format!("--task-id={task_id_encoded}"),
             "--leader".to_string(),
             leader.to_string(),
-            "--auth-token".to_string(),
+            "--dap-auth-token".to_string(),
             "collector-authentication-token".to_string(),
             format!("--hpke-config={encoded_hpke_config}"),
             format!("--hpke-private-key={encoded_private_key}"),
@@ -822,29 +875,48 @@ mod tests {
             ]);
             Options::try_parse_from(good_arguments).unwrap();
         }
+    }
+
+    #[test]
+    fn batch_arguments() {
+        let task_id: TaskId = random();
+        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
+
+        let leader = Url::parse("https://example.com/dap/").unwrap();
+
+        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let encoded_hpke_config = URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded());
+        let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
+
+        let auth_token = AuthenticationToken::from(b"collector-authentication-token".to_vec());
 
         // Check parsing arguments for a current batch query.
         let expected = Options {
             task_id,
             leader: leader.clone(),
-            auth_token: auth_token.clone(),
+            authentication: AuthenticationOptions {
+                dap_auth_token: Some(auth_token.clone()),
+                authorization_bearer_token: None,
+            },
             hpke_config: hpke_keypair.config().clone(),
             hpke_private_key: hpke_keypair.private_key().clone(),
             vdaf: VdafType::Count,
             length: None,
             bits: None,
             buckets: None,
-            batch_interval_start: None,
-            batch_interval_duration: None,
-            batch_id: None,
-            current_batch: true,
+            query: QueryOptions {
+                batch_interval_start: None,
+                batch_interval_duration: None,
+                batch_id: None,
+                current_batch: true,
+            },
         };
         let correct_arguments = [
             "collect",
             &format!("--task-id={task_id_encoded}"),
             "--leader",
             leader.as_str(),
-            "--auth-token",
+            "--dap-auth-token",
             "collector-authentication-token",
             &format!("--hpke-config={encoded_hpke_config}"),
             &format!("--hpke-private-key={encoded_private_key}"),
@@ -857,29 +929,35 @@ mod tests {
             Err(e) => panic!("{}\narguments were {:?}", e, correct_arguments),
         }
 
+        // Check parsing arguments for a by-batch-id query.
         let batch_id: BatchId = random();
         let batch_id_encoded = URL_SAFE_NO_PAD.encode(batch_id.as_ref());
         let expected = Options {
             task_id,
             leader: leader.clone(),
-            auth_token,
+            authentication: AuthenticationOptions {
+                dap_auth_token: Some(auth_token),
+                authorization_bearer_token: None,
+            },
             hpke_config: hpke_keypair.config().clone(),
             hpke_private_key: hpke_keypair.private_key().clone(),
             vdaf: VdafType::Count,
             length: None,
             bits: None,
             buckets: None,
-            batch_interval_start: None,
-            batch_interval_duration: None,
-            batch_id: Some(batch_id),
-            current_batch: false,
+            query: QueryOptions {
+                batch_interval_start: None,
+                batch_interval_duration: None,
+                batch_id: Some(batch_id),
+                current_batch: false,
+            },
         };
         let correct_arguments = [
             "collect",
             &format!("--task-id={task_id_encoded}"),
             "--leader",
             leader.as_str(),
-            "--auth-token",
+            "--dap-auth-token",
             "collector-authentication-token",
             &format!("--hpke-config={encoded_hpke_config}"),
             &format!("--hpke-private-key={encoded_private_key}"),
@@ -892,37 +970,47 @@ mod tests {
             Err(e) => panic!("{}\narguments were {:?}", e, correct_arguments),
         }
 
-        // Check that clap enforces all the constraints we need on combinations of query arguments.
-        // This allows us to treat a default match branch as `unreachable!()` when unpacking the
-        // argument matches.
         let base_arguments = Vec::from([
             "collect".to_string(),
             format!("--task-id={task_id_encoded}"),
             "--leader".to_string(),
-            leader.to_string(),
-            "--auth-token".to_string(),
+            "https://example.com/dap/".to_string(),
+            "--dap-auth-token".to_string(),
             "collector-authentication-token".to_string(),
             format!("--hpke-config={encoded_hpke_config}"),
             format!("--hpke-private-key={encoded_private_key}"),
+            "--vdaf=count".to_string(),
         ]);
+
+        let mut good_arguments = base_arguments.clone();
+        good_arguments.push("--current-batch".to_string());
+        Options::try_parse_from(good_arguments).unwrap();
+
+        // Check that clap enforces all the constraints we need on combinations of query arguments.
+        // This allows us to treat a default match branch as `unreachable!()` when unpacking the
+        // argument matches.
+
         assert_eq!(
             Options::try_parse_from(base_arguments.clone())
                 .unwrap_err()
                 .kind(),
             ErrorKind::MissingRequiredArgument
         );
+
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.push("--batch-interval-start=1".to_string());
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::MissingRequiredArgument
         );
+
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.push("--batch-interval-duration=1".to_string());
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::MissingRequiredArgument
         );
+
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.extend([
             "--batch-interval-start=1".to_string(),
@@ -933,6 +1021,7 @@ mod tests {
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ArgumentConflict
         );
+
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.extend([
             "--batch-interval-start=1".to_string(),
@@ -942,6 +1031,7 @@ mod tests {
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ArgumentConflict
         );
+
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.extend([
             "--batch-interval-duration=1".to_string(),
@@ -951,6 +1041,7 @@ mod tests {
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ArgumentConflict
         );
+
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.extend([
             "--batch-interval-start=1".to_string(),
@@ -960,6 +1051,7 @@ mod tests {
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ArgumentConflict
         );
+
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.extend([
             "--batch-interval-duration=1".to_string(),
@@ -969,6 +1061,7 @@ mod tests {
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ArgumentConflict
         );
+
         let mut bad_arguments = base_arguments;
         bad_arguments.extend([
             "--batch-id=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string(),
@@ -977,6 +1070,91 @@ mod tests {
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ArgumentConflict
+        );
+    }
+
+    #[test]
+    fn auth_arguments() {
+        let task_id: TaskId = random();
+        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
+
+        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let encoded_hpke_config = URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded());
+        let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
+
+        let base_arguments = Vec::from([
+            "collect".to_string(),
+            format!("--task-id={task_id_encoded}"),
+            "--leader".to_string(),
+            "https://example.com/dap/".to_string(),
+            format!("--hpke-config={encoded_hpke_config}"),
+            format!("--hpke-private-key={encoded_private_key}"),
+            "--batch-interval-start".to_string(),
+            "1000000".to_string(),
+            "--batch-interval-duration".to_string(),
+            "1000".to_string(),
+            "--vdaf=count".to_string(),
+        ]);
+        let dap_auth_token_arguments = Vec::from([
+            "--dap-auth-token".to_string(),
+            "collector-authentication-token".to_string(),
+        ]);
+        let authorization_bearer_token_arguments = Vec::from([
+            "--authorization-bearer-token".to_string(),
+            "/////////////////////w==".to_string(),
+        ]);
+
+        let mut case_1_arguments = base_arguments.clone();
+        case_1_arguments.extend(dap_auth_token_arguments.iter().cloned());
+        assert_eq!(
+            Options::try_parse_from(case_1_arguments)
+                .unwrap()
+                .authentication,
+            AuthenticationOptions {
+                dap_auth_token: Some(AuthenticationToken::from(
+                    b"collector-authentication-token".to_vec()
+                )),
+                authorization_bearer_token: None,
+            }
+        );
+
+        let mut case_2_arguments = base_arguments.clone();
+        case_2_arguments.extend(authorization_bearer_token_arguments.iter().cloned());
+        assert_eq!(
+            Options::try_parse_from(case_2_arguments)
+                .unwrap()
+                .authentication,
+            AuthenticationOptions {
+                dap_auth_token: None,
+                authorization_bearer_token: Some(AuthenticationToken::from(Vec::from([0xff; 16]))),
+            }
+        );
+
+        let case_3_arguments = base_arguments.clone();
+        assert_eq!(
+            Options::try_parse_from(case_3_arguments)
+                .unwrap_err()
+                .kind(),
+            ErrorKind::MissingRequiredArgument
+        );
+
+        let mut case_4_arguments = base_arguments.clone();
+        case_4_arguments.extend(dap_auth_token_arguments.iter().cloned());
+        case_4_arguments.extend(authorization_bearer_token_arguments.iter().cloned());
+        assert_eq!(
+            Options::try_parse_from(case_4_arguments)
+                .unwrap_err()
+                .kind(),
+            ErrorKind::ArgumentConflict
+        );
+
+        let mut case_5_arguments = base_arguments;
+        case_5_arguments.push("--authorization-bearer-token=not-base-64-!@#$%^&*".to_string());
+        assert_eq!(
+            Options::try_parse_from(case_5_arguments)
+                .unwrap_err()
+                .kind(),
+            ErrorKind::ValueValidation
         );
     }
 }

@@ -6,7 +6,7 @@ use clap::{value_parser, Arg, Command};
 use fixed::types::extra::{U15, U31, U63};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32, FixedI64};
-use janus_collector::{Collector, CollectorParameters};
+use janus_collector::{Authentication, Collector, CollectorParameters};
 use janus_core::{
     hpke::HpkeKeypair,
     task::{AuthenticationToken, VdafInstance},
@@ -230,10 +230,10 @@ async fn handle_collection_start(
         .get(&task_id)
         .context("task was not added before being used in a collect request")?;
 
-    let collector_params = CollectorParameters::new(
+    let collector_params = CollectorParameters::new_with_authentication(
         task_id,
         task_state.leader_url.clone(),
-        task_state.auth_token.clone(),
+        Authentication::DapAuthToken(task_state.auth_token.clone()),
         task_state.keypair.config().clone(),
         task_state.keypair.private_key().clone(),
     )

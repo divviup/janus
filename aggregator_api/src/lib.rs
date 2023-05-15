@@ -132,7 +132,7 @@ async fn post_task<C: Clock>(
     let task = Arc::new(
         Task::new(
             /* task_id */ random(),
-            /* aggregator_endpoints */ req.aggregator_endpoints,
+            /* aggregator_endpoints */ vec![req.leader_endpoint, req.helper_endpoint],
             /* query_type */ req.query_type,
             /* vdaf */ req.vdaf,
             /* role */ req.role,
@@ -234,9 +234,8 @@ mod models {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use janus_aggregator_core::task::{QueryType, Task};
     use janus_core::task::VdafInstance;
-    use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId, Time};
+    use janus_messages::{Duration, HpkeConfig, Role, TaskId, Time};
     use serde::{Deserialize, Serialize};
-    use std::collections::HashMap;
     use url::Url;
 
     #[derive(Serialize)]
@@ -248,7 +247,8 @@ mod models {
 
     #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
     pub(crate) struct PostTaskReq {
-        pub(crate) aggregator_endpoints: Vec<Url>,
+        pub(crate) leader_endpoint: Url,
+        pub(crate) helper_endpoint: Url,
         pub(crate) query_type: QueryType,
         pub(crate) vdaf: VdafInstance,
         pub(crate) role: Role,
@@ -262,7 +262,8 @@ mod models {
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
     pub(crate) struct TaskResp {
         pub(crate) task_id: TaskId,
-        pub(crate) aggregator_endpoints: Vec<Url>,
+        pub(crate) leader_endpoint: Url,
+        pub(crate) helper_endpoint: Url,
         pub(crate) query_type: QueryType,
         pub(crate) vdaf: VdafInstance,
         pub(crate) role: Role,
@@ -276,7 +277,7 @@ mod models {
         pub(crate) collector_hpke_config: HpkeConfig,
         pub(crate) aggregator_auth_tokens: Vec<String>,
         pub(crate) collector_auth_tokens: Vec<String>,
-        pub(crate) aggregator_hpke_configs: HashMap<HpkeConfigId, HpkeConfig>,
+        pub(crate) aggregator_hpke_configs: Vec<HpkeConfig>,
     }
 
     impl From<&Task> for TaskResp {
@@ -296,15 +297,17 @@ mod models {
                 .iter()
                 .map(|token| URL_SAFE_NO_PAD.encode(token))
                 .collect();
-            let aggregator_hpke_configs: HashMap<_, _> = task
+            let mut aggregator_hpke_configs: Vec<_> = task
                 .hpke_keys()
-                .iter()
-                .map(|(&config_id, keypair)| (config_id, keypair.config().clone()))
+                .values()
+                .map(|keypair| keypair.config().clone())
                 .collect();
+            aggregator_hpke_configs.sort_by_key(|config| *config.id());
 
             Self {
                 task_id: *task.id(),
-                aggregator_endpoints: task.aggregator_endpoints().to_vec(),
+                leader_endpoint: task.aggregator_endpoints()[0].clone(),
+                helper_endpoint: task.aggregator_endpoints()[1].clone(),
                 query_type: *task.query_type(),
                 vdaf: task.vdaf().clone(),
                 role: *task.role(),
@@ -516,10 +519,8 @@ mod tests {
 
         // Verify: posting a task creates a new task which matches the request.
         let req = PostTaskReq {
-            aggregator_endpoints: Vec::from([
-                "http://leader.endpoint".try_into().unwrap(),
-                "http://helper.endpoint".try_into().unwrap(),
-            ]),
+            leader_endpoint: "http://leader.endpoint".try_into().unwrap(),
+            helper_endpoint: "http://helper.endpoint".try_into().unwrap(),
             query_type: QueryType::TimeInterval,
             vdaf: VdafInstance::Prio3Count,
             role: Role::Leader,
@@ -565,7 +566,10 @@ mod tests {
             .expect("task was not created");
 
         // Verify that the task written to the datastore matches the request...
-        assert_eq!(&req.aggregator_endpoints, got_task.aggregator_endpoints());
+        assert_eq!(
+            [req.leader_endpoint.clone(), req.helper_endpoint.clone()],
+            got_task.aggregator_endpoints()
+        );
         assert_eq!(&req.query_type, got_task.query_type());
         assert_eq!(&req.vdaf, got_task.vdaf());
         assert_eq!(&req.role, got_task.role());
@@ -895,10 +899,8 @@ mod tests {
     fn post_task_req_serialization() {
         assert_tokens(
             &PostTaskReq {
-                aggregator_endpoints: Vec::from([
-                    "https://example.com/".parse().unwrap(),
-                    "https://example.net/".parse().unwrap(),
-                ]),
+                leader_endpoint: "https://example.com/".parse().unwrap(),
+                helper_endpoint: "https://example.net/".parse().unwrap(),
                 query_type: QueryType::FixedSize {
                     max_batch_size: 999,
                 },
@@ -919,13 +921,12 @@ mod tests {
             &[
                 Token::Struct {
                     name: "PostTaskReq",
-                    len: 9,
+                    len: 10,
                 },
-                Token::Str("aggregator_endpoints"),
-                Token::Seq { len: Some(2) },
+                Token::Str("leader_endpoint"),
                 Token::Str("https://example.com/"),
+                Token::Str("helper_endpoint"),
                 Token::Str("https://example.net/"),
-                Token::SeqEnd,
                 Token::Str("query_type"),
                 Token::StructVariant {
                     name: "QueryType",
@@ -1040,15 +1041,14 @@ mod tests {
             &[
                 Token::Struct {
                     name: "TaskResp",
-                    len: 16,
+                    len: 17,
                 },
                 Token::Str("task_id"),
                 Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
-                Token::Str("aggregator_endpoints"),
-                Token::Seq { len: Some(2) },
+                Token::Str("leader_endpoint"),
                 Token::Str("https://example.com/"),
+                Token::Str("helper_endpoint"),
                 Token::Str("https://example.net/"),
-                Token::SeqEnd,
                 Token::Str("query_type"),
                 Token::StructVariant {
                     name: "QueryType",
@@ -1128,11 +1128,7 @@ mod tests {
                 Token::Str("Y29sbGVjdG9yLWFiY2RlZjAw"),
                 Token::SeqEnd,
                 Token::Str("aggregator_hpke_configs"),
-                Token::Map { len: Some(1) },
-                Token::NewtypeStruct {
-                    name: "HpkeConfigId",
-                },
-                Token::U8(13),
+                Token::Seq { len: Some(1) },
                 Token::Struct {
                     name: "HpkeConfig",
                     len: 5,
@@ -1160,7 +1156,7 @@ mod tests {
                 Token::Str("public_key"),
                 Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
                 Token::StructEnd,
-                Token::MapEnd,
+                Token::SeqEnd,
                 Token::StructEnd,
             ],
         );

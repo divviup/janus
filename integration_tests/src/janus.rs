@@ -15,7 +15,6 @@ use janus_interop_binaries::{
 };
 use janus_messages::Role;
 use k8s_openapi::api::core::v1::Secret;
-use portpicker::pick_unused_port;
 use std::{
     path::Path,
     process::{Command, Stdio},
@@ -131,10 +130,8 @@ impl Janus<'static> {
         // service named "postgresql" listening on port 5432. We could instead look up the service
         // by some label and dynamically discover its port, but being coupled to a label value isn't
         // much different than being coupled to a service name.
-        let local_db_port = pick_unused_port().unwrap();
-        let _datastore_port_forward = cluster
-            .forward_port(namespace, "postgresql", local_db_port, 5432)
-            .await;
+        let datastore_port_forward = cluster.forward_port(namespace, "postgresql", 5432).await;
+        let local_db_port = datastore_port_forward.local_port();
         debug!("forwarded DB port");
 
         let pool = database_pool(
@@ -161,9 +158,7 @@ impl Janus<'static> {
             .unwrap();
         datastore.put_task(task).await.unwrap();
 
-        let aggregator_port_forward = cluster
-            .forward_port(namespace, "aggregator", pick_unused_port().unwrap(), 80)
-            .await;
+        let aggregator_port_forward = cluster.forward_port(namespace, "aggregator", 80).await;
 
         Self::KubernetesCluster {
             aggregator_port_forward,

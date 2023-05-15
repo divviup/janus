@@ -225,7 +225,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                         .unwrap();
                     if matches!(
                         report_aggregation.state(),
-                        ReportAggregationState::Failed(_) | ReportAggregationState::Invalid
+                        ReportAggregationState::Failed(_)
                     ) {
                         continue;
                     }
@@ -253,9 +253,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
             if report_aggregations.iter().all(|ra| {
                 matches!(
                     ra.state(),
-                    ReportAggregationState::Finished
-                        | ReportAggregationState::Failed(_)
-                        | ReportAggregationState::Invalid
+                    ReportAggregationState::Finished | ReportAggregationState::Failed(_)
                 )
             }) {
                 *aggregation_job = Cow::Owned(

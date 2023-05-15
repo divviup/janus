@@ -2,7 +2,7 @@
 $ collect --help
 Command-line DAP-PPM collector from ISRG's Divvi Up
 
-Usage: collect [OPTIONS] --task-id <TASK_ID> --leader <LEADER> --auth-token <AUTH_TOKEN> --hpke-config <HPKE_CONFIG> --hpke-private-key <HPKE_PRIVATE_KEY> --vdaf <VDAF>
+Usage: collect [OPTIONS] --task-id <TASK_ID> --leader <LEADER> --hpke-config <HPKE_CONFIG> --hpke-private-key <HPKE_PRIVATE_KEY> --vdaf <VDAF> <--dap-auth-token <DAP_AUTH_TOKEN>|--authorization-bearer-token <AUTHORIZATION_BEARER_TOKEN>> <--batch-interval-start <BATCH_INTERVAL_START>|--batch-interval-duration <BATCH_INTERVAL_DURATION>|--batch-id <BATCH_ID>|--current-batch>
 
 Options:
   -h, --help
@@ -18,11 +18,6 @@ DAP Task Parameters:
       --leader <LEADER>
           The leader aggregator's endpoint URL
 
-      --auth-token <AUTH_TOKEN>
-          Authentication token for the DAP-Auth-Token HTTP header
-          
-          [env: AUTH_TOKEN=]
-
       --hpke-config <HPKE_CONFIG>
           DAP message for the collector's HPKE configuration, encoded with base64url
 
@@ -30,6 +25,17 @@ DAP Task Parameters:
           The collector's HPKE private key, encoded with base64url
           
           [env: HPKE_PRIVATE_KEY=]
+
+Authorization:
+      --dap-auth-token <DAP_AUTH_TOKEN>
+          Authentication token for the DAP-Auth-Token HTTP header
+          
+          [env: DAP_AUTH_TOKEN=]
+
+      --authorization-bearer-token <AUTHORIZATION_BEARER_TOKEN>
+          Authentication token for the "Authorization: Bearer ..." HTTP header, in base64
+          
+          [env: AUTHORIZATION_BEARER_TOKEN=]
 
 VDAF Algorithm and Parameters:
       --vdaf <VDAF>
@@ -46,10 +52,10 @@ VDAF Algorithm and Parameters:
           - fixedpoint64bitboundedl2vecsum: Prio3FixedPoint64BitBoundedL2VecSum
 
       --length <LENGTH>
-          Number of vector elements, for use with --vdaf=countvec
+          Number of vector elements, for use with --vdaf=countvec and --vdaf=sumvec
 
       --bits <BITS>
-          Bit length of measurements, for use with --vdaf=sum
+          Bit length of measurements, for use with --vdaf=sum and --vdaf=sumvec
 
       --buckets <BUCKETS>
           Comma-separated list of bucket boundaries, for use with --vdaf=histogram
