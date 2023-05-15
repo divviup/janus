@@ -179,9 +179,30 @@ async fn post_task<C: Clock>(
     } else {
         Vec::from([random()])
     };
-    let collector_auth_tokens = match req.role {
-        Role::Leader => Vec::from([random()]),
-        _ => Vec::new(),
+    let collector_auth_tokens = match (req.role, req.collector_auth_token) {
+        (Role::Leader, None) => Vec::from([random()]),
+        (Role::Leader, Some(encoded)) => {
+            let token_bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|err| {
+                Error::new(
+                    format!("Invalid base64 value for collector_auth_token: {err}"),
+                    Status::BadRequest,
+                )
+            })?;
+            Vec::from([AuthenticationToken::try_from(token_bytes).map_err(|_| {
+                Error::new(
+                    "Invalid HTTP header value in collector_auth_token".to_string(),
+                    Status::BadRequest,
+                )
+            })?])
+        }
+        (Role::Helper, None) => Vec::new(),
+        (Role::Helper, Some(_)) => {
+            return Err(Error::new(
+                "Cannot set collector_auth_token in a helper task".to_string(),
+                Status::BadRequest,
+            ))
+        }
+        _ => return Err(Error::new("Invalid role".to_string(), Status::BadRequest)),
     };
     let hpke_keys = Vec::from([generate_hpke_config_and_private_key(
         random(),
@@ -329,6 +350,7 @@ mod models {
         pub(crate) time_precision: u64, // seconds
         pub(crate) collector_hpke_config: HpkeConfig,
         pub(crate) aggregator_auth_token: Option<String>,
+        pub(crate) collector_auth_token: Option<String>,
     }
 
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -615,6 +637,7 @@ mod tests {
             .config()
             .clone(),
             aggregator_auth_token: None,
+            collector_auth_token: None,
         };
         let mut conn = post("/tasks")
             .with_request_body(serde_json::to_vec(&req).unwrap())
@@ -688,6 +711,7 @@ mod tests {
         let vdaf_verify_key =
             SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
         let aggregator_auth_token = random::<AuthenticationToken>();
+        let collector_auth_token = random::<AuthenticationToken>();
 
         // Verify: posting a task creates a new task which matches the request.
         let req = PostTaskReq {
@@ -711,6 +735,7 @@ mod tests {
             .config()
             .clone(),
             aggregator_auth_token: Some(URL_SAFE_NO_PAD.encode(&aggregator_auth_token)),
+            collector_auth_token: Some(URL_SAFE_NO_PAD.encode(&collector_auth_token)),
         };
         let mut conn = post("/tasks")
             .with_request_body(serde_json::to_vec(&req).unwrap())
@@ -769,6 +794,11 @@ mod tests {
         assert_eq!(
             aggregator_auth_token.as_ref(),
             got_task.aggregator_auth_tokens()[0].as_ref()
+        );
+        assert_eq!(1, got_task.collector_auth_tokens().len());
+        assert_eq!(
+            collector_auth_token.as_ref(),
+            got_task.collector_auth_tokens()[0].as_ref()
         );
 
         // ...and the response.
@@ -1097,11 +1127,12 @@ mod tests {
                     HpkePublicKey::from([0u8; 32].to_vec()),
                 ),
                 aggregator_auth_token: None,
+                collector_auth_token: None,
             },
             &[
                 Token::Struct {
                     name: "PostTaskReq",
-                    len: 13,
+                    len: 14,
                 },
                 Token::Str("task_id"),
                 Token::None,
@@ -1172,6 +1203,8 @@ mod tests {
                 Token::StructEnd,
                 Token::Str("aggregator_auth_token"),
                 Token::None,
+                Token::Str("collector_auth_token"),
+                Token::None,
                 Token::StructEnd,
             ],
         );
@@ -1203,11 +1236,12 @@ mod tests {
                     HpkePublicKey::from([0u8; 32].to_vec()),
                 ),
                 aggregator_auth_token: Some("encoded".to_owned()),
+                collector_auth_token: Some("encoded".to_owned()),
             },
             &[
                 Token::Struct {
                     name: "PostTaskReq",
-                    len: 13,
+                    len: 14,
                 },
                 Token::Str("task_id"),
                 Token::Some,
@@ -1279,6 +1313,9 @@ mod tests {
                 Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
                 Token::StructEnd,
                 Token::Str("aggregator_auth_token"),
+                Token::Some,
+                Token::Str("encoded"),
+                Token::Str("collector_auth_token"),
                 Token::Some,
                 Token::Str("encoded"),
                 Token::StructEnd,
