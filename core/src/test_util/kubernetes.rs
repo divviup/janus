@@ -74,18 +74,10 @@ impl Cluster {
 
         // List pods that match the label key-value pairs in the service's selector. Pick the first
         // one.
-        let mut label_selector_param = String::with_capacity(
-            selector
-                .iter()
-                .map(|(name, value)| name.len() + value.len() + 2)
-                .sum(),
-        );
-        for (name, value) in selector.iter() {
-            label_selector_param.push_str(name);
-            label_selector_param.push('=');
-            label_selector_param.push_str(value);
-            label_selector_param.push(',');
-        }
+        let mut label_selector_param = selector
+            .iter()
+            .flat_map(|(name, value)| [name, "=", value, ","])
+            .collect::<String>();
         label_selector_param.pop();
         let lp = ListParams::default().labels(&label_selector_param);
         let client = self.client().await;
