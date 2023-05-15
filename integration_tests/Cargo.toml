@@ -28,7 +28,6 @@ janus_interop_binaries = { workspace = true, features = ["testcontainer"] }
 janus_messages.workspace = true
 k8s-openapi.workspace = true
 kube.workspace = true
-portpicker = "0.1"
 prio.workspace = true
 rand = "0.8"
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }

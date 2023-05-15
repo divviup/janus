@@ -1,18 +1,27 @@
 //! Testing framework for functionality that interacts with Kubernetes.
 
-use kube::config::{KubeConfigOptions, Kubeconfig};
+use anyhow::Context;
+use futures::TryStreamExt;
+use k8s_openapi::api::core::v1::{Pod, Service};
+use kube::{
+    api::ListParams,
+    config::{KubeConfigOptions, Kubeconfig},
+    Api, ResourceExt,
+};
 use rand::random;
 use std::{
-    io::{self, ErrorKind},
+    net::{Ipv4Addr, SocketAddrV4},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
 };
+use stopper::Stopper;
 use tempfile::NamedTempFile;
 use tokio::{
-    net::TcpStream,
-    time::{sleep, timeout},
+    net::{TcpListener, TcpStream},
+    task::{self},
 };
-use tracing::debug;
+use tokio_stream::wrappers::TcpListenerStream;
+use tracing::{debug, error, trace};
 
 /// Cluster represents a running Kubernetes cluster.
 pub struct Cluster {
@@ -49,63 +58,106 @@ impl Cluster {
         .unwrap()
     }
 
-    /// Set up port forwarding from `local_port` to `service_port` on the service in the namespace.
-    /// Returns a [`PortForward`] which will kill the child `kubectl` process on drop.
+    /// Set up port forwarding from a dynamically chosen local port to `service_port` on the service
+    /// in the namespace. Returns a [`PortForward`] handle.
     pub async fn forward_port(
         &self,
         namespace: &str,
-        service: &str,
-        local_port: u16,
+        service_name: &str,
         service_port: u16,
     ) -> PortForward {
-        let args = [
-            "--kubeconfig",
-            &self.kubeconfig_path.to_string_lossy(),
-            "--context",
-            &self.context_name,
-            "--namespace",
-            namespace,
-            "port-forward",
-            &format!("service/{service}"),
-            &format!("{local_port}:{service_port}"),
-        ];
-        debug!(?args, "Invoking kubectl");
-        let mut child = Command::new("kubectl")
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
+        // Fetch the service.
+        let client = self.client().await;
+        let services: Api<Service> = Api::namespaced(client, namespace);
+        let service = services.get(service_name).await.unwrap();
+        let selector = service.spec.as_ref().unwrap().selector.as_ref().unwrap();
+
+        // List pods that match the label key-value pairs in the service's selector. Pick the first
+        // one.
+        let mut label_selector_param = selector
+            .iter()
+            .flat_map(|(name, value)| [name, "=", value, ","])
+            .collect::<String>();
+        label_selector_param.pop();
+        let lp = ListParams::default().labels(&label_selector_param);
+        let client = self.client().await;
+        let pods: Api<Pod> = Api::namespaced(client, namespace);
+        let matching_pods = pods.list(&lp).await.unwrap();
+        let pod = matching_pods
+            .items
+            .get(0)
+            .unwrap_or_else(|| panic!("could not find any pods for the service {service_name}"));
+        let pod_name = pod.name_unchecked();
+
+        // Set up a port forwarding connection with the pod. (based on the pod_portforward_bind
+        // example from the kube crate)
+        let tcp_listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            .await
             .unwrap();
-
-        // Wait for up to five seconds for the forwarded port to be available.
-        timeout(tokio::time::Duration::from_secs(5), async {
-            loop {
-                let stream = match TcpStream::connect(&format!("127.0.0.1:{local_port}")).await {
-                    Err(e) if e.kind() == ErrorKind::ConnectionRefused => {
-                        if let Ok(Some(status)) = child.try_wait() {
-                            Err(io::Error::new(
-                                ErrorKind::Other,
-                                format!("child kubectl process exited with status {status})"),
-                            ))
-                        } else {
-                            sleep(tokio::time::Duration::from_millis(100)).await;
-                            continue;
-                        }
-                    }
-                    r => r,
+        let local_port = tcp_listener.local_addr().unwrap().port();
+        debug!(
+            namespace,
+            service_name, service_port, local_port, "Forwarding port"
+        );
+        let stopper = Stopper::new();
+        let stream = stopper.stop_stream(TcpListenerStream::new(tcp_listener));
+        task::spawn({
+            let stopper = stopper.clone();
+            async move {
+                let res = stream
+                    .try_for_each(|stream| async {
+                        let (pods, pod_name, stopper) =
+                            (pods.clone(), pod_name.clone(), stopper.clone());
+                        trace!(local_port, "new connection");
+                        task::spawn(async move {
+                            if let Err(e) =
+                                forward_connection(&pods, &pod_name, service_port, stream, &stopper)
+                                    .await
+                            {
+                                error!(local_port, error = %e, "Port forward error");
+                            }
+                        });
+                        Ok(())
+                    })
+                    .await;
+                if let Err(e) = res {
+                    error!(local_port, error = %e, "Port forward TCP server error");
                 }
-                .unwrap();
-                stream.writable().await.unwrap();
-                debug!(local_port, service_port, "forwarded port became writable");
-                break;
             }
-        })
-        .await
-        .expect("timeout waiting for forwarded port to become writable");
+        });
 
-        PortForward { local_port, child }
+        // Listen on a local TCP port, and forward incoming connections over the port forwarding
+        // connection.
+
+        PortForward {
+            local_port,
+            stopper,
+        }
     }
+}
+
+async fn forward_connection(
+    pods_api: &Api<Pod>,
+    pod_name: &str,
+    port: u16,
+    mut tcp_stream: TcpStream,
+    stopper: &Stopper,
+) -> anyhow::Result<()> {
+    let mut forwarder = pods_api.portforward(pod_name, &[port]).await?;
+    let mut pod_stream = forwarder
+        .take_stream(port)
+        .context("stream for forwarded port was missing")?;
+    stopper
+        .stop_future(tokio::io::copy_bidirectional(
+            &mut tcp_stream,
+            &mut pod_stream,
+        ))
+        .await
+        .transpose()?;
+    drop(pod_stream);
+    forwarder.join().await?;
+    trace!("connection closed");
+    Ok(())
 }
 
 /// EphemeralCluster represents a running ephemeral Kubernetes cluster for testing. Dropping an
@@ -185,7 +237,7 @@ impl Drop for EphemeralCluster {
 /// value is dropped.
 pub struct PortForward {
     local_port: u16,
-    child: Child,
+    stopper: Stopper,
 }
 
 impl PortForward {
@@ -197,12 +249,8 @@ impl PortForward {
 
 impl Drop for PortForward {
     fn drop(&mut self) {
-        debug!(?self.child, "dropping port forward");
-        // We kill and reap child `kubectl` processes here to ensure that we don't orphan children
-        // on test failures. This is normally a questionable practice, but acceptable since this is
-        // only used in test code.
-        self.child.kill().unwrap();
-        self.child.wait().unwrap();
+        debug!(?self.local_port, "dropping port forward");
+        self.stopper.stop();
     }
 }
 

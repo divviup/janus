@@ -2217,10 +2217,12 @@ dependencies = [
  "serde_json",
  "serde_test",
  "serde_yaml",
+ "stopper",
  "tempfile",
  "testcontainers",
  "thiserror",
  "tokio",
+ "tokio-stream",
  "tracing",
  "tracing-log",
  "tracing-subscriber",
@@ -2248,7 +2250,6 @@ dependencies = [
  "janus_messages",
  "k8s-openapi",
  "kube",
- "portpicker",
  "prio",
  "rand",
  "reqwest",
@@ -2434,6 +2435,7 @@ dependencies = [
  "kube-core",
  "pem",
  "pin-project",
+ "rand",
  "rustls 0.21.0",
  "rustls-pemfile",
  "secrecy",
@@ -2442,6 +2444,7 @@ dependencies = [
  "serde_yaml",
  "thiserror",
  "tokio",
+ "tokio-tungstenite",
  "tokio-util",
  "tower",
  "tower-http 0.4.0",
@@ -4511,13 +4514,25 @@ dependencies = [
 
 [[package]]
 name = "tokio-stream"
-version = "0.1.13"
+version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76cd2598a37719e3cd4c28af93f978506a97a2920ef4d96e4b12e38b8cbc8940"
+checksum = "397c988d37662c7dda6d2208364a706264bf3d6138b11d436cbac0ad38832842"
 dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+]
+
+[[package]]
+name = "tokio-tungstenite"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54319c93411147bced34cb5609a80e0a8e44c5999c93903a81cd866630ec0bfd"
+dependencies = [
+ "futures-util",
+ "log",
+ "tokio",
+ "tungstenite",
 ]
 
 [[package]]
@@ -4990,6 +5005,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "tungstenite"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30ee6ab729cd4cf0fd55218530c4522ed30b7b6081752839b68fcec8d0960788"
+dependencies = [
+ "base64 0.13.1",
+ "byteorder",
+ "bytes",
+ "http",
+ "httparse",
+ "log",
+ "rand",
+ "sha1",
+ "thiserror",
+ "url",
+ "utf-8",
+]
+
+[[package]]
 name = "typenum"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5073,6 +5107,12 @@ dependencies = [
  "percent-encoding",
  "serde",
 ]
+
+[[package]]
+name = "utf-8"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9"
 
 [[package]]
 name = "utf8parse"
