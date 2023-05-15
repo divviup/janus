@@ -220,7 +220,7 @@ impl AggregationJobDriver {
                 ReportAggregationState::Start => saw_start = true,
                 ReportAggregationState::Waiting(_, _) => saw_waiting = true,
                 ReportAggregationState::Finished => saw_finished = true,
-                ReportAggregationState::Failed(_) | ReportAggregationState::Invalid => (), // ignore failure aggregation states
+                ReportAggregationState::Failed(_) => (), // ignore failed aggregations
             }
         }
         match (saw_start, saw_waiting, saw_finished) {
@@ -611,7 +611,7 @@ impl AggregationJobDriver {
                             1,
                             &[KeyValue::new("type", "continue_mismatch")],
                         );
-                        ReportAggregationState::Invalid
+                        ReportAggregationState::Failed(ReportShareError::VdafPrepError)
                     }
                 }
 
@@ -643,7 +643,7 @@ impl AggregationJobDriver {
                             1,
                             &[KeyValue::new("type", "finish_mismatch")],
                         );
-                        ReportAggregationState::Invalid
+                        ReportAggregationState::Failed(ReportShareError::VdafPrepError)
                     }
                 }
 

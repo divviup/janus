@@ -86,7 +86,7 @@ macro_rules! supported_schema_versions {
 
 // List of schema versions that this version of Janus can safely run on. If any other schema
 // version is seen, [`Datastore::new`] fails.
-supported_schema_versions!(4);
+supported_schema_versions!(5);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -2026,8 +2026,6 @@ impl<C: Clock> Transaction<'_, C> {
                     )
                 })?)
             }
-
-            ReportAggregationStateCode::Invalid => ReportAggregationState::Invalid,
         };
 
         Ok(ReportAggregation::new(
@@ -4623,7 +4621,6 @@ pub mod models {
         ),
         Finished,
         Failed(ReportShareError),
-        Invalid,
     }
 
     impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
@@ -4635,7 +4632,6 @@ pub mod models {
                 ReportAggregationState::Waiting(_, _) => ReportAggregationStateCode::Waiting,
                 ReportAggregationState::Finished => ReportAggregationStateCode::Finished,
                 ReportAggregationState::Failed(_) => ReportAggregationStateCode::Failed,
-                ReportAggregationState::Invalid => ReportAggregationStateCode::Invalid,
             }
         }
 
@@ -4662,7 +4658,6 @@ pub mod models {
                         ..Default::default()
                     }
                 }
-                ReportAggregationState::Invalid => EncodedReportAggregationStateValues::default(),
             }
         }
     }
@@ -4689,8 +4684,6 @@ pub mod models {
         Finished,
         #[postgres(name = "FAILED")]
         Failed,
-        #[postgres(name = "INVALID")]
-        Invalid,
     }
 
     impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
@@ -7366,7 +7359,6 @@ mod tests {
             ReportAggregationState::Waiting(leader_prep_state.clone(), None),
             ReportAggregationState::Finished,
             ReportAggregationState::Failed(ReportShareError::VdafPrepError),
-            ReportAggregationState::Invalid,
         ]
         .into_iter()
         .enumerate()
@@ -7657,7 +7649,7 @@ mod tests {
                         Time::from_seconds_since_epoch(12345),
                         0,
                         None,
-                        ReportAggregationState::Invalid,
+                        ReportAggregationState::Failed(ReportShareError::VdafPrepError),
                     ))
                     .await
                 })
@@ -7717,7 +7709,6 @@ mod tests {
                         ReportAggregationState::Waiting(prep_state.clone(), Some(prep_msg)),
                         ReportAggregationState::Finished,
                         ReportAggregationState::Failed(ReportShareError::VdafPrepError),
-                        ReportAggregationState::Invalid,
                     ]
                     .iter()
                     .enumerate()
@@ -9612,15 +9603,6 @@ mod tests {
                         None,
                         ReportAggregationState::Failed(ReportShareError::VdafPrepError), // Not counted among min_size or max_size.
                     );
-                    let report_aggregation_0_3 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
-                        *task.id(),
-                        *aggregation_job_0.id(),
-                        random(),
-                        clock.now(),
-                        3,
-                        None,
-                        ReportAggregationState::Invalid, // Not counted among min_size or max_size.
-                    );
 
                     let aggregation_job_1 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                         *task.id(),
@@ -9659,15 +9641,6 @@ mod tests {
                         None,
                         ReportAggregationState::Failed(ReportShareError::VdafPrepError), // Not counted among min_size or max_size.
                     );
-                    let report_aggregation_1_3 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
-                        *task.id(),
-                        *aggregation_job_1.id(),
-                        random(),
-                        clock.now(),
-                        3,
-                        None,
-                        ReportAggregationState::Invalid, // Not counted among min_size or max_size.
-                    );
 
                     for aggregation_job in &[aggregation_job_0, aggregation_job_1] {
                         tx.put_aggregation_job(aggregation_job).await?;
@@ -9676,11 +9649,9 @@ mod tests {
                         report_aggregation_0_0,
                         report_aggregation_0_1,
                         report_aggregation_0_2,
-                        report_aggregation_0_3,
                         report_aggregation_1_0,
                         report_aggregation_1_1,
                         report_aggregation_1_2,
-                        report_aggregation_1_3,
                     ] {
                         tx.put_client_report(
                             &dummy_vdaf::Vdaf::new(),
