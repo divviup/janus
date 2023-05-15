@@ -566,7 +566,7 @@ mod tests {
 
     /// Test the POST /tasks endpoint, with none of the optional fields provided.
     #[tokio::test]
-    async fn post_task_first_mover() {
+    async fn post_task_no_optional_fields() {
         // Setup: create a datastore & handler.
         let (handler, ephemeral_datastore) = setup_api_test().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
@@ -658,7 +658,7 @@ mod tests {
 
     /// Test the POST /tasks endpoint, with all of the optional fields provided.
     #[tokio::test]
-    async fn post_task_second_mover() {
+    async fn post_task_all_optional_fields() {
         // Setup: create a datastore & handler.
         let (handler, ephemeral_datastore) = setup_api_test().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
