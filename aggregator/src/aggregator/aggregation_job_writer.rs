@@ -1,6 +1,7 @@
 //! In-memory accumulation of aggregation job (& report aggregation) updates.
 
 use crate::{aggregator::query_type::CollectableQueryType, Operation};
+use anyhow::anyhow;
 use futures::{future::try_join_all, TryFutureExt};
 use janus_aggregator_core::{
     datastore::{
@@ -84,7 +85,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
     }
 
     /// Queues an existing aggregation job to be updated in the datastore. Nothing is actually
-    /// written // until `write` is called.
+    /// written until `write` is called.
     pub fn update(
         &mut self,
         aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
@@ -145,7 +146,10 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
         Ok(())
     }
 
-    /// Writes all queued aggregation jobs to the datastore.
+    /// Writes all queued aggregation jobs to the datastore. Some report aggregations may turn out
+    /// to be unwritable due to a concurrent collection operation (aggregation into a collected
+    /// batch is not allowed). These report aggregations will be written with a
+    /// `Failed(BatchCollected)` state, and the associated report IDs will be returned.
     pub async fn write<C: Clock>(
         &self,
         tx: &Transaction<'_, C>,
@@ -440,25 +444,44 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                 .map(|collection_job| {
                     let relevant_batches = Arc::clone(&relevant_batches);
                     async move {
-                        if Q::batch_identifiers_for_collection_identifier(
+                        let mut is_collectable = true;
+                        for batch_identifier in Q::batch_identifiers_for_collection_identifier(
                             &self.task,
                             collection_job.batch_identifier(),
-                        )
-                        .all(|batch_identifier| {
-                            relevant_batches
-                                .get(&batch_identifier)
-                                .map_or(false, |batch| {
-                                    batch
-                                        .as_ref()
-                                        .map_or(false, |batch| batch.state() == &BatchState::Closed)
-                                })
-                        }) {
+                        ) {
+                            let batch = match relevant_batches.get(&batch_identifier) {
+                                Some(batch) => batch,
+                                None => {
+                                    return Err(Error::User(
+                                        anyhow!(
+                                        "impossible: did not attempt to read all required batches"
+                                    )
+                                        .into(),
+                                    ))
+                                }
+                            };
+                            let batch = match batch.as_ref() {
+                                Some(batch) => batch,
+                                None => {
+                                    return Err(Error::User(
+                                        anyhow!(
+                                        "impossible: expected batch does not exist in datastore"
+                                    )
+                                        .into(),
+                                    ))
+                                }
+                            };
+                            if batch.state() != &BatchState::Closed {
+                                is_collectable = false;
+                            }
+                        }
+                        if is_collectable {
                             tx.update_collection_job(
                                 &collection_job.with_state(CollectionJobState::Collectable),
                             )
                             .await?;
                         }
-                        Ok::<_, Error>(())
+                        Ok(())
                     }
                 }),
         )

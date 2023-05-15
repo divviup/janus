@@ -760,8 +760,9 @@ impl AggregationJobDriver {
                 Box::pin(async move {
                     // On abandoning an aggregation job, we update the aggregation job's state field
                     // to Abandoned, but leave all other state (e.g. report aggregations) alone to
-                    // ease debugging. (Note that the aggregation_job_writer will still necessarily
-                    // update some of the )
+                    // ease debugging. (Note that the aggregation_job_writer may still update report
+                    // aggregation states to Failed(BatchCollected) if a collection has begun for
+                    // the relevant batch.
                     let task = tx
                         .get_task(lease.leased().task_id())
                         .await?
