@@ -842,12 +842,15 @@ impl<C: Clock> Transaction<'_, C> {
             row_id[..TaskId::LEN].copy_from_slice(task_id.as_ref());
             row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
 
-            aggregator_auth_tokens.push(AuthenticationToken::from(self.crypter.decrypt(
-                "task_aggregator_auth_tokens",
-                &row_id,
-                "token",
-                &encrypted_aggregator_auth_token,
-            )?));
+            aggregator_auth_tokens.push(
+                AuthenticationToken::try_from(self.crypter.decrypt(
+                    "task_aggregator_auth_tokens",
+                    &row_id,
+                    "token",
+                    &encrypted_aggregator_auth_token,
+                )?)
+                .map_err(|e| Error::DbState(e.to_string()))?,
+            );
         }
 
         // Collector authentication tokens.
@@ -860,12 +863,15 @@ impl<C: Clock> Transaction<'_, C> {
             row_id[..TaskId::LEN].copy_from_slice(task_id.as_ref());
             row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
 
-            collector_auth_tokens.push(AuthenticationToken::from(self.crypter.decrypt(
-                "task_collector_auth_tokens",
-                &row_id,
-                "token",
-                &encrypted_collector_auth_token,
-            )?));
+            collector_auth_tokens.push(
+                AuthenticationToken::try_from(self.crypter.decrypt(
+                    "task_collector_auth_tokens",
+                    &row_id,
+                    "token",
+                    &encrypted_collector_auth_token,
+                )?)
+                .map_err(|e| Error::DbState(e.to_string()))?,
+            );
         }
 
         // HPKE keys.

@@ -2,7 +2,6 @@
 
 use crate::models::{GetTaskIdsResp, PostTaskReq};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use http::HeaderValue;
 use janus_aggregator_core::{
     datastore::{self, Datastore},
     task::Task,
@@ -149,15 +148,12 @@ async fn post_task<C: Clock>(
                 Status::BadRequest,
             )
         })?;
-        // Check that the token value can be used in a DAP-Auth-Token header. (Authorization: Bearer
-        // headers have no restrictions, since we base64-encode tokens in that case)
-        HeaderValue::try_from(token_bytes.as_slice()).map_err(|_| {
+        Vec::from([AuthenticationToken::try_from(token_bytes).map_err(|_| {
             (
                 "Invalid HTTP header value in aggregator_auth_token".to_string(),
                 Status::BadRequest,
             )
-        })?;
-        Vec::from([AuthenticationToken::from(token_bytes)])
+        })?])
     } else {
         Vec::from([random()])
     };
@@ -1295,12 +1291,12 @@ mod tests {
                 HpkeAeadId::Aes128Gcm,
                 HpkePublicKey::from([0u8; 32].to_vec()),
             ),
-            Vec::from([AuthenticationToken::from(
-                "aggregator-12345678".as_bytes().to_vec(),
-            )]),
-            Vec::from([AuthenticationToken::from(
-                "collector-abcdef00".as_bytes().to_vec(),
-            )]),
+            Vec::from([
+                AuthenticationToken::try_from("aggregator-12345678".as_bytes().to_vec()).unwrap(),
+            ]),
+            Vec::from([
+                AuthenticationToken::try_from("collector-abcdef00".as_bytes().to_vec()).unwrap(),
+            ]),
             [(HpkeKeypair::new(
                 HpkeConfig::new(
                     HpkeConfigId::from(13),

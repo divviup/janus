@@ -166,11 +166,15 @@ async fn handle_add_task(
     let keypair = keyring.lock().await.get_random_keypair();
     let hpke_config = keypair.config().clone();
 
+    let auth_token =
+        AuthenticationToken::try_from(request.collector_authentication_token.into_bytes())
+            .context("invalid header value in \"collector_authentication_token\"")?;
+
     entry.or_insert(TaskState {
         keypair,
         leader_url: request.leader,
         vdaf: request.vdaf,
-        auth_token: AuthenticationToken::from(request.collector_authentication_token.into_bytes()),
+        auth_token,
     });
 
     Ok(hpke_config)
