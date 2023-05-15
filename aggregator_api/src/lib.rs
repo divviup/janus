@@ -1,6 +1,7 @@
 //! This crate implements the Janus Aggregator API.
 
 use crate::models::{GetTaskIdsResp, PostTaskReq};
+use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
     datastore::{self, Datastore},
@@ -108,20 +109,41 @@ async fn get_task_ids<C: Clock>(
     ))
 }
 
+/// A simple error type that holds a message and an HTTP status. This can be used as a [`Handler`].
+struct Error {
+    message: String,
+    status: Status,
+}
+
+impl Error {
+    fn new(message: String, status: Status) -> Self {
+        Self { message, status }
+    }
+}
+
+#[async_trait]
+impl Handler for Error {
+    async fn run(&self, conn: Conn) -> Conn {
+        conn.with_body(self.message.clone())
+            .with_status(self.status)
+            .halt()
+    }
+}
+
 async fn post_task<C: Clock>(
     _: &mut Conn,
     (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PostTaskReq>),
-) -> Result<impl Handler, impl Handler> {
+) -> Result<impl Handler, Error> {
     let task_id = req.task_id.unwrap_or_else(random);
     let vdaf_verify_keys = if let Some(encoded) = req.vdaf_verify_key.as_ref() {
         let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|err| {
-            (
+            Error::new(
                 format!("Invalid base64 value for vdaf_verify_key: {err}"),
                 Status::BadRequest,
             )
         })?;
         if bytes.len() != req.vdaf.verify_key_length() {
-            return Err((
+            return Err(Error::new(
                 format!(
                     "Wrong VDAF verify key length, expected {}, got {}",
                     req.vdaf.verify_key_length(),
@@ -143,13 +165,13 @@ async fn post_task<C: Clock>(
     let time_precision = Duration::from_seconds(req.time_precision);
     let aggregator_auth_tokens = if let Some(encoded) = req.aggregator_auth_token.as_ref() {
         let token_bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|err| {
-            (
+            Error::new(
                 format!("Invalid base64 value for aggregator_auth_token: {err}"),
                 Status::BadRequest,
             )
         })?;
         Vec::from([AuthenticationToken::try_from(token_bytes).map_err(|_| {
-            (
+            Error::new(
                 "Invalid HTTP header value in aggregator_auth_token".to_string(),
                 Status::BadRequest,
             )
@@ -190,7 +212,7 @@ async fn post_task<C: Clock>(
             /* hpke_keys */ hpke_keys,
         )
         .map_err(|err| {
-            (
+            Error::new(
                 format!("Error constructing task: {err}"),
                 Status::BadRequest,
             )
@@ -204,7 +226,7 @@ async fn post_task<C: Clock>(
     .await
     .map_err(|err| {
         error!(err = %err, "Database transaction error");
-        (
+        Error::new(
             "Error storing task".to_string(),
             Status::InternalServerError,
         )
