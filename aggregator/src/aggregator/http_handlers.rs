@@ -2622,7 +2622,7 @@ mod tests {
                 let (task, vdaf, report_metadata_0) =
                     (task.clone(), vdaf.clone(), report_metadata_0.clone());
                 Box::pin(async move {
-                    TimeInterval::get_batch_aggregations_for_collect_identifier::<
+                    TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         PRIO3_VERIFY_KEY_LENGTH,
                         Prio3Count,
                         _,
@@ -2694,7 +2694,7 @@ mod tests {
                 let (task, vdaf, report_metadata_2) =
                     (task.clone(), vdaf.clone(), report_metadata_2.clone());
                 Box::pin(async move {
-                    TimeInterval::get_batch_aggregations_for_collect_identifier::<
+                    TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         PRIO3_VERIFY_KEY_LENGTH,
                         Prio3Count,
                         _,
@@ -2928,7 +2928,7 @@ mod tests {
                 let (task, vdaf, report_metadata_0) =
                     (task.clone(), vdaf.clone(), report_metadata_0.clone());
                 Box::pin(async move {
-                    TimeInterval::get_batch_aggregations_for_collect_identifier::<
+                    TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         PRIO3_VERIFY_KEY_LENGTH,
                         Prio3Count,
                         _,
@@ -3005,7 +3005,7 @@ mod tests {
                 let (task, vdaf, report_metadata_2) =
                     (task.clone(), vdaf.clone(), report_metadata_2.clone());
                 Box::pin(async move {
-                    TimeInterval::get_batch_aggregations_for_collect_identifier::<
+                    TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         PRIO3_VERIFY_KEY_LENGTH,
                         Prio3Count,
                         _,

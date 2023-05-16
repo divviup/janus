@@ -2082,7 +2082,7 @@ mod tests {
                         .await?
                         .unwrap();
                     let batch_aggregations =
-                        TimeInterval::get_batch_aggregations_for_collect_identifier::<
+                        TimeInterval::get_batch_aggregations_for_collection_identifier::<
                             PRIO3_VERIFY_KEY_LENGTH,
                             Prio3Count,
                             _,
@@ -2433,7 +2433,7 @@ mod tests {
                         .await?
                         .unwrap();
                     let batch_aggregations =
-                        FixedSize::get_batch_aggregations_for_collect_identifier::<
+                        FixedSize::get_batch_aggregations_for_collection_identifier::<
                             PRIO3_VERIFY_KEY_LENGTH,
                             Prio3Count,
                             _,

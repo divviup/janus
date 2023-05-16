@@ -3435,7 +3435,7 @@ impl<C: Clock> Transaction<'_, C> {
         batch_identifier: &Q::BatchIdentifier,
         aggregation_parameter: &A::AggregationParam,
     ) -> Result<Option<Batch<SEED_SIZE, Q, A>>, Error> {
-        let stmt: Statement = self
+        let stmt = self
             .prepare_cached(
                 "SELECT state, outstanding_aggregation_jobs FROM batches
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
@@ -3472,11 +3472,11 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         task_id: &TaskId,
     ) -> Result<Vec<Batch<SEED_SIZE, Q, A>>, Error> {
-        let stmt: Statement = self
+        let stmt = self
             .prepare_cached(
                 "SELECT batch_identifier, aggregation_param, state, outstanding_aggregation_jobs
-            FROM batches
-            WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+                FROM batches
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             )
             .await?;
         self.query(&stmt, &[/* task_id */ task_id.as_ref()])
@@ -4332,23 +4332,6 @@ pub mod models {
     where
         A::AggregationParam: Eq,
     {
-    }
-
-    impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Hash
-        for AggregationJob<SEED_SIZE, Q, A>
-    where
-        A::AggregationParam: Hash,
-    {
-        fn hash<H: Hasher>(&self, state: &mut H) {
-            self.task_id.hash(state);
-            self.aggregation_job_id.hash(state);
-            self.aggregation_parameter.hash(state);
-            self.batch_id.hash(state);
-            self.client_timestamp_interval.hash(state);
-            self.state.hash(state);
-            self.round.hash(state);
-            self.last_continue_request_hash.hash(state);
-        }
     }
 
     /// AggregationJobState represents the state of an aggregation job. It corresponds to the
@@ -5484,8 +5467,8 @@ pub mod models {
     impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
         for Batch<SEED_SIZE, Q, A>
     where
-        Q::BatchIdentifier: PartialEq,
         A::AggregationParam: PartialEq,
+        Q::BatchIdentifier: PartialEq,
     {
         fn eq(&self, other: &Self) -> bool {
             self.task_id == other.task_id
@@ -5499,8 +5482,8 @@ pub mod models {
     impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
         for Batch<SEED_SIZE, Q, A>
     where
-        Q::BatchIdentifier: Eq,
         A::AggregationParam: Eq,
+        Q::BatchIdentifier: Eq,
     {
     }
 
@@ -9388,7 +9371,7 @@ mod tests {
                 .await?;
 
                 let batch_aggregations =
-                    TimeInterval::get_batch_aggregations_for_collect_identifier::<
+                    TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         0,
                         dummy_vdaf::Vdaf,
                         _,
@@ -9433,7 +9416,7 @@ mod tests {
                     .await?;
 
                 let batch_aggregations =
-                    TimeInterval::get_batch_aggregations_for_collect_identifier::<
+                    TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         0,
                         dummy_vdaf::Vdaf,
                         _,

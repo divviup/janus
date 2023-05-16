@@ -1711,7 +1711,7 @@ impl VdafOps {
         req_bytes: &[u8],
     ) -> Result<(), Error>
     where
-        A::AggregationParam: Eq + PartialEq + Send + Sync + 'static,
+        A::AggregationParam: 'static + Send + Sync + PartialEq + Eq,
         A::AggregateShare: Send + Sync,
     {
         let req = Arc::new(CollectionReq::<Q>::get_decoded(req_bytes)?);
@@ -1958,7 +1958,7 @@ impl VdafOps {
                         })?;
 
                     let (batch_aggregations, _) = try_join!(
-                        Q::get_batch_aggregations_for_collect_identifier(
+                        Q::get_batch_aggregations_for_collection_identifier(
                             tx,
                             &task,
                             vdaf.as_ref(),
@@ -2268,7 +2268,7 @@ impl VdafOps {
                                 aggregate_share_req.aggregation_parameter(),
                             )?;
                             let (batch_aggregations, _) = try_join!(
-                                Q::get_batch_aggregations_for_collect_identifier(
+                                Q::get_batch_aggregations_for_collection_identifier(
                                     tx,
                                     &task,
                                     vdaf.as_ref(),

@@ -117,8 +117,8 @@ impl AccumulableQueryType for TimeInterval {
             .await
     }
 
-    fn to_batch_interval(collect_identifier: &Self::BatchIdentifier) -> Option<&Interval> {
-        Some(collect_identifier)
+    fn to_batch_interval(collection_identifier: &Self::BatchIdentifier) -> Option<&Interval> {
+        Some(collection_identifier)
     }
 
     fn downgrade_batch_identifier(
@@ -211,32 +211,32 @@ pub trait CollectableQueryType: AccumulableQueryType {
         query: &Query<Self>,
     ) -> Result<Option<Self::BatchIdentifier>, datastore::Error>;
 
-    /// Some query types (e.g. [`TimeInterval`]) can receive a batch identifier in collect requests
-    /// which refers to multiple batches. This method takes a batch identifier received in a collect
-    /// request and provides an iterator over the individual batches' identifiers.
+    /// Some query types (e.g. [`TimeInterval`]) can receive a batch identifier in collection
+    /// requests which refers to multiple batches. This method takes a batch identifier received in
+    /// a collection request and provides an iterator over the individual batches' identifiers.
     fn batch_identifiers_for_collection_identifier(
         _: &Task,
-        collect_identifier: &Self::BatchIdentifier,
+        collection_identifier: &Self::BatchIdentifier,
     ) -> Self::Iter;
 
-    /// Validates a collect identifier, per the boundary checks in
+    /// Validates a collection identifier, per the boundary checks in
     /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6>.
     fn validate_collection_identifier(
         task: &Task,
-        collect_identifier: &Self::BatchIdentifier,
+        collection_identifier: &Self::BatchIdentifier,
     ) -> bool;
 
-    /// Returns the number of client reports included in the given collect identifier, whether they
-    /// have been aggregated or not.
+    /// Returns the number of client reports included in the given collection identifier, whether
+    /// they have been aggregated or not.
     async fn count_client_reports<C: Clock>(
         tx: &Transaction<'_, C>,
         task: &Task,
-        collect_identifier: &Self::BatchIdentifier,
+        collection_identifier: &Self::BatchIdentifier,
     ) -> Result<u64, datastore::Error>;
 
-    /// Retrieves batch aggregations corresponding to all batches identified by the given collect
+    /// Retrieves batch aggregations corresponding to all batches identified by the given collection
     /// identifier.
-    async fn get_batch_aggregations_for_collect_identifier<
+    async fn get_batch_aggregations_for_collection_identifier<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
         C: Clock,
@@ -244,7 +244,7 @@ pub trait CollectableQueryType: AccumulableQueryType {
         tx: &Transaction<C>,
         task: &Task,
         vdaf: &A,
-        collect_identifier: &Self::BatchIdentifier,
+        collection_identifier: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
     ) -> Result<Vec<BatchAggregation<SEED_SIZE, Self, A>>, datastore::Error>
     where
@@ -252,7 +252,7 @@ pub trait CollectableQueryType: AccumulableQueryType {
         A::AggregateShare: Send + Sync,
     {
         Ok(try_join_all(
-            Self::batch_identifiers_for_collection_identifier(task, collect_identifier).map(
+            Self::batch_identifiers_for_collection_identifier(task, collection_identifier).map(
                 |batch_identifier| {
                     let (task_id, aggregation_param) = (*task.id(), aggregation_param.clone());
                     async move {
@@ -305,16 +305,16 @@ impl CollectableQueryType for TimeInterval {
 
     fn validate_collection_identifier(
         task: &Task,
-        collect_identifier: &Self::BatchIdentifier,
+        collection_identifier: &Self::BatchIdentifier,
     ) -> bool {
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
 
         // Batch interval should be greater than task's time precision
-        collect_identifier.duration().as_seconds() >= task.time_precision().as_seconds()
+        collection_identifier.duration().as_seconds() >= task.time_precision().as_seconds()
                 // Batch interval start must be a multiple of time precision
-                && collect_identifier.start().as_seconds_since_epoch() % task.time_precision().as_seconds() == 0
+                && collection_identifier.start().as_seconds_since_epoch() % task.time_precision().as_seconds() == 0
                 // Batch interval duration must be a multiple of time precision
-                && collect_identifier.duration().as_seconds() % task.time_precision().as_seconds() == 0
+                && collection_identifier.duration().as_seconds() % task.time_precision().as_seconds() == 0
     }
 
     async fn count_client_reports<C: Clock>(

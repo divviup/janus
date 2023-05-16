@@ -1494,8 +1494,8 @@ mod tests {
                     min_size_batch_id.unwrap(),
                     (),
                     BatchState::Open,
-                    4
-                )
+                    4,
+                ),
             ])
         );
     }

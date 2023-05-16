@@ -158,7 +158,7 @@ impl CollectionJobDriver {
                     // Read batch aggregations, and mark them as read-for-collection to avoid
                     // further aggregation.
                     let batch_aggregations: Vec<_> =
-                        Q::get_batch_aggregations_for_collect_identifier(
+                        Q::get_batch_aggregations_for_collection_identifier(
                             tx,
                             &task,
                             vdaf.as_ref(),

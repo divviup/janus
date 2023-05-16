@@ -118,7 +118,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
 
         // Compute batch identifiers first, since computing the batch identifier is fallible and
         // it's nicer not to have to unwind state modifications if we encounter an error.
-        let batch_identifiers: Vec<_> = info
+        let batch_identifiers = info
             .report_aggregations
             .iter()
             .map(|ra| {
@@ -128,7 +128,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                     ra.report_metadata().time(),
                 )
             })
-            .collect::<Result<_, _>>()?;
+            .collect::<Result<Vec<_>, _>>()?;
         assert_eq!(batch_identifiers.len(), info.report_aggregations.len());
 
         // Modify our state to record this aggregation job. (starting here, failure is not allowed)
@@ -150,12 +150,16 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
     /// to be unwritable due to a concurrent collection operation (aggregation into a collected
     /// batch is not allowed). These report aggregations will be written with a
     /// `Failed(BatchCollected)` state, and the associated report IDs will be returned.
-    pub async fn write<C: Clock>(
+    ///
+    /// A call to write, successful or not, does not change the internal state of the aggregation
+    /// job writer; calling write again will cause the same set of aggregation jobs to be written.
+    pub async fn write<C>(
         &self,
         tx: &Transaction<'_, C>,
         vdaf: Arc<A>,
     ) -> Result<HashSet<ReportId>, Error>
     where
+        C: Clock,
         A: Send + Sync,
         A::AggregationParam: PartialEq + Eq + Hash,
         A::PrepareState: Encode,
@@ -345,7 +349,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                     match op {
                         Operation::Put => {
                             // These operations must occur serially since report aggregation rows
-                            // have a foreign-key contrainst on the related aggregation job
+                            // have a foreign-key constraint on the related aggregation job
                             // existing. We could speed things up for initial writes by switching to
                             // DEFERRED constraints:
                             // https://www.postgresql.org/docs/current/sql-set-constraints.html
