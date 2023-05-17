@@ -86,7 +86,7 @@ macro_rules! supported_schema_versions {
 
 // List of schema versions that this version of Janus can safely run on. If any other schema
 // version is seen, [`Datastore::new`] fails.
-supported_schema_versions!(5);
+supported_schema_versions!(6);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -427,7 +427,11 @@ impl<C: Clock> Transaction<'_, C> {
                 /* vdaf */ &Json(task.vdaf()),
                 /* max_batch_query_count */
                 &i64::try_from(task.max_batch_query_count())?,
-                /* task_expiration */ &task.task_expiration().as_naive_date_time()?,
+                /* task_expiration */
+                &task
+                    .task_expiration()
+                    .map(Time::as_naive_date_time)
+                    .transpose()?,
                 /* report_expiry_age */
                 &task
                     .report_expiry_age()
@@ -822,7 +826,10 @@ impl<C: Clock> Transaction<'_, C> {
         let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
         let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
         let max_batch_query_count = row.get_bigint_and_convert("max_batch_query_count")?;
-        let task_expiration = Time::from_naive_date_time(&row.get("task_expiration"));
+        let task_expiration = row
+            .get::<_, Option<NaiveDateTime>>("task_expiration")
+            .as_ref()
+            .map(Time::from_naive_date_time);
         let report_expiry_age = row
             .get_nullable_bigint_and_convert("report_expiry_age")?
             .map(Duration::from_seconds);

@@ -13,7 +13,7 @@ use janus_interop_binaries::{
 };
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
-    Duration, TaskId, Time,
+    Duration, TaskId,
 };
 use prio::codec::Encode;
 use rand::random;
@@ -270,7 +270,6 @@ async fn run(
         "min_batch_size": 1,
         "time_precision": TIME_PRECISION,
         "collector_hpke_config": collector_hpke_config_encoded,
-        "task_expiration": Time::distant_future().as_seconds_since_epoch(),
     });
     if let Some(max_batch_size) = &max_batch_size {
         leader_add_task_request_body
@@ -323,7 +322,6 @@ async fn run(
         "min_batch_size": 1,
         "time_precision": TIME_PRECISION,
         "collector_hpke_config": collector_hpke_config_encoded,
-        "task_expiration": Time::distant_future().as_seconds_since_epoch(),
     });
     if let Some(max_batch_size) = &max_batch_size {
         helper_add_task_request_body
