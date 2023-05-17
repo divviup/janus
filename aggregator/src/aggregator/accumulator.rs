@@ -67,6 +67,11 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
         }
     }
 
+    /// Retrieves the aggregation parameter associated with this accumulator.
+    pub fn aggregation_parameter(&self) -> &A::AggregationParam {
+        &self.aggregation_parameter
+    }
+
     /// Update the in-memory accumulators with the provided output share and report timestamp.
     pub fn update(
         &mut self,

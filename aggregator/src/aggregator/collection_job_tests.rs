@@ -454,7 +454,7 @@ async fn collection_job_put_idempotence_time_interval() {
                     .await
                     .unwrap();
                 assert_eq!(collection_jobs.len(), 1);
-                assert_eq!(collection_jobs[0].collection_job_id(), &collection_job_id);
+                assert_eq!(collection_jobs[0].id(), &collection_job_id);
 
                 Ok(())
             })
@@ -573,7 +573,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch() {
                         .await
                         .unwrap();
                     assert_eq!(collection_jobs.len(), 1);
-                    assert_eq!(collection_jobs[0].collection_job_id(), &collection_job_id);
+                    assert_eq!(collection_jobs[0].id(), &collection_job_id);
                     assert!(
                         collection_jobs[0].batch_identifier().eq(&batch_id_1)
                             || collection_jobs[0].batch_identifier().eq(&batch_id_2)

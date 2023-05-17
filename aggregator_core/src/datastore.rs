@@ -2,9 +2,9 @@
 
 use self::models::{
     AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
-    AggregatorRole, BatchAggregation, CollectionJob, CollectionJobState, CollectionJobStateCode,
-    LeaderStoredReport, Lease, LeaseToken, OutstandingBatch, ReportAggregation,
-    ReportAggregationState, ReportAggregationStateCode, SqlInterval,
+    AggregatorRole, Batch, BatchAggregation, CollectionJob, CollectionJobState,
+    CollectionJobStateCode, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
+    ReportAggregation, ReportAggregationState, ReportAggregationStateCode, SqlInterval,
 };
 #[cfg(feature = "test-util")]
 use crate::VdafHasAggregationParameter;
@@ -86,7 +86,7 @@ macro_rules! supported_schema_versions {
 
 // List of schema versions that this version of Janus can safely run on. If any other schema
 // version is seen, [`Datastore::new`] fails.
-supported_schema_versions!(5);
+supported_schema_versions!(7);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -1453,8 +1453,8 @@ impl<C: Clock> Transaction<'_, C> {
                     WHERE excluded.client_timestamp = client_reports.client_timestamp",
             )
             .await?;
-        let rows_modified = self
-            .execute(
+        check_insert(
+            self.execute(
                 &stmt,
                 &[
                     /* task_id */ &task_id.get_encoded(),
@@ -1463,13 +1463,8 @@ impl<C: Clock> Transaction<'_, C> {
                     &report_share.metadata().time().as_naive_date_time()?,
                 ],
             )
-            .await?;
-
-        if rows_modified == 0 {
-            Err(Error::MutationTargetAlreadyExists)
-        } else {
-            Ok(())
-        }
+            .await?,
+        )
     }
 
     /// get_aggregation_job retrieves an aggregation job by ID.
@@ -1708,8 +1703,8 @@ impl<C: Clock> Transaction<'_, C> {
                 ON CONFLICT DO NOTHING",
             )
             .await?;
-        let rows_affected = self
-            .execute(
+        check_insert(
+            self.execute(
                 &stmt,
                 &[
                     /* task_id */ &aggregation_job.task_id().as_ref(),
@@ -1726,13 +1721,8 @@ impl<C: Clock> Transaction<'_, C> {
                     &aggregation_job.last_continue_request_hash(),
                 ],
             )
-            .await?;
-
-        if rows_affected == 0 {
-            return Err(Error::MutationTargetAlreadyExists);
-        }
-
-        Ok(())
+            .await?,
+        )
     }
 
     /// update_aggregation_job updates a stored aggregation job.
@@ -2389,6 +2379,8 @@ impl<C: Clock> Transaction<'_, C> {
         let state = match state {
             CollectionJobStateCode::Start => CollectionJobState::Start,
 
+            CollectionJobStateCode::Collectable => CollectionJobState::Collectable,
+
             CollectionJobStateCode::Finished => {
                 let report_count = u64::try_from(report_count.ok_or_else(|| {
                     Error::DbState(
@@ -2461,7 +2453,7 @@ impl<C: Clock> Transaction<'_, C> {
         self.execute(
             &stmt,
             &[
-                /* collection_job_id */ collection_job.collection_job_id().as_ref(),
+                /* collection_job_id */ collection_job.id().as_ref(),
                 /* task_id */ collection_job.task_id().as_ref(),
                 /* batch_identifier */ &collection_job.batch_identifier().get_encoded(),
                 /* batch_interval */ &batch_interval,
@@ -2475,11 +2467,11 @@ impl<C: Clock> Transaction<'_, C> {
         Ok(())
     }
 
-    /// acquire_incomplete_time_interval_collection_jobs retrieves & acquires the IDs of unclaimed
-    /// incomplete collection jobs. At most `maximum_acquire_count` jobs are acquired. The job is
-    /// acquired with a "lease" that will time out; the desired duration of the lease is a
-    /// parameter, and the lease expiration time is returned. Applies only to time-interval tasks.
-    pub async fn acquire_incomplete_time_interval_collection_jobs(
+    /// acquire_incomplete_collection_jobs retrieves & acquires the IDs of unclaimed incomplete
+    /// collection jobs. At most `maximum_acquire_count` jobs are acquired. The job is acquired with
+    /// a "lease" that will time out; the desired duration of the lease is a parameter, and the
+    /// lease expiration time is returned.
+    pub async fn acquire_incomplete_collection_jobs(
         &self,
         lease_duration: &StdDuration,
         maximum_acquire_count: usize,
@@ -2490,45 +2482,25 @@ impl<C: Clock> Transaction<'_, C> {
 
         let stmt = self
             .prepare_cached(
-                "
-WITH updated as (
-    UPDATE collection_jobs
-    SET lease_expiry = $1,
-        lease_token = gen_random_bytes(16),
-        lease_attempts = lease_attempts + 1
-    FROM tasks
-    WHERE collection_jobs.id IN (
-        SELECT collection_jobs.id FROM collection_jobs
-        -- Join on aggregation jobs with matching task ID, matching aggregation parameter, and
-        -- subsets of the batch interval
-        INNER JOIN aggregation_jobs
-            ON collection_jobs.aggregation_param = aggregation_jobs.aggregation_param
-            AND collection_jobs.task_id = aggregation_jobs.task_id
-            AND collection_jobs.batch_interval && aggregation_jobs.client_timestamp_interval
-        WHERE
-            -- Constraint for tasks table in FROM position
-            tasks.id = collection_jobs.task_id
-            -- Only return time interval collection jobs.
-            AND tasks.query_type ? 'TimeInterval'
-            -- Only acquire collection jobs in a non-terminal state.
-            AND collection_jobs.state = 'START'
-            -- Do not acquire collection jobs with an unexpired lease
-            AND collection_jobs.lease_expiry <= $2
-        GROUP BY collection_jobs.id
-        -- Do not acquire collection jobs where any associated aggregation jobs are not finished
-        HAVING bool_and(aggregation_jobs.state != 'IN_PROGRESS')
-        -- Honor maximum_acquire_count *after* winnowing down to runnable collection jobs
-        LIMIT $3
-    )
-    RETURNING tasks.task_id, tasks.query_type, tasks.vdaf, collection_jobs.collection_job_id,
-              collection_jobs.id, collection_jobs.lease_token, collection_jobs.lease_attempts
-)
-SELECT task_id, query_type, vdaf, collection_job_id, lease_token, lease_attempts FROM updated
--- TODO (#174): revisit collection job queueing behavior implied by this ORDER BY
-ORDER BY id DESC
-",
+                "UPDATE collection_jobs SET
+                    lease_expiry = $1,
+                    lease_token = gen_random_bytes(16),
+                    lease_attempts = lease_attempts + 1
+                FROM tasks
+                WHERE tasks.id = collection_jobs.task_id
+                  AND collection_jobs.id IN (
+                    SELECT collection_jobs.id FROM collection_jobs
+                    JOIN tasks on tasks.id = collection_jobs.task_id
+                    WHERE tasks.aggregator_role = 'LEADER'
+                      AND collection_jobs.state = 'COLLECTABLE'
+                      AND collection_jobs.lease_expiry <= $2
+                    FOR UPDATE SKIP LOCKED LIMIT $3)
+                RETURNING tasks.task_id, tasks.query_type, tasks.vdaf,
+                          collection_jobs.collection_job_id, collection_jobs.id,
+                          collection_jobs.lease_token, collection_jobs.lease_attempts",
             )
             .await?;
+
         self.query(
             &stmt,
             &[
@@ -2557,90 +2529,8 @@ ORDER BY id DESC
         .collect()
     }
 
-    /// acquire_incomplete_fixed_size_collection_jobs retrieves & acquires the IDs of unclaimed
-    /// incomplete collection jobs. At most `maximum_acquire_count` jobs are acquired. The job is
-    /// acquired with a "lease" that will time out; the desired duration of the lease is a
-    /// parameter, and the lease expiration time is returned. Applies only to fixed-size tasks.
-    pub async fn acquire_incomplete_fixed_size_collection_jobs(
-        &self,
-        lease_duration: &StdDuration,
-        maximum_acquire_count: usize,
-    ) -> Result<Vec<Lease<AcquiredCollectionJob>>, Error> {
-        let now = self.clock.now().as_naive_date_time()?;
-        let lease_expiry_time = add_naive_date_time_duration(&now, lease_duration)?;
-        let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
-
-        let stmt = self
-            .prepare_cached(
-                "
-WITH updated as (
-    UPDATE collection_jobs
-    SET lease_expiry = $1,
-        lease_token = gen_random_bytes(16),
-        lease_attempts = lease_attempts + 1
-    FROM tasks
-    WHERE collection_jobs.id IN (
-        SELECT collection_jobs.id FROM collection_jobs
-        -- Join on aggregation jobs with matching task ID, matching aggregation parameter, and
-        -- matching batch identifier.
-        INNER JOIN aggregation_jobs
-            ON collection_jobs.aggregation_param = aggregation_jobs.aggregation_param
-            AND collection_jobs.task_id = aggregation_jobs.task_id
-            AND collection_jobs.batch_identifier = aggregation_jobs.batch_id
-        WHERE
-            -- Constraint for tasks table in FROM position
-            tasks.id = collection_jobs.task_id
-            -- Only return fixed-size collection jobs.
-            AND tasks.query_type ? 'FixedSize'
-            -- Only acquire collection jobs in a non-terminal state.
-            AND collection_jobs.state = 'START'
-            -- Do not acquire collection jobs with an unexpired lease
-            AND collection_jobs.lease_expiry <= $2
-        GROUP BY collection_jobs.id
-        -- Do not acquire collection jobs where any associated aggregation jobs are not finished
-        HAVING bool_and(aggregation_jobs.state != 'IN_PROGRESS')
-        -- Honor maximum_acquire_count *after* winnowing down to runnable collection jobs
-        LIMIT $3
-    )
-    RETURNING tasks.task_id, tasks.query_type, tasks.vdaf, collection_jobs.collection_job_id,
-              collection_jobs.id, collection_jobs.lease_token, collection_jobs.lease_attempts
-)
-SELECT task_id, query_type, vdaf, collection_job_id, lease_token, lease_attempts FROM updated
--- TODO (#174): revisit collection job queueing behavior implied by this ORDER BY
-ORDER BY id DESC
-",
-            )
-            .await?;
-        self.query(
-            &stmt,
-            &[
-                /* lease_expiry */ &lease_expiry_time,
-                /* now */ &now,
-                /* limit */ &maximum_acquire_count,
-            ],
-        )
-        .await?
-        .into_iter()
-        .map(|row| {
-            let task_id = TaskId::get_decoded(row.get("task_id"))?;
-            let collection_job_id =
-                row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-            let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
-            let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
-            let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
-            let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
-            Ok(Lease::new(
-                AcquiredCollectionJob::new(task_id, collection_job_id, query_type, vdaf),
-                lease_expiry_time,
-                lease_token,
-                lease_attempts,
-            ))
-        })
-        .collect()
-    }
-
-    /// release_collection_job releases an acquired (via e.g. acquire_incomplete_collection_jobs) collect
-    /// job. It returns an error if the collection job has no current lease.
+    /// release_collection_job releases an acquired (via e.g. acquire_incomplete_collection_jobs)
+    /// collect job. It returns an error if the collection job has no current lease.
     pub async fn release_collection_job(
         &self,
         lease: &Lease<AcquiredCollectionJob>,
@@ -2703,7 +2593,9 @@ ORDER BY id DESC
 
                 (report_count, leader_aggregate_share, helper_aggregate_share)
             }
-            CollectionJobState::Abandoned | CollectionJobState::Deleted => (None, None, None),
+            CollectionJobState::Collectable
+            | CollectionJobState::Abandoned
+            | CollectionJobState::Deleted => (None, None, None),
         };
 
         let stmt = self
@@ -2725,7 +2617,7 @@ ORDER BY id DESC
                     /* report_count */ &report_count,
                     /* leader_aggregate_share */ &leader_aggregate_share,
                     /* helper_aggregate_share */ &helper_aggregate_share,
-                    /* collection_job_id */ &collection_job.collection_job_id().as_ref(),
+                    /* collection_job_id */ &collection_job.id().as_ref(),
                 ],
             )
             .await?,
@@ -2938,8 +2830,8 @@ ORDER BY id DESC
                 ON CONFLICT DO NOTHING",
             )
             .await?;
-        let rows_affected = self
-            .execute(
+        check_insert(
+            self.execute(
                 &stmt,
                 &[
                     /* task_id */ &batch_aggregation.task_id().as_ref(),
@@ -2959,12 +2851,8 @@ ORDER BY id DESC
                     /* checksum */ &batch_aggregation.checksum().get_encoded(),
                 ],
             )
-            .await?;
-
-        if rows_affected == 0 {
-            return Err(Error::MutationTargetAlreadyExists);
-        }
-        Ok(())
+            .await?,
+        )
     }
 
     /// Update an existing `batch_aggregations` row with the values from the provided batch
@@ -3472,6 +3360,163 @@ ORDER BY id DESC
         .transpose()
     }
 
+    /// Puts a `batch` into the datastore. Returns `MutationTargetAlreadyExists` if the batch is
+    /// already stored.
+    pub async fn put_batch<
+        const SEED_SIZE: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+    >(
+        &self,
+        batch: &Batch<SEED_SIZE, Q, A>,
+    ) -> Result<(), Error> {
+        let stmt = self
+            .prepare_cached(
+                "INSERT INTO batches
+                    (task_id, batch_identifier, aggregation_param, state,
+                    outstanding_aggregation_jobs)
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5)
+                ON CONFLICT DO NOTHING",
+            )
+            .await?;
+        check_insert(
+            self.execute(
+                &stmt,
+                &[
+                    /* task_id */ &batch.task_id().as_ref(),
+                    /* batch_identifier */ &batch.batch_identifier().get_encoded(),
+                    /* aggregation_param */ &batch.aggregation_parameter().get_encoded(),
+                    /* state */ &batch.state(),
+                    /* outstanding_aggregation_jobs */
+                    &i64::try_from(batch.outstanding_aggregation_jobs())?,
+                ],
+            )
+            .await?,
+        )
+    }
+
+    /// Updates a given `batch` in the datastore. Returns `MutationTargetNotFound` if no such batch
+    /// is currently stored.
+    pub async fn update_batch<
+        const SEED_SIZE: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+    >(
+        &self,
+        batch: &Batch<SEED_SIZE, Q, A>,
+    ) -> Result<(), Error> {
+        let stmt = self
+            .prepare_cached(
+                "UPDATE batches SET state = $1, outstanding_aggregation_jobs = $2
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $3)
+                  AND batch_identifier = $4
+                  AND aggregation_param = $5",
+            )
+            .await?;
+        check_single_row_mutation(
+            self.execute(
+                &stmt,
+                &[
+                    /* state */ &batch.state(),
+                    /* outstanding_aggregation_jobs */
+                    &i64::try_from(batch.outstanding_aggregation_jobs())?,
+                    /* task_id */ &batch.task_id().as_ref(),
+                    /* batch_identifier */ &batch.batch_identifier().get_encoded(),
+                    /* aggregation_param */ &batch.aggregation_parameter().get_encoded(),
+                ],
+            )
+            .await?,
+        )
+    }
+
+    /// Gets a given `batch` from the datastore, based on the primary key. Returns `None` if no such
+    /// batch is stored in the datastore.
+    pub async fn get_batch<
+        const SEED_SIZE: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+    >(
+        &self,
+        task_id: &TaskId,
+        batch_identifier: &Q::BatchIdentifier,
+        aggregation_parameter: &A::AggregationParam,
+    ) -> Result<Option<Batch<SEED_SIZE, Q, A>>, Error> {
+        let stmt = self
+            .prepare_cached(
+                "SELECT state, outstanding_aggregation_jobs FROM batches
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                  AND batch_identifier = $2
+                  AND aggregation_param = $3",
+            )
+            .await?;
+        self.query_opt(
+            &stmt,
+            &[
+                /* task_id */ task_id.as_ref(),
+                /* batch_identifier */ &batch_identifier.get_encoded(),
+                /* aggregation_param */ &aggregation_parameter.get_encoded(),
+            ],
+        )
+        .await?
+        .map(|row| {
+            Self::batch_from_row(
+                *task_id,
+                batch_identifier.clone(),
+                aggregation_parameter.clone(),
+                row,
+            )
+        })
+        .transpose()
+    }
+
+    #[cfg(feature = "test-util")]
+    pub async fn get_batches_for_task<
+        const SEED_SIZE: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+    >(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Vec<Batch<SEED_SIZE, Q, A>>, Error> {
+        let stmt = self
+            .prepare_cached(
+                "SELECT batch_identifier, aggregation_param, state, outstanding_aggregation_jobs
+                FROM batches
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+            )
+            .await?;
+        self.query(&stmt, &[/* task_id */ task_id.as_ref()])
+            .await?
+            .into_iter()
+            .map(|row| {
+                let batch_identifier =
+                    Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
+                let aggregation_parameter =
+                    A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
+                Self::batch_from_row(*task_id, batch_identifier, aggregation_parameter, row)
+            })
+            .collect()
+    }
+
+    fn batch_from_row<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>(
+        task_id: TaskId,
+        batch_identifier: Q::BatchIdentifier,
+        aggregation_parameter: A::AggregationParam,
+        row: Row,
+    ) -> Result<Batch<SEED_SIZE, Q, A>, Error> {
+        let state = row.get("state");
+        let outstanding_aggregation_jobs = row
+            .get::<_, i64>("outstanding_aggregation_jobs")
+            .try_into()?;
+        Ok(Batch::new(
+            task_id,
+            batch_identifier,
+            aggregation_parameter,
+            state,
+            outstanding_aggregation_jobs,
+        ))
+    }
+
     /// Deletes old client reports for a given task, that is, client reports whose timestamp is
     /// older than a given timestamp which are not included in any report aggregations.
     #[tracing::instrument(skip(self), err)]
@@ -3678,6 +3723,16 @@ ORDER BY id DESC
         )
         .await?;
         Ok(())
+    }
+}
+
+fn check_insert(row_count: u64) -> Result<(), Error> {
+    match row_count {
+        0 => Err(Error::MutationTargetAlreadyExists),
+        1 => Ok(()),
+        _ => panic!(
+            "insert which should have affected at most one row instead affected {row_count} rows"
+        ),
     }
 }
 
@@ -3976,8 +4031,11 @@ pub mod models {
         vdaf::{self, Aggregatable},
     };
     use rand::{distributions::Standard, prelude::Distribution};
-    use std::fmt::{Debug, Formatter};
-    use std::{fmt::Display, ops::RangeInclusive};
+    use std::{
+        fmt::{Debug, Display, Formatter},
+        hash::{Hash, Hasher},
+        ops::RangeInclusive,
+    };
 
     // We have to manually implement [Partial]Eq for a number of types because the derived
     // implementations don't play nice with generic fields, even if those fields are constrained to
@@ -4284,7 +4342,7 @@ pub mod models {
 
     /// AggregationJobState represents the state of an aggregation job. It corresponds to the
     /// AGGREGATION_JOB_STATE enum in the schema.
-    #[derive(Copy, Clone, Debug, PartialEq, Eq, ToSql, FromSql)]
+    #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, ToSql, FromSql)]
     #[postgres(name = "aggregation_job_state")]
     pub enum AggregationJobState {
         #[postgres(name = "IN_PROGRESS")]
@@ -4986,7 +5044,7 @@ pub mod models {
         }
 
         /// Returns the collection job ID associated with this collection job.
-        pub fn collection_job_id(&self) -> &CollectionJobId {
+        pub fn id(&self) -> &CollectionJobId {
             &self.collection_job_id
         }
 
@@ -5061,6 +5119,7 @@ pub mod models {
     #[derivative(Debug)]
     pub enum CollectionJobState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
         Start,
+        Collectable,
         Finished {
             /// The number of reports included in this collection job.
             report_count: u64,
@@ -5081,6 +5140,7 @@ pub mod models {
         pub fn collection_job_state_code(&self) -> CollectionJobStateCode {
             match self {
                 Self::Start => CollectionJobStateCode::Start,
+                Self::Collectable => CollectionJobStateCode::Collectable,
                 Self::Finished { .. } => CollectionJobStateCode::Finished,
                 Self::Abandoned => CollectionJobStateCode::Abandoned,
                 Self::Deleted => CollectionJobStateCode::Deleted,
@@ -5098,6 +5158,7 @@ pub mod models {
                 "{}",
                 match self {
                     Self::Start => "start",
+                    Self::Collectable => "collectable",
                     Self::Finished { .. } => "finished",
                     Self::Abandoned => "abandoned",
                     Self::Deleted => "deleted",
@@ -5146,6 +5207,8 @@ pub mod models {
     pub enum CollectionJobStateCode {
         #[postgres(name = "START")]
         Start,
+        #[postgres(name = "COLLECTABLE")]
+        Collectable,
         #[postgres(name = "FINISHED")]
         Finished,
         #[postgres(name = "ABANDONED")]
@@ -5320,6 +5383,130 @@ pub mod models {
         }
     }
 
+    /// Represents the state of a `Batch`.
+    #[derive(Copy, Clone, Debug, FromSql, ToSql, PartialEq, Eq, Hash)]
+    #[postgres(name = "batch_state")]
+    pub enum BatchState {
+        /// This batch can accept the creation of additional aggregation jobs.
+        #[postgres(name = "OPEN")]
+        Open,
+        /// This batch can accept the creation of additional aggregation jobs, but will transition
+        /// to state `CLOSED` once there are no outstanding aggregation jobs remaining.
+        #[postgres(name = "CLOSING")]
+        Closing,
+        /// This batch can no longer accept the creation of additional aggregation jobs.
+        #[postgres(name = "CLOSED")]
+        Closed,
+    }
+
+    /// Represents the state of a given batch (and aggregation parameter).
+
+    #[derive(Clone, Debug)]
+    pub struct Batch<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> {
+        task_id: TaskId,
+        batch_identifier: Q::BatchIdentifier,
+        aggregation_parameter: A::AggregationParam,
+        state: BatchState,
+        outstanding_aggregation_jobs: u64,
+    }
+
+    impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
+        Batch<SEED_SIZE, Q, A>
+    {
+        /// Creates a new [`Batch`].
+        pub fn new(
+            task_id: TaskId,
+            batch_identifier: Q::BatchIdentifier,
+            aggregation_parameter: A::AggregationParam,
+            state: BatchState,
+            outstanding_aggregation_jobs: u64,
+        ) -> Self {
+            Self {
+                task_id,
+                batch_identifier,
+                aggregation_parameter,
+                state,
+                outstanding_aggregation_jobs,
+            }
+        }
+
+        /// Gets the task ID associated with this batch.
+        pub fn task_id(&self) -> &TaskId {
+            &self.task_id
+        }
+
+        /// Gets the batch identifier associated with this batch.
+        pub fn batch_identifier(&self) -> &Q::BatchIdentifier {
+            &self.batch_identifier
+        }
+
+        /// Gets the aggregation parameter associated with this batch.
+        pub fn aggregation_parameter(&self) -> &A::AggregationParam {
+            &self.aggregation_parameter
+        }
+
+        /// Gets the state associated with this batch.
+        pub fn state(&self) -> &BatchState {
+            &self.state
+        }
+
+        /// Returns a new batch equivalent to the current batch, but with the given state.
+        pub fn with_state(self, state: BatchState) -> Self {
+            Self { state, ..self }
+        }
+
+        /// Gets the count of outstanding aggregation jobs associated with this batch.
+        pub fn outstanding_aggregation_jobs(&self) -> u64 {
+            self.outstanding_aggregation_jobs
+        }
+
+        /// Returns a new batch equivalent to the current batch, but with the given count of
+        /// outstanding aggregation jobs.
+        pub fn with_outstanding_aggregation_jobs(self, outstanding_aggregation_jobs: u64) -> Self {
+            Self {
+                outstanding_aggregation_jobs,
+                ..self
+            }
+        }
+    }
+
+    impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
+        for Batch<SEED_SIZE, Q, A>
+    where
+        A::AggregationParam: PartialEq,
+        Q::BatchIdentifier: PartialEq,
+    {
+        fn eq(&self, other: &Self) -> bool {
+            self.task_id == other.task_id
+                && self.batch_identifier == other.batch_identifier
+                && self.aggregation_parameter == other.aggregation_parameter
+                && self.state == other.state
+                && self.outstanding_aggregation_jobs == other.outstanding_aggregation_jobs
+        }
+    }
+
+    impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
+        for Batch<SEED_SIZE, Q, A>
+    where
+        A::AggregationParam: Eq,
+        Q::BatchIdentifier: Eq,
+    {
+    }
+
+    impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Hash
+        for Batch<SEED_SIZE, Q, A>
+    where
+        A::AggregationParam: Hash,
+    {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.task_id.hash(state);
+            self.batch_identifier.hash(state);
+            self.aggregation_parameter.hash(state);
+            self.state.hash(state);
+            self.outstanding_aggregation_jobs.hash(state);
+        }
+    }
+
     /// The SQL timestamp epoch, midnight UTC on 2000-01-01.
     const SQL_EPOCH_TIME: Time = Time::from_seconds_since_epoch(946_684_800);
 
@@ -5458,9 +5645,9 @@ mod tests {
         datastore::{
             models::{
                 AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
-                AggregationJobState, BatchAggregation, BatchAggregationState, CollectionJob,
-                CollectionJobState, LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
-                ReportAggregationState, SqlInterval,
+                AggregationJobState, Batch, BatchAggregation, BatchAggregationState, BatchState,
+                CollectionJob, CollectionJobState, LeaderStoredReport, Lease, OutstandingBatch,
+                ReportAggregation, ReportAggregationState, SqlInterval,
             },
             schema_versions_template,
             test_util::{
@@ -7862,7 +8049,7 @@ mod tests {
                 let first_collection_job_again = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &vdaf,
-                        first_collection_job.collection_job_id(),
+                        first_collection_job.id(),
                     )
                     .await
                     .unwrap()
@@ -7872,7 +8059,7 @@ mod tests {
                 let second_collection_job_again = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &vdaf,
-                        second_collection_job.collection_job_id(),
+                        second_collection_job.id(),
                     )
                     .await
                     .unwrap()
@@ -7911,7 +8098,7 @@ mod tests {
                 let updated_first_collection_job = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &vdaf,
-                        first_collection_job.collection_job_id(),
+                        first_collection_job.id(),
                     )
                     .await
                     .unwrap()
@@ -7980,7 +8167,7 @@ mod tests {
                 let abandoned_collection_job_again = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &vdaf,
-                        abandoned_collection_job.collection_job_id(),
+                        abandoned_collection_job.id(),
                     )
                     .await?
                     .unwrap();
@@ -8006,7 +8193,7 @@ mod tests {
                 let abandoned_collection_job_again = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &vdaf,
-                        abandoned_collection_job.collection_job_id(),
+                        abandoned_collection_job.id(),
                     )
                     .await?
                     .unwrap();
@@ -8014,7 +8201,7 @@ mod tests {
                 let deleted_collection_job_again = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &vdaf,
-                        deleted_collection_job.collection_job_id(),
+                        deleted_collection_job.id(),
                     )
                     .await?
                     .unwrap();
@@ -8043,6 +8230,7 @@ mod tests {
     #[derive(Copy, Clone)]
     enum CollectionJobTestCaseState {
         Start,
+        Collectable,
         Finished,
         Deleted,
         Abandoned,
@@ -8105,6 +8293,9 @@ mod tests {
                         test_case.agg_param,
                         match test_case.state {
                             CollectionJobTestCaseState::Start => CollectionJobState::Start,
+                            CollectionJobTestCaseState::Collectable => {
+                                CollectionJobState::Collectable
+                            }
                             CollectionJobTestCaseState::Finished => CollectionJobState::Finished {
                                 report_count: 1,
                                 encrypted_helper_aggregate_share: HpkeCiphertext::new(
@@ -8119,7 +8310,7 @@ mod tests {
                         },
                     );
                     tx.put_collection_job(&collection_job).await?;
-                    test_case.collection_job_id = Some(*collection_job.collection_job_id());
+                    test_case.collection_job_id = Some(*collection_job.id());
                 }
 
                 Ok(test_case)
@@ -8140,19 +8331,12 @@ mod tests {
             let test_case = test_case.clone();
             let clock = clock.clone();
             Box::pin(async move {
-                let time_interval_leases = tx
-                    .acquire_incomplete_time_interval_collection_jobs(
-                        &StdDuration::from_secs(100),
-                        10,
-                    )
-                    .await?;
-                let fixed_size_leases = tx
-                    .acquire_incomplete_fixed_size_collection_jobs(&StdDuration::from_secs(100), 10)
+                let leases = tx
+                    .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
                     .await?;
 
-                let mut leased_collection_jobs: Vec<_> = time_interval_leases
+                let mut leased_collection_jobs: Vec<_> = leases
                     .iter()
-                    .chain(fixed_size_leases.iter())
                     .map(|lease| (lease.leased().clone(), *lease.lease_expiry_time()))
                     .collect();
                 leased_collection_jobs.sort();
@@ -8178,10 +8362,7 @@ mod tests {
 
                 assert_eq!(leased_collection_jobs, expected_collection_jobs);
 
-                Ok(time_interval_leases
-                    .into_iter()
-                    .chain(fixed_size_leases.into_iter())
-                    .collect())
+                Ok(leases)
             })
         })
         .await
@@ -8235,7 +8416,7 @@ mod tests {
             batch_identifier: batch_interval,
             agg_param: AggregationParam(0),
             collection_job_id: None,
-            state: CollectionJobTestCaseState::Start,
+            state: CollectionJobTestCaseState::Collectable,
         }]);
 
         let collection_job_leases = run_collection_job_acquire_test_case(
@@ -8258,10 +8439,7 @@ mod tests {
                     // Try to re-acquire collection jobs. Nothing should happen because the lease is still
                     // valid.
                     assert!(tx
-                        .acquire_incomplete_time_interval_collection_jobs(
-                            &StdDuration::from_secs(100),
-                            10
-                        )
+                        .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
                         .await
                         .unwrap()
                         .is_empty());
@@ -8272,10 +8450,7 @@ mod tests {
                         .unwrap();
 
                     let reacquired_leases = tx
-                        .acquire_incomplete_time_interval_collection_jobs(
-                            &StdDuration::from_secs(100),
-                            10,
-                        )
+                        .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
                         .await
                         .unwrap();
                     let reacquired_jobs: Vec<_> = reacquired_leases
@@ -8305,10 +8480,7 @@ mod tests {
             Box::pin(async move {
                 // Re-acquire the jobs whose lease should have lapsed.
                 let acquired_jobs = tx
-                    .acquire_incomplete_time_interval_collection_jobs(
-                        &StdDuration::from_secs(100),
-                        10,
-                    )
+                    .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
                     .await
                     .unwrap();
 
@@ -8376,7 +8548,7 @@ mod tests {
                     batch_identifier: batch_id,
                     agg_param: AggregationParam(0),
                     collection_job_id: None,
-                    state: CollectionJobTestCaseState::Start,
+                    state: CollectionJobTestCaseState::Collectable,
                 }]),
             },
         )
@@ -8389,10 +8561,7 @@ mod tests {
                     // Try to re-acquire collection jobs. Nothing should happen because the lease is still
                     // valid.
                     assert!(tx
-                        .acquire_incomplete_fixed_size_collection_jobs(
-                            &StdDuration::from_secs(100),
-                            10,
-                        )
+                        .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10,)
                         .await
                         .unwrap()
                         .is_empty());
@@ -8403,10 +8572,7 @@ mod tests {
                         .unwrap();
 
                     let reacquired_leases = tx
-                        .acquire_incomplete_fixed_size_collection_jobs(
-                            &StdDuration::from_secs(100),
-                            10,
-                        )
+                        .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
                         .await
                         .unwrap();
                     let reacquired_jobs: Vec<_> = reacquired_leases
@@ -8436,7 +8602,7 @@ mod tests {
             Box::pin(async move {
                 // Re-acquire the jobs whose lease should have lapsed.
                 let acquired_jobs = tx
-                    .acquire_incomplete_fixed_size_collection_jobs(&StdDuration::from_secs(100), 10)
+                    .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
                     .await
                     .unwrap();
 
@@ -8851,7 +9017,7 @@ mod tests {
                 batch_identifier: batch_interval,
                 agg_param: AggregationParam(0),
                 collection_job_id: None,
-                state: CollectionJobTestCaseState::Start,
+                state: CollectionJobTestCaseState::Collectable,
             },
             CollectionJobTestCase::<TimeInterval> {
                 should_be_acquired: true,
@@ -8863,7 +9029,7 @@ mod tests {
                 .unwrap(),
                 agg_param: AggregationParam(1),
                 collection_job_id: None,
-                state: CollectionJobTestCaseState::Start,
+                state: CollectionJobTestCaseState::Collectable,
             },
         ]);
 
@@ -8887,19 +9053,13 @@ mod tests {
                 // Acquire a single collection job, twice. Each call should yield one job. We don't
                 // care what order they are acquired in.
                 let mut acquired_collection_jobs = tx
-                    .acquire_incomplete_time_interval_collection_jobs(
-                        &StdDuration::from_secs(100),
-                        1,
-                    )
+                    .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 1)
                     .await?;
                 assert_eq!(acquired_collection_jobs.len(), 1);
 
                 acquired_collection_jobs.extend(
-                    tx.acquire_incomplete_time_interval_collection_jobs(
-                        &StdDuration::from_secs(100),
-                        1,
-                    )
-                    .await?,
+                    tx.acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 1)
+                        .await?,
                 );
 
                 assert_eq!(acquired_collection_jobs.len(), 2);
@@ -9062,10 +9222,7 @@ mod tests {
             Box::pin(async move {
                 // No collection jobs should be acquired because none of them are in the START state
                 let acquired_collection_jobs = tx
-                    .acquire_incomplete_time_interval_collection_jobs(
-                        &StdDuration::from_secs(100),
-                        10,
-                    )
+                    .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 10)
                     .await?;
                 assert!(acquired_collection_jobs.is_empty());
 
@@ -9220,7 +9377,7 @@ mod tests {
                 .await?;
 
                 let batch_aggregations =
-                    TimeInterval::get_batch_aggregations_for_collect_identifier::<
+                    TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         0,
                         dummy_vdaf::Vdaf,
                         _,
@@ -9265,7 +9422,7 @@ mod tests {
                     .await?;
 
                 let batch_aggregations =
-                    TimeInterval::get_batch_aggregations_for_collect_identifier::<
+                    TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         0,
                         dummy_vdaf::Vdaf,
                         _,
@@ -9731,6 +9888,100 @@ mod tests {
             .await
             .unwrap();
         assert!(outstanding_batches.is_empty());
+    }
+
+    #[rstest_reuse::apply(schema_versions_template)]
+    #[tokio::test]
+    async fn roundtrip_batch(ephemeral_datastore: EphemeralDatastore) {
+        install_test_trace_subscriber();
+
+        let clock = MockClock::default();
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
+
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                let want_batch = Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                    random(),
+                    random(),
+                    AggregationParam(2),
+                    BatchState::Closing,
+                    1,
+                );
+
+                tx.put_task(
+                    &TaskBuilder::new(
+                        task::QueryType::FixedSize { max_batch_size: 10 },
+                        VdafInstance::Fake,
+                        Role::Leader,
+                    )
+                    .with_id(*want_batch.task_id())
+                    .build(),
+                )
+                .await?;
+                tx.put_batch(&want_batch).await?;
+
+                // Try reading the batch back, and verify that modifying any of the primary key
+                // attributes causes None to be returned.
+                assert_eq!(
+                    tx.get_batch(
+                        want_batch.task_id(),
+                        want_batch.batch_identifier(),
+                        want_batch.aggregation_parameter()
+                    )
+                    .await?
+                    .as_ref(),
+                    Some(&want_batch)
+                );
+                assert_eq!(
+                    tx.get_batch::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        &random(),
+                        want_batch.batch_identifier(),
+                        want_batch.aggregation_parameter()
+                    )
+                    .await?,
+                    None
+                );
+                assert_eq!(
+                    tx.get_batch::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        want_batch.task_id(),
+                        &random(),
+                        want_batch.aggregation_parameter()
+                    )
+                    .await?,
+                    None
+                );
+                assert_eq!(
+                    tx.get_batch::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        want_batch.task_id(),
+                        want_batch.batch_identifier(),
+                        &AggregationParam(3)
+                    )
+                    .await?,
+                    None
+                );
+
+                // Update the batch, then read it again, verifying that the changes are reflected.
+                let want_batch = want_batch
+                    .with_state(BatchState::Closed)
+                    .with_outstanding_aggregation_jobs(0);
+                tx.update_batch(&want_batch).await?;
+
+                assert_eq!(
+                    tx.get_batch(
+                        want_batch.task_id(),
+                        want_batch.batch_identifier(),
+                        want_batch.aggregation_parameter()
+                    )
+                    .await?
+                    .as_ref(),
+                    Some(&want_batch)
+                );
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
     }
 
     #[async_trait]
@@ -10752,11 +11003,7 @@ mod tests {
                 let outstanding_batch_id =
                     Q::write_outstanding_batch(tx, task.id(), &batch_identifier).await;
 
-                return (
-                    Some(*collection_job.collection_job_id()),
-                    None,
-                    outstanding_batch_id,
-                );
+                return (Some(*collection_job.id()), None, outstanding_batch_id);
             } else {
                 let aggregate_share_job = AggregateShareJob::new(
                     *task.id(),
@@ -11097,7 +11344,7 @@ mod tests {
                         .await
                         .unwrap()
                         .into_iter()
-                        .map(|collection_job| *collection_job.collection_job_id());
+                        .map(|collection_job| *collection_job.id());
                     let helper_time_interval_collection_job_ids = tx
                         .get_collection_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
                             &vdaf,
@@ -11106,7 +11353,7 @@ mod tests {
                         .await
                         .unwrap()
                         .into_iter()
-                        .map(|collection_job| *collection_job.collection_job_id());
+                        .map(|collection_job| *collection_job.id());
                     let leader_fixed_size_collection_job_ids = tx
                         .get_collection_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
                             &vdaf,
@@ -11115,7 +11362,7 @@ mod tests {
                         .await
                         .unwrap()
                         .into_iter()
-                        .map(|collection_job| *collection_job.collection_job_id());
+                        .map(|collection_job| *collection_job.id());
                     let helper_fixed_size_collection_job_ids = tx
                         .get_collection_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
                             &vdaf,
@@ -11124,7 +11371,7 @@ mod tests {
                         .await
                         .unwrap()
                         .into_iter()
-                        .map(|collection_job| *collection_job.collection_job_id());
+                        .map(|collection_job| *collection_job.id());
                     let other_task_collection_job_ids = tx
                         .get_collection_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
                             &vdaf,
@@ -11133,7 +11380,7 @@ mod tests {
                         .await
                         .unwrap()
                         .into_iter()
-                        .map(|collection_job| *collection_job.collection_job_id());
+                        .map(|collection_job| *collection_job.id());
                     let got_collection_job_ids = leader_time_interval_collection_job_ids
                         .chain(helper_time_interval_collection_job_ids)
                         .chain(leader_fixed_size_collection_job_ids)
