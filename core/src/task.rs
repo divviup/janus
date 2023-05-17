@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
+use http::header::HeaderValue;
 use rand::{distributions::Standard, prelude::Distribution};
 use reqwest::Url;
 use ring::constant_time;
@@ -550,9 +551,12 @@ impl AsRef<[u8]> for AuthenticationToken {
     }
 }
 
-impl From<Vec<u8>> for AuthenticationToken {
-    fn from(token: Vec<u8>) -> Self {
-        Self(token)
+impl TryFrom<Vec<u8>> for AuthenticationToken {
+    type Error = anyhow::Error;
+
+    fn try_from(token: Vec<u8>) -> Result<Self, anyhow::Error> {
+        HeaderValue::try_from(token.as_slice())?;
+        Ok(Self(token))
     }
 }
 

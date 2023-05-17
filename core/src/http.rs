@@ -34,7 +34,7 @@ pub fn extract_bearer_token(conn: &Conn) -> Result<Option<AuthenticationToken>, 
             let decoded = STANDARD
                 .decode(received_token)
                 .context("bearer token cannot be decoded from Base64")?;
-            return Ok(Some(AuthenticationToken::from(decoded)));
+            return Ok(Some(AuthenticationToken::try_from(decoded)?));
         } else {
             return Err(anyhow!("authorization header value is not a bearer token"));
         }

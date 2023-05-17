@@ -1,13 +1,16 @@
 //! This crate implements the Janus Aggregator API.
 
 use crate::models::{GetTaskIdsResp, PostTaskReq};
+use async_trait::async_trait;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
     datastore::{self, Datastore},
     task::Task,
     SecretBytes,
 };
 use janus_core::{
-    hpke::generate_hpke_config_and_private_key, http::extract_bearer_token, time::Clock,
+    hpke::generate_hpke_config_and_private_key, http::extract_bearer_token,
+    task::AuthenticationToken, time::Clock,
 };
 use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, Role, TaskId, Time};
 use models::{GetTaskMetricsResp, TaskResp};
@@ -106,21 +109,100 @@ async fn get_task_ids<C: Clock>(
     ))
 }
 
+/// A simple error type that holds a message and an HTTP status. This can be used as a [`Handler`].
+struct Error {
+    message: String,
+    status: Status,
+}
+
+impl Error {
+    fn new(message: String, status: Status) -> Self {
+        Self { message, status }
+    }
+}
+
+#[async_trait]
+impl Handler for Error {
+    async fn run(&self, conn: Conn) -> Conn {
+        conn.with_body(self.message.clone())
+            .with_status(self.status)
+            .halt()
+    }
+}
+
 async fn post_task<C: Clock>(
     _: &mut Conn,
     (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PostTaskReq>),
-) -> Result<impl Handler, Status> {
-    let vdaf_verify_keys = Vec::from([SecretBytes::new(
-        thread_rng()
-            .sample_iter(Standard)
-            .take(req.vdaf.verify_key_length())
-            .collect(),
-    )]);
+) -> Result<impl Handler, Error> {
+    let task_id = req.task_id.unwrap_or_else(random);
+    let vdaf_verify_keys = if let Some(encoded) = req.vdaf_verify_key.as_ref() {
+        let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|err| {
+            Error::new(
+                format!("Invalid base64 value for vdaf_verify_key: {err}"),
+                Status::BadRequest,
+            )
+        })?;
+        if bytes.len() != req.vdaf.verify_key_length() {
+            return Err(Error::new(
+                format!(
+                    "Wrong VDAF verify key length, expected {}, got {}",
+                    req.vdaf.verify_key_length(),
+                    bytes.len()
+                ),
+                Status::BadRequest,
+            ));
+        }
+        Vec::from([SecretBytes::new(bytes)])
+    } else {
+        Vec::from([SecretBytes::new(
+            thread_rng()
+                .sample_iter(Standard)
+                .take(req.vdaf.verify_key_length())
+                .collect(),
+        )])
+    };
     let task_expiration = req.task_expiration.map(Time::from_seconds_since_epoch);
     let time_precision = Duration::from_seconds(req.time_precision);
-    let collector_auth_tokens = match req.role {
-        Role::Leader => Vec::from([random()]),
-        _ => Vec::new(),
+    let aggregator_auth_tokens = if let Some(encoded) = req.aggregator_auth_token.as_ref() {
+        let token_bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|err| {
+            Error::new(
+                format!("Invalid base64 value for aggregator_auth_token: {err}"),
+                Status::BadRequest,
+            )
+        })?;
+        Vec::from([AuthenticationToken::try_from(token_bytes).map_err(|_| {
+            Error::new(
+                "Invalid HTTP header value in aggregator_auth_token".to_string(),
+                Status::BadRequest,
+            )
+        })?])
+    } else {
+        Vec::from([random()])
+    };
+    let collector_auth_tokens = match (req.role, req.collector_auth_token) {
+        (Role::Leader, None) => Vec::from([random()]),
+        (Role::Leader, Some(encoded)) => {
+            let token_bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|err| {
+                Error::new(
+                    format!("Invalid base64 value for collector_auth_token: {err}"),
+                    Status::BadRequest,
+                )
+            })?;
+            Vec::from([AuthenticationToken::try_from(token_bytes).map_err(|_| {
+                Error::new(
+                    "Invalid HTTP header value in collector_auth_token".to_string(),
+                    Status::BadRequest,
+                )
+            })?])
+        }
+        (Role::Helper, None) => Vec::new(),
+        (Role::Helper, Some(_)) => {
+            return Err(Error::new(
+                "Cannot set collector_auth_token in a helper task".to_string(),
+                Status::BadRequest,
+            ))
+        }
+        _ => return Err(Error::new("Invalid role".to_string(), Status::BadRequest)),
     };
     let hpke_keys = Vec::from([generate_hpke_config_and_private_key(
         random(),
@@ -131,7 +213,7 @@ async fn post_task<C: Clock>(
 
     let task = Arc::new(
         Task::new(
-            /* task_id */ random(),
+            /* task_id */ task_id,
             /* aggregator_endpoints */ vec![req.leader_endpoint, req.helper_endpoint],
             /* query_type */ req.query_type,
             /* vdaf */ req.vdaf,
@@ -146,11 +228,16 @@ async fn post_task<C: Clock>(
             /* tolerable_clock_skew */
             Duration::from_seconds(60), // 1 minute,
             /* collector_hpke_config */ req.collector_hpke_config,
-            /* aggregator_auth_tokens */ Vec::from([random()]),
+            /* aggregator_auth_tokens */ aggregator_auth_tokens,
             /* collector_auth_tokens */ collector_auth_tokens,
             /* hpke_keys */ hpke_keys,
         )
-        .map_err(|_| Status::BadRequest)?,
+        .map_err(|err| {
+            Error::new(
+                format!("Error constructing task: {err}"),
+                Status::BadRequest,
+            )
+        })?,
     );
 
     ds.run_tx_with_name("post_task", |tx| {
@@ -160,7 +247,10 @@ async fn post_task<C: Clock>(
     .await
     .map_err(|err| {
         error!(err = %err, "Database transaction error");
-        Status::InternalServerError
+        Error::new(
+            "Error storing task".to_string(),
+            Status::InternalServerError,
+        )
     })?;
 
     Ok(Json(TaskResp::from(task.as_ref())))
@@ -247,16 +337,20 @@ mod models {
 
     #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
     pub(crate) struct PostTaskReq {
+        pub(crate) task_id: Option<TaskId>,
         pub(crate) leader_endpoint: Url,
         pub(crate) helper_endpoint: Url,
         pub(crate) query_type: QueryType,
         pub(crate) vdaf: VdafInstance,
         pub(crate) role: Role,
+        pub(crate) vdaf_verify_key: Option<String>,
         pub(crate) max_batch_query_count: u64,
         pub(crate) task_expiration: Option<u64>, // seconds since UNIX epoch
         pub(crate) min_batch_size: u64,
         pub(crate) time_precision: u64, // seconds
         pub(crate) collector_hpke_config: HpkeConfig,
+        pub(crate) aggregator_auth_token: Option<String>,
+        pub(crate) collector_auth_token: Option<String>,
     }
 
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -374,7 +468,10 @@ mod tests {
         models::{GetTaskIdsResp, GetTaskMetricsResp, PostTaskReq, TaskResp},
         Config,
     };
-    use base64::{engine::general_purpose::STANDARD, Engine};
+    use base64::{
+        engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+        Engine,
+    };
     use futures::future::try_join_all;
     use janus_aggregator_core::{
         datastore::{
@@ -400,7 +497,7 @@ mod tests {
         query_type::TimeInterval, AggregationJobRound, Duration, HpkeAeadId, HpkeConfig,
         HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Interval, Role, TaskId, Time,
     };
-    use rand::random;
+    use rand::{distributions::Standard, random, thread_rng, Rng};
     use serde_test::{assert_ser_tokens, assert_tokens, Token};
     use std::{iter, sync::Arc};
     use trillium::{Handler, Status};
@@ -511,19 +608,22 @@ mod tests {
         );
     }
 
+    /// Test the POST /tasks endpoint, with none of the optional fields provided.
     #[tokio::test]
-    async fn post_task() {
+    async fn post_task_no_optional_fields() {
         // Setup: create a datastore & handler.
         let (handler, ephemeral_datastore) = setup_api_test().await;
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         // Verify: posting a task creates a new task which matches the request.
         let req = PostTaskReq {
+            task_id: None,
             leader_endpoint: "http://leader.endpoint".try_into().unwrap(),
             helper_endpoint: "http://helper.endpoint".try_into().unwrap(),
             query_type: QueryType::TimeInterval,
             vdaf: VdafInstance::Prio3Count,
             role: Role::Leader,
+            vdaf_verify_key: None,
             max_batch_query_count: 12,
             task_expiration: Some(12345),
             min_batch_size: 223,
@@ -536,6 +636,8 @@ mod tests {
             )
             .config()
             .clone(),
+            aggregator_auth_token: None,
+            collector_auth_token: None,
         };
         let mut conn = post("/tasks")
             .with_request_body(serde_json::to_vec(&req).unwrap())
@@ -599,6 +701,112 @@ mod tests {
             Status::Unauthorized,
             "",
         );
+    }
+
+    /// Test the POST /tasks endpoint, with all of the optional fields provided.
+    #[tokio::test]
+    async fn post_task_all_optional_fields() {
+        // Setup: create a datastore & handler.
+        let (handler, ephemeral_datastore) = setup_api_test().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+
+        let vdaf_verify_key =
+            SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
+        let aggregator_auth_token = random::<AuthenticationToken>();
+        let collector_auth_token = random::<AuthenticationToken>();
+
+        // Verify: posting a task creates a new task which matches the request.
+        let req = PostTaskReq {
+            task_id: Some(random()),
+            leader_endpoint: "http://leader.endpoint".try_into().unwrap(),
+            helper_endpoint: "http://helper.endpoint".try_into().unwrap(),
+            query_type: QueryType::TimeInterval,
+            vdaf: VdafInstance::Prio3Count,
+            role: Role::Leader,
+            vdaf_verify_key: Some(URL_SAFE_NO_PAD.encode(&vdaf_verify_key)),
+            max_batch_query_count: 12,
+            task_expiration: Some(12345),
+            min_batch_size: 223,
+            time_precision: 62,
+            collector_hpke_config: generate_hpke_config_and_private_key(
+                random(),
+                HpkeKemId::X25519HkdfSha256,
+                HpkeKdfId::HkdfSha256,
+                HpkeAeadId::Aes128Gcm,
+            )
+            .config()
+            .clone(),
+            aggregator_auth_token: Some(URL_SAFE_NO_PAD.encode(&aggregator_auth_token)),
+            collector_auth_token: Some(URL_SAFE_NO_PAD.encode(&collector_auth_token)),
+        };
+        let mut conn = post("/tasks")
+            .with_request_body(serde_json::to_vec(&req).unwrap())
+            .with_request_header(
+                "Authorization",
+                format!("Bearer {}", STANDARD.encode(AUTH_TOKEN)),
+            )
+            .run_async(&handler)
+            .await;
+        assert_status!(conn, Status::Ok);
+        let got_task_resp: TaskResp = serde_json::from_slice(
+            &conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+
+        let got_task = ds
+            .run_tx(|tx| {
+                let got_task_resp = got_task_resp.clone();
+                Box::pin(async move { tx.get_task(&got_task_resp.task_id).await })
+            })
+            .await
+            .unwrap()
+            .expect("task was not created");
+
+        // Verify that the task written to the datastore matches the request...
+        assert_eq!(req.task_id.as_ref().unwrap(), got_task.id());
+        assert_eq!(
+            [req.leader_endpoint.clone(), req.helper_endpoint.clone()],
+            got_task.aggregator_endpoints()
+        );
+        assert_eq!(&req.query_type, got_task.query_type());
+        assert_eq!(&req.vdaf, got_task.vdaf());
+        assert_eq!(&req.role, got_task.role());
+        assert_eq!(1, got_task.vdaf_verify_keys().len());
+        assert_eq!(
+            vdaf_verify_key.as_ref(),
+            got_task.vdaf_verify_keys()[0].as_ref()
+        );
+        assert_eq!(req.max_batch_query_count, got_task.max_batch_query_count());
+        assert_eq!(
+            req.task_expiration
+                .map(Time::from_seconds_since_epoch)
+                .as_ref(),
+            got_task.task_expiration()
+        );
+        assert_eq!(req.min_batch_size, got_task.min_batch_size());
+        assert_eq!(
+            &Duration::from_seconds(req.time_precision),
+            got_task.time_precision()
+        );
+        assert_eq!(&req.collector_hpke_config, got_task.collector_hpke_config());
+        assert_eq!(1, got_task.aggregator_auth_tokens().len());
+        assert_eq!(
+            aggregator_auth_token.as_ref(),
+            got_task.aggregator_auth_tokens()[0].as_ref()
+        );
+        assert_eq!(1, got_task.collector_auth_tokens().len());
+        assert_eq!(
+            collector_auth_token.as_ref(),
+            got_task.collector_auth_tokens()[0].as_ref()
+        );
+
+        // ...and the response.
+        assert_eq!(got_task_resp, TaskResp::from(&got_task));
     }
 
     #[tokio::test]
@@ -899,8 +1107,10 @@ mod tests {
 
     #[test]
     fn post_task_req_serialization() {
+        // minimal request
         assert_tokens(
             &PostTaskReq {
+                task_id: None,
                 leader_endpoint: "https://example.com/".parse().unwrap(),
                 helper_endpoint: "https://example.net/".parse().unwrap(),
                 query_type: QueryType::FixedSize {
@@ -908,6 +1118,7 @@ mod tests {
                 },
                 vdaf: VdafInstance::Prio3CountVec { length: 5 },
                 role: Role::Leader,
+                vdaf_verify_key: None,
                 max_batch_query_count: 1,
                 task_expiration: None,
                 min_batch_size: 100,
@@ -919,12 +1130,16 @@ mod tests {
                     HpkeAeadId::Aes128Gcm,
                     HpkePublicKey::from([0u8; 32].to_vec()),
                 ),
+                aggregator_auth_token: None,
+                collector_auth_token: None,
             },
             &[
                 Token::Struct {
                     name: "PostTaskReq",
-                    len: 9,
+                    len: 14,
                 },
+                Token::Str("task_id"),
+                Token::None,
                 Token::Str("leader_endpoint"),
                 Token::Str("https://example.com/"),
                 Token::Str("helper_endpoint"),
@@ -952,8 +1167,12 @@ mod tests {
                     name: "Role",
                     variant: "Leader",
                 },
+                Token::Str("vdaf_verify_key"),
+                Token::None,
                 Token::Str("max_batch_query_count"),
                 Token::U64(1),
+                Token::Str("task_expiration"),
+                Token::None,
                 Token::Str("min_batch_size"),
                 Token::U64(100),
                 Token::Str("time_precision"),
@@ -986,6 +1205,123 @@ mod tests {
                 Token::Str("public_key"),
                 Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
                 Token::StructEnd,
+                Token::Str("aggregator_auth_token"),
+                Token::None,
+                Token::Str("collector_auth_token"),
+                Token::None,
+                Token::StructEnd,
+            ],
+        );
+
+        // maximal request
+        assert_tokens(
+            &PostTaskReq {
+                task_id: Some(TaskId::from([
+                    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+                    22, 23, 24, 25, 26, 251, 252, 253, 254, 255,
+                ])),
+                leader_endpoint: "https://example.com/".parse().unwrap(),
+                helper_endpoint: "https://example.net/".parse().unwrap(),
+                query_type: QueryType::FixedSize {
+                    max_batch_size: 999,
+                },
+                vdaf: VdafInstance::Prio3CountVec { length: 5 },
+                role: Role::Leader,
+                vdaf_verify_key: Some("encoded".to_owned()),
+                max_batch_query_count: 1,
+                task_expiration: None,
+                min_batch_size: 100,
+                time_precision: 3600,
+                collector_hpke_config: HpkeConfig::new(
+                    HpkeConfigId::from(7),
+                    HpkeKemId::X25519HkdfSha256,
+                    HpkeKdfId::HkdfSha256,
+                    HpkeAeadId::Aes128Gcm,
+                    HpkePublicKey::from([0u8; 32].to_vec()),
+                ),
+                aggregator_auth_token: Some("encoded".to_owned()),
+                collector_auth_token: Some("encoded".to_owned()),
+            },
+            &[
+                Token::Struct {
+                    name: "PostTaskReq",
+                    len: 14,
+                },
+                Token::Str("task_id"),
+                Token::Some,
+                Token::Str("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBka-_z9_v8"),
+                Token::Str("leader_endpoint"),
+                Token::Str("https://example.com/"),
+                Token::Str("helper_endpoint"),
+                Token::Str("https://example.net/"),
+                Token::Str("query_type"),
+                Token::StructVariant {
+                    name: "QueryType",
+                    variant: "FixedSize",
+                    len: 1,
+                },
+                Token::Str("max_batch_size"),
+                Token::U64(999),
+                Token::StructVariantEnd,
+                Token::Str("vdaf"),
+                Token::StructVariant {
+                    name: "VdafInstance",
+                    variant: "Prio3CountVec",
+                    len: 1,
+                },
+                Token::Str("length"),
+                Token::U64(5),
+                Token::StructVariantEnd,
+                Token::Str("role"),
+                Token::UnitVariant {
+                    name: "Role",
+                    variant: "Leader",
+                },
+                Token::Str("vdaf_verify_key"),
+                Token::Some,
+                Token::Str("encoded"),
+                Token::Str("max_batch_query_count"),
+                Token::U64(1),
+                Token::Str("task_expiration"),
+                Token::None,
+                Token::Str("min_batch_size"),
+                Token::U64(100),
+                Token::Str("time_precision"),
+                Token::U64(3600),
+                Token::Str("collector_hpke_config"),
+                Token::Struct {
+                    name: "HpkeConfig",
+                    len: 5,
+                },
+                Token::Str("id"),
+                Token::NewtypeStruct {
+                    name: "HpkeConfigId",
+                },
+                Token::U8(7),
+                Token::Str("kem_id"),
+                Token::UnitVariant {
+                    name: "HpkeKemId",
+                    variant: "X25519HkdfSha256",
+                },
+                Token::Str("kdf_id"),
+                Token::UnitVariant {
+                    name: "HpkeKdfId",
+                    variant: "HkdfSha256",
+                },
+                Token::Str("aead_id"),
+                Token::UnitVariant {
+                    name: "HpkeAeadId",
+                    variant: "Aes128Gcm",
+                },
+                Token::Str("public_key"),
+                Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+                Token::StructEnd,
+                Token::Str("aggregator_auth_token"),
+                Token::Some,
+                Token::Str("encoded"),
+                Token::Str("collector_auth_token"),
+                Token::Some,
+                Token::Str("encoded"),
                 Token::StructEnd,
             ],
         );
@@ -1018,12 +1354,12 @@ mod tests {
                 HpkeAeadId::Aes128Gcm,
                 HpkePublicKey::from([0u8; 32].to_vec()),
             ),
-            Vec::from([AuthenticationToken::from(
-                "aggregator-12345678".as_bytes().to_vec(),
-            )]),
-            Vec::from([AuthenticationToken::from(
-                "collector-abcdef00".as_bytes().to_vec(),
-            )]),
+            Vec::from([
+                AuthenticationToken::try_from("aggregator-12345678".as_bytes().to_vec()).unwrap(),
+            ]),
+            Vec::from([
+                AuthenticationToken::try_from("collector-abcdef00".as_bytes().to_vec()).unwrap(),
+            ]),
             [(HpkeKeypair::new(
                 HpkeConfig::new(
                     HpkeConfigId::from(13),
@@ -1041,7 +1377,7 @@ mod tests {
             &[
                 Token::Struct {
                     name: "TaskResp",
-                    len: 16,
+                    len: 17,
                 },
                 Token::Str("task_id"),
                 Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
@@ -1078,6 +1414,8 @@ mod tests {
                 Token::SeqEnd,
                 Token::Str("max_batch_query_count"),
                 Token::U64(1),
+                Token::Str("task_expiration"),
+                Token::None,
                 Token::Str("report_expiry_age"),
                 Token::None,
                 Token::Str("min_batch_size"),

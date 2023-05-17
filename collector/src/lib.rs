@@ -7,7 +7,7 @@
 //! # Examples
 //!
 //! ```no_run
-//! use janus_collector::{Collector, CollectorParameters, default_http_client};
+//! use janus_collector::{Authentication, Collector, CollectorParameters, default_http_client};
 //! use janus_core::{hpke::generate_hpke_config_and_private_key, task::AuthenticationToken};
 //! use janus_messages::{
 //!     Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Interval, TaskId,
@@ -26,11 +26,12 @@
 //!     HpkeKdfId::HkdfSha256,
 //!     HpkeAeadId::Aes128Gcm,
 //! );
-//! let authentication_token = AuthenticationToken::from(b"my-authentication-token".to_vec());
-//! let parameters = CollectorParameters::new(
+//! let authentication_token =
+//!     AuthenticationToken::try_from(b"my-authentication-token".to_vec()).unwrap();
+//! let parameters = CollectorParameters::new_with_authentication(
 //!     task_id,
 //!     "https://example.com/dap/".parse().unwrap(),
-//!     authentication_token,
+//!     Authentication::DapAuthToken(authentication_token),
 //!     hpke_keypair.config().clone(),
 //!     hpke_keypair.private_key().clone(),
 //! );
@@ -746,7 +747,7 @@ mod tests {
         let parameters = CollectorParameters::new_with_authentication(
             random(),
             server_url,
-            Authentication::DapAuthToken(AuthenticationToken::from(b"token".to_vec())),
+            Authentication::DapAuthToken(AuthenticationToken::try_from(b"token".to_vec()).unwrap()),
             hpke_keypair.config().clone(),
             hpke_keypair.private_key().clone(),
         )
@@ -847,7 +848,7 @@ mod tests {
         let collector_parameters = CollectorParameters::new_with_authentication(
             random(),
             "http://example.com/dap".parse().unwrap(),
-            Authentication::DapAuthToken(AuthenticationToken::from(b"token".to_vec())),
+            Authentication::DapAuthToken(AuthenticationToken::try_from(b"token".to_vec()).unwrap()),
             hpke_keypair.config().clone(),
             hpke_keypair.private_key().clone(),
         );
@@ -860,7 +861,7 @@ mod tests {
         let collector_parameters = CollectorParameters::new_with_authentication(
             random(),
             "http://example.com".parse().unwrap(),
-            Authentication::DapAuthToken(AuthenticationToken::from(b"token".to_vec())),
+            Authentication::DapAuthToken(AuthenticationToken::try_from(b"token".to_vec()).unwrap()),
             hpke_keypair.config().clone(),
             hpke_keypair.private_key().clone(),
         );
@@ -1262,7 +1263,9 @@ mod tests {
         let parameters = CollectorParameters::new_with_authentication(
             random(),
             server_url,
-            Authentication::AuthorizationBearerToken(AuthenticationToken::from([0u8; 16].to_vec())),
+            Authentication::AuthorizationBearerToken(
+                AuthenticationToken::try_from([0x41u8; 16].to_vec()).unwrap(),
+            ),
             hpke_keypair.config().clone(),
             hpke_keypair.private_key().clone(),
         )
@@ -1285,7 +1288,7 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 CollectionReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .match_header(AUTHORIZATION.as_str(), "Bearer AAAAAAAAAAAAAAAAAAAAAA==")
+            .match_header(AUTHORIZATION.as_str(), "Bearer QUFBQUFBQUFBQUFBQUFBQQ==")
             .with_status(201)
             .expect(1)
             .create_async()
@@ -1301,7 +1304,7 @@ mod tests {
 
         let mocked_collect_complete = server
             .mock("POST", job.collection_job_url.path())
-            .match_header(AUTHORIZATION.as_str(), "Bearer AAAAAAAAAAAAAAAAAAAAAA==")
+            .match_header(AUTHORIZATION.as_str(), "Bearer QUFBQUFBQUFBQUFBQUFBQQ==")
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),

@@ -145,14 +145,12 @@ impl TypedValueParser for BatchIdValueParser {
     }
 }
 
-fn parse_authentication_token(value: String) -> AuthenticationToken {
-    AuthenticationToken::from(value.into_bytes())
+fn parse_authentication_token(value: String) -> Result<AuthenticationToken, anyhow::Error> {
+    value.into_bytes().try_into()
 }
 
-fn parse_authentication_token_base64(
-    value: String,
-) -> Result<AuthenticationToken, base64::DecodeError> {
-    STANDARD.decode(value).map(AuthenticationToken::from)
+fn parse_authentication_token_base64(value: String) -> Result<AuthenticationToken, anyhow::Error> {
+    STANDARD.decode(value)?.try_into()
 }
 
 #[derive(Clone)]
@@ -259,7 +257,7 @@ struct AuthenticationOptions {
     #[clap(
         long,
         required = false,
-        value_parser = StringValueParser::new().map(parse_authentication_token),
+        value_parser = StringValueParser::new().try_map(parse_authentication_token),
         env,
         help_heading = "Authorization",
         display_order = 0,
@@ -631,7 +629,8 @@ mod tests {
 
         let task_id = random();
         let leader = Url::parse("https://example.com/dap/").unwrap();
-        let auth_token = AuthenticationToken::from(b"collector-authentication-token".to_vec());
+        let auth_token =
+            AuthenticationToken::try_from(b"collector-authentication-token".to_vec()).unwrap();
 
         let expected = Options {
             task_id,
@@ -888,7 +887,8 @@ mod tests {
         let encoded_hpke_config = URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded());
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
 
-        let auth_token = AuthenticationToken::from(b"collector-authentication-token".to_vec());
+        let auth_token =
+            AuthenticationToken::try_from(b"collector-authentication-token".to_vec()).unwrap();
 
         // Check parsing arguments for a current batch query.
         let expected = Options {
@@ -1111,9 +1111,10 @@ mod tests {
                 .unwrap()
                 .authentication,
             AuthenticationOptions {
-                dap_auth_token: Some(AuthenticationToken::from(
-                    b"collector-authentication-token".to_vec()
-                )),
+                dap_auth_token: Some(
+                    AuthenticationToken::try_from(b"collector-authentication-token".to_vec())
+                        .unwrap()
+                ),
                 authorization_bearer_token: None,
             }
         );
@@ -1126,7 +1127,9 @@ mod tests {
                 .authentication,
             AuthenticationOptions {
                 dap_auth_token: None,
-                authorization_bearer_token: Some(AuthenticationToken::from(Vec::from([0xff; 16]))),
+                authorization_bearer_token: Some(
+                    AuthenticationToken::try_from(Vec::from([0xff; 16])).unwrap(),
+                )
             }
         );
 

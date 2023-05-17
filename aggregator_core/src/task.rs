@@ -3,7 +3,6 @@
 use crate::SecretBytes;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
-use http::HeaderValue;
 use janus_core::{
     hpke::{generate_hpke_config_and_private_key, HpkeKeypair},
     task::{url_ensure_trailing_slash, AuthenticationToken, VdafInstance},
@@ -539,31 +538,29 @@ impl TryFrom<SerializedTask> for Task {
         let aggregator_auth_tokens = serialized_task
             .aggregator_auth_tokens
             .into_iter()
-            .map(|token| Ok(AuthenticationToken::from(URL_SAFE_NO_PAD.decode(token)?)))
+            .map(|token| {
+                AuthenticationToken::try_from(URL_SAFE_NO_PAD.decode(token)?).map_err(|_| {
+                    Error::InvalidParameter(concat!(
+                        "value in aggregator_auth_tokens does not base64url-decode to a valid ",
+                        "HTTP header value"
+                    ))
+                })
+            })
             .collect::<Result<Vec<AuthenticationToken>, Self::Error>>()?;
-        for token in aggregator_auth_tokens.iter() {
-            HeaderValue::try_from(token.as_ref()).map_err(|_| {
-                Error::InvalidParameter(concat!(
-                    "value in aggregator_auth_tokens does not base64url-decode to a valid ",
-                    "HTTP header value"
-                ))
-            })?;
-        }
 
         // collector_auth_tokens
         let collector_auth_tokens = serialized_task
             .collector_auth_tokens
             .into_iter()
-            .map(|token| Ok(AuthenticationToken::from(URL_SAFE_NO_PAD.decode(token)?)))
+            .map(|token| {
+                AuthenticationToken::try_from(URL_SAFE_NO_PAD.decode(token)?).map_err(|_| {
+                    Error::InvalidParameter(concat!(
+                        "value in collector_auth_tokens does not base64url-decode to a valid ",
+                        "HTTP header value"
+                    ))
+                })
+            })
             .collect::<Result<Vec<AuthenticationToken>, Self::Error>>()?;
-        for token in collector_auth_tokens.iter() {
-            HeaderValue::try_from(token.as_ref()).map_err(|_| {
-                Error::InvalidParameter(concat!(
-                    "value in collector_auth_tokens does not base64url-decode to a valid ",
-                    "HTTP header value"
-                ))
-            })?;
-        }
 
         Task::new(
             task_id,
@@ -1051,8 +1048,8 @@ mod tests {
                     HpkeAeadId::Aes128Gcm,
                     HpkePublicKey::from(b"collector hpke public key".to_vec()),
                 ),
-                Vec::from([AuthenticationToken::from(b"aggregator token".to_vec())]),
-                Vec::from([AuthenticationToken::from(b"collector token".to_vec())]),
+                Vec::from([AuthenticationToken::try_from(b"aggregator token".to_vec()).unwrap()]),
+                Vec::from([AuthenticationToken::try_from(b"collector token".to_vec()).unwrap()]),
                 [HpkeKeypair::new(
                     HpkeConfig::new(
                         HpkeConfigId::from(255),
@@ -1214,7 +1211,7 @@ mod tests {
                     HpkeAeadId::Aes128Gcm,
                     HpkePublicKey::from(b"collector hpke public key".to_vec()),
                 ),
-                Vec::from([AuthenticationToken::from(b"aggregator token".to_vec())]),
+                Vec::from([AuthenticationToken::try_from(b"aggregator token".to_vec()).unwrap()]),
                 Vec::new(),
                 [HpkeKeypair::new(
                     HpkeConfig::new(
