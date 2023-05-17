@@ -242,7 +242,7 @@ mod tests {
                         "test",
                         "text/plain",
                         (),
-                        &AuthenticationToken::from("auth".as_bytes().to_vec()),
+                        &AuthenticationToken::try_from("auth".as_bytes().to_vec()).unwrap(),
                         &request_histogram,
                     )
                     .await

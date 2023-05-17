@@ -535,10 +535,16 @@ fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<Authenticati
         return Ok(bearer_token);
     }
 
-    Ok(conn
-        .request_headers()
+    conn.request_headers()
         .get(DAP_AUTH_HEADER)
-        .map(|value| value.as_ref().to_owned().into()))
+        .map(|value| {
+            value.as_ref().to_owned().try_into().map_err(|_| {
+                Error::BadRequest(
+                    "DAP-Auth-Header value is not a valid HTTP header value".to_string(),
+                )
+            })
+        })
+        .transpose()
 }
 
 #[cfg(test)]
