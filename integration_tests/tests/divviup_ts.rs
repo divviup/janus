@@ -20,8 +20,8 @@ async fn run_divviup_ts_integration_test(container_client: &Cli, vdaf: VdafInsta
         test_task_builders(vdaf, QueryType::TimeInterval);
     let leader_task = leader_task.build();
     let network = generate_network_name();
-    let leader = Janus::new_in_container(container_client, &network, &leader_task).await;
-    let helper = Janus::new_in_container(container_client, &network, &helper_task.build()).await;
+    let leader = Janus::new(container_client, &network, &leader_task).await;
+    let helper = Janus::new(container_client, &network, &helper_task.build()).await;
 
     let client_backend = ClientBackend::Container {
         container_client,

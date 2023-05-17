@@ -2253,11 +2253,11 @@ dependencies = [
  "prio",
  "rand",
  "reqwest",
+ "serde",
  "serde_json",
  "tempfile",
  "testcontainers",
  "tokio",
- "tracing",
  "url",
 ]
 
