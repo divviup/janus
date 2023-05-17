@@ -1,3 +1,4 @@
+use crate::aggregator::aggregation_job_writer::AggregationJobWriter;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{
     types::extra::{U15, U31, U63},
@@ -8,7 +9,7 @@ use janus_aggregator_core::{
     datastore::models::{
         AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
     },
-    datastore::{models::OutstandingBatch, Datastore},
+    datastore::{self, models::OutstandingBatch, Datastore},
     task::{self, Task},
 };
 use janus_core::{
@@ -29,7 +30,7 @@ use prio::{
     codec::Encode,
     vdaf::{
         self,
-        prio3::{Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVec, Prio3SumVecMultithreaded},
+        prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVecMultithreaded},
     },
 };
 use rand::{random, thread_rng, Rng};
@@ -232,102 +233,163 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     ) -> anyhow::Result<bool> {
         match (task.query_type(), task.vdaf()) {
             (task::QueryType::TimeInterval, VdafInstance::Prio3Count) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(task)
+                let vdaf = Arc::new(Prio3::new_count(2)?);
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(task, vdaf)
                     .await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3CountVec { .. }) => {
+            (task::QueryType::TimeInterval, VdafInstance::Prio3CountVec { length }) => {
+                let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(2, 1, *length)?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<
                     PRIO3_VERIFY_KEY_LENGTH,
                     Prio3SumVecMultithreaded
-                >(task).await
+                >(task, vdaf).await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3Sum { .. }) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Sum>(task)
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Sum { bits }) => {
+                let vdaf = Arc::new(Prio3::new_sum(2, *bits)?);
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Sum>(task, vdaf)
                     .await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3SumVec { .. }) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3SumVec>(task)
+            (task::QueryType::TimeInterval, VdafInstance::Prio3SumVec { bits, length }) => {
+                let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(2, *bits, *length)?);
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3SumVecMultithreaded>(task, vdaf)
                     .await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3Histogram { .. }) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Histogram>(task)
-                    .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (task::QueryType::TimeInterval, VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { .. }) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>>(task)
-                    .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (task::QueryType::TimeInterval, VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { .. }) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>>(task)
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Histogram { buckets }) => {
+                let vdaf = Arc::new(Prio3::new_histogram(2, buckets)?);
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Histogram>(task, vdaf)
                     .await
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
-            (task::QueryType::TimeInterval, VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { .. }) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>>(task)
+            (
+                task::QueryType::TimeInterval,
+                VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { length },
+            ) => {
+                let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>> =
+                    Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
+                        2, *length,
+                    )?);
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>>(task, vdaf)
                     .await
             }
 
-            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Count) => {
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (
+                task::QueryType::TimeInterval,
+                VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { length },
+            ) => {
+                let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>> =
+                    Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
+                        2, *length,
+                    )?);
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>>(task, vdaf)
+                    .await
+            }
+
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (
+                task::QueryType::TimeInterval,
+                VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { length },
+            ) => {
+                let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>> =
+                    Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
+                        2, *length,
+                    )?);
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>>(task, vdaf)
+                    .await
+            }
+
+            (task::QueryType::FixedSize { max_batch_size }, VdafInstance::Prio3Count) => {
+                let vdaf = Arc::new(Prio3::new_count(2)?);
                 let max_batch_size = *max_batch_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(task, max_batch_size)
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(task, vdaf, max_batch_size)
                     .await
             }
 
-            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3CountVec { .. }) => {
+            (
+                task::QueryType::FixedSize { max_batch_size },
+                VdafInstance::Prio3CountVec { length },
+            ) => {
+                let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(2, 1, *length)?);
                 let max_batch_size = *max_batch_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
                     PRIO3_VERIFY_KEY_LENGTH,
                     Prio3SumVecMultithreaded
-                >(task, max_batch_size).await
+                >(task, vdaf, max_batch_size).await
             }
 
-            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Sum { .. }) => {
+            (task::QueryType::FixedSize { max_batch_size }, VdafInstance::Prio3Sum { bits }) => {
+                let vdaf = Arc::new(Prio3::new_sum(2, *bits)?);
                 let max_batch_size = *max_batch_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Sum>(task, max_batch_size)
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Sum>(task, vdaf, max_batch_size)
                     .await
             }
 
-            (task::QueryType::FixedSize { max_batch_size }, VdafInstance::Prio3SumVec { .. }) => {
+            (
+                task::QueryType::FixedSize { max_batch_size },
+                VdafInstance::Prio3SumVec { bits, length },
+            ) => {
+                let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(2, *bits, *length)?);
                 let max_batch_size = *max_batch_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
                     PRIO3_VERIFY_KEY_LENGTH,
-                    Prio3SumVec,
-                >(task, max_batch_size).await
+                    Prio3SumVecMultithreaded,
+                >(task, vdaf, max_batch_size).await
             }
 
-            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Histogram { .. }) => {
+            (
+                task::QueryType::FixedSize { max_batch_size },
+                VdafInstance::Prio3Histogram { buckets },
+            ) => {
+                let vdaf = Arc::new(Prio3::new_histogram(2, buckets)?);
                 let max_batch_size = *max_batch_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Histogram>(task, max_batch_size)
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Histogram>(task, vdaf, max_batch_size)
                     .await
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
-            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { .. }) => {
+            (
+                task::QueryType::FixedSize { max_batch_size },
+                VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { length },
+            ) => {
+                let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>> =
+                    Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
+                        2, *length,
+                    )?);
                 let max_batch_size = *max_batch_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>>(task, max_batch_size)
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>>(task, vdaf, max_batch_size)
                     .await
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
-            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { .. }) => {
+            (
+                task::QueryType::FixedSize { max_batch_size },
+                VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { length },
+            ) => {
+                let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>> =
+                    Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
+                        2, *length,
+                    )?);
                 let max_batch_size = *max_batch_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>>(task, max_batch_size)
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>>(task, vdaf, max_batch_size)
                     .await
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
-            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { .. }) => {
+            (
+                task::QueryType::FixedSize { max_batch_size },
+                VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { length },
+            ) => {
+                let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>> =
+                    Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
+                        2, *length,
+                    )?);
                 let max_batch_size = *max_batch_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>>(task, max_batch_size)
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>>(task, vdaf, max_batch_size)
                     .await
             }
 
@@ -345,8 +407,11 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     >(
         self: Arc<Self>,
         task: Arc<Task>,
+        vdaf: Arc<A>,
     ) -> anyhow::Result<bool>
     where
+        A: Send + Sync + 'static,
+        A::AggregateShare: Send + Sync,
         A::PrepareMessage: Send + Sync,
         A::PrepareShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
@@ -355,7 +420,10 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         Ok(self
             .datastore
             .run_tx_with_name("aggregation_job_creator_time_no_param", |tx| {
-                let (this, task) = (Arc::clone(&self), Arc::clone(&task));
+                let this = Arc::clone(&self);
+                let task = Arc::clone(&task);
+                let vdaf = Arc::clone(&vdaf);
+
                 Box::pin(async move {
                     // Find some unaggregated client reports.
                     let report_ids_and_times = tx
@@ -363,8 +431,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         .await?;
 
                     // Generate aggregation jobs & report aggregations based on the reports we read.
-                    let mut agg_jobs = Vec::new();
-                    let mut report_aggs = Vec::new();
+                    let mut aggregation_job_writer = AggregationJobWriter::new(Arc::clone(&task));
                     for agg_job_reports in
                         report_ids_and_times.chunks(this.max_aggregation_job_size)
                     {
@@ -398,7 +465,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 .add(&DurationMsg::from_seconds(1))?,
                         )?;
 
-                        agg_jobs.push(AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
+                        let aggregation_job = AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
                             *task.id(),
                             aggregation_job_id,
                             (),
@@ -406,36 +473,30 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             client_timestamp_interval,
                             AggregationJobState::InProgress,
                             AggregationJobRound::from(0),
-                        ));
+                        );
 
-                        for (ord, (report_id, time)) in agg_job_reports.iter().enumerate() {
-                            report_aggs.push(ReportAggregation::<SEED_SIZE, A>::new(
-                                *task.id(),
-                                aggregation_job_id,
-                                *report_id,
-                                *time,
-                                ord.try_into()?,
-                                None,
-                                ReportAggregationState::Start,
-                            ));
-                        }
+                        let report_aggregations = agg_job_reports
+                            .iter()
+                            .enumerate()
+                            .map(|(ord, (report_id, time))| {
+                                Ok(ReportAggregation::<SEED_SIZE, A>::new(
+                                    *task.id(),
+                                    aggregation_job_id,
+                                    *report_id,
+                                    *time,
+                                    ord.try_into()?,
+                                    None,
+                                    ReportAggregationState::Start,
+                                ))
+                            })
+                            .collect::<Result<_, datastore::Error>>()?;
+
+                        aggregation_job_writer.put(aggregation_job, report_aggregations)?;
                     }
 
                     // Write the aggregation jobs & report aggregations we created.
-                    try_join_all(
-                        agg_jobs
-                            .iter()
-                            .map(|agg_job| tx.put_aggregation_job(agg_job)),
-                    )
-                    .await?;
-                    try_join_all(
-                        report_aggs
-                            .iter()
-                            .map(|report_agg| tx.put_report_aggregation(report_agg)),
-                    )
-                    .await?;
-
-                    Ok(!agg_jobs.is_empty())
+                    aggregation_job_writer.write(tx, vdaf).await?;
+                    Ok(!aggregation_job_writer.is_empty())
                 })
             })
             .await?)
@@ -448,9 +509,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     >(
         self: Arc<Self>,
         task: Arc<Task>,
+        vdaf: Arc<A>,
         task_max_batch_size: u64,
     ) -> anyhow::Result<bool>
     where
+        A: Send + Sync + 'static,
+        A::AggregateShare: Send + Sync,
         A::PrepareMessage: Send + Sync,
         A::PrepareShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
@@ -463,7 +527,10 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         Ok(self
             .datastore
             .run_tx_with_name("aggregation_job_creator_fixed_no_param", |tx| {
-                let (this, task) = (Arc::clone(&self), Arc::clone(&task));
+                let this = Arc::clone(&self);
+                let task = Arc::clone(&task);
+                let vdaf = Arc::clone(&vdaf);
+
                 Box::pin(async move {
                     // Find unaggregated client reports & existing unfilled batches.
                     let (mut unaggregated_report_ids, outstanding_batches) = try_join!(
@@ -491,9 +558,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     // Main loop: repeatedly consume some of the unaggregated report IDs to generate
                     // an aggregation job, assigning it to an existing batch which has need of
                     // reports, or a new batch if no existing batch needs reports.
-                    let mut aggregation_jobs =
-                        Vec::<AggregationJob<SEED_SIZE, FixedSize, A>>::new();
-                    let mut report_aggregations = Vec::<ReportAggregation<SEED_SIZE, A>>::new();
+                    let mut aggregation_job_writer =
+                        AggregationJobWriter::<SEED_SIZE, FixedSize, A>::new(Arc::clone(&task));
                     let mut new_batches = Vec::new();
                     let (mut is_batch_new, mut batch) = batch_iter.next().unwrap(); // unwrap safety: infinite iterator
                     let mut batch_max_size = *batch.size().end();
@@ -553,31 +619,29 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
                         let mut min_client_timestamp = None;
                         let mut max_client_timestamp = None;
-                        report_aggregations.extend(
-                            unaggregated_report_ids
-                                .drain(..aggregation_job_size)
-                                .enumerate()
-                                .map(|(ord, (report_id, client_timestamp))| {
-                                    min_client_timestamp =
-                                        Some(min_client_timestamp.map_or(client_timestamp, |ts| {
-                                            min(ts, client_timestamp)
-                                        }));
-                                    max_client_timestamp =
-                                        Some(max_client_timestamp.map_or(client_timestamp, |ts| {
-                                            max(ts, client_timestamp)
-                                        }));
-                                    Ok(ReportAggregation::new(
-                                        *task.id(),
-                                        aggregation_job_id,
-                                        report_id,
-                                        client_timestamp,
-                                        ord.try_into()?,
-                                        None,
-                                        ReportAggregationState::Start,
-                                    ))
-                                })
-                                .collect::<Result<Vec<_>, TryFromIntError>>()?,
-                        );
+                        let report_aggregations = unaggregated_report_ids
+                            .drain(..aggregation_job_size)
+                            .enumerate()
+                            .map(|(ord, (report_id, client_timestamp))| {
+                                min_client_timestamp = Some(
+                                    min_client_timestamp
+                                        .map_or(client_timestamp, |ts| min(ts, client_timestamp)),
+                                );
+                                max_client_timestamp = Some(
+                                    max_client_timestamp
+                                        .map_or(client_timestamp, |ts| max(ts, client_timestamp)),
+                                );
+                                Ok(ReportAggregation::new(
+                                    *task.id(),
+                                    aggregation_job_id,
+                                    report_id,
+                                    client_timestamp,
+                                    ord.try_into()?,
+                                    None,
+                                    ReportAggregationState::Start,
+                                ))
+                            })
+                            .collect::<Result<_, TryFromIntError>>()?;
 
                         let min_client_timestamp = min_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
                         let max_client_timestamp = max_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
@@ -587,7 +651,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 .difference(&min_client_timestamp)?
                                 .add(&DurationMsg::from_seconds(1))?,
                         )?;
-                        aggregation_jobs.push(AggregationJob::new(
+                        let aggregation_job = AggregationJob::new(
                             *task.id(),
                             aggregation_job_id,
                             (),
@@ -595,7 +659,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             client_timestamp_interval,
                             AggregationJobState::InProgress,
                             AggregationJobRound::from(0),
-                        ));
+                        );
+                        aggregation_job_writer.put(aggregation_job, report_aggregations)?;
 
                         if is_batch_new {
                             new_batches.push(*batch.id())
@@ -606,35 +671,28 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
                     // Write the outstanding batches, aggregation jobs, & report aggregations we
                     // created.
-                    if !unaggregated_report_ids.is_empty() {
-                        let report_ids: Vec<_> = unaggregated_report_ids
-                            .iter()
-                            .map(|(report_id, _)| *report_id)
-                            .collect();
-                        tx.mark_reports_unaggregated(task.id(), &report_ids).await?;
-                    }
-
                     try_join!(
-                        try_join_all(
-                            aggregation_jobs
-                                .iter()
-                                .map(|agg_job| tx.put_aggregation_job(agg_job)),
-                        ),
+                        aggregation_job_writer.write(tx, vdaf),
                         try_join_all(
                             new_batches
                                 .iter()
                                 .map(|batch_id| tx.put_outstanding_batch(task.id(), batch_id)),
-                        )
+                        ),
+                        {
+                            let task_id = *task.id();
+                            async move {
+                                if !unaggregated_report_ids.is_empty() {
+                                    let report_ids: Vec<_> = unaggregated_report_ids
+                                        .iter()
+                                        .map(|(report_id, _)| *report_id)
+                                        .collect();
+                                    tx.mark_reports_unaggregated(&task_id, &report_ids).await?;
+                                }
+                                Ok(())
+                            }
+                        },
                     )?;
-
-                    try_join_all(
-                        report_aggregations
-                            .iter()
-                            .map(|report_agg| tx.put_report_aggregation(report_agg)),
-                    )
-                    .await?;
-
-                    Ok(!aggregation_jobs.is_empty())
+                    Ok(!aggregation_job_writer.is_empty())
                 })
             })
             .await?)
@@ -767,7 +825,10 @@ mod tests {
     use futures::{future::try_join_all, TryFutureExt};
     use janus_aggregator_core::{
         datastore::{
-            models::{AggregationJob, CollectionJob, CollectionJobState, LeaderStoredReport},
+            models::{
+                AggregationJob, AggregationJobState, Batch, BatchState, CollectionJob,
+                CollectionJobState, LeaderStoredReport,
+            },
             test_util::ephemeral_datastore,
             Transaction,
         },
@@ -784,15 +845,9 @@ mod tests {
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
-        AggregationJobId, AggregationJobRound, Interval, ReportId, Role, TaskId, Time,
+        AggregationJobRound, Interval, ReportId, Role, TaskId, Time,
     };
-    use prio::{
-        codec::ParameterizedDecode,
-        vdaf::{
-            prio3::{Prio3, Prio3Count},
-            Aggregator,
-        },
-    };
+    use prio::vdaf::{self, prio3::Prio3Count};
     use rand::random;
     use std::{
         collections::{HashMap, HashSet},
@@ -800,7 +855,7 @@ mod tests {
         sync::Arc,
         time::Duration,
     };
-    use tokio::{task, time};
+    use tokio::{task, time, try_join};
 
     #[tokio::test]
     async fn aggregation_job_creator() {
@@ -813,7 +868,6 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
-        let vdaf = dummy_vdaf::Vdaf::new();
 
         // TODO(#234): consider using tokio::time::pause() to make time deterministic, and allow
         // this test to run without the need for a (racy, wallclock-consuming) real sleep.
@@ -828,6 +882,8 @@ mod tests {
             Role::Leader,
         )
         .build();
+        let batch_identifier =
+            TimeInterval::to_batch_identifier(&leader_task, &(), &report_time).unwrap();
         let leader_report = LeaderStoredReport::new_dummy(*leader_task.id(), report_time);
 
         let helper_task = TaskBuilder::new(
@@ -839,13 +895,13 @@ mod tests {
         let helper_report = LeaderStoredReport::new_dummy(*helper_task.id(), report_time);
 
         ds.run_tx(|tx| {
-            let vdaf = vdaf.clone();
             let (leader_task, helper_task) = (leader_task.clone(), helper_task.clone());
             let (leader_report, helper_report) = (leader_report.clone(), helper_report.clone());
             Box::pin(async move {
                 tx.put_task(&leader_task).await?;
                 tx.put_task(&helper_task).await?;
 
+                let vdaf = dummy_vdaf::Vdaf::new();
                 tx.put_client_report(&vdaf, &leader_report).await?;
                 tx.put_client_report(&vdaf, &helper_report).await
             })
@@ -870,41 +926,63 @@ mod tests {
         time::sleep(5 * AGGREGATION_JOB_CREATION_INTERVAL).await;
         task_handle.abort();
 
-        // Inspect database state to verify that the expected aggregation jobs were created.
-        let (leader_agg_jobs, helper_agg_jobs) = job_creator
-            .datastore
-            .run_tx(|tx| {
-                let (leader_task, helper_task) = (leader_task.clone(), helper_task.clone());
-                Box::pin(async move {
-                    let leader_agg_jobs = read_aggregate_jobs_for_task_prio3_count::<
-                        TimeInterval,
-                        HashSet<_>,
-                        _,
-                    >(tx, leader_task.id())
-                    .await;
-                    let helper_agg_jobs = read_aggregate_jobs_for_task_prio3_count::<
-                        TimeInterval,
-                        HashSet<_>,
-                        _,
-                    >(tx, helper_task.id())
-                    .await;
-                    Ok((leader_agg_jobs, helper_agg_jobs))
+        // Inspect database state to verify that the expected aggregation jobs & batches were
+        // created.
+        let (leader_aggregations, leader_batches, helper_aggregations, helper_batches) =
+            job_creator
+                .datastore
+                .run_tx(|tx| {
+                    let (leader_task, helper_task) = (leader_task.clone(), helper_task.clone());
+                    Box::pin(async move {
+                        let (leader_aggregations, leader_batches) =
+                            read_aggregate_info_for_task::<
+                                PRIO3_VERIFY_KEY_LENGTH,
+                                TimeInterval,
+                                Prio3Count,
+                                _,
+                            >(tx, leader_task.id())
+                            .await;
+                        let (helper_aggregations, helper_batches) =
+                            read_aggregate_info_for_task::<
+                                PRIO3_VERIFY_KEY_LENGTH,
+                                TimeInterval,
+                                Prio3Count,
+                                _,
+                            >(tx, helper_task.id())
+                            .await;
+                        Ok((
+                            leader_aggregations,
+                            leader_batches,
+                            helper_aggregations,
+                            helper_batches,
+                        ))
+                    })
                 })
-            })
-            .await
-            .unwrap();
-        assert!(helper_agg_jobs.is_empty());
-        assert_eq!(leader_agg_jobs.len(), 1);
-        let leader_agg_job = leader_agg_jobs.values().next().unwrap();
-        assert_eq!(leader_agg_job.0.partial_batch_identifier(), &());
-        assert_eq!(leader_agg_job.0.round(), AggregationJobRound::from(0));
+                .await
+                .unwrap();
+
+        assert_eq!(leader_aggregations.len(), 1);
+        let leader_aggregation = leader_aggregations.into_iter().next().unwrap();
+        assert_eq!(leader_aggregation.0.partial_batch_identifier(), &());
+        assert_eq!(leader_aggregation.0.round(), AggregationJobRound::from(0));
         assert_eq!(
-            leader_agg_job.1,
-            HashSet::from([(
-                *leader_report.metadata().time(),
-                *leader_report.metadata().id()
+            leader_aggregation.1,
+            Vec::from([*leader_report.metadata().id()])
+        );
+
+        assert_eq!(
+            leader_batches,
+            Vec::from([Batch::new(
+                *leader_task.id(),
+                batch_identifier,
+                (),
+                BatchState::Open,
+                1
             )])
         );
+
+        assert!(helper_aggregations.is_empty());
+        assert!(helper_batches.is_empty());
     }
 
     #[tokio::test]
@@ -914,7 +992,6 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
-        let vdaf = dummy_vdaf::Vdaf::new();
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
 
@@ -930,7 +1007,8 @@ mod tests {
         // Create 2 max-size batches, a min-size batch, one extra report (which will be added to the
         // min-size batch).
         let report_time = clock.now();
-        let reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
+        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
+        let reports: Vec<_> =
             iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
                 .take(2 * MAX_AGGREGATION_JOB_SIZE + MIN_AGGREGATION_JOB_SIZE + 1)
                 .collect();
@@ -940,11 +1018,12 @@ mod tests {
             .collect();
 
         ds.run_tx(|tx| {
-            let (vdaf, task, reports) = (vdaf.clone(), Arc::clone(&task), reports.clone());
+            let (task, reports) = (Arc::clone(&task), reports.clone());
             Box::pin(async move {
                 tx.put_task(&task).await?;
                 for report in reports.iter() {
-                    tx.put_client_report(&vdaf, report).await?;
+                    tx.put_client_report(&dummy_vdaf::Vdaf::new(), report)
+                        .await?;
                 }
                 Ok(())
             })
@@ -966,41 +1045,54 @@ mod tests {
             .unwrap();
 
         // Verify.
-        let agg_jobs = job_creator
+        let (agg_jobs, batches) = job_creator
             .datastore
             .run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
-                    Ok(
-                        read_aggregate_jobs_for_task_prio3_count::<TimeInterval, Vec<_>, _>(
-                            tx,
-                            task.id(),
-                        )
-                        .await,
-                    )
+                    Ok(read_aggregate_info_for_task::<
+                        PRIO3_VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        Prio3Count,
+                        _,
+                    >(tx, task.id())
+                    .await)
                 })
             })
             .await
             .unwrap();
         let mut seen_report_ids = HashSet::new();
-        for (_, (agg_job, times_and_ids)) in agg_jobs {
+        for (agg_job, report_ids) in &agg_jobs {
             // Jobs are created in round 0
             assert_eq!(agg_job.round(), AggregationJobRound::from(0));
+
             // The batch is at most MAX_AGGREGATION_JOB_SIZE in size.
-            assert!(times_and_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
+            assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
 
             // The batch is at least MIN_AGGREGATION_JOB_SIZE in size.
-            assert!(times_and_ids.len() >= MIN_AGGREGATION_JOB_SIZE);
+            assert!(report_ids.len() >= MIN_AGGREGATION_JOB_SIZE);
 
             // Report IDs are non-repeated across or inside aggregation jobs.
-            for (_, report_id) in times_and_ids {
-                assert!(!seen_report_ids.contains(&report_id));
-                seen_report_ids.insert(report_id);
+            for report_id in report_ids {
+                assert!(!seen_report_ids.contains(report_id));
+                seen_report_ids.insert(*report_id);
             }
         }
 
         // Every client report was added to some aggregation job.
         assert_eq!(all_report_ids, seen_report_ids);
+
+        // Batches are created appropriately.
+        assert_eq!(
+            batches,
+            Vec::from([Batch::new(
+                *task.id(),
+                batch_identifier,
+                (),
+                BatchState::Open,
+                agg_jobs.len().try_into().unwrap(),
+            )])
+        );
     }
 
     #[tokio::test]
@@ -1010,7 +1102,6 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
-        let vdaf = dummy_vdaf::Vdaf::new();
         let task = Arc::new(
             TaskBuilder::new(
                 TaskQueryType::TimeInterval,
@@ -1019,15 +1110,17 @@ mod tests {
             )
             .build(),
         );
-        let first_report = LeaderStoredReport::new_dummy(*task.id(), clock.now());
-        let second_report = LeaderStoredReport::new_dummy(*task.id(), clock.now());
+        let report_time = clock.now();
+        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
+        let first_report = LeaderStoredReport::new_dummy(*task.id(), report_time);
+        let second_report = LeaderStoredReport::new_dummy(*task.id(), report_time);
 
         ds.run_tx(|tx| {
-            let (vdaf, task, first_report) =
-                (vdaf.clone(), Arc::clone(&task), first_report.clone());
+            let (task, first_report) = (Arc::clone(&task), first_report.clone());
             Box::pin(async move {
                 tx.put_task(&task).await?;
-                tx.put_client_report(&vdaf, &first_report).await
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &first_report)
+                    .await
             })
         })
         .await
@@ -1047,30 +1140,34 @@ mod tests {
             .unwrap();
 
         // Verify -- we haven't received enough reports yet, so we don't create anything.
-        let agg_jobs = job_creator
+        let (agg_jobs, batches) = job_creator
             .datastore
             .run_tx(|tx| {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
-                    Ok(
-                        read_aggregate_jobs_for_task_prio3_count::<TimeInterval, HashSet<_>, _>(
-                            tx,
-                            task.id(),
-                        )
-                        .await,
-                    )
+                    Ok(read_aggregate_info_for_task::<
+                        PRIO3_VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        Prio3Count,
+                        _,
+                    >(tx, task.id())
+                    .await)
                 })
             })
             .await
             .unwrap();
         assert!(agg_jobs.is_empty());
+        assert!(batches.is_empty());
 
         // Setup again -- add another report.
         job_creator
             .datastore
             .run_tx(|tx| {
-                let (vdaf, second_report) = (vdaf.clone(), second_report.clone());
-                Box::pin(async move { tx.put_client_report(&vdaf, &second_report).await })
+                let second_report = second_report.clone();
+                Box::pin(async move {
+                    tx.put_client_report(&dummy_vdaf::Vdaf::new(), &second_report)
+                        .await
+                })
             })
             .await
             .unwrap();
@@ -1082,36 +1179,163 @@ mod tests {
             .unwrap();
 
         // Verify -- the additional report we wrote allows an aggregation job to be created.
-        let agg_jobs = job_creator
+        let (agg_jobs, batches) = job_creator
             .datastore
             .run_tx(|tx| {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
-                    Ok(
-                        read_aggregate_jobs_for_task_prio3_count::<TimeInterval, HashSet<_>, _>(
-                            tx,
-                            task.id(),
-                        )
-                        .await,
-                    )
+                    Ok(read_aggregate_info_for_task::<
+                        PRIO3_VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        Prio3Count,
+                        _,
+                    >(tx, task.id())
+                    .await)
                 })
             })
             .await
             .unwrap();
         assert_eq!(agg_jobs.len(), 1);
-        let report_ids = agg_jobs.into_iter().next().unwrap().1 .1;
+        let report_ids: HashSet<_> = agg_jobs.into_iter().next().unwrap().1.into_iter().collect();
         assert_eq!(
             report_ids,
             HashSet::from([
-                (
-                    *first_report.metadata().time(),
-                    *first_report.metadata().id()
-                ),
-                (
-                    *second_report.metadata().time(),
-                    *second_report.metadata().id()
-                )
+                *first_report.metadata().id(),
+                *second_report.metadata().id()
             ])
+        );
+
+        assert_eq!(
+            batches,
+            Vec::from([Batch::new(
+                *task.id(),
+                batch_identifier,
+                (),
+                BatchState::Open,
+                1
+            )])
+        );
+    }
+
+    #[tokio::test]
+    async fn create_aggregation_jobs_for_time_interval_task_batch_closed() {
+        // Setup.
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
+        const MIN_AGGREGATION_JOB_SIZE: usize = 50;
+        const MAX_AGGREGATION_JOB_SIZE: usize = 60;
+
+        let task = Arc::new(
+            TaskBuilder::new(
+                TaskQueryType::TimeInterval,
+                VdafInstance::Prio3Count,
+                Role::Leader,
+            )
+            .build(),
+        );
+
+        // Create a min-size batch.
+        let report_time = clock.now();
+        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
+        let reports: Vec<_> =
+            iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
+                .take(2 * MAX_AGGREGATION_JOB_SIZE + MIN_AGGREGATION_JOB_SIZE + 1)
+                .collect();
+        let all_report_ids: HashSet<ReportId> = reports
+            .iter()
+            .map(|report| *report.metadata().id())
+            .collect();
+
+        ds.run_tx(|tx| {
+            let (task, reports) = (Arc::clone(&task), reports.clone());
+            Box::pin(async move {
+                tx.put_task(&task).await?;
+                for report in reports.iter() {
+                    tx.put_client_report(&dummy_vdaf::Vdaf::new(), report)
+                        .await?;
+                }
+                tx.put_batch(
+                    &Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                        *task.id(),
+                        batch_identifier,
+                        (),
+                        BatchState::Closed,
+                        0,
+                    ),
+                )
+                .await?;
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        // Run.
+        let job_creator = Arc::new(AggregationJobCreator {
+            datastore: ds,
+            tasks_update_frequency: Duration::from_secs(3600),
+            aggregation_job_creation_interval: Duration::from_secs(1),
+            min_aggregation_job_size: MIN_AGGREGATION_JOB_SIZE,
+            max_aggregation_job_size: MAX_AGGREGATION_JOB_SIZE,
+        });
+        Arc::clone(&job_creator)
+            .create_aggregation_jobs_for_task(Arc::clone(&task))
+            .await
+            .unwrap();
+
+        // Verify.
+        let (agg_jobs, batches) = job_creator
+            .datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move {
+                    Ok(read_aggregate_info_for_task::<
+                        PRIO3_VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        Prio3Count,
+                        _,
+                    >(tx, task.id())
+                    .await)
+                })
+            })
+            .await
+            .unwrap();
+        let mut seen_report_ids = HashSet::new();
+        for (agg_job, report_ids) in &agg_jobs {
+            // Job immediately finished since all reports are in a closed batch.
+            assert_eq!(agg_job.state(), &AggregationJobState::Finished);
+
+            // Jobs are created in round 0.
+            assert_eq!(agg_job.round(), AggregationJobRound::from(0));
+
+            // The batch is at most MAX_AGGREGATION_JOB_SIZE in size.
+            assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
+
+            // The batch is at least MIN_AGGREGATION_JOB_SIZE in size.
+            assert!(report_ids.len() >= MIN_AGGREGATION_JOB_SIZE);
+
+            // Report IDs are non-repeated across or inside aggregation jobs.
+            for report_id in report_ids {
+                assert!(!seen_report_ids.contains(report_id));
+                seen_report_ids.insert(*report_id);
+            }
+        }
+
+        // Every client report was added to some aggregation job.
+        assert_eq!(all_report_ids, seen_report_ids);
+
+        // Batches are created appropriately.
+        assert_eq!(
+            batches,
+            Vec::from([Batch::new(
+                *task.id(),
+                batch_identifier,
+                (),
+                BatchState::Closed,
+                0,
+            )])
         );
     }
 
@@ -1119,10 +1343,10 @@ mod tests {
     async fn create_aggregation_jobs_for_fixed_size_task() {
         // Setup.
         install_test_trace_subscriber();
-        let clock = MockClock::default();
+        let clock: MockClock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(clock.clone()).await;
-        let vdaf = dummy_vdaf::Vdaf::new();
+        let ds: janus_aggregator_core::datastore::Datastore<MockClock> =
+            ephemeral_datastore.datastore(clock.clone()).await;
 
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
@@ -1143,8 +1367,9 @@ mod tests {
 
         // Create MIN_BATCH_SIZE + MAX_BATCH_SIZE reports. We expect aggregation jobs to be created
         // containing these reports.
+        let report_time = clock.now();
         let reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
-            iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), clock.now()))
+            iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
                 .take(MIN_BATCH_SIZE + MAX_BATCH_SIZE)
                 .collect();
 
@@ -1154,9 +1379,10 @@ mod tests {
             .collect();
 
         ds.run_tx(|tx| {
-            let (vdaf, task, reports) = (vdaf.clone(), task.clone(), reports.clone());
+            let (task, reports) = (task.clone(), reports.clone());
             Box::pin(async move {
                 tx.put_task(&task).await?;
+                let vdaf = dummy_vdaf::Vdaf::new();
                 for report in &reports {
                     tx.put_client_report(&vdaf, report).await?;
                 }
@@ -1180,17 +1406,19 @@ mod tests {
             .unwrap();
 
         // Verify.
-        let (outstanding_batches, agg_jobs) = job_creator
+        let (outstanding_batches, (agg_jobs, batches)) = job_creator
             .datastore
             .run_tx(|tx| {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
                     Ok((
                         tx.get_outstanding_batches_for_task(task.id()).await?,
-                        read_aggregate_jobs_for_task_prio3_count::<FixedSize, Vec<_>, _>(
-                            tx,
-                            task.id(),
-                        )
+                        read_aggregate_info_for_task::<
+                            PRIO3_VERIFY_KEY_LENGTH,
+                            FixedSize,
+                            Prio3Count,
+                            _,
+                        >(tx, task.id())
                         .await,
                     ))
                 })
@@ -1200,32 +1428,49 @@ mod tests {
 
         // Verify outstanding batches.
         let mut total_max_size = 0;
-        for outstanding_batch in outstanding_batches {
+        let mut min_size_batch_id = None;
+        let mut max_size_batch_id = None;
+        for outstanding_batch in &outstanding_batches {
             assert_eq!(outstanding_batch.size().start(), &0);
             assert!(&MIN_BATCH_SIZE <= outstanding_batch.size().end());
             assert!(outstanding_batch.size().end() <= &MAX_BATCH_SIZE);
             total_max_size += *outstanding_batch.size().end();
+
+            if outstanding_batch.size().end() == &MIN_BATCH_SIZE {
+                min_size_batch_id = Some(*outstanding_batch.id());
+            }
+            if outstanding_batch.size().end() == &MAX_BATCH_SIZE {
+                max_size_batch_id = Some(*outstanding_batch.id());
+            }
         }
         assert_eq!(total_max_size, report_ids.len());
+        let batch_ids: HashSet<_> = outstanding_batches
+            .iter()
+            .map(|outstanding_batch| *outstanding_batch.id())
+            .collect();
 
         // Verify aggregation jobs.
         let mut seen_report_ids = HashSet::new();
         let mut batches_with_small_agg_jobs = HashSet::new();
-        for (_, (agg_job, times_and_ids)) in agg_jobs {
-            // Aggregation jobs are created in round 0
+        for (agg_job, report_ids) in agg_jobs {
+            // Aggregation jobs are created in round 0.
             assert_eq!(agg_job.round(), AggregationJobRound::from(0));
+
+            // Every batch corresponds to one of the outstanding batches.
+            assert!(batch_ids.contains(agg_job.batch_id()));
+
             // At most one aggregation job per batch will be smaller than the normal minimum
             // aggregation job size.
-            if times_and_ids.len() < MIN_AGGREGATION_JOB_SIZE {
+            if report_ids.len() < MIN_AGGREGATION_JOB_SIZE {
                 assert!(!batches_with_small_agg_jobs.contains(agg_job.batch_id()));
                 batches_with_small_agg_jobs.insert(*agg_job.batch_id());
             }
 
             // The aggregation job is at most MAX_AGGREGATION_JOB_SIZE in size.
-            assert!(times_and_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
+            assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
 
             // Report IDs are non-repeated across or inside aggregation jobs.
-            for (_, report_id) in times_and_ids {
+            for report_id in report_ids {
                 assert!(!seen_report_ids.contains(&report_id));
                 seen_report_ids.insert(report_id);
             }
@@ -1233,6 +1478,26 @@ mod tests {
 
         // Every client report was added to some aggregation job.
         assert_eq!(report_ids, seen_report_ids);
+
+        assert_eq!(
+            batches.into_iter().collect::<HashSet<_>>(),
+            HashSet::from([
+                Batch::new(
+                    *task.id(),
+                    max_size_batch_id.unwrap(),
+                    (),
+                    BatchState::Open,
+                    5,
+                ),
+                Batch::new(
+                    *task.id(),
+                    min_size_batch_id.unwrap(),
+                    (),
+                    BatchState::Open,
+                    4,
+                ),
+            ])
+        );
     }
 
     #[tokio::test]
@@ -1311,24 +1576,23 @@ mod tests {
 
         // Verify, there should be no aggregation jobs yet, because there are no collection jobs to
         // provide aggregation parameters.
-        let agg_jobs = job_creator
+        let (agg_jobs, _) = job_creator
             .datastore
             .run_tx(|tx| {
-                let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
+                let task = Arc::clone(&task);
                 Box::pin(async move {
-                    Ok(read_aggregate_jobs_for_task_generic::<
-                        0,
-                        TimeInterval,
-                        dummy_vdaf::Vdaf,
-                        Vec<_>,
-                        _,
-                    >(tx, task.id(), &vdaf)
-                    .await)
+                    Ok(
+                        read_aggregate_info_for_task::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
+                            tx,
+                            task.id(),
+                        )
+                        .await,
+                    )
                 })
             })
             .await
             .unwrap();
-        assert!(agg_jobs.count() == 0);
+        assert!(agg_jobs.is_empty());
 
         job_creator
             .datastore
@@ -1376,35 +1640,33 @@ mod tests {
             .unwrap();
 
         // Verify.
-        let mut agg_jobs = job_creator
+        let (mut agg_jobs, _) = job_creator
             .datastore
             .run_tx(|tx| {
-                let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
+                let task = Arc::clone(&task);
                 Box::pin(async move {
-                    Ok(read_aggregate_jobs_for_task_generic::<
-                        0,
-                        TimeInterval,
-                        dummy_vdaf::Vdaf,
-                        Vec<_>,
-                        _,
-                    >(tx, task.id(), &vdaf)
-                    .await)
+                    Ok(
+                        read_aggregate_info_for_task::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
+                            tx,
+                            task.id(),
+                        )
+                        .await,
+                    )
                 })
             })
             .await
-            .unwrap()
-            .collect::<Vec<_>>();
+            .unwrap();
 
         let mut seen_pairs = Vec::new();
         let mut aggregation_jobs_per_aggregation_param = HashMap::new();
-        for (aggregation_job, times_and_ids) in agg_jobs.iter() {
-            assert!(times_and_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
+        for (aggregation_job, report_ids) in agg_jobs.iter() {
+            assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
 
             *aggregation_jobs_per_aggregation_param
                 .entry(*aggregation_job.aggregation_parameter())
                 .or_default() += 1;
 
-            for (_, report_id) in times_and_ids {
+            for report_id in report_ids {
                 seen_pairs.push((*report_id, *aggregation_job.aggregation_parameter()));
             }
         }
@@ -1434,100 +1696,68 @@ mod tests {
 
         // We should see the same aggregation jobs as before, because the newly created aggregation
         // jobs should have satisfied all the collection jobs.
-        let mut quiescent_check_agg_jobs = job_creator
+        let (mut quiescent_check_agg_jobs, _) = job_creator
             .datastore
             .run_tx(|tx| {
-                let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
+                let task = Arc::clone(&task);
                 Box::pin(async move {
-                    Ok(read_aggregate_jobs_for_task_generic::<
-                        0,
-                        TimeInterval,
-                        dummy_vdaf::Vdaf,
-                        Vec<_>,
-                        _,
-                    >(tx, task.id(), &vdaf)
-                    .await)
+                    Ok(
+                        read_aggregate_info_for_task::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
+                            tx,
+                            task.id(),
+                        )
+                        .await,
+                    )
                 })
             })
             .await
-            .unwrap()
-            .collect::<Vec<_>>();
+            .unwrap();
         assert_eq!(agg_jobs.len(), quiescent_check_agg_jobs.len());
         agg_jobs.sort_by_key(|(agg_job, _)| *agg_job.id());
         quiescent_check_agg_jobs.sort_by_key(|(agg_job, _)| *agg_job.id());
         assert_eq!(agg_jobs, quiescent_check_agg_jobs);
     }
 
-    /// Test helper function that reads all aggregation jobs for a given task ID, with VDAF
-    /// Prio3Count, returning a map from aggregation job ID to the report IDs included in the
-    /// aggregation job. The container used to store the report IDs is up to the caller; ordered
-    /// containers will store report IDs in the order they are included in the aggregate job.
-    async fn read_aggregate_jobs_for_task_prio3_count<
-        Q: AccumulableQueryType,
-        T: FromIterator<(Time, ReportId)>,
-        C: Clock,
-    >(
-        tx: &Transaction<'_, C>,
-        task_id: &TaskId,
-    ) -> HashMap<AggregationJobId, (AggregationJob<PRIO3_VERIFY_KEY_LENGTH, Q, Prio3Count>, T)>
-    {
-        let vdaf = Prio3::new_count(2).unwrap();
-        read_aggregate_jobs_for_task_generic::<PRIO3_VERIFY_KEY_LENGTH, Q, Prio3Count, T, C>(
-            tx, task_id, &vdaf,
-        )
-        .await
-        .map(|(agg_job, report_id)| (*agg_job.id(), (agg_job, report_id)))
-        .collect()
-    }
-
-    /// Test helper function that reads all aggregation jobs for a given task ID, returning an
-    /// iterator of tuples containing aggregation job IDs, the report IDs included in the
-    /// aggregation job, and aggregation parameters. The container used to store the report IDs is
-    /// up to the caller; ordered containers will store report IDs in the order they are included in
-    /// the aggregate job.
-    async fn read_aggregate_jobs_for_task_generic<
+    /// Test helper function that reads all aggregation jobs & batches for a given task ID,
+    /// returning the aggregation jobs, the report IDs included in the aggregation job, and the
+    /// batches. Report IDs are returned in the order they are included in the aggregation job.
+    async fn read_aggregate_info_for_task<
         const SEED_SIZE: usize,
         Q: AccumulableQueryType,
-        A,
-        T,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
         C: Clock,
     >(
         tx: &Transaction<'_, C>,
         task_id: &TaskId,
-        vdaf: &A,
-    ) -> impl Iterator<Item = (AggregationJob<SEED_SIZE, Q, A>, T)>
-    where
-        T: FromIterator<(Time, ReportId)>,
-        A: Aggregator<SEED_SIZE, 16>,
-        <A as Aggregator<SEED_SIZE, 16>>::PrepareState: for<'a> ParameterizedDecode<(&'a A, usize)>,
-    {
-        try_join_all(
-            tx.get_aggregation_jobs_for_task::<SEED_SIZE, Q, A>(task_id)
-                .await
-                .unwrap()
-                .into_iter()
-                .map(|agg_job| async {
-                    let agg_job_id = *agg_job.id();
-                    tx.get_report_aggregations_for_aggregation_job(
-                        vdaf,
-                        &Role::Leader,
-                        task_id,
-                        &agg_job_id,
-                    )
-                    .map_ok(move |report_aggs| {
-                        (
-                            agg_job,
-                            report_aggs
-                                .into_iter()
-                                .map(|ra| (*ra.time(), *ra.report_id()))
-                                .collect::<T>(),
-                        )
-                    })
+    ) -> (
+        Vec<(AggregationJob<SEED_SIZE, Q, A>, Vec<ReportId>)>,
+        Vec<Batch<SEED_SIZE, Q, A>>,
+    ) {
+        try_join!(
+            try_join_all(
+                tx.get_aggregation_jobs_for_task(task_id)
                     .await
-                }),
+                    .unwrap()
+                    .into_iter()
+                    .map(|agg_job| async {
+                        let agg_job_id = *agg_job.id();
+                        tx.get_report_aggregations_for_aggregation_job(
+                            &dummy_vdaf::Vdaf::new(),
+                            &Role::Leader,
+                            task_id,
+                            &agg_job_id,
+                        )
+                        .map_ok(move |report_aggs| {
+                            (
+                                agg_job,
+                                report_aggs.into_iter().map(|ra| *ra.report_id()).collect(),
+                            )
+                        })
+                        .await
+                    }),
+            ),
+            tx.get_batches_for_task(task_id),
         )
-        .await
         .unwrap()
-        .into_iter()
     }
 }

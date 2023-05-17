@@ -158,7 +158,7 @@ impl CollectionJobDriver {
                     // Read batch aggregations, and mark them as read-for-collection to avoid
                     // further aggregation.
                     let batch_aggregations: Vec<_> =
-                        Q::get_batch_aggregations_for_collect_identifier(
+                        Q::get_batch_aggregations_for_collection_identifier(
                             tx,
                             &task,
                             vdaf.as_ref(),
@@ -255,16 +255,16 @@ impl CollectionJobDriver {
 
                 Box::pin(async move {
                     let maybe_updated_collection_job = tx
-                        .get_collection_job::<SEED_SIZE, Q, A>(vdaf.as_ref(), collection_job.collection_job_id())
+                        .get_collection_job::<SEED_SIZE, Q, A>(vdaf.as_ref(), collection_job.id())
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
-                                Error::UnrecognizedCollectionJob(*collection_job.collection_job_id()).into(),
+                                Error::UnrecognizedCollectionJob(*collection_job.id()).into(),
                             )
                         })?;
 
                     match maybe_updated_collection_job.state() {
-                        CollectionJobState::Start => {
+                        CollectionJobState::Collectable => {
                             try_join!(
                                 tx.update_collection_job::<SEED_SIZE, Q, A>(&collection_job),
                                 tx.release_collection_job(&lease),
@@ -278,7 +278,7 @@ impl CollectionJobDriver {
                             // state so that appropriate status can be returned from polling the
                             // collection job URI and GC can run (#313).
                             info!(
-                                collection_job_id = %collection_job.collection_job_id(),
+                                collection_job_id = %collection_job.id(),
                                 "collection job was deleted while lease was held. Discarding aggregate results.",
                             );
                             metrics.deleted_jobs_encountered_counter.add(&Context::current(), 1, &[]);
@@ -287,11 +287,12 @@ impl CollectionJobDriver {
                         state => {
                             // It shouldn't be possible for a collection job to move to the
                             // abandoned or finished state while this collection job driver held its
-                            // lease.
+                            // lease, and we should not have acquired a lease if we were in the
+                            // start state.
                             metrics.unexpected_job_state_counter.add(&Context::current(), 1, &[KeyValue::new("state", Value::from(format!("{state}")))]);
                             panic!(
                                 "collection job {} unexpectedly in state {}",
-                                collection_job.collection_job_id(), state
+                                collection_job.id(), state
                             );
                         }
                     }
@@ -384,26 +385,17 @@ impl CollectionJobDriver {
         lease_duration: Duration,
     ) -> impl Fn(usize) -> BoxFuture<'static, Result<Vec<Lease<AcquiredCollectionJob>>, datastore::Error>>
     {
-        move |maximum_acquire_count_per_query_type| {
+        move |maximum_acquire_count| {
             let datastore = Arc::clone(&datastore);
             Box::pin(async move {
                 datastore
                     .run_tx_with_name("acquire_collection_jobs", |tx| {
                         Box::pin(async move {
-                            let (time_interval_jobs, fixed_size_jobs) = try_join!(
-                                tx.acquire_incomplete_time_interval_collection_jobs(
-                                    &lease_duration,
-                                    maximum_acquire_count_per_query_type,
-                                ),
-                                tx.acquire_incomplete_fixed_size_collection_jobs(
-                                    &lease_duration,
-                                    maximum_acquire_count_per_query_type
-                                ),
-                            )?;
-                            Ok(time_interval_jobs
-                                .into_iter()
-                                .chain(fixed_size_jobs.into_iter())
-                                .collect())
+                            tx.acquire_incomplete_collection_jobs(
+                                &lease_duration,
+                                maximum_acquire_count,
+                            )
+                            .await
                         })
                     })
                     .await
@@ -579,7 +571,7 @@ mod tests {
             random(),
             batch_interval,
             aggregation_param,
-            CollectionJobState::Start,
+            CollectionJobState::Collectable,
         );
 
         let lease = datastore
@@ -661,17 +653,11 @@ mod tests {
 
                     if acquire_lease {
                         let lease = tx
-                            .acquire_incomplete_time_interval_collection_jobs(
-                                &StdDuration::from_secs(100),
-                                1,
-                            )
+                            .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 1)
                             .await?
                             .remove(0);
                         assert_eq!(task.id(), lease.leased().task_id());
-                        assert_eq!(
-                            collection_job.collection_job_id(),
-                            lease.leased().collection_job_id()
-                        );
+                        assert_eq!(collection_job.id(), lease.leased().collection_job_id());
                         Ok(Some(lease))
                     } else {
                         Ok(None)
@@ -722,7 +708,7 @@ mod tests {
                             collection_job_id,
                             batch_interval,
                             aggregation_param,
-                            CollectionJobState::Start,
+                            CollectionJobState::Collectable,
                         ),
                     )
                     .await?;
@@ -758,12 +744,9 @@ mod tests {
                     .await?;
 
                     let lease = Arc::new(
-                        tx.acquire_incomplete_time_interval_collection_jobs(
-                            &StdDuration::from_secs(100),
-                            1,
-                        )
-                        .await?
-                        .remove(0),
+                        tx.acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 1)
+                            .await?
+                            .remove(0),
                     );
 
                     assert_eq!(task.id(), lease.leased().task_id());
@@ -885,7 +868,7 @@ mod tests {
                     .await
                     .unwrap()
                     .unwrap();
-                assert_eq!(collection_job.state(), &CollectionJobState::Start);
+                assert_eq!(collection_job.state(), &CollectionJobState::Collectable);
                 Ok(())
             })
         })
@@ -985,16 +968,13 @@ mod tests {
                     let abandoned_collection_job = tx
                         .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                             &dummy_vdaf::Vdaf::new(),
-                            collection_job.collection_job_id(),
+                            collection_job.id(),
                         )
                         .await?
                         .unwrap();
 
                     let leases = tx
-                        .acquire_incomplete_time_interval_collection_jobs(
-                            &StdDuration::from_secs(100),
-                            1,
-                        )
+                        .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 1)
                         .await?;
 
                     Ok((abandoned_collection_job, leases))
@@ -1088,7 +1068,7 @@ mod tests {
                 Box::pin(async move {
                     tx.get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &dummy_vdaf::Vdaf::new(),
-                        collection_job.collection_job_id(),
+                        collection_job.id(),
                     )
                     .await
                 })
@@ -1164,7 +1144,7 @@ mod tests {
                 let collection_job = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &dummy_vdaf::Vdaf::new(),
-                        collection_job.collection_job_id(),
+                        collection_job.id(),
                     )
                     .await
                     .unwrap()
@@ -1173,10 +1153,7 @@ mod tests {
                 assert_eq!(collection_job.state(), &CollectionJobState::Deleted);
 
                 let leases = tx
-                    .acquire_incomplete_time_interval_collection_jobs(
-                        &StdDuration::from_secs(100),
-                        1,
-                    )
+                    .acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 1)
                     .await
                     .unwrap();
 

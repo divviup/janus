@@ -21,6 +21,7 @@ use reqwest::{header::CONTENT_TYPE, StatusCode, Url};
 use serde_json::{json, Value};
 use std::time::Duration as StdDuration;
 use testcontainers::RunnableImage;
+use tokio::time::sleep;
 
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed_macro::fixed;
@@ -420,6 +421,9 @@ async fn run(
         }
     };
 
+    // Wait a few seconds to allow the aggregation process to start for all uploaded reports.
+    sleep(StdDuration::from_secs(5)).await;
+
     // Try collecting one or more times. For fixed size tasks, a "current batch" query will fail
     // with an invalid batch until enough reports are ready.
     let mut collect_attempt_backoff = ExponentialBackoffBuilder::new()
@@ -512,7 +516,7 @@ async fn run(
                 .expect("\"status\" value is not a string");
             if status == "in progress" {
                 if let Some(duration) = collection_poll_backoff.next_backoff() {
-                    tokio::time::sleep(duration).await;
+                    sleep(duration).await;
                     continue;
                 } else {
                     panic!("timed out fetching aggregation result");
@@ -523,7 +527,7 @@ async fn run(
 
         if status == "error" {
             if let Some(duration) = collect_attempt_backoff.next_backoff() {
-                tokio::time::sleep(duration).await;
+                sleep(duration).await;
                 continue;
             } else {
                 panic!("timed out waiting for collect to succeed");
