@@ -1,7 +1,10 @@
 #![cfg(feature = "in-cluster")]
 
 use anyhow::anyhow;
-use base64::engine::{general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::engine::{
+    general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    Engine,
+};
 use common::{submit_measurements_and_verify_aggregate, test_task_builders};
 use http::header::{ACCEPT, CONTENT_TYPE};
 use janus_aggregator_core::task::{QueryType, Task};
@@ -14,7 +17,8 @@ use janus_core::{
     },
 };
 use janus_integration_tests::client::ClientBackend;
-use janus_messages::{HpkeConfig, HpkePublicKey, Role, TaskId};
+use janus_messages::{Role, TaskId};
+use prio::codec::Encode;
 use serde::{Deserialize, Serialize};
 use std::env;
 use url::Url;
@@ -213,27 +217,6 @@ impl TryFrom<&VdafInstance> for ApiVdaf {
 }
 
 #[derive(Serialize)]
-struct ApiHpkeConfig {
-    id: u8,
-    kem_id: u8,
-    kdf_id: u8,
-    aead_id: u8,
-    public_key: HpkePublicKey,
-}
-
-impl From<HpkeConfig> for ApiHpkeConfig {
-    fn from(value: HpkeConfig) -> Self {
-        Self {
-            id: (*value.id()).into(),
-            kem_id: *value.kem_id() as u16 as u8,
-            kdf_id: *value.kdf_id() as u16 as u8,
-            aead_id: *value.aead_id() as u16 as u8,
-            public_key: value.public_key().clone(),
-        }
-    }
-}
-
-#[derive(Serialize)]
 struct NewTaskRequest {
     name: String,
     id: TaskId,
@@ -245,7 +228,7 @@ struct NewTaskRequest {
     vdaf_verify_key: String,
     expiration: String,
     time_precision_seconds: u64,
-    hpke_config: ApiHpkeConfig,
+    hpke_config: String,
     aggregator_auth_token: String,
     collector_auth_token: Option<String>,
 }
@@ -279,7 +262,7 @@ impl TryFrom<&Task> for NewTaskRequest {
             vdaf_verify_key: URL_SAFE_NO_PAD.encode(&task.vdaf_verify_keys()[0]),
             expiration: "3000-01-01T00:00:00Z".to_owned(),
             time_precision_seconds: task.time_precision().as_seconds(),
-            hpke_config: task.collector_hpke_config().clone().into(),
+            hpke_config: STANDARD.encode(task.collector_hpke_config().get_encoded()),
             aggregator_auth_token: URL_SAFE_NO_PAD
                 .encode(task.primary_aggregator_auth_token().as_ref()),
             collector_auth_token,
