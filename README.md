@@ -43,6 +43,8 @@ DOCKER_BUILDKIT=1 docker build --tag=janus_aggregation_job_driver --build-arg BI
 DOCKER_BUILDKIT=1 docker build --tag=janus_collection_job_driver --build-arg BINARY=collection_job_driver .
 ```
 
+Alternately, run `docker buildx bake` to build images in parallel.
+
 ## Running tests
 
 Tests require that [`docker`](https://www.docker.com) and
