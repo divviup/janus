@@ -6,7 +6,7 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::{FixedSize, QueryType as _, TimeInterval},
-    HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId,
+    HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId, Time,
 };
 use prio::codec::Encode;
 use rand::random;
@@ -267,7 +267,7 @@ pub struct AggregatorAddTaskRequest {
     pub max_batch_size: Option<u64>,
     pub time_precision: u64,           // in seconds
     pub collector_hpke_config: String, // in unpadded base64url
-    pub task_expiration: u64,          // in seconds since the epoch
+    pub task_expiration: Option<u64>,  // in seconds since the epoch
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -312,7 +312,7 @@ impl From<Task> for AggregatorAddTaskRequest {
             time_precision: task.time_precision().as_seconds(),
             collector_hpke_config: URL_SAFE_NO_PAD
                 .encode(task.collector_hpke_config().get_encoded()),
-            task_expiration: task.task_expiration().as_seconds_since_epoch(),
+            task_expiration: task.task_expiration().map(Time::as_seconds_since_epoch),
         }
     }
 }

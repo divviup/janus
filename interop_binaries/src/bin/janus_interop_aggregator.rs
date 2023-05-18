@@ -92,7 +92,7 @@ async fn handle_add_task(
         request.role.into(),
         Vec::from([vdaf_verify_key]),
         request.max_batch_query_count,
-        Time::from_seconds_since_epoch(request.task_expiration),
+        request.task_expiration.map(Time::from_seconds_since_epoch),
         None,
         request.min_batch_size,
         time_precision,

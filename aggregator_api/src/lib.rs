@@ -161,7 +161,7 @@ async fn post_task<C: Clock>(
                 .collect(),
         )])
     };
-    let task_expiration = Time::from_seconds_since_epoch(req.task_expiration);
+    let task_expiration = req.task_expiration.map(Time::from_seconds_since_epoch);
     let time_precision = Duration::from_seconds(req.time_precision);
     let aggregator_auth_tokens = if let Some(encoded) = req.aggregator_auth_token.as_ref() {
         let token_bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|err| {
@@ -345,7 +345,7 @@ mod models {
         pub(crate) role: Role,
         pub(crate) vdaf_verify_key: Option<String>,
         pub(crate) max_batch_query_count: u64,
-        pub(crate) task_expiration: u64, // seconds since UNIX epoch
+        pub(crate) task_expiration: Option<u64>, // seconds since UNIX epoch
         pub(crate) min_batch_size: u64,
         pub(crate) time_precision: u64, // seconds
         pub(crate) collector_hpke_config: HpkeConfig,
@@ -363,7 +363,7 @@ mod models {
         pub(crate) role: Role,
         pub(crate) vdaf_verify_keys: Vec<String>,
         pub(crate) max_batch_query_count: u64,
-        pub(crate) task_expiration: Time,
+        pub(crate) task_expiration: Option<Time>,
         pub(crate) report_expiry_age: Option<Duration>,
         pub(crate) min_batch_size: u64,
         pub(crate) time_precision: Duration,
@@ -407,7 +407,7 @@ mod models {
                 role: *task.role(),
                 vdaf_verify_keys: encoded_verify_keys,
                 max_batch_query_count: task.max_batch_query_count(),
-                task_expiration: *task.task_expiration(),
+                task_expiration: task.task_expiration().copied(),
                 report_expiry_age: task.report_expiry_age().cloned(),
                 min_batch_size: task.min_batch_size(),
                 time_precision: *task.time_precision(),
@@ -625,7 +625,7 @@ mod tests {
             role: Role::Leader,
             vdaf_verify_key: None,
             max_batch_query_count: 12,
-            task_expiration: 12345,
+            task_expiration: Some(12345),
             min_batch_size: 223,
             time_precision: 62,
             collector_hpke_config: generate_hpke_config_and_private_key(
@@ -677,7 +677,9 @@ mod tests {
         assert_eq!(&req.role, got_task.role());
         assert_eq!(req.max_batch_query_count, got_task.max_batch_query_count());
         assert_eq!(
-            &Time::from_seconds_since_epoch(req.task_expiration),
+            req.task_expiration
+                .map(Time::from_seconds_since_epoch)
+                .as_ref(),
             got_task.task_expiration()
         );
         assert_eq!(req.min_batch_size, got_task.min_batch_size());
@@ -723,7 +725,7 @@ mod tests {
             role: Role::Leader,
             vdaf_verify_key: Some(URL_SAFE_NO_PAD.encode(&vdaf_verify_key)),
             max_batch_query_count: 12,
-            task_expiration: 12345,
+            task_expiration: Some(12345),
             min_batch_size: 223,
             time_precision: 62,
             collector_hpke_config: generate_hpke_config_and_private_key(
@@ -781,7 +783,9 @@ mod tests {
         );
         assert_eq!(req.max_batch_query_count, got_task.max_batch_query_count());
         assert_eq!(
-            &Time::from_seconds_since_epoch(req.task_expiration),
+            req.task_expiration
+                .map(Time::from_seconds_since_epoch)
+                .as_ref(),
             got_task.task_expiration()
         );
         assert_eq!(req.min_batch_size, got_task.min_batch_size());
@@ -1116,7 +1120,7 @@ mod tests {
                 role: Role::Leader,
                 vdaf_verify_key: None,
                 max_batch_query_count: 1,
-                task_expiration: u64::MAX,
+                task_expiration: None,
                 min_batch_size: 100,
                 time_precision: 3600,
                 collector_hpke_config: HpkeConfig::new(
@@ -1168,7 +1172,7 @@ mod tests {
                 Token::Str("max_batch_query_count"),
                 Token::U64(1),
                 Token::Str("task_expiration"),
-                Token::U64(u64::MAX),
+                Token::None,
                 Token::Str("min_batch_size"),
                 Token::U64(100),
                 Token::Str("time_precision"),
@@ -1225,7 +1229,7 @@ mod tests {
                 role: Role::Leader,
                 vdaf_verify_key: Some("encoded".to_owned()),
                 max_batch_query_count: 1,
-                task_expiration: u64::MAX,
+                task_expiration: None,
                 min_batch_size: 100,
                 time_precision: 3600,
                 collector_hpke_config: HpkeConfig::new(
@@ -1279,7 +1283,7 @@ mod tests {
                 Token::Str("max_batch_query_count"),
                 Token::U64(1),
                 Token::Str("task_expiration"),
-                Token::U64(u64::MAX),
+                Token::None,
                 Token::Str("min_batch_size"),
                 Token::U64(100),
                 Token::Str("time_precision"),
@@ -1338,7 +1342,7 @@ mod tests {
             Role::Leader,
             Vec::from([SecretBytes::new(b"vdaf verify key!".to_vec())]),
             1,
-            Time::distant_future(),
+            None,
             None,
             100,
             Duration::from_seconds(3600),
@@ -1411,8 +1415,7 @@ mod tests {
                 Token::Str("max_batch_query_count"),
                 Token::U64(1),
                 Token::Str("task_expiration"),
-                Token::NewtypeStruct { name: "Time" },
-                Token::U64(9_000_000_000),
+                Token::None,
                 Token::Str("report_expiry_age"),
                 Token::None,
                 Token::Str("min_batch_size"),

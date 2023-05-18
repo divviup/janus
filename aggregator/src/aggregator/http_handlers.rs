@@ -983,7 +983,7 @@ mod tests {
             VdafInstance::Prio3Count,
             Role::Leader,
         )
-        .with_task_expiration(clock.now().add(&Duration::from_seconds(60)).unwrap())
+        .with_task_expiration(Some(clock.now().add(&Duration::from_seconds(60)).unwrap()))
         .build();
         datastore.put_task(&task_expire_soon).await.unwrap();
         let report_2 = create_report(

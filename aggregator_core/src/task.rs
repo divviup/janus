@@ -92,7 +92,7 @@ pub struct Task {
     /// The maximum number of times a given batch may be collected.
     max_batch_query_count: u64,
     /// The time after which the task is considered invalid.
-    task_expiration: Time,
+    task_expiration: Option<Time>,
     /// The age after which a report is considered to be "expired" and will be considered a
     /// candidate for garbage collection.
     report_expiry_age: Option<Duration>,
@@ -127,7 +127,7 @@ impl Task {
         role: Role,
         vdaf_verify_keys: Vec<SecretBytes>,
         max_batch_query_count: u64,
-        task_expiration: Time,
+        task_expiration: Option<Time>,
         report_expiry_age: Option<Duration>,
         min_batch_size: u64,
         time_precision: Duration,
@@ -233,8 +233,8 @@ impl Task {
     }
 
     /// Retrieves the task expiration associated with this task.
-    pub fn task_expiration(&self) -> &Time {
-        &self.task_expiration
+    pub fn task_expiration(&self) -> Option<&Time> {
+        self.task_expiration.as_ref()
     }
 
     /// Retrieves the report expiry age associated with this task.
@@ -411,7 +411,7 @@ pub struct SerializedTask {
     role: Role,
     vdaf_verify_keys: Vec<String>, // in unpadded base64url
     max_batch_query_count: u64,
-    task_expiration: Time,
+    task_expiration: Option<Time>,
     report_expiry_age: Option<Duration>,
     min_batch_size: u64,
     time_precision: Duration,
@@ -670,7 +670,7 @@ pub mod test_util {
                     role,
                     Vec::from([vdaf_verify_key]),
                     1,
-                    Time::distant_future(),
+                    None,
                     None,
                     0,
                     Duration::from_hours(8).unwrap(),
@@ -770,7 +770,7 @@ pub mod test_util {
         }
 
         /// Sets the task expiration time.
-        pub fn with_task_expiration(self, task_expiration: Time) -> Self {
+        pub fn with_task_expiration(self, task_expiration: Option<Time>) -> Self {
             Self(Task {
                 task_expiration,
                 ..self.0
@@ -803,6 +803,12 @@ pub mod test_util {
             self.0
         }
     }
+
+    impl From<Task> for TaskBuilder {
+        fn from(task: Task) -> Self {
+            Self(task)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -821,7 +827,7 @@ mod tests {
     };
     use janus_messages::{
         Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,
-        TaskId, Time,
+        TaskId,
     };
     use rand::random;
     use serde_test::{assert_tokens, Token};
@@ -858,7 +864,7 @@ mod tests {
             Role::Leader,
             Vec::from([SecretBytes::new([0; PRIO3_VERIFY_KEY_LENGTH].into())]),
             0,
-            Time::from_seconds_since_epoch(u64::MAX),
+            None,
             None,
             0,
             Duration::from_hours(8).unwrap(),
@@ -882,7 +888,7 @@ mod tests {
             Role::Leader,
             Vec::from([SecretBytes::new([0; PRIO3_VERIFY_KEY_LENGTH].into())]),
             0,
-            Time::from_seconds_since_epoch(u64::MAX),
+            None,
             None,
             0,
             Duration::from_hours(8).unwrap(),
@@ -906,7 +912,7 @@ mod tests {
             Role::Helper,
             Vec::from([SecretBytes::new([0; PRIO3_VERIFY_KEY_LENGTH].into())]),
             0,
-            Time::from_seconds_since_epoch(u64::MAX),
+            None,
             None,
             0,
             Duration::from_hours(8).unwrap(),
@@ -930,7 +936,7 @@ mod tests {
             Role::Helper,
             Vec::from([SecretBytes::new([0; PRIO3_VERIFY_KEY_LENGTH].into())]),
             0,
-            Time::from_seconds_since_epoch(u64::MAX),
+            None,
             None,
             0,
             Duration::from_hours(8).unwrap(),
@@ -956,7 +962,7 @@ mod tests {
             Role::Leader,
             Vec::from([SecretBytes::new([0; PRIO3_VERIFY_KEY_LENGTH].into())]),
             0,
-            Time::from_seconds_since_epoch(u64::MAX),
+            None,
             None,
             0,
             Duration::from_hours(8).unwrap(),
@@ -1036,7 +1042,7 @@ mod tests {
                 Role::Leader,
                 Vec::from([SecretBytes::new(b"1234567812345678".to_vec())]),
                 1,
-                Time::distant_future(),
+                None,
                 None,
                 10,
                 Duration::from_seconds(3600),
@@ -1097,8 +1103,7 @@ mod tests {
                 Token::Str("max_batch_query_count"),
                 Token::U64(1),
                 Token::Str("task_expiration"),
-                Token::NewtypeStruct { name: "Time" },
-                Token::U64(9000000000),
+                Token::None,
                 Token::Str("report_expiry_age"),
                 Token::None,
                 Token::Str("min_batch_size"),
@@ -1199,7 +1204,7 @@ mod tests {
                 Role::Helper,
                 Vec::from([SecretBytes::new(b"1234567812345678".to_vec())]),
                 1,
-                Time::distant_future(),
+                None,
                 Some(Duration::from_seconds(1800)),
                 10,
                 Duration::from_seconds(3600),
@@ -1268,8 +1273,7 @@ mod tests {
                 Token::Str("max_batch_query_count"),
                 Token::U64(1),
                 Token::Str("task_expiration"),
-                Token::NewtypeStruct { name: "Time" },
-                Token::U64(9000000000),
+                Token::None,
                 Token::Str("report_expiry_age"),
                 Token::Some,
                 Token::NewtypeStruct { name: "Duration" },
@@ -1376,7 +1380,7 @@ mod tests {
             role: Role::Helper,
             vdaf_verify_keys: Vec::from([]),
             max_batch_query_count: 1,
-            task_expiration: Time::distant_future(),
+            task_expiration: None,
             report_expiry_age: None,
             min_batch_size: 100,
             time_precision: Duration::from_seconds(3600),
@@ -1402,7 +1406,7 @@ mod tests {
             role: Role::Leader,
             vdaf_verify_keys: Vec::from([]),
             max_batch_query_count: 1,
-            task_expiration: Time::distant_future(),
+            task_expiration: None,
             report_expiry_age: None,
             min_batch_size: 100,
             time_precision: Duration::from_seconds(3600),

@@ -994,12 +994,14 @@ impl VdafOps {
 
         // Reject reports after a task has expired.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
-        if report.metadata().time().is_after(task.task_expiration()) {
-            return Err(Arc::new(Error::ReportRejected(
-                *task.id(),
-                *report.metadata().id(),
-                *report.metadata().time(),
-            )));
+        if let Some(task_expiration) = task.task_expiration() {
+            if report.metadata().time().is_after(task_expiration) {
+                return Err(Arc::new(Error::ReportRejected(
+                    *task.id(),
+                    *report.metadata().id(),
+                    *report.metadata().time(),
+                )));
+            }
         }
 
         // Reject reports that would be eligible for garbage collection, to prevent replay attacks.
