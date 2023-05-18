@@ -1,10 +1,10 @@
 //! Functionality for tests interacting with Daphne (<https://github.com/cloudflare/daphne>).
 
 use crate::interop_api;
-use janus_aggregator_core::task::Task;
+use janus_aggregator_core::task::{test_util::TaskBuilder, Task};
 use janus_interop_binaries::log_export_path;
 use janus_interop_binaries::test_util::await_http_server;
-use janus_messages::Role;
+use janus_messages::{Role, Time};
 use std::{
     fs::{create_dir_all, File},
     process::{Command, Stdio},
@@ -44,12 +44,23 @@ impl<'a> Daphne<'a> {
         // Wait for Daphne container to begin listening on the port.
         await_http_server(port).await;
 
+        // Daphne does not support unset task expiration values. Work around this by specifying an
+        // arbitrary, far-future task expiration time, instead.
+        let task = if task.task_expiration().is_none() {
+            TaskBuilder::from(task.clone())
+                .with_task_expiration(Some(Time::from_seconds_since_epoch(10000000000000)))
+                .build()
+        } else {
+            task.clone()
+        };
+        let role = *task.role();
+
         // Write the given task to the Daphne instance we started.
-        interop_api::aggregator_add_task(port, task.clone()).await;
+        interop_api::aggregator_add_task(port, task).await;
 
         Self {
             daphne_container,
-            role: *task.role(),
+            role,
         }
     }
 

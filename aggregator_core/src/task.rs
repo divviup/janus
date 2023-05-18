@@ -803,6 +803,12 @@ pub mod test_util {
             self.0
         }
     }
+
+    impl From<Task> for TaskBuilder {
+        fn from(task: Task) -> Self {
+            Self(task)
+        }
+    }
 }
 
 #[cfg(test)]
