@@ -532,7 +532,16 @@ fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<Authenticati
     let bearer_token =
         extract_bearer_token(conn).map_err(|_| Error::UnauthorizedRequest(*task_id))?;
     if bearer_token.is_some() {
-        return Ok(bearer_token);
+        return bearer_token
+            .map(AuthenticationToken::try_from)
+            .transpose()
+            .map_err(|_| {
+                Error::BadRequest(
+                    "Authorization: Bearer value decodes to an authentication token containing \
+                     unsafe bytes"
+                        .to_string(),
+                )
+            });
     }
 
     conn.request_headers()
