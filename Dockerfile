@@ -1,8 +1,7 @@
 FROM rust:1.69.0-alpine as builder
 RUN apk add libc-dev
 WORKDIR /src
-COPY Cargo.toml /src/Cargo.toml
-COPY Cargo.lock /src/Cargo.lock
+COPY Cargo.toml Cargo.lock /src/
 COPY aggregator /src/aggregator
 COPY aggregator_api /src/aggregator_api
 COPY aggregator_core /src/aggregator_core

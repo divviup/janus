@@ -3,8 +3,7 @@ ARG PROFILE=release
 FROM rust:1.69.0-alpine as builder
 RUN apk add libc-dev
 WORKDIR /src
-COPY Cargo.toml /src/Cargo.toml
-COPY Cargo.lock /src/Cargo.lock
+COPY Cargo.toml Cargo.lock /src/
 COPY aggregator /src/aggregator
 COPY aggregator_api /src/aggregator_api
 COPY aggregator_core /src/aggregator_core
@@ -38,14 +37,17 @@ RUN mkdir /logs && mkdir /etc/janus
 RUN apk add --update supervisor && rm -rf /tmp/* /var/cache/apk/*
 COPY db /etc/janus/migrations
 COPY interop_binaries/setup.sh /usr/local/bin/setup.sh
-COPY interop_binaries/config/supervisord.conf /etc/janus/supervisord.conf
-COPY interop_binaries/config/janus_interop_aggregator.yaml /etc/janus/janus_interop_aggregator.yaml
-COPY interop_binaries/config/aggregation_job_creator.yaml /etc/janus/aggregation_job_creator.yaml
-COPY interop_binaries/config/aggregation_job_driver.yaml /etc/janus/aggregation_job_driver.yaml
-COPY interop_binaries/config/collection_job_driver.yaml /etc/janus/collection_job_driver.yaml
-COPY --from=builder /janus_interop_aggregator /usr/local/bin/janus_interop_aggregator
-COPY --from=builder /aggregation_job_creator /usr/local/bin/aggregation_job_creator
-COPY --from=builder /aggregation_job_driver /usr/local/bin/aggregation_job_driver
-COPY --from=builder /collection_job_driver /usr/local/bin/collection_job_driver
+COPY interop_binaries/config/supervisord.conf \
+    interop_binaries/config/janus_interop_aggregator.yaml \
+    interop_binaries/config/aggregation_job_creator.yaml \
+    interop_binaries/config/aggregation_job_driver.yaml \
+    interop_binaries/config/collection_job_driver.yaml \
+    /etc/janus/
+COPY --from=builder \
+    /src/target/$PROFILE/janus_interop_aggregator \
+    /src/target/$PROFILE/aggregation_job_creator \
+    /src/target/$PROFILE/aggregation_job_driver \
+    /src/target/$PROFILE/collection_job_driver \
+    /usr/local/bin/
 EXPOSE 8080
 ENTRYPOINT ["/usr/bin/supervisord", "-c", "/etc/janus/supervisord.conf"]
