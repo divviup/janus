@@ -5,7 +5,11 @@
 
 use self::query_type::{FixedSize, QueryType, TimeInterval};
 use anyhow::anyhow;
-use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{
+    display::Base64Display,
+    engine::general_purpose::{STANDARD_NO_PAD, URL_SAFE_NO_PAD},
+    Engine,
+};
 use derivative::Derivative;
 use num_enum::TryFromPrimitive;
 use prio::codec::{
@@ -951,7 +955,7 @@ impl Debug for HpkePublicKey {
 
 impl Display for HpkePublicKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", Base64Display::new(&self.0, &URL_SAFE_NO_PAD))
+        write!(f, "{}", Base64Display::new(&self.0, &STANDARD_NO_PAD))
     }
 }
 
@@ -962,7 +966,7 @@ impl Serialize for HpkePublicKey {
     where
         S: Serializer,
     {
-        let encoded = URL_SAFE_NO_PAD.encode(self.as_ref());
+        let encoded = STANDARD_NO_PAD.encode(self.as_ref());
         serializer.serialize_str(&encoded)
     }
 }
@@ -980,7 +984,7 @@ impl<'de> Visitor<'de> for HpkePublicKeyVisitor {
     where
         E: de::Error,
     {
-        let decoded = URL_SAFE_NO_PAD
+        let decoded = STANDARD_NO_PAD
             .decode(value)
             .map_err(|_| E::custom("invalid base64url value"))?;
         Ok(HpkePublicKey::from(decoded))
