@@ -66,10 +66,7 @@ mod tests {
     use assert_matches::assert_matches;
     use futures::future::join_all;
     use http::Method;
-    use janus_core::{
-        task::AuthenticationToken,
-        time::{Clock, RealClock},
-    };
+    use janus_core::time::{Clock, RealClock};
     use janus_messages::{
         problem_type::{DapProblemType, DapProblemTypeParseError},
         Duration, HpkeConfigId, Interval, ReportIdChecksum,
@@ -242,7 +239,7 @@ mod tests {
                         "test",
                         "text/plain",
                         (),
-                        &AuthenticationToken::try_from("auth".as_bytes().to_vec()).unwrap(),
+                        &random(),
                         &request_histogram,
                     )
                     .await

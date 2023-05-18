@@ -5,7 +5,7 @@ use janus_aggregator_api::instrumented;
 use janus_aggregator_core::datastore::Datastore;
 use janus_core::{
     http::extract_bearer_token,
-    task::{AuthenticationToken, DAP_AUTH_HEADER},
+    task::{AuthenticationToken, DapAuthToken, DAP_AUTH_HEADER},
     time::Clock,
 };
 use janus_messages::{
@@ -526,32 +526,21 @@ fn parse_collection_job_id(captures: &Captures) -> Result<CollectionJobId, Error
         .map_err(|_| Error::BadRequest("invalid CollectionJobId".to_owned()))
 }
 
-/// Get the authorization token header from the request.
+/// Get an [`AuthenticationToken`] from the request.
 fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<AuthenticationToken>, Error> {
     // Prefer a bearer token, then fall back to DAP-Auth-Token
-    let bearer_token =
-        extract_bearer_token(conn).map_err(|_| Error::UnauthorizedRequest(*task_id))?;
-    if bearer_token.is_some() {
-        return bearer_token
-            .map(AuthenticationToken::try_from)
-            .transpose()
-            .map_err(|_| {
-                Error::BadRequest(
-                    "Authorization: Bearer value decodes to an authentication token containing \
-                     unsafe bytes"
-                        .to_string(),
-                )
-            });
+    if let Some(bearer_token) =
+        extract_bearer_token(conn).map_err(|_| Error::UnauthorizedRequest(*task_id))?
+    {
+        return Ok(Some(AuthenticationToken::Bearer(bearer_token)));
     }
 
     conn.request_headers()
         .get(DAP_AUTH_HEADER)
         .map(|value| {
-            value.as_ref().to_owned().try_into().map_err(|_| {
-                Error::BadRequest(
-                    "DAP-Auth-Header value is not a valid HTTP header value".to_string(),
-                )
-            })
+            DapAuthToken::try_from(value.as_ref().to_vec())
+                .map(AuthenticationToken::DapAuth)
+                .map_err(|e| Error::BadRequest(format!("bad DAP-Auth-Token header: {e}")))
         })
         .transpose()
 }
@@ -1211,6 +1200,8 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
+        let (wrong_auth_header, wrong_auth_value) =
+            random::<AuthenticationToken>().request_authentication();
         let request = AggregationJobInitializeReq::new(
             Vec::new(),
             PartialBatchSelector::new_time_interval(),
@@ -1225,10 +1216,7 @@ mod tests {
             .aggregation_job_uri(&aggregation_job_id)
             .unwrap()
             .path())
-        .with_request_header(
-            "DAP-Auth-Token",
-            random::<AuthenticationToken>().as_ref().to_owned(),
-        )
+        .with_request_header(wrong_auth_header, wrong_auth_value)
         .with_request_header(
             KnownHeaderName::ContentType,
             AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,

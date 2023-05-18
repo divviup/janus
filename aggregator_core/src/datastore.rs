@@ -2,9 +2,10 @@
 
 use self::models::{
     AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
-    AggregatorRole, Batch, BatchAggregation, CollectionJob, CollectionJobState,
-    CollectionJobStateCode, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
-    ReportAggregation, ReportAggregationState, ReportAggregationStateCode, SqlInterval,
+    AggregatorRole, AuthenticationTokenType, Batch, BatchAggregation, CollectionJob,
+    CollectionJobState, CollectionJobStateCode, LeaderStoredReport, Lease, LeaseToken,
+    OutstandingBatch, ReportAggregation, ReportAggregationState, ReportAggregationStateCode,
+    SqlInterval,
 };
 #[cfg(feature = "test-util")]
 use crate::VdafHasAggregationParameter;
@@ -18,7 +19,7 @@ use chrono::NaiveDateTime;
 use futures::future::try_join_all;
 use janus_core::{
     hpke::{HpkeKeypair, HpkePrivateKey},
-    task::{AuthenticationToken, VdafInstance},
+    task::VdafInstance,
     time::{Clock, TimeExt},
 };
 use janus_messages::{
@@ -86,7 +87,7 @@ macro_rules! supported_schema_versions {
 
 // List of schema versions that this version of Janus can safely run on. If any other schema
 // version is seen, [`Datastore::new`] fails.
-supported_schema_versions!(8);
+supported_schema_versions!(9);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -450,6 +451,7 @@ impl<C: Clock> Transaction<'_, C> {
 
         // Aggregator auth tokens.
         let mut aggregator_auth_token_ords = Vec::new();
+        let mut aggregator_auth_token_types = Vec::new();
         let mut aggregator_auth_tokens = Vec::new();
         for (ord, token) in task.aggregator_auth_tokens().iter().enumerate() {
             let ord = i64::try_from(ord)?;
@@ -466,25 +468,28 @@ impl<C: Clock> Transaction<'_, C> {
             )?;
 
             aggregator_auth_token_ords.push(ord);
+            aggregator_auth_token_types.push(AuthenticationTokenType::from(token));
             aggregator_auth_tokens.push(encrypted_aggregator_auth_token);
         }
         let stmt = self
             .prepare_cached(
-                "INSERT INTO task_aggregator_auth_tokens (task_id, ord, token)
+                "INSERT INTO task_aggregator_auth_tokens (task_id, ord, type, token)
                 SELECT
                     (SELECT id FROM tasks WHERE task_id = $1),
-                    * FROM UNNEST($2::BIGINT[], $3::BYTEA[])",
+                    * FROM UNNEST($2::BIGINT[], $3::AUTH_TOKEN_TYPE[], $4::BYTEA[])",
             )
             .await?;
         let aggregator_auth_tokens_params: &[&(dyn ToSql + Sync)] = &[
             /* task_id */ &task.id().as_ref(),
             /* ords */ &aggregator_auth_token_ords,
+            /* token_types */ &aggregator_auth_token_types,
             /* tokens */ &aggregator_auth_tokens,
         ];
         let aggregator_auth_tokens_future = self.execute(&stmt, aggregator_auth_tokens_params);
 
         // Collector auth tokens.
         let mut collector_auth_token_ords = Vec::new();
+        let mut collector_auth_token_types = Vec::new();
         let mut collector_auth_tokens = Vec::new();
         for (ord, token) in task.collector_auth_tokens().iter().enumerate() {
             let ord = i64::try_from(ord)?;
@@ -501,19 +506,21 @@ impl<C: Clock> Transaction<'_, C> {
             )?;
 
             collector_auth_token_ords.push(ord);
+            collector_auth_token_types.push(AuthenticationTokenType::from(token));
             collector_auth_tokens.push(encrypted_collector_auth_token);
         }
         let stmt = self
             .prepare_cached(
-                "INSERT INTO task_collector_auth_tokens (task_id, ord, token)
+                "INSERT INTO task_collector_auth_tokens (task_id, ord, type, token)
                 SELECT
                     (SELECT id FROM tasks WHERE task_id = $1),
-                    * FROM UNNEST($2::BIGINT[], $3::BYTEA[])",
+                    * FROM UNNEST($2::BIGINT[], $3::AUTH_TOKEN_TYPE[], $4::BYTEA[])",
             )
             .await?;
         let collector_auth_tokens_params: &[&(dyn ToSql + Sync)] = &[
             /* task_id */ &task.id().as_ref(),
             /* ords */ &collector_auth_token_ords,
+            /* token_types */ &collector_auth_token_types,
             /* tokens */ &collector_auth_tokens,
         ];
         let collector_auth_tokens_future = self.execute(&stmt, collector_auth_tokens_params);
@@ -619,7 +626,7 @@ impl<C: Clock> Transaction<'_, C> {
 
         let stmt = self
             .prepare_cached(
-                "SELECT ord, token FROM task_aggregator_auth_tokens
+                "SELECT ord, type, token FROM task_aggregator_auth_tokens
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1) ORDER BY ord ASC",
             )
             .await?;
@@ -627,7 +634,7 @@ impl<C: Clock> Transaction<'_, C> {
 
         let stmt = self
             .prepare_cached(
-                "SELECT ord, token FROM task_collector_auth_tokens
+                "SELECT ord, type, token FROM task_collector_auth_tokens
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1) ORDER BY ord ASC",
             )
             .await?;
@@ -693,7 +700,7 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT (SELECT tasks.task_id FROM tasks
                     WHERE tasks.id = task_aggregator_auth_tokens.task_id),
-                ord, token FROM task_aggregator_auth_tokens ORDER BY ord ASC",
+                ord, type, token FROM task_aggregator_auth_tokens ORDER BY ord ASC",
             )
             .await?;
         let aggregator_auth_token_rows = self.query(&stmt, &[]);
@@ -702,7 +709,7 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT (SELECT tasks.task_id FROM tasks
                     WHERE tasks.id = task_collector_auth_tokens.task_id),
-                ord, token FROM task_collector_auth_tokens ORDER BY ord ASC",
+                ord, type, token FROM task_collector_auth_tokens ORDER BY ord ASC",
             )
             .await?;
         let collector_auth_token_rows = self.query(&stmt, &[]);
@@ -843,42 +850,42 @@ impl<C: Clock> Transaction<'_, C> {
         let mut aggregator_auth_tokens = Vec::new();
         for row in aggregator_auth_token_rows {
             let ord: i64 = row.get("ord");
+            let auth_token_type: AuthenticationTokenType = row.get("type");
             let encrypted_aggregator_auth_token: Vec<u8> = row.get("token");
 
             let mut row_id = [0u8; TaskId::LEN + size_of::<i64>()];
             row_id[..TaskId::LEN].copy_from_slice(task_id.as_ref());
             row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
 
-            aggregator_auth_tokens.push(
-                AuthenticationToken::try_from(self.crypter.decrypt(
+            aggregator_auth_tokens.push(auth_token_type.as_authentication(
+                &self.crypter.decrypt(
                     "task_aggregator_auth_tokens",
                     &row_id,
                     "token",
                     &encrypted_aggregator_auth_token,
-                )?)
-                .map_err(|e| Error::DbState(e.to_string()))?,
-            );
+                )?,
+            )?);
         }
 
         // Collector authentication tokens.
         let mut collector_auth_tokens = Vec::new();
         for row in collector_auth_token_rows {
             let ord: i64 = row.get("ord");
+            let auth_token_type: AuthenticationTokenType = row.get("type");
             let encrypted_collector_auth_token: Vec<u8> = row.get("token");
 
             let mut row_id = [0u8; TaskId::LEN + size_of::<i64>()];
             row_id[..TaskId::LEN].copy_from_slice(task_id.as_ref());
             row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
 
-            collector_auth_tokens.push(
-                AuthenticationToken::try_from(self.crypter.decrypt(
+            collector_auth_tokens.push(auth_token_type.as_authentication(
+                &self.crypter.decrypt(
                     "task_collector_auth_tokens",
                     &row_id,
                     "token",
                     &encrypted_collector_auth_token,
-                )?)
-                .map_err(|e| Error::DbState(e.to_string()))?,
-            );
+                )?,
+            )?);
         }
 
         // HPKE keys.
@@ -4020,7 +4027,7 @@ pub mod models {
     use derivative::Derivative;
     use janus_core::{
         report_id::ReportIdChecksumExt,
-        task::VdafInstance,
+        task::{AuthenticationToken, DapAuthToken, VdafInstance},
         time::{DurationExt, IntervalExt, TimeExt},
     };
     use janus_messages::{
@@ -4047,6 +4054,40 @@ pub mod models {
     // We have to manually implement [Partial]Eq for a number of types because the derived
     // implementations don't play nice with generic fields, even if those fields are constrained to
     // themselves implement [Partial]Eq.
+
+    /// AuthenticationTokenType represents the type of an authentication token. It corresponds to enum
+    /// `AUTH_TOKEN_TYPE` in the schema.
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, ToSql, FromSql)]
+    #[postgres(name = "auth_token_type")]
+    pub enum AuthenticationTokenType {
+        #[postgres(name = "DAP_AUTH")]
+        DapAuthToken,
+        #[postgres(name = "BEARER")]
+        AuthorizationBearerToken,
+    }
+
+    impl AuthenticationTokenType {
+        pub fn as_authentication(&self, token: &[u8]) -> Result<AuthenticationToken, Error> {
+            match self {
+                Self::DapAuthToken => DapAuthToken::try_from(token.to_vec())
+                    .map(AuthenticationToken::DapAuth)
+                    .map_err(|e| {
+                        Error::DbState(format!("invalid DAP auth token in database: {e:?}"))
+                    }),
+                Self::AuthorizationBearerToken => Ok(AuthenticationToken::Bearer(token.into())),
+            }
+        }
+    }
+
+    impl From<&AuthenticationToken> for AuthenticationTokenType {
+        fn from(value: &AuthenticationToken) -> Self {
+            match value {
+                AuthenticationToken::DapAuth(_) => Self::DapAuthToken,
+                AuthenticationToken::Bearer(_) => Self::AuthorizationBearerToken,
+                _ => unreachable!(),
+            }
+        }
+    }
 
     /// Represents a report as it is stored in the leader's database, corresponding to a row in
     /// `client_reports`, where `leader_input_share` and `helper_encrypted_input_share` are required
