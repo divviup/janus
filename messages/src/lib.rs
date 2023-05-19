@@ -25,6 +25,7 @@ use std::{
 };
 
 pub mod problem_type;
+pub use prio::codec;
 
 /// Errors returned by functions and methods in this module
 #[derive(Debug, thiserror::Error)]
