@@ -35,7 +35,7 @@ async fn daphne_janus() {
 
     let container_client = container_client();
     let leader = Daphne::new(&container_client, &network, &leader_task).await;
-    let helper = Janus::new_in_container(&container_client, &network, &helper_task).await;
+    let helper = Janus::new(&container_client, &network, &helper_task).await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
@@ -70,7 +70,7 @@ async fn janus_daphne() {
         .unwrap();
 
     let container_client = container_client();
-    let leader = Janus::new_in_container(&container_client, &network, &leader_task).await;
+    let leader = Janus::new(&container_client, &network, &leader_task).await;
     let helper = Daphne::new(&container_client, &network, &helper_task).await;
 
     // Run the behavioral test.
