@@ -65,6 +65,8 @@ jobs:
         workdir: .
         targets: interop_binaries_small
         load: true
+    - name: Expose GitHub Runtime
+      uses: crazy-max/ghaction-github-runtime@v2
     - name: Build minimal janus_messages
       run: cargo build --package janus_messages --no-default-features
     - name: Build janus_core
