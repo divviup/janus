@@ -556,9 +556,13 @@ pub enum AuthenticationToken {
     ),
 
     /// Token presented as the value of the "DAP-Auth-Token" HTTP header. Conforms to
-    /// [draft-ietf-dap-ppm-01 section 3.2][1].
+    /// [draft-dcook-ppm-dap-interop-test-design-03][1], sections [4.3.3][2] and [4.4.2][3], and
+    /// [draft-ietf-dap-ppm-01 section 3.2][4].
     ///
-    /// [1]: https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-01#name-https-sender-authentication
+    /// [1]: https://datatracker.ietf.org/doc/html/draft-dcook-ppm-dap-interop-test-design-03
+    /// [2]: https://datatracker.ietf.org/doc/html/draft-dcook-ppm-dap-interop-test-design-03#section-4.3.3
+    /// [3]: https://datatracker.ietf.org/doc/html/draft-dcook-ppm-dap-interop-test-design-03#section-4.4.2
+    /// [4]: https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-01#name-https-sender-authentication
     DapAuth(DapAuthToken),
 }
 
