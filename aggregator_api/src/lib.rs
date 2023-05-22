@@ -9,8 +9,10 @@ use janus_aggregator_core::{
     SecretBytes,
 };
 use janus_core::{
-    hpke::generate_hpke_config_and_private_key, http::extract_bearer_token,
-    task::AuthenticationToken, time::Clock,
+    hpke::generate_hpke_config_and_private_key,
+    http::extract_bearer_token,
+    task::{AuthenticationToken, DapAuthToken},
+    time::Clock,
 };
 use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, Role, TaskId, Time};
 use models::{GetTaskMetricsResp, TaskResp};
@@ -170,17 +172,25 @@ async fn post_task<C: Clock>(
                 Status::BadRequest,
             )
         })?;
-        Vec::from([AuthenticationToken::try_from(token_bytes).map_err(|_| {
-            Error::new(
-                "Invalid HTTP header value in aggregator_auth_token".to_string(),
-                Status::BadRequest,
-            )
-        })?])
+        Vec::from([
+            // TODO(#472): Each token in the PostTaskReq should indicate whether it is a bearer
+            // token or a DAP-Auth-Token. For now, assume the latter.
+            DapAuthToken::try_from(token_bytes)
+                .map(AuthenticationToken::DapAuth)
+                .map_err(|_| {
+                    Error::new(
+                        "Invalid HTTP header value in aggregator_auth_token".to_string(),
+                        Status::BadRequest,
+                    )
+                })?,
+        ])
     } else {
-        Vec::from([random()])
+        // TODO(#472): switch to generating bearer tokens by default
+        Vec::from([AuthenticationToken::DapAuth(random())])
     };
     let collector_auth_tokens = match (req.role, req.collector_auth_token) {
-        (Role::Leader, None) => Vec::from([random()]),
+        // TODO(#472): switch to generating bearer tokens by default
+        (Role::Leader, None) => Vec::from([AuthenticationToken::DapAuth(random())]),
         (Role::Leader, Some(encoded)) => {
             let token_bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|err| {
                 Error::new(
@@ -188,12 +198,16 @@ async fn post_task<C: Clock>(
                     Status::BadRequest,
                 )
             })?;
-            Vec::from([AuthenticationToken::try_from(token_bytes).map_err(|_| {
-                Error::new(
-                    "Invalid HTTP header value in collector_auth_token".to_string(),
-                    Status::BadRequest,
-                )
-            })?])
+            // TODO(#472): Each token in the PostTaskReq should indicate whether it is a bearer
+            // token or a DAP-Auth-Token. For now, assume the latter.
+            Vec::from([DapAuthToken::try_from(token_bytes)
+                .map(AuthenticationToken::DapAuth)
+                .map_err(|_| {
+                    Error::new(
+                        "Invalid HTTP header value in collector_auth_token".to_string(),
+                        Status::BadRequest,
+                    )
+                })?])
         }
         (Role::Helper, None) => Vec::new(),
         (Role::Helper, Some(_)) => {
@@ -486,7 +500,7 @@ mod tests {
     };
     use janus_core::{
         hpke::{generate_hpke_config_and_private_key, HpkeKeypair, HpkePrivateKey},
-        task::{AuthenticationToken, VdafInstance},
+        task::{AuthenticationToken, DapAuthToken, VdafInstance},
         test_util::{
             dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber,
@@ -712,8 +726,8 @@ mod tests {
 
         let vdaf_verify_key =
             SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
-        let aggregator_auth_token = random::<AuthenticationToken>();
-        let collector_auth_token = random::<AuthenticationToken>();
+        let aggregator_auth_token = AuthenticationToken::DapAuth(random());
+        let collector_auth_token = AuthenticationToken::DapAuth(random());
 
         // Verify: posting a task creates a new task which matches the request.
         let req = PostTaskReq {
@@ -1354,12 +1368,12 @@ mod tests {
                 HpkeAeadId::Aes128Gcm,
                 HpkePublicKey::from([0u8; 32].to_vec()),
             ),
-            Vec::from([
-                AuthenticationToken::try_from("aggregator-12345678".as_bytes().to_vec()).unwrap(),
-            ]),
-            Vec::from([
-                AuthenticationToken::try_from("collector-abcdef00".as_bytes().to_vec()).unwrap(),
-            ]),
+            Vec::from([AuthenticationToken::DapAuth(
+                DapAuthToken::try_from(b"aggregator-12345678".to_vec()).unwrap(),
+            )]),
+            Vec::from([AuthenticationToken::DapAuth(
+                DapAuthToken::try_from(b"collector-abcdef00".to_vec()).unwrap(),
+            )]),
             [(HpkeKeypair::new(
                 HpkeConfig::new(
                     HpkeConfigId::from(13),

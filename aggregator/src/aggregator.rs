@@ -38,7 +38,7 @@ use janus_core::test_util::dummy_vdaf;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
     http::response_to_problem_details,
-    task::{AuthenticationToken, VdafInstance, DAP_AUTH_HEADER, PRIO3_VERIFY_KEY_LENGTH},
+    task::{AuthenticationToken, VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
     time::{Clock, DurationExt, IntervalExt, TimeExt},
 };
 use janus_messages::{
@@ -2438,16 +2438,13 @@ async fn send_request_to_helper<T: Encode>(
 ) -> Result<Bytes, Error> {
     let domain = url.domain().unwrap_or_default().to_string();
     let request_body = request.get_encoded();
+    let (auth_header, auth_value) = auth_token.request_authentication();
 
     let start = Instant::now();
     let response_result = http_client
         .request(method, url)
         .header(CONTENT_TYPE, content_type)
-        // TODO(#472): We want to be able to communicate with new Janus (prefers bearer token but
-        // supports `DAP-Auth-Token`) as well as older Janus and Daphne (which require
-        // `DAP-Auth-Token`) so for the moment, we send `DAP-Auth-Token`. But eventually we should
-        // determine the appropriate token header to send for a given task.
-        .header(DAP_AUTH_HEADER, auth_token.as_ref())
+        .header(auth_header, auth_value)
         .body(request_body)
         .send()
         .await;

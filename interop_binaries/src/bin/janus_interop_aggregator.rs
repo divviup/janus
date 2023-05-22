@@ -11,7 +11,10 @@ use janus_aggregator_core::{
     task::{self, Task},
     SecretBytes,
 };
-use janus_core::{task::AuthenticationToken, time::RealClock};
+use janus_core::{
+    task::{AuthenticationToken, DapAuthToken},
+    time::RealClock,
+};
 use janus_interop_binaries::{
     status::{ERROR, SUCCESS},
     AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole, HpkeConfigRegistry, Keyring,
@@ -38,9 +41,10 @@ async fn handle_add_task(
     request: AggregatorAddTaskRequest,
 ) -> anyhow::Result<()> {
     let vdaf = request.vdaf.into();
-    let leader_authentication_token =
-        AuthenticationToken::try_from(request.leader_authentication_token.into_bytes())
-            .context("invalid header value in \"leader_authentication_token\"")?;
+    let leader_authentication_token = AuthenticationToken::DapAuth(
+        DapAuthToken::try_from(request.leader_authentication_token.into_bytes())
+            .context("invalid header value in \"leader_authentication_token\"")?,
+    );
     let vdaf_verify_key = SecretBytes::new(
         URL_SAFE_NO_PAD
             .decode(request.vdaf_verify_key)
@@ -59,10 +63,10 @@ async fn handle_add_task(
                 return Err(anyhow::anyhow!("collector authentication token is missing"))
             }
             (AggregatorRole::Leader, Some(collector_authentication_token)) => {
-                Vec::from([AuthenticationToken::try_from(
-                    collector_authentication_token.into_bytes(),
-                )
-                .context("invalid header value in \"collector_authentication_token\"")?])
+                Vec::from([AuthenticationToken::DapAuth(
+                    DapAuthToken::try_from(collector_authentication_token.into_bytes())
+                        .context("invalid header value in \"collector_authentication_token\"")?,
+                )])
             }
             (AggregatorRole::Helper, _) => Vec::new(),
         };

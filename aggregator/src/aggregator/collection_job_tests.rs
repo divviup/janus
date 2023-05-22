@@ -56,8 +56,9 @@ impl CollectionJobTestCase {
             .collection_job_uri(collection_job_id)
             .unwrap()
             .path());
-        if let Some(token) = auth_token {
-            test_conn = test_conn.with_request_header("DAP-Auth-Token", token.as_ref().to_owned())
+        if let Some(auth) = auth_token {
+            let (header, value) = auth.request_authentication();
+            test_conn = test_conn.with_request_header(header, value);
         }
 
         test_conn
@@ -94,8 +95,9 @@ impl CollectionJobTestCase {
                 .unwrap()
                 .path(),
         );
-        if let Some(token) = auth_token {
-            test_conn = test_conn.with_request_header("DAP-Auth-Token", token.as_ref().to_owned())
+        if let Some(auth) = auth_token {
+            let (header, value) = auth.request_authentication();
+            test_conn = test_conn.with_request_header(header, value);
         }
         test_conn.run_async(&self.handler).await
     }

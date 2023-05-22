@@ -2,8 +2,7 @@ use backoff::{future::retry, ExponentialBackoffBuilder};
 use itertools::Itertools;
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType, Task};
 use janus_collector::{
-    test_util::collect_with_rewritten_url, Authentication, Collection, Collector,
-    CollectorParameters,
+    test_util::collect_with_rewritten_url, Collection, Collector, CollectorParameters,
 };
 use janus_core::{
     hpke::{test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey},
@@ -126,7 +125,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
     let collector_params = CollectorParameters::new_with_authentication(
         *leader_task.id(),
         aggregator_endpoints[Role::Leader.index().unwrap()].clone(),
-        Authentication::DapAuthToken(leader_task.primary_collector_auth_token().clone()),
+        leader_task.primary_collector_auth_token().clone(),
         leader_task.collector_hpke_config().clone(),
         collector_private_key.clone(),
     )

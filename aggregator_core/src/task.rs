@@ -107,10 +107,8 @@ pub struct Task {
     /// HPKE configuration for the collector.
     collector_hpke_config: HpkeConfig,
     /// Tokens used to authenticate messages sent to or received from the other aggregator.
-    #[derivative(Debug = "ignore")]
     aggregator_auth_tokens: Vec<AuthenticationToken>,
     /// Tokens used to authenticate messages sent to or received from the collector.
-    #[derivative(Debug = "ignore")]
     collector_auth_tokens: Vec<AuthenticationToken>,
     /// HPKE configurations & private keys used by this aggregator to decrypt client reports.
     hpke_keys: HashMap<HpkeConfigId, HpkeKeypair>,
@@ -326,6 +324,7 @@ impl Task {
     /// Returns the [`AuthenticationToken`] currently used by the collector to authenticate itself
     /// to the aggregators.
     pub fn primary_collector_auth_token(&self) -> &AuthenticationToken {
+        // Unwrap safety: self.collector_auth_tokens is never empty
         self.collector_auth_tokens.iter().rev().next().unwrap()
     }
 
@@ -417,9 +416,9 @@ pub struct SerializedTask {
     time_precision: Duration,
     tolerable_clock_skew: Duration,
     collector_hpke_config: HpkeConfig,
-    aggregator_auth_tokens: Vec<String>, // in unpadded base64url
-    collector_auth_tokens: Vec<String>,  // in unpadded base64url
-    hpke_keys: Vec<HpkeKeypair>,         // uses unpadded base64url
+    aggregator_auth_tokens: Vec<AuthenticationToken>,
+    collector_auth_tokens: Vec<AuthenticationToken>,
+    hpke_keys: Vec<HpkeKeypair>, // uses unpadded base64url
 }
 
 impl SerializedTask {
@@ -455,13 +454,11 @@ impl SerializedTask {
         }
 
         if self.aggregator_auth_tokens.is_empty() {
-            self.aggregator_auth_tokens =
-                Vec::from([URL_SAFE_NO_PAD.encode(random::<AuthenticationToken>())]);
+            self.aggregator_auth_tokens = Vec::from([random()]);
         }
 
         if self.collector_auth_tokens.is_empty() && self.role == Role::Leader {
-            self.collector_auth_tokens =
-                Vec::from([URL_SAFE_NO_PAD.encode(random::<AuthenticationToken>())]);
+            self.collector_auth_tokens = Vec::from([random()]);
         }
 
         if self.hpke_keys.is_empty() {
@@ -484,16 +481,6 @@ impl Serialize for Task {
             .iter()
             .map(|key| URL_SAFE_NO_PAD.encode(key.as_ref()))
             .collect();
-        let aggregator_auth_tokens = self
-            .aggregator_auth_tokens
-            .iter()
-            .map(|token| URL_SAFE_NO_PAD.encode(token))
-            .collect();
-        let collector_auth_tokens = self
-            .collector_auth_tokens
-            .iter()
-            .map(|token| URL_SAFE_NO_PAD.encode(token))
-            .collect();
         let hpke_keys = self.hpke_keys.values().cloned().collect();
 
         SerializedTask {
@@ -510,8 +497,8 @@ impl Serialize for Task {
             time_precision: self.time_precision,
             tolerable_clock_skew: self.tolerable_clock_skew,
             collector_hpke_config: self.collector_hpke_config.clone(),
-            aggregator_auth_tokens,
-            collector_auth_tokens,
+            aggregator_auth_tokens: self.aggregator_auth_tokens.clone(),
+            collector_auth_tokens: self.collector_auth_tokens.clone(),
             hpke_keys,
         }
         .serialize(serializer)
@@ -534,34 +521,6 @@ impl TryFrom<SerializedTask> for Task {
             .map(|key| Ok(SecretBytes::new(URL_SAFE_NO_PAD.decode(key)?)))
             .collect::<Result<_, Self::Error>>()?;
 
-        // aggregator_auth_tokens
-        let aggregator_auth_tokens = serialized_task
-            .aggregator_auth_tokens
-            .into_iter()
-            .map(|token| {
-                AuthenticationToken::try_from(URL_SAFE_NO_PAD.decode(token)?).map_err(|_| {
-                    Error::InvalidParameter(concat!(
-                        "value in aggregator_auth_tokens does not base64url-decode to a valid ",
-                        "HTTP header value"
-                    ))
-                })
-            })
-            .collect::<Result<Vec<AuthenticationToken>, Self::Error>>()?;
-
-        // collector_auth_tokens
-        let collector_auth_tokens = serialized_task
-            .collector_auth_tokens
-            .into_iter()
-            .map(|token| {
-                AuthenticationToken::try_from(URL_SAFE_NO_PAD.decode(token)?).map_err(|_| {
-                    Error::InvalidParameter(concat!(
-                        "value in collector_auth_tokens does not base64url-decode to a valid ",
-                        "HTTP header value"
-                    ))
-                })
-            })
-            .collect::<Result<Vec<AuthenticationToken>, Self::Error>>()?;
-
         Task::new(
             task_id,
             serialized_task.aggregator_endpoints,
@@ -576,8 +535,8 @@ impl TryFrom<SerializedTask> for Task {
             serialized_task.time_precision,
             serialized_task.tolerable_clock_skew,
             serialized_task.collector_hpke_config,
-            aggregator_auth_tokens,
-            collector_auth_tokens,
+            serialized_task.aggregator_auth_tokens,
+            serialized_task.collector_auth_tokens,
             serialized_task.hpke_keys,
         )
     }
@@ -653,7 +612,7 @@ pub mod test_util {
             );
 
             let collector_auth_tokens = if role == Role::Leader {
-                Vec::from([random(), random()])
+                Vec::from([random(), AuthenticationToken::DapAuth(random())])
             } else {
                 Vec::new()
             };
@@ -676,7 +635,7 @@ pub mod test_util {
                     Duration::from_hours(8).unwrap(),
                     Duration::from_minutes(10).unwrap(),
                     generate_test_hpke_config_and_private_key().config().clone(),
-                    Vec::from([random(), random()]),
+                    Vec::from([random(), AuthenticationToken::DapAuth(random())]),
                     collector_auth_tokens,
                     Vec::from([aggregator_keypair_0, aggregator_keypair_1]),
                 )
@@ -814,14 +773,12 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use crate::{
-        task::{test_util::TaskBuilder, Error, QueryType, SerializedTask, Task, VdafInstance},
+        task::{test_util::TaskBuilder, QueryType, Task, VdafInstance},
         SecretBytes,
     };
-    use assert_matches::assert_matches;
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use janus_core::{
         hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair, HpkePrivateKey},
-        task::{AuthenticationToken, PRIO3_VERIFY_KEY_LENGTH},
+        task::{AuthenticationToken, DapAuthToken, PRIO3_VERIFY_KEY_LENGTH},
         test_util::roundtrip_encoding,
         time::DurationExt,
     };
@@ -894,8 +851,8 @@ mod tests {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
-            Vec::from([random::<AuthenticationToken>()]),
-            Vec::from([random::<AuthenticationToken>()]),
+            Vec::from([random()]),
+            Vec::from([random()]),
             Vec::from([generate_test_hpke_config_and_private_key()]),
         )
         .unwrap();
@@ -918,7 +875,7 @@ mod tests {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
-            Vec::from([random::<AuthenticationToken>()]),
+            Vec::from([random()]),
             Vec::new(),
             Vec::from([generate_test_hpke_config_and_private_key()]),
         )
@@ -942,8 +899,8 @@ mod tests {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
-            Vec::from([random::<AuthenticationToken>()]),
-            Vec::from([random::<AuthenticationToken>()]),
+            Vec::from([random()]),
+            Vec::from([random()]),
             Vec::from([generate_test_hpke_config_and_private_key()]),
         )
         .unwrap_err();
@@ -968,8 +925,8 @@ mod tests {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
-            Vec::from([random::<AuthenticationToken>()]),
-            Vec::from([random::<AuthenticationToken>()]),
+            Vec::from([random()]),
+            Vec::from([random()]),
             Vec::from([generate_test_hpke_config_and_private_key()]),
         )
         .unwrap();
@@ -1054,8 +1011,10 @@ mod tests {
                     HpkeAeadId::Aes128Gcm,
                     HpkePublicKey::from(b"collector hpke public key".to_vec()),
                 ),
-                Vec::from([AuthenticationToken::try_from(b"aggregator token".to_vec()).unwrap()]),
-                Vec::from([AuthenticationToken::try_from(b"collector token".to_vec()).unwrap()]),
+                Vec::from([AuthenticationToken::DapAuth(
+                    DapAuthToken::try_from(b"aggregator token".to_vec()).unwrap(),
+                )]),
+                Vec::from([AuthenticationToken::Bearer(b"collector token".to_vec())]),
                 [HpkeKeypair::new(
                     HpkeConfig::new(
                         HpkeConfigId::from(255),
@@ -1144,11 +1103,27 @@ mod tests {
                 Token::StructEnd,
                 Token::Str("aggregator_auth_tokens"),
                 Token::Seq { len: Some(1) },
+                Token::Struct {
+                    name: "AuthenticationToken",
+                    len: 2,
+                },
+                Token::Str("type"),
+                Token::Str("DapAuth"),
+                Token::Str("token"),
                 Token::Str("YWdncmVnYXRvciB0b2tlbg"),
+                Token::StructEnd,
                 Token::SeqEnd,
                 Token::Str("collector_auth_tokens"),
                 Token::Seq { len: Some(1) },
+                Token::Struct {
+                    name: "AuthenticationToken",
+                    len: 2,
+                },
+                Token::Str("type"),
+                Token::Str("Bearer"),
+                Token::Str("token"),
                 Token::Str("Y29sbGVjdG9yIHRva2Vu"),
+                Token::StructEnd,
                 Token::SeqEnd,
                 Token::Str("hpke_keys"),
                 Token::Seq { len: Some(1) },
@@ -1216,7 +1191,7 @@ mod tests {
                     HpkeAeadId::Aes128Gcm,
                     HpkePublicKey::from(b"collector hpke public key".to_vec()),
                 ),
-                Vec::from([AuthenticationToken::try_from(b"aggregator token".to_vec()).unwrap()]),
+                Vec::from([AuthenticationToken::Bearer(b"aggregator token".to_vec())]),
                 Vec::new(),
                 [HpkeKeypair::new(
                     HpkeConfig::new(
@@ -1316,7 +1291,15 @@ mod tests {
                 Token::StructEnd,
                 Token::Str("aggregator_auth_tokens"),
                 Token::Seq { len: Some(1) },
-                Token::Str("YWdncmVnYXRvciB0b2tlbg"),
+                Token::Struct {
+                    name: "AuthenticationToken",
+                    len: 2,
+                },
+                Token::Str("type"),
+                Token::Str("Bearer"),
+                Token::Str("token"),
+                Token::Str("YWdncmVnYXRvciB0b2tlbg=="),
+                Token::StructEnd,
                 Token::SeqEnd,
                 Token::Str("collector_auth_tokens"),
                 Token::Seq { len: Some(0) },
@@ -1362,65 +1345,5 @@ mod tests {
                 Token::StructEnd,
             ],
         );
-    }
-
-    #[test]
-    fn reject_invalid_auth_tokens() {
-        let aggregator_keypair = generate_test_hpke_config_and_private_key();
-        let collector_keypair = generate_test_hpke_config_and_private_key();
-
-        let bad_agg_auth_token = SerializedTask {
-            task_id: Some(random()),
-            aggregator_endpoints: Vec::from([
-                "https://www.example.com/".parse().unwrap(),
-                "https://www.example.net/".parse().unwrap(),
-            ]),
-            query_type: QueryType::TimeInterval,
-            vdaf: VdafInstance::Prio3Count,
-            role: Role::Helper,
-            vdaf_verify_keys: Vec::from([]),
-            max_batch_query_count: 1,
-            task_expiration: None,
-            report_expiry_age: None,
-            min_batch_size: 100,
-            time_precision: Duration::from_seconds(3600),
-            tolerable_clock_skew: Duration::from_seconds(15),
-            collector_hpke_config: collector_keypair.config().clone(),
-            aggregator_auth_tokens: Vec::from(["AAAAAAAAAAAAAA".to_string()]),
-            collector_auth_tokens: Vec::new(),
-            hpke_keys: Vec::from([aggregator_keypair.clone()]),
-        };
-        let err = Task::try_from(bad_agg_auth_token).unwrap_err();
-        assert_matches!(err, Error::InvalidParameter(message) => {
-            assert!(message.contains("aggregator") && message.contains("HTTP header value"), "{}", message);
-        });
-
-        let bad_collector_auth_token = SerializedTask {
-            task_id: Some(random()),
-            aggregator_endpoints: Vec::from([
-                "https://www.example.com/".parse().unwrap(),
-                "https://www.example.net/".parse().unwrap(),
-            ]),
-            query_type: QueryType::TimeInterval,
-            vdaf: VdafInstance::Prio3Count,
-            role: Role::Leader,
-            vdaf_verify_keys: Vec::from([]),
-            max_batch_query_count: 1,
-            task_expiration: None,
-            report_expiry_age: None,
-            min_batch_size: 100,
-            time_precision: Duration::from_seconds(3600),
-            tolerable_clock_skew: Duration::from_seconds(15),
-            collector_hpke_config: collector_keypair.config().clone(),
-            aggregator_auth_tokens: Vec::from([
-                URL_SAFE_NO_PAD.encode(random::<AuthenticationToken>())
-            ]),
-            collector_auth_tokens: Vec::from(["AAAAAAAAAAAAAA".to_string()]),
-            hpke_keys: Vec::from([aggregator_keypair]),
-        };
-        let err = Task::try_from(bad_collector_auth_token).unwrap_err();
-        assert_matches!(err, Error::InvalidParameter(message) => {
-            assert!(message.contains("collector") && message.contains("HTTP header value"), "{}", message);
-        });
     }
 }

@@ -9,7 +9,7 @@ use janus_aggregator_core::{
     task::{test_util::TaskBuilder, QueryType, Task},
 };
 use janus_core::{
-    task::{VdafInstance, DAP_AUTH_HEADER},
+    task::{AuthenticationToken, VdafInstance, DAP_AUTH_HEADER},
     test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf, VdafTranscript},
     time::{Clock, MockClock, TimeExt as _},
 };
@@ -176,22 +176,23 @@ pub(crate) async fn put_aggregation_job(
 }
 
 #[tokio::test]
-async fn aggregation_job_init_authorization_bearer_header() {
+async fn aggregation_job_init_authorization_dap_auth_token() {
     let test_case = setup_aggregate_init_test_without_sending_request().await;
+    // Find a DapAuthToken among the task's aggregator auth tokens
+    let (auth_header, auth_value) = test_case
+        .task
+        .aggregator_auth_tokens()
+        .iter()
+        .find(|auth| matches!(auth, AuthenticationToken::DapAuth(_)))
+        .unwrap()
+        .request_authentication();
 
     let response = put(test_case
         .task
         .aggregation_job_uri(&test_case.aggregation_job_id)
         .unwrap()
         .path())
-    // Authenticate using an "Authorization: Bearer <token>" header instead of "DAP-Auth-Token"
-    .with_request_header(
-        KnownHeaderName::Authorization,
-        test_case
-            .task
-            .primary_aggregator_auth_token()
-            .bearer_token(),
-    )
+    .with_request_header(auth_header, auth_value)
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
