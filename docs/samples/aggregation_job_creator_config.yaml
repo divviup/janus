@@ -7,6 +7,10 @@ database:
   # Timeout for new database connections. Defaults to 60 seconds.
   connection_pool_timeout_secs: 60
 
+  # Flag to check if the database schema version is compatible upon startup.
+  # (optional, defaults to true)
+  check_schema_version: true
+
 # Socket address for /healthz HTTP requests. Defaults to 127.0.0.1:9001.
 health_check_listen_address: "0.0.0.0:8000"
 
