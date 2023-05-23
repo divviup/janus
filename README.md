@@ -29,6 +29,9 @@ branch.
 [`docker`](https://www.docker.com) must be installed at build time, and the
 `docker` daemon must be running. To build Janus, execute `cargo build`.
 
+Note that `podman` is not an acceptable substitute for `docker`. There are
+subtle incompatibilities between the two that will cause tests to fail.
+
 Building Janus with `janus_aggregator`'s `otlp` feature enabled currently
 requires the Protocol Buffers compiler, `protoc`, be installed on the machine
 performing the build.
