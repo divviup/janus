@@ -103,6 +103,13 @@ using the `--source` argument to point to `janus/db` and providing database
 connection information in any of the ways supported by `sqlx` (see its
 documentation).
 
+For simple or experimental deployments where the complexity of `sqlx` is not
+warranted, it is possible to create a single schema file by concatenating the
+`.up.sql` scripts, in order, and applying this schema to the database. Note that
+such deployments will not easily be able to migrate to later versions of the
+schema, so this technique is likely not appropriate for deployments which need
+to retain data across deployments.
+
 [sqlx-cli]: https://crates.io/crates/sqlx-cli
 
 ## `janus_cli provision-tasks`
