@@ -32,11 +32,10 @@ variable, to override (or fill in) the password set in the configuration file.
 #### Health Check
 
 Each binary starts an HTTP server to service health check requests from
-orchestration systems. The required configuration parameter
-`health_check_listen_address` determines what socket address this server listens
-on. Orchestration systems should send a GET or HEAD request to the path
-`/healthz`. After a successful startup, the HTTP server will respond with `200
-OK`.
+orchestration systems. The configuration parameter `health_check_listen_address`
+determines what socket address this server listens on. Orchestration systems
+should send a GET or HEAD request to the path `/healthz`. After a successful
+startup, the HTTP server will respond with `200 OK`.
 
 #### Observability
 
