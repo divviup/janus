@@ -26,7 +26,7 @@
 //!     HpkeKdfId::HkdfSha256,
 //!     HpkeAeadId::Aes128Gcm,
 //! );
-//! let parameters = CollectorParameters::new_with_authentication(
+//! let parameters = CollectorParameters::new(
 //!     task_id,
 //!     "https://example.com/dap/".parse().unwrap(),
 //!     AuthenticationToken::Bearer(b"my-authentication-token".to_vec()),
@@ -178,29 +178,7 @@ pub struct CollectorParameters {
 
 impl CollectorParameters {
     /// Creates a new set of collector task parameters.
-    ///
-    /// This constructor is deprecated, because it always uses the `DAP-Auth-Token` header for
-    /// authentication. See [CollectorParameters::new_with_authentication] for a more flexible
-    /// constructor.
-    #[deprecated]
     pub fn new(
-        task_id: TaskId,
-        leader_endpoint: Url,
-        authentication: AuthenticationToken,
-        hpke_config: HpkeConfig,
-        hpke_private_key: HpkePrivateKey,
-    ) -> CollectorParameters {
-        Self::new_with_authentication(
-            task_id,
-            leader_endpoint,
-            authentication,
-            hpke_config,
-            hpke_private_key,
-        )
-    }
-
-    /// Creates a new set of collector task parameters.
-    pub fn new_with_authentication(
         task_id: TaskId,
         mut leader_endpoint: Url,
         authentication: AuthenticationToken,
@@ -723,7 +701,7 @@ mod tests {
     ) -> Collector<V> {
         let server_url = Url::parse(&server.url()).unwrap();
         let hpke_keypair = generate_test_hpke_config_and_private_key();
-        let parameters = CollectorParameters::new_with_authentication(
+        let parameters = CollectorParameters::new(
             random(),
             server_url,
             AuthenticationToken::Bearer(b"token".to_vec()),
@@ -824,7 +802,7 @@ mod tests {
     #[test]
     fn leader_endpoint_end_in_slash() {
         let hpke_keypair = generate_test_hpke_config_and_private_key();
-        let collector_parameters = CollectorParameters::new_with_authentication(
+        let collector_parameters = CollectorParameters::new(
             random(),
             "http://example.com/dap".parse().unwrap(),
             AuthenticationToken::Bearer(b"token".to_vec()),
@@ -837,7 +815,7 @@ mod tests {
             "http://example.com/dap/",
         );
 
-        let collector_parameters = CollectorParameters::new_with_authentication(
+        let collector_parameters = CollectorParameters::new(
             random(),
             "http://example.com".parse().unwrap(),
             AuthenticationToken::Bearer(b"token".to_vec()),
@@ -1243,7 +1221,7 @@ mod tests {
         let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &1);
         let server_url = Url::parse(&server.url()).unwrap();
         let hpke_keypair = generate_test_hpke_config_and_private_key();
-        let parameters = CollectorParameters::new_with_authentication(
+        let parameters = CollectorParameters::new(
             random(),
             server_url,
             AuthenticationToken::Bearer(Vec::from([0x41u8; 16])),

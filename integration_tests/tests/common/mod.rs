@@ -122,7 +122,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
         client_implementation.upload(measurement).await.unwrap();
     }
 
-    let collector_params = CollectorParameters::new_with_authentication(
+    let collector_params = CollectorParameters::new(
         *leader_task.id(),
         aggregator_endpoints[Role::Leader.index().unwrap()].clone(),
         leader_task.primary_collector_auth_token().clone(),
