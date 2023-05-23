@@ -451,7 +451,7 @@ where
         (Some(token), None) => token,
         (None, None) | (Some(_), Some(_)) => unreachable!(),
     };
-    let parameters = CollectorParameters::new_with_authentication(
+    let parameters = CollectorParameters::new(
         options.task_id,
         options.leader,
         authentication,

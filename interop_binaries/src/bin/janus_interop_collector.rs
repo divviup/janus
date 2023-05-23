@@ -236,7 +236,7 @@ async fn handle_collection_start(
         .get(&task_id)
         .context("task was not added before being used in a collect request")?;
 
-    let collector_params = CollectorParameters::new_with_authentication(
+    let collector_params = CollectorParameters::new(
         task_id,
         task_state.leader_url.clone(),
         task_state.auth_token.clone(),
