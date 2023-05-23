@@ -150,6 +150,10 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
     // Send a collect request and verify that we got the correct result.
     match leader_task.query_type() {
         QueryType::TimeInterval => {
+            // Give the aggregators a few seconds to settle.
+            // TODO(#1380): remove the need for this wait.
+            sleep(StdDuration::from_secs(5)).await;
+
             let batch_interval = Interval::new(
                 before_timestamp
                     .to_batch_interval_start(leader_task.time_precision())
