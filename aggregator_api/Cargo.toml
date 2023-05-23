@@ -15,7 +15,7 @@ base64 = "0.21.0"
 janus_aggregator_core.workspace = true
 janus_core.workspace = true
 janus_messages.workspace = true
-opentelemetry = "0.18"
+opentelemetry.workspace = true
 querystring = "1.1.0"
 rand = { version = "0.8", features = ["min_const_gen"] }
 ring = "0.16.20"

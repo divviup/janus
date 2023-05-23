@@ -38,7 +38,7 @@ janus_client.workspace = true
 janus_collector.workspace = true
 janus_core.workspace = true
 janus_messages.workspace = true
-opentelemetry = { version = "0.18", features = ["metrics"] }
+opentelemetry.workspace = true
 prio.workspace = true
 rand = "0.8"
 regex = { version = "1", optional = true }
