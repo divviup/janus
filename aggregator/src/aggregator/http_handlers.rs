@@ -198,6 +198,7 @@ impl Handler for StatusCounter {
 
 pub(crate) static AGGREGATION_JOB_ROUTE: &str =
     "tasks/:task_id/aggregation_jobs/:aggregation_job_id";
+pub(crate) static COLLECTION_JOB_ROUTE: &str = "tasks/:task_id/collection_jobs/:collection_job_id";
 pub(crate) static AGGREGATE_SHARES_ROUTE: &str = "tasks/:task_id/aggregate_shares";
 
 /// Constructs a Trillium handler for the aggregator.
@@ -235,15 +236,15 @@ pub fn aggregator_handler<C: Clock>(
                 instrumented(api(aggregation_jobs_post::<C>)),
             )
             .put(
-                "tasks/:task_id/collection_jobs/:collection_job_id",
+                COLLECTION_JOB_ROUTE,
                 instrumented(api(collection_jobs_put::<C>)),
             )
             .post(
-                "tasks/:task_id/collection_jobs/:collection_job_id",
+                COLLECTION_JOB_ROUTE,
                 instrumented(api(collection_jobs_post::<C>)),
             )
             .delete(
-                "tasks/:task_id/collection_jobs/:collection_job_id",
+                COLLECTION_JOB_ROUTE,
                 instrumented(api(collection_jobs_delete::<C>)),
             )
             .post(
@@ -1200,8 +1201,6 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let (wrong_auth_header, wrong_auth_value) =
-            random::<AuthenticationToken>().request_authentication();
         let request = AggregationJobInitializeReq::new(
             Vec::new(),
             PartialBatchSelector::new_time_interval(),
@@ -1212,72 +1211,56 @@ mod tests {
             aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
-        let mut test_conn = put(task
-            .aggregation_job_uri(&aggregation_job_id)
-            .unwrap()
-            .path())
-        .with_request_header(wrong_auth_header, wrong_auth_value)
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-        )
-        .with_request_body(request.get_encoded())
-        .run_async(&handler)
-        .await;
+        let wrong_token_value = random();
 
-        let want_status = 400;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
+        // Send the right token, but the wrong format: we find a DapAuth token in the task's
+        // aggregator tokens and convert it to an equivalent Bearer token, which should be rejected.
+        let wrong_token_format = task
+            .aggregator_auth_tokens()
+            .iter()
+            .find(|token| matches!(token, AuthenticationToken::DapAuth(_)))
+            .map(|token| AuthenticationToken::Bearer(token.as_ref().to_vec()))
+            .unwrap();
+
+        for auth_token in [Some(wrong_token_value), Some(wrong_token_format), None] {
+            let mut test_conn = put(task
+                .aggregation_job_uri(&aggregation_job_id)
                 .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            problem_details,
-            json!({
-                "status": want_status,
-                "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
-                "title": "The request's authorization is not valid.",
-                "taskid": format!("{}", task.id()),
-            })
-        );
-        assert_eq!(want_status, test_conn.status().unwrap() as u16);
+                .path())
+            .with_request_header(
+                KnownHeaderName::ContentType,
+                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .with_request_body(request.get_encoded());
 
-        let mut test_conn = put(task
-            .aggregation_job_uri(&aggregation_job_id)
-            .unwrap()
-            .path())
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-        )
-        .with_request_body(request.get_encoded())
-        .run_async(&handler)
-        .await;
+            if let Some(auth_token) = auth_token {
+                let (auth_header, auth_value) = auth_token.request_authentication();
+                test_conn = test_conn.with_request_header(auth_header, auth_value);
+            }
 
-        let want_status = 400;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            problem_details,
-            json!({
-                "status": want_status,
-                "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
-                "title": "The request's authorization is not valid.",
-                "taskid": format!("{}", task.id()),
-            })
-        );
-        assert_eq!(want_status, test_conn.status().unwrap() as u16);
+            let mut test_conn = test_conn.run_async(&handler).await;
+
+            let want_status = 400;
+            let problem_details: serde_json::Value = serde_json::from_slice(
+                &test_conn
+                    .take_response_body()
+                    .unwrap()
+                    .into_bytes()
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                problem_details,
+                json!({
+                    "status": want_status,
+                    "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+                    "title": "The request's authorization is not valid.",
+                    "taskid": format!("{}", task.id()),
+                })
+            );
+            assert_eq!(want_status, test_conn.status().unwrap() as u16);
+        }
     }
 
     #[tokio::test]
