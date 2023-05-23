@@ -72,27 +72,28 @@ support](CONFIGURING_TOKIO_CONSOLE.md).
 The `aggregator` component requires a socket address to listen on for DAP
 requests, and additional parameters to customize batching of uploaded reports
 into database transactions. See the [sample configuration
-file](samples/aggregator_config.yaml) for details.
+file](samples/aggregator_basic_config.yaml) for details.
 
 ### `aggregation_job_creator` configuration
 
 The `aggregation_job_creator` component requires configuration parameters to
 determine how frequently it performs its work, and how many reports it will
 include in each aggregation job. See the [sample configuration
-file](samples/aggregation_job_creator_config.yaml) for details.
+file](samples/aggregation_job_creator_basic_config.yaml) for details.
 
 ### `aggregation_job_driver` configuration
 
 The `aggregation_job_driver` component requires configuration parameters to
 determine its schedule for discovering incomplete jobs, maximum per-process
 parallelism, duration of leases on jobs, and retry attempts. See the [sample
-configuration file](samples/aggregation_job_driver_config.yaml) for details.
+configuration file](samples/aggregation_job_driver_basic_config.yaml) for
+details.
 
 ### `collection_job_driver` configuration
 
 The `collection_job_driver` component requires the same set of configuration
 parameters as the aggregation job driver above. See the [sample configuration
-file](samples/collection_job_driver_config.yaml) for details.
+file](samples/collection_job_driver_basic_config.yaml) for details.
 
 ## Database
 
