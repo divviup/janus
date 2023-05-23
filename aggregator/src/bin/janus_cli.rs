@@ -875,9 +875,13 @@ mod tests {
     }
 
     #[test]
-    fn documentation_config_example() {
+    fn documentation_config_examples() {
         serde_yaml::from_str::<ConfigFile>(include_str!(
-            "../../../docs/samples/janus_cli_config.yaml"
+            "../../../docs/samples/janus_cli_basic_config.yaml"
+        ))
+        .unwrap();
+        serde_yaml::from_str::<ConfigFile>(include_str!(
+            "../../../docs/samples/janus_cli_advanced_config.yaml"
         ))
         .unwrap();
     }

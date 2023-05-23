@@ -72,9 +72,13 @@ mod tests {
     use super::Config;
 
     #[test]
-    fn documentation_config_example() {
+    fn documentation_config_examples() {
         serde_yaml::from_str::<Config>(include_str!(
-            "../../../docs/samples/garbage_collector_config.yaml"
+            "../../../docs/samples/garbage_collector_basic_config.yaml"
+        ))
+        .unwrap();
+        serde_yaml::from_str::<Config>(include_str!(
+            "../../../docs/samples/garbage_collector_advanced_config.yaml"
         ))
         .unwrap();
     }

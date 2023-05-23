@@ -448,7 +448,11 @@ mod tests {
         );
 
         serde_yaml::from_str::<Config>(include_str!(
-            "../../../docs/samples/aggregator_config.yaml"
+            "../../../docs/samples/aggregator_basic_config.yaml"
+        ))
+        .unwrap();
+        serde_yaml::from_str::<Config>(include_str!(
+            "../../../docs/samples/aggregator_advanced_config.yaml"
         ))
         .unwrap();
     }
