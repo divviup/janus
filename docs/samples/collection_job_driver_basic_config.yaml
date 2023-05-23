@@ -31,4 +31,5 @@ maximum_attempts_before_failure: 10
 
 # Number of sharded database records per batch aggregation. Must not be less
 # than the equivalent setting in the aggregator and aggregation job driver.
+# (required)
 batch_aggregation_shard_count: 32
