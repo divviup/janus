@@ -15,12 +15,11 @@ jobs:
   yank:
     strategy:
       matrix:
-        crate: [
-          "janus_messages",
-          "janus_core",
-          "janus_client",
-          "janus_collector",
-        ]
+        crate:
+          - janus_messages
+          - janus_core
+          - janus_client
+          - janus_collector
     runs-on: ubuntu-latest
     steps:
     - name: Install Rust toolchain
