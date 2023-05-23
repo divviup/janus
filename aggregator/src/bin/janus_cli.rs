@@ -308,7 +308,7 @@ async fn datastore_from_opts(
         &kubernetes_secret_options
             .datastore_keys(&command_line_options.common_options, kube_client)
             .await?,
-        true,
+        config_file.common_config().database.check_schema_version,
     )
     .await
 }
