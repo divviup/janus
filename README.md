@@ -32,10 +32,6 @@ branch.
 Note that `podman` is not an acceptable substitute for `docker`. There are
 subtle incompatibilities between the two that will cause tests to fail.
 
-Building Janus with `janus_aggregator`'s `otlp` feature enabled currently
-requires the Protocol Buffers compiler, `protoc`, be installed on the machine
-performing the build.
-
 ### Container image
 
 To build container images, run the following commands.
