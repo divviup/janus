@@ -984,6 +984,8 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&task).await?;
                     tx.put_client_report(vdaf.borrow(), &report).await?;
+                    tx.mark_report_aggregated(task.id(), report.metadata().id())
+                        .await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_VERIFY_KEY_LENGTH,
@@ -1851,6 +1853,8 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&task).await?;
                     tx.put_client_report(vdaf.borrow(), &report).await?;
+                    tx.mark_report_aggregated(task.id(), report.metadata().id())
+                        .await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_VERIFY_KEY_LENGTH,

@@ -197,22 +197,41 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
             })
             .collect();
 
-        // Read all relevant batches from the datastore.
-        let mut batches: HashMap<_, _> = try_join_all(self.by_batch_identifier_index.keys().map(
-            |batch_identifier| {
-                tx.get_batch::<SEED_SIZE, Q, A>(
-                    self.task.id(),
-                    batch_identifier,
-                    aggregation_parameter,
-                )
-            },
-        ))
-        .await?
-        .into_iter()
-        .flat_map(|batch: Option<Batch<SEED_SIZE, Q, A>>| {
-            batch.map(|b| (b.batch_identifier().clone(), b))
-        })
-        .collect();
+        // Read all relevant batches & report counts from the datastore.
+        let (batches, batches_with_reports) = try_join!(
+            try_join_all(
+                self.by_batch_identifier_index
+                    .keys()
+                    .map(|batch_identifier| {
+                        tx.get_batch::<SEED_SIZE, Q, A>(
+                            self.task.id(),
+                            batch_identifier,
+                            aggregation_parameter,
+                        )
+                    })
+            ),
+            try_join_all(self.by_batch_identifier_index.keys().map(
+                |batch_identifier| async move {
+                    if let Some(batch_interval) = Q::to_batch_interval(batch_identifier) {
+                        if tx
+                            .interval_has_unaggregated_reports(self.task.id(), batch_interval)
+                            .await?
+                        {
+                            return Ok::<_, Error>(Some(batch_identifier.clone()));
+                        }
+                    }
+                    Ok(None)
+                },
+            )),
+        )?;
+
+        let mut batches: HashMap<_, _> = batches
+            .into_iter()
+            .flat_map(|batch: Option<Batch<SEED_SIZE, Q, A>>| {
+                batch.map(|b| (b.batch_identifier().clone(), b))
+            })
+            .collect();
+        let batches_with_reports: HashSet<_> = batches_with_reports.into_iter().flatten().collect();
 
         // Update in-memory state of report aggregations: any report aggregations applying to a
         // closed batch instead fail with a BatchCollected error (unless they were already in an
@@ -319,7 +338,10 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                         outstanding_aggregation_jobs -= 1;
                     }
                 }
-                if batch.state() == &BatchState::Closing && outstanding_aggregation_jobs == 0 {
+                if batch.state() == &BatchState::Closing
+                    && outstanding_aggregation_jobs == 0
+                    && !batches_with_reports.contains(batch.batch_identifier())
+                {
                     batch = batch.with_state(BatchState::Closed);
                     newly_closed_batches.push(batch_identifier);
                 }

@@ -1279,6 +1279,59 @@ impl<C: Clock> Transaction<'_, C> {
         Ok(())
     }
 
+    #[cfg(feature = "test-util")]
+    pub async fn mark_report_aggregated(
+        &self,
+        task_id: &TaskId,
+        report_id: &ReportId,
+    ) -> Result<(), Error> {
+        let stmt = self
+            .prepare_cached(
+                "UPDATE client_reports SET aggregation_started = TRUE
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1) AND report_id = $2",
+            )
+            .await?;
+        self.execute(
+            &stmt,
+            &[
+                /* task_id */ task_id.as_ref(),
+                /* report_id */ &report_id.get_encoded(),
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Determines whether the given task includes any client reports which have not yet started the
+    /// aggregation process in the given interval.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn interval_has_unaggregated_reports(
+        &self,
+        task_id: &TaskId,
+        batch_interval: &Interval,
+    ) -> Result<bool, Error> {
+        let stmt = self
+            .prepare_cached(
+                "SELECT EXISTS(
+                    SELECT 1 FROM client_reports
+                    WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                    AND client_timestamp <@ $2::TSRANGE
+                    AND aggregation_started = FALSE
+                ) AS unaggregated_report_exists",
+            )
+            .await?;
+        let row = self
+            .query_one(
+                &stmt,
+                &[
+                    /* task_id */ task_id.as_ref(),
+                    /* batch_interval */ &SqlInterval::from(batch_interval),
+                ],
+            )
+            .await?;
+        Ok(row.get("unaggregated_report_exists"))
+    }
+
     /// Return the number of reports in the provided task whose timestamp falls within the provided
     /// interval, regardless of whether the reports have been aggregated or collected. Applies only
     /// to time-interval queries.
@@ -6179,18 +6232,21 @@ mod tests {
             .now()
             .to_batch_interval_start(&time_precision)
             .unwrap();
+        let report_interval = Interval::new(when, Duration::from_seconds(1)).unwrap();
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
             VdafInstance::Prio3Count,
             Role::Leader,
         )
+        .with_time_precision(time_precision)
         .build();
         let unrelated_task = TaskBuilder::new(
             task::QueryType::TimeInterval,
             VdafInstance::Prio3Count,
             Role::Leader,
         )
+        .with_time_precision(time_precision)
         .build();
 
         let first_unaggregated_report = LeaderStoredReport::new_dummy(*task.id(), when);
@@ -6229,18 +6285,9 @@ mod tests {
                 tx.put_client_report(&dummy_vdaf::Vdaf::new(), &unrelated_report)
                     .await?;
 
-                // Mark aggregated_report as aggregated. (we use SQL here as there is no standard
-                // datastore operation to manually mark a client report as aggregated)
-                tx.execute(
-                    "UPDATE client_reports SET aggregation_started = TRUE
-                        WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                          AND report_id = $2",
-                    &[
-                        &task.id().as_ref(),
-                        &aggregated_report.metadata().id().as_ref(),
-                    ],
-                )
-                .await?;
+                // Mark aggregated_report as aggregated.
+                tx.mark_report_aggregated(task.id(), aggregated_report.metadata().id())
+                    .await?;
                 Ok(())
             })
         })
@@ -6252,6 +6299,13 @@ mod tests {
             ds.run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
+                    // At this point, first_unaggregated_report and second_unaggregated_report are
+                    // both unaggregated.
+                    assert!(
+                        tx.interval_has_unaggregated_reports(task.id(), &report_interval)
+                            .await?
+                    );
+
                     tx.get_unaggregated_client_report_ids_for_task(task.id())
                         .await
                 })
@@ -6279,6 +6333,12 @@ mod tests {
             ds.run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
+                    // At this point, all reports have started aggregation.
+                    assert!(
+                        !tx.interval_has_unaggregated_reports(task.id(), &report_interval)
+                            .await?
+                    );
+
                     tx.get_unaggregated_client_report_ids_for_task(task.id())
                         .await
                 })
@@ -6309,6 +6369,12 @@ mod tests {
             ds.run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
+                    // At this point, first_unaggregated_report is unaggregated.
+                    assert!(
+                        tx.interval_has_unaggregated_reports(task.id(), &report_interval)
+                            .await?
+                    );
+
                     tx.get_unaggregated_client_report_ids_for_task(task.id())
                         .await
                 })
