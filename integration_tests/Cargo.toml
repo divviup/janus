@@ -14,7 +14,7 @@ in-cluster = ["dep:k8s-openapi", "dep:kube", "dep:serde"]
 [dependencies]
 anyhow.workspace = true
 backoff = { version = "0.4", features = ["tokio"] }
-base64 = "0.21.0"
+base64 = "0.21.1"
 futures = "0.3.28"
 hex = "0.4"
 janus_aggregator = { workspace = true, features = ["test-util"] }
