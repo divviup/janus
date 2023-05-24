@@ -74,11 +74,11 @@ mod tests {
     #[test]
     fn documentation_config_examples() {
         serde_yaml::from_str::<Config>(include_str!(
-            "../../../docs/samples/garbage_collector_basic_config.yaml"
+            "../../../docs/samples/basic_config/garbage_collector.yaml"
         ))
         .unwrap();
         serde_yaml::from_str::<Config>(include_str!(
-            "../../../docs/samples/garbage_collector_advanced_config.yaml"
+            "../../../docs/samples/advanced_config/garbage_collector.yaml"
         ))
         .unwrap();
     }

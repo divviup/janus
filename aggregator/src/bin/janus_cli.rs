@@ -877,11 +877,11 @@ mod tests {
     #[test]
     fn documentation_config_examples() {
         serde_yaml::from_str::<ConfigFile>(include_str!(
-            "../../../docs/samples/janus_cli_basic_config.yaml"
+            "../../../docs/samples/basic_config/janus_cli.yaml"
         ))
         .unwrap();
         serde_yaml::from_str::<ConfigFile>(include_str!(
-            "../../../docs/samples/janus_cli_advanced_config.yaml"
+            "../../../docs/samples/advanced_config/janus_cli.yaml"
         ))
         .unwrap();
     }
