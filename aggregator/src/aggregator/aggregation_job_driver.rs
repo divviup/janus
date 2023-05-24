@@ -693,6 +693,7 @@ impl AggregationJobDriver {
                     // aggregations; this should be guaranteed by the system as we do not make batch
                     // aggregations unwritable until after we make report aggregations unwritable.
                     // But we should certainly check that this is true!
+                    // TODO(#1392): remove this check by fusing report aggregation/batch aggregation writes.
                     assert!(unwritable_ba_report_ids.is_subset(&unwritable_ra_report_ids));
                     Ok(())
                 })
