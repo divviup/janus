@@ -339,7 +339,35 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
             // Write updated batches.
             try_join_all(batches.values().map(|(op, batch)| async move {
                 match op {
-                    Operation::Put => tx.put_batch(batch).await,
+                    Operation::Put => {
+                        let rslt = tx.put_batch(batch).await;
+                        if matches!(rslt, Err(Error::MutationTargetAlreadyExists)) {
+                            // This codepath can be taken due to a quirk of how the Repeatable Read
+                            // isolation level works. It cannot occur at the Serializable isolation
+                            // level.
+                            //
+                            // For this codepath to be taken, two writers must concurrently choose
+                            // to write the same batch (by task ID, batch ID, and aggregation
+                            // parameter), and this batch must not already exist in the datastore.
+                            //
+                            // Both writers will receive `None` from the `get_batch` call, and then
+                            // both will try to `put_batch`. One of the writers will succeed. The
+                            // other will fail with a unique constraint violation on (task_id,
+                            // batch_identifier, aggregation_param), since unique constraints are
+                            // still enforced even in the presence of snapshot isolation. This
+                            // unique constraint will be translated to a MutationTargetAlreadyExists
+                            // error.
+                            //
+                            // The failing writer, in this case, can't do anything about this
+                            // problem while in its current transaction: further attempts to read
+                            // the batch will continue to return `None` (since all reads in the same
+                            // transaction are from the same snapshot), so it can't update the
+                            // now-written batch. All it can do is give up on this transaction and
+                            // try again, by calling `retry` and returning an error.
+                            tx.retry();
+                        }
+                        rslt
+                    }
                     Operation::Update => tx.update_batch(batch).await,
                 }
             })),
