@@ -11,9 +11,6 @@ Janus is currently in active development.
 
 ## Building
 
-Building Janus with `janus_aggregator`'s `otlp` feature enabled requires the Protocol Buffers
-compiler, `protoc`, be installed on the machine performing the build.
-
 To build Janus, execute `cargo build`. There is also support for building containers with the Janus
 components; see `.github/workflows/ci-build.yml` for example Docker invocations.
 

@@ -137,11 +137,11 @@ impl<C: Clock> Datastore<C> {
     pub fn new(pool: deadpool_postgres::Pool, crypter: Crypter, clock: C) -> Datastore<C> {
         let meter = opentelemetry::global::meter("janus_aggregator");
         let transaction_status_counter = meter
-            .u64_counter("janus_database_transactions_total")
+            .u64_counter("janus_database_transactions")
             .with_description("Count of database transactions run, with their status.")
             .init();
         let rollback_error_counter = meter
-            .u64_counter("janus_database_rollback_errors_total")
+            .u64_counter("janus_database_rollback_errors")
             .with_description(concat!(
                 "Count of errors received when rolling back a database transaction, ",
                 "with their PostgreSQL error code.",
