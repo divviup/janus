@@ -34,7 +34,7 @@ janus_client = { path = "../client" }
 janus_collector = { path = "../collector" }
 janus_core = { path = "../core" }
 janus_messages = { path = "../messages" }
-opentelemetry = { version = "0.18", features = ["metrics"] }
+opentelemetry = { version = "0.19", features = ["metrics"] }
 prio = { version = "0.10.0", features = ["multithreaded"] }
 rand = "0.8"
 regex = { version = "1", optional = true }

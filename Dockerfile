@@ -1,6 +1,6 @@
 FROM rust:1.69.0-alpine as builder
 ARG BINARY=aggregator
-RUN apk add libc-dev protobuf-dev protoc
+RUN apk add libc-dev
 WORKDIR /src
 COPY Cargo.toml /src/Cargo.toml
 COPY Cargo.lock /src/Cargo.lock

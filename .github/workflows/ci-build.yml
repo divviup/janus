@@ -56,10 +56,6 @@ jobs:
       run: go install sigs.k8s.io/kind@v0.14.0
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
-    - name: Install Protoc
-      uses: arduino/setup-protoc@v1
-      with:
-        repo-token: ${{ secrets.GITHUB_TOKEN }}
     - name: Cache dependencies
       uses: Swatinem/rust-cache@v2
       with:
@@ -104,10 +100,6 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
       with:
         components: clippy, rustfmt
-    - name: Install Protoc
-      uses: arduino/setup-protoc@v1
-      with:
-        repo-token: ${{ secrets.GITHUB_TOKEN }}
     - name: Format
       run: cargo fmt --message-format human -- --check
     - name: Clippy
