@@ -308,7 +308,7 @@ async fn datastore_from_opts(
         &kubernetes_secret_options
             .datastore_keys(&command_line_options.common_options, kube_client)
             .await?,
-        true,
+        config_file.common_config().database.check_schema_version,
     )
     .await
 }
@@ -875,9 +875,13 @@ mod tests {
     }
 
     #[test]
-    fn documentation_config_example() {
+    fn documentation_config_examples() {
         serde_yaml::from_str::<ConfigFile>(include_str!(
-            "../../../docs/samples/janus_cli_config.yaml"
+            "../../../docs/samples/basic_config/janus_cli.yaml"
+        ))
+        .unwrap();
+        serde_yaml::from_str::<ConfigFile>(include_str!(
+            "../../../docs/samples/advanced_config/janus_cli.yaml"
         ))
         .unwrap();
     }

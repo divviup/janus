@@ -1,0 +1,22 @@
+# Common configuration parameters:
+
+database:
+  # Database URL. (required)
+  url: "postgres://postgres:postgres@localhost:5432/postgres"
+
+# Socket address for /healthz HTTP requests. Defaults to 127.0.0.1:9001.
+health_check_listen_address: "0.0.0.0:8000"
+
+# Aggregation job creator-specific parameters:
+
+# Interval on which to check the database for new tasks. (required)
+tasks_update_frequency_secs: 3600
+
+# Interval on which to create new aggregation jobs. (required)
+aggregation_job_creation_interval_secs: 60
+
+# Minimum aggregation job size, in reports. (required)
+min_aggregation_job_size: 10
+
+# Maximum aggregation job size, in reports. (required)
+max_aggregation_job_size: 100

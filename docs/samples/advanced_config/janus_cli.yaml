@@ -7,6 +7,10 @@ database:
   # Timeout for new database connections. Defaults to 60 seconds.
   connection_pool_timeout_secs: 60
 
+  # Flag to check if the database schema version is compatible upon startup.
+  # (optional, defaults to true)
+  check_schema_version: true
+
 # Socket address for /healthz HTTP requests. Defaults to 127.0.0.1:9001.
 health_check_listen_address: "0.0.0.0:8000"
 
@@ -53,29 +57,3 @@ metrics_config:
   ##  # gRPC metadata to send with OTLP requests. (optional)
   ##  metadata:
   ##    key: "value"
-
-# Collection job driver-related parameters:
-
-# Minimum interval on which to acquire incomplete collection jobs. (required)
-min_job_discovery_delay_secs: 10
-
-# Maximum interval on which to acquire incomplete collection jobs. (required)
-max_job_discovery_delay_secs: 60
-
-# Maximum number of collection jobs to step concurrently. (required)
-max_concurrent_job_workers: 10
-
-# Duration of leases of collection jobs being processed. (required)
-worker_lease_duration_secs: 600
-
-# Maximum allowable clock skew used when identifying expired leases on
-# collection jobs. (required)
-worker_lease_clock_skew_allowance_secs: 60
-
-# Number of times to attempt processing an collection job before abandoning it.
-# (required)
-maximum_attempts_before_failure: 10
-
-# Number of sharded database records per batch aggregation. Must not be less
-# than the equivalent setting in the aggregator and aggregation job driver.
-batch_aggregation_shard_count: 32

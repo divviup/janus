@@ -7,6 +7,10 @@ database:
   # Timeout for new database connections. Defaults to 60 seconds.
   connection_pool_timeout_secs: 60
 
+  # Flag to check if the database schema version is compatible upon startup.
+  # (optional, defaults to true)
+  check_schema_version: true
+
 # Socket address for /healthz HTTP requests. Defaults to 127.0.0.1:9001.
 health_check_listen_address: "0.0.0.0:8000"
 
@@ -54,16 +58,28 @@ metrics_config:
   ##  metadata:
   ##    key: "value"
 
-# Aggregation job creator-specific parameters:
+# Aggregation job driver-related parameters:
 
-# Interval on which to check the database for new tasks. (required)
-tasks_update_frequency_secs: 3600
+# Minimum interval on which to acquire incomplete aggregation jobs. (required)
+min_job_discovery_delay_secs: 10
 
-# Interval on which to create new aggregation jobs. (required)
-aggregation_job_creation_interval_secs: 60
+# Maximum interval on which to acquire incomplete aggregation jobs. (required)
+max_job_discovery_delay_secs: 60
 
-# Minimum aggregation job size, in reports. (required)
-min_aggregation_job_size: 10
+# Maximum number of aggregation jobs to step concurrently. (required)
+max_concurrent_job_workers: 10
 
-# Maximum aggregation job size, in reports. (required)
-max_aggregation_job_size: 100
+# Duration of leases of aggregation jobs being processed. (required)
+worker_lease_duration_secs: 600
+
+# Maximum allowable clock skew used when identifying expired leases on
+# aggregation jobs. (required)
+worker_lease_clock_skew_allowance_secs: 60
+
+# Number of times to attempt processing an aggregation job before abandoning it.
+# (required)
+maximum_attempts_before_failure: 10
+
+# Number of sharded database records per batch aggregation. Must not be greater
+# than the equivalent setting in the collection job driver.
+batch_aggregation_shard_count: 32

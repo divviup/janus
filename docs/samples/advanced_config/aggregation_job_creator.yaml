@@ -7,6 +7,10 @@ database:
   # Timeout for new database connections. Defaults to 60 seconds.
   connection_pool_timeout_secs: 60
 
+  # Flag to check if the database schema version is compatible upon startup.
+  # (optional, defaults to true)
+  check_schema_version: true
+
 # Socket address for /healthz HTTP requests. Defaults to 127.0.0.1:9001.
 health_check_listen_address: "0.0.0.0:8000"
 
@@ -54,21 +58,16 @@ metrics_config:
   ##  metadata:
   ##    key: "value"
 
-# Aggregator-specific parameters:
+# Aggregation job creator-specific parameters:
 
-# Socket address for DAP requests. (required)
-listen_address: "0.0.0.0:80"
+# Interval on which to check the database for new tasks. (required)
+tasks_update_frequency_secs: 3600
 
-# Socket address for Janus aggregator API requests. If not set, Janus aggregator API is not served.
-# (optional)
-aggregator_api_listen_address: "0.0.0.0:8081"
+# Interval on which to create new aggregation jobs. (required)
+aggregation_job_creation_interval_secs: 60
 
-# Maximum number of uploaded reports per batching transaction. (required)
-max_upload_batch_size: 100
+# Minimum aggregation job size, in reports. (required)
+min_aggregation_job_size: 10
 
-# Maximum delay before writing a batch of uploaded reports. (required)
-max_upload_batch_write_delay_ms: 250
-
-# Number of sharded database records per batch aggregation. Must not be greater
-# than the equivalent setting in the collection job driver.
-batch_aggregation_shard_count: 32
+# Maximum aggregation job size, in reports. (required)
+max_aggregation_job_size: 100
