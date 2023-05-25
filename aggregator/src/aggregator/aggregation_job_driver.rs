@@ -693,6 +693,7 @@ impl AggregationJobDriver {
                     // aggregations; this should be guaranteed by the system as we do not make batch
                     // aggregations unwritable until after we make report aggregations unwritable.
                     // But we should certainly check that this is true!
+                    // TODO(#1392): remove this check by fusing report aggregation/batch aggregation writes.
                     assert!(unwritable_ba_report_ids.is_subset(&unwritable_ra_report_ids));
                     Ok(())
                 })
@@ -983,6 +984,8 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&task).await?;
                     tx.put_client_report(vdaf.borrow(), &report).await?;
+                    tx.mark_report_aggregated(task.id(), report.metadata().id())
+                        .await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_VERIFY_KEY_LENGTH,
@@ -1850,6 +1853,8 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&task).await?;
                     tx.put_client_report(vdaf.borrow(), &report).await?;
+                    tx.mark_report_aggregated(task.id(), report.metadata().id())
+                        .await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_VERIFY_KEY_LENGTH,

@@ -1779,7 +1779,7 @@ impl VdafOps {
                     }
 
                     debug!(collect_request = ?req, "Cache miss, creating new collection job");
-                    let (_, report_count, batches) = try_join!(
+                    let (_, report_count, batches, batches_with_reports) = try_join!(
                         Q::validate_query_count::<SEED_SIZE, C, A>(
                             tx,
                             &vdaf,
@@ -1806,8 +1806,38 @@ impl VdafOps {
                                     Ok::<_, datastore::Error>((batch_identifier, batch))
                                 }
                             }),
-                        )
+                        ),
+                        try_join_all(
+                            Q::batch_identifiers_for_collection_identifier(
+                                &task,
+                                &collection_identifier
+                            )
+                            .map(|batch_identifier| {
+                                let task_id = *task.id();
+                                async move {
+                                    if let Some(batch_interval) =
+                                        Q::to_batch_interval(&batch_identifier)
+                                    {
+                                        if tx
+                                            .interval_has_unaggregated_reports(
+                                                &task_id,
+                                                batch_interval,
+                                            )
+                                            .await?
+                                        {
+                                            return Ok::<_, datastore::Error>(Some(
+                                                batch_identifier.clone(),
+                                            ));
+                                        }
+                                    }
+                                    Ok(None)
+                                }
+                            })
+                        ),
                     )?;
+
+                    let batches_with_reports: HashSet<_> =
+                        batches_with_reports.into_iter().flatten().collect();
 
                     // Batch size must be validated while handling CollectReq and hence before
                     // creating a collection job.
@@ -1833,40 +1863,46 @@ impl VdafOps {
                     #[allow(clippy::needless_collect)]
                     let batches: Vec<_> = batches
                         .into_iter()
-                        .flat_map(|(batch_identifier, batch)| match batch {
-                            Some(batch) => {
-                                match batch.state() {
-                                    // If the batch is open, start it closing or close it entirely
-                                    // based on the number of outstanding aggregation jobs.
-                                    BatchState::Open => {
-                                        let new_state = if batch.outstanding_aggregation_jobs() == 0
-                                        {
-                                            BatchState::Closed
-                                        } else {
-                                            initial_collection_job_state =
-                                                CollectionJobState::Start;
-                                            BatchState::Closing
-                                        };
-                                        Some((Operation::Update, batch.with_state(new_state)))
-                                    }
+                        .flat_map(|(batch_identifier, batch)| {
+                            // Determine the batch state we want to write for this batch. If there are
+                            // no outstanding aggregation jobs (or no batch has yet been written, which
+                            // implies no aggregation jobs have ever existed), and there are no
+                            // outstanding unaggregated reports, close immediately. Otherwise, go to
+                            // closing to allow the aggregation process to eventually complete & close
+                            // the batch.
+                            let batch_state = if batch
+                                .as_ref()
+                                .map_or(0, |b| b.outstanding_aggregation_jobs())
+                                == 0
+                                && !batches_with_reports.contains(&batch_identifier)
+                            {
+                                BatchState::Closed
+                            } else {
+                                initial_collection_job_state = CollectionJobState::Start;
+                                BatchState::Closing
+                            };
 
-                                    // If the batch is already closing/closed, we don't need to
-                                    // write anything for this batch.
-                                    _ => None,
+                            match batch {
+                                Some(batch) if batch.state() == &BatchState::Open => {
+                                    Some((Operation::Update, batch.with_state(batch_state)))
                                 }
-                            }
 
-                            // If no batch has yet been written, immediately close it.
-                            None => Some((
-                                Operation::Put,
-                                Batch::<SEED_SIZE, Q, A>::new(
-                                    *task.id(),
-                                    batch_identifier,
-                                    aggregation_param.as_ref().clone(),
-                                    BatchState::Closed,
-                                    0,
-                                ),
-                            )),
+                                // If no batch has yet been written, write it now.
+                                None => Some((
+                                    Operation::Put,
+                                    Batch::<SEED_SIZE, Q, A>::new(
+                                        *task.id(),
+                                        batch_identifier,
+                                        aggregation_param.as_ref().clone(),
+                                        batch_state,
+                                        0,
+                                    ),
+                                )),
+
+                                // If the batch exists but is already in a non-Open state, we don't
+                                // need to write anything for this batch.
+                                _ => None,
+                            }
                         })
                         .collect();
 
@@ -1883,7 +1919,41 @@ impl VdafOps {
                         tx.put_collection_job(&collection_job),
                         try_join_all(batches.into_iter().map(|(op, batch)| async move {
                             match op {
-                                Operation::Put => tx.put_batch(&batch).await,
+                                Operation::Put => {
+                                    let rslt = tx.put_batch(&batch).await;
+                                    if matches!(
+                                        rslt,
+                                        Err(datastore::Error::MutationTargetAlreadyExists)
+                                    ) {
+                                        // This codepath can be taken due to a quirk of how the
+                                        // Repeatable Read isolation level works. It cannot occur at
+                                        // the Serializable isolation level.
+                                        //
+                                        // For this codepath to be taken, two writers must
+                                        // concurrently choose to write the same batch (by task ID,
+                                        // batch ID, and aggregation parameter), and this batch must
+                                        // not already exist in the datastore.
+                                        //
+                                        // Both writers will receive `None` from the `get_batch`
+                                        // call, and then both will try to `put_batch`. One of the
+                                        // writers will succeed. The other will fail with a unique
+                                        // constraint violation on (task_id, batch_identifier,
+                                        // aggregation_param), since unique constraints are still
+                                        // enforced even in the presence of snapshot isolation. This
+                                        // unique constraint will be translated to a
+                                        // MutationTargetAlreadyExists error.
+                                        //
+                                        // The failing writer, in this case, can't do anything about
+                                        // this problem while in its current transaction: further
+                                        // attempts to read the batch will continue to return `None`
+                                        // (since all reads in the same transaction are from the
+                                        // same snapshot), so it can't update the now-written batch.
+                                        // All it can do is give up on this transaction and try
+                                        // again, by calling `retry` and returning an error.
+                                        tx.retry();
+                                    }
+                                    rslt
+                                }
                                 Operation::Update => tx.update_batch(&batch).await,
                             }
                         }))

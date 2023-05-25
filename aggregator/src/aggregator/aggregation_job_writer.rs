@@ -197,22 +197,41 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
             })
             .collect();
 
-        // Read all relevant batches from the datastore.
-        let mut batches: HashMap<_, _> = try_join_all(self.by_batch_identifier_index.keys().map(
-            |batch_identifier| {
-                tx.get_batch::<SEED_SIZE, Q, A>(
-                    self.task.id(),
-                    batch_identifier,
-                    aggregation_parameter,
-                )
-            },
-        ))
-        .await?
-        .into_iter()
-        .flat_map(|batch: Option<Batch<SEED_SIZE, Q, A>>| {
-            batch.map(|b| (b.batch_identifier().clone(), b))
-        })
-        .collect();
+        // Read all relevant batches & report counts from the datastore.
+        let (batches, batches_with_reports) = try_join!(
+            try_join_all(
+                self.by_batch_identifier_index
+                    .keys()
+                    .map(|batch_identifier| {
+                        tx.get_batch::<SEED_SIZE, Q, A>(
+                            self.task.id(),
+                            batch_identifier,
+                            aggregation_parameter,
+                        )
+                    })
+            ),
+            try_join_all(self.by_batch_identifier_index.keys().map(
+                |batch_identifier| async move {
+                    if let Some(batch_interval) = Q::to_batch_interval(batch_identifier) {
+                        if tx
+                            .interval_has_unaggregated_reports(self.task.id(), batch_interval)
+                            .await?
+                        {
+                            return Ok::<_, Error>(Some(batch_identifier.clone()));
+                        }
+                    }
+                    Ok(None)
+                },
+            )),
+        )?;
+
+        let mut batches: HashMap<_, _> = batches
+            .into_iter()
+            .flat_map(|batch: Option<Batch<SEED_SIZE, Q, A>>| {
+                batch.map(|b| (b.batch_identifier().clone(), b))
+            })
+            .collect();
+        let batches_with_reports: HashSet<_> = batches_with_reports.into_iter().flatten().collect();
 
         // Update in-memory state of report aggregations: any report aggregations applying to a
         // closed batch instead fail with a BatchCollected error (unless they were already in an
@@ -319,7 +338,10 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                         outstanding_aggregation_jobs -= 1;
                     }
                 }
-                if batch.state() == &BatchState::Closing && outstanding_aggregation_jobs == 0 {
+                if batch.state() == &BatchState::Closing
+                    && outstanding_aggregation_jobs == 0
+                    && !batches_with_reports.contains(batch.batch_identifier())
+                {
                     batch = batch.with_state(BatchState::Closed);
                     newly_closed_batches.push(batch_identifier);
                 }
@@ -339,7 +361,35 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
             // Write updated batches.
             try_join_all(batches.values().map(|(op, batch)| async move {
                 match op {
-                    Operation::Put => tx.put_batch(batch).await,
+                    Operation::Put => {
+                        let rslt = tx.put_batch(batch).await;
+                        if matches!(rslt, Err(Error::MutationTargetAlreadyExists)) {
+                            // This codepath can be taken due to a quirk of how the Repeatable Read
+                            // isolation level works. It cannot occur at the Serializable isolation
+                            // level.
+                            //
+                            // For this codepath to be taken, two writers must concurrently choose
+                            // to write the same batch (by task ID, batch ID, and aggregation
+                            // parameter), and this batch must not already exist in the datastore.
+                            //
+                            // Both writers will receive `None` from the `get_batch` call, and then
+                            // both will try to `put_batch`. One of the writers will succeed. The
+                            // other will fail with a unique constraint violation on (task_id,
+                            // batch_identifier, aggregation_param), since unique constraints are
+                            // still enforced even in the presence of snapshot isolation. This
+                            // unique constraint will be translated to a MutationTargetAlreadyExists
+                            // error.
+                            //
+                            // The failing writer, in this case, can't do anything about this
+                            // problem while in its current transaction: further attempts to read
+                            // the batch will continue to return `None` (since all reads in the same
+                            // transaction are from the same snapshot), so it can't update the
+                            // now-written batch. All it can do is give up on this transaction and
+                            // try again, by calling `retry` and returning an error.
+                            tx.retry();
+                        }
+                        rslt
+                    }
                     Operation::Update => tx.update_batch(batch).await,
                 }
             })),

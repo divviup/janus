@@ -421,9 +421,6 @@ async fn run(
         }
     };
 
-    // Wait a few seconds to allow the aggregation process to start for all uploaded reports.
-    sleep(StdDuration::from_secs(5)).await;
-
     // Try collecting one or more times. For fixed size tasks, a "current batch" query will fail
     // with an invalid batch until enough reports are ready.
     let mut collect_attempt_backoff = ExponentialBackoffBuilder::new()
