@@ -1,7 +1,7 @@
 ARG PROFILE=release
 
 FROM rust:1.69.0-alpine AS chef
-RUN apk add libc-dev
+RUN apk add --no-cache libc-dev
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 RUN cargo install cargo-chef --version 0.1.60 && \
     rm -r $CARGO_HOME/registry
@@ -66,7 +66,7 @@ RUN cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_interop_
 
 FROM postgres:14-alpine AS final
 RUN mkdir /logs && mkdir /etc/janus
-RUN apk add --update supervisor && rm -rf /tmp/* /var/cache/apk/*
+RUN apk add --no-cache supervisor && rm -rf /tmp/* /var/cache/apk/*
 COPY db /etc/janus/migrations
 COPY interop_binaries/setup.sh /usr/local/bin/setup.sh
 COPY interop_binaries/config/supervisord.conf \
