@@ -8,7 +8,7 @@ pub fn save_zstd_compressed_docker_image<W: Write>(image_id: &str, writer: W) {
         .args(["save", image_id])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::inherit())
         .spawn()
         .expect("Failed to execute `docker save`");
     let save_stdout = save_child.stdout.take().unwrap();

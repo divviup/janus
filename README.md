@@ -34,14 +34,11 @@ subtle incompatibilities between the two that will cause tests to fail.
 
 ### Container image
 
-To build container images, run the following commands.
-
-```bash
-DOCKER_BUILDKIT=1 docker build --tag=janus_aggregator .
-DOCKER_BUILDKIT=1 docker build --tag=janus_aggregation_job_creator --build-arg BINARY=aggregation_job_creator .
-DOCKER_BUILDKIT=1 docker build --tag=janus_aggregation_job_driver --build-arg BINARY=aggregation_job_driver .
-DOCKER_BUILDKIT=1 docker build --tag=janus_collection_job_driver --build-arg BINARY=collection_job_driver .
-```
+To build container images, run `docker buildx bake --load`. This will produce images
+tagged `janus_aggregator`, `janus_aggregation_job_creator`,
+`janus_aggregation_job_driver`, `janus_collection_job_driver`, `janus_cli`,
+`janus_interop_client`, `janus_interop_aggregator`, and
+`janus_interop_collector` by default.
 
 ## Running tests
 

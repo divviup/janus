@@ -49,10 +49,24 @@ jobs:
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust-toolchain }}
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+      with:
+        driver: docker-container
+        use: true
     - name: Cache dependencies
       uses: Swatinem/rust-cache@v2
       with:
         key: ${{ steps.os-version.outputs.release }}
+    - name: Pre-build embedded container images
+      uses: docker/bake-action@v3.0.1
+      with:
+        files: docker-bake.hcl
+        workdir: .
+        targets: interop_binaries_small
+        load: true
+    - name: Expose GitHub Runtime
+      uses: crazy-max/ghaction-github-runtime@v2
     - name: Build minimal janus_messages
       run: cargo build --package janus_messages --no-default-features
     - name: Build janus_core
@@ -120,11 +134,18 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - run: echo "GIT_REVISION=$(git describe --always --dirty=-modified)" >> $GITHUB_ENV
-    - run: docker build --tag janus_aggregator --build-arg GIT_REVISION=${GIT_REVISION} .
-    - run: docker build --tag janus_aggregation_job_creator --build-arg BINARY=aggregation_job_creator --build-arg GIT_REVISION=${GIT_REVISION} .
-    - run: docker build --tag janus_aggregation_job_driver --build-arg BINARY=aggregation_job_driver --build-arg GIT_REVISION=${GIT_REVISION} .
-    - run: docker build --tag janus_collection_job_driver --build-arg BINARY=collection_job_driver --build-arg GIT_REVISION=${GIT_REVISION} .
-    - run: docker build --tag janus_cli --build-arg BINARY=janus_cli --build-arg GIT_REVISION=${GIT_REVISION} .
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+      with:
+        driver: docker-container
+        use: true
+    - name: Build
+      uses: docker/bake-action@v3.0.1
+      with:
+        files: docker-bake.hcl
+        workdir: .
+        targets: janus
+        load: true
     - run: docker run --rm janus_aggregator --help
     - run: docker run --rm janus_aggregation_job_creator --help
     - run: docker run --rm janus_aggregation_job_driver --help
@@ -137,6 +158,14 @@ jobs:
       DOCKER_BUILDKIT: 1
     steps:
     - uses: actions/checkout@v3
-    - run: docker build --tag janus_interop_client --build-arg BINARY=janus_interop_client -f Dockerfile.interop .
-    - run: docker build --tag janus_interop_aggregator -f Dockerfile.interop_aggregator .
-    - run: docker build --tag janus_interop_collector --build-arg BINARY=janus_interop_collector -f Dockerfile.interop .
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+      with:
+        driver: docker-container
+        use: true
+    - name: Build
+      uses: docker/bake-action@v3.0.1
+      with:
+        files: docker-bake.hcl
+        workdir: .
+        targets: interop_binaries

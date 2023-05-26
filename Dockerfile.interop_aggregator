@@ -1,11 +1,32 @@
 ARG PROFILE=release
 
-FROM rust:1.69.0-alpine as builder
-ARG PROFILE
+FROM rust:1.69.0-alpine AS chef
 RUN apk add libc-dev
+ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
+RUN cargo install cargo-chef --version 0.1.60 && \
+    rm -r $CARGO_HOME/registry
 WORKDIR /src
-COPY Cargo.toml /src/Cargo.toml
-COPY Cargo.lock /src/Cargo.lock
+
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock /src/
+COPY aggregator /src/aggregator
+COPY aggregator_api /src/aggregator_api
+COPY aggregator_core /src/aggregator_core
+COPY build_script_utils /src/build_script_utils
+COPY client /src/client
+COPY collector /src/collector
+COPY core /src/core
+COPY integration_tests /src/integration_tests
+COPY interop_binaries /src/interop_binaries
+COPY messages /src/messages
+COPY tools /src/tools
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder-aggregator
+COPY --from=planner /src/recipe.json /src/recipe.json
+ARG PROFILE
+RUN cargo chef cook --features fpvec_bounded_l2 --profile $PROFILE -p janus_aggregator
+COPY Cargo.toml Cargo.lock /src/
 COPY aggregator /src/aggregator
 COPY aggregator_api /src/aggregator_api
 COPY aggregator_core /src/aggregator_core
@@ -18,34 +39,48 @@ COPY integration_tests /src/integration_tests
 COPY interop_binaries /src/interop_binaries
 COPY messages /src/messages
 COPY tools /src/tools
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target \
-    cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_interop_binaries \
-    --bin janus_interop_aggregator && \
-    cp /src/target/$PROFILE/janus_interop_aggregator /janus_interop_aggregator
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target \
-    cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_aggregator \
+RUN cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_aggregator \
     --bin aggregation_job_creator \
     --bin aggregation_job_driver \
-    --bin collection_job_driver && \
-    cp /src/target/$PROFILE/aggregation_job_creator /aggregation_job_creator && \
-    cp /src/target/$PROFILE/aggregation_job_driver /aggregation_job_driver && \
-    cp /src/target/$PROFILE/collection_job_driver /collection_job_driver
+    --bin collection_job_driver
 
-FROM postgres:14-alpine
+FROM chef AS builder-interop
+COPY --from=planner /src/recipe.json /src/recipe.json
+ARG PROFILE
+RUN cargo chef cook --features fpvec_bounded_l2 --profile $PROFILE -p janus_interop_binaries
+COPY Cargo.toml Cargo.lock /src/
+COPY aggregator /src/aggregator
+COPY aggregator_api /src/aggregator_api
+COPY aggregator_core /src/aggregator_core
+COPY build_script_utils /src/build_script_utils
+COPY client /src/client
+COPY collector /src/collector
+COPY core /src/core
+COPY db /src/db
+COPY integration_tests /src/integration_tests
+COPY interop_binaries /src/interop_binaries
+COPY messages /src/messages
+COPY tools /src/tools
+RUN cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_interop_binaries \
+    --bin janus_interop_aggregator
+
+FROM postgres:14-alpine AS final
 RUN mkdir /logs && mkdir /etc/janus
 RUN apk add --update supervisor && rm -rf /tmp/* /var/cache/apk/*
 COPY db /etc/janus/migrations
 COPY interop_binaries/setup.sh /usr/local/bin/setup.sh
-COPY interop_binaries/config/supervisord.conf /etc/janus/supervisord.conf
-COPY interop_binaries/config/janus_interop_aggregator.yaml /etc/janus/janus_interop_aggregator.yaml
-COPY interop_binaries/config/aggregation_job_creator.yaml /etc/janus/aggregation_job_creator.yaml
-COPY interop_binaries/config/aggregation_job_driver.yaml /etc/janus/aggregation_job_driver.yaml
-COPY interop_binaries/config/collection_job_driver.yaml /etc/janus/collection_job_driver.yaml
-COPY --from=builder /janus_interop_aggregator /usr/local/bin/janus_interop_aggregator
-COPY --from=builder /aggregation_job_creator /usr/local/bin/aggregation_job_creator
-COPY --from=builder /aggregation_job_driver /usr/local/bin/aggregation_job_driver
-COPY --from=builder /collection_job_driver /usr/local/bin/collection_job_driver
+COPY interop_binaries/config/supervisord.conf \
+    interop_binaries/config/janus_interop_aggregator.yaml \
+    interop_binaries/config/aggregation_job_creator.yaml \
+    interop_binaries/config/aggregation_job_driver.yaml \
+    interop_binaries/config/collection_job_driver.yaml \
+    /etc/janus/
+ARG PROFILE
+COPY --from=builder-interop /src/target/$PROFILE/janus_interop_aggregator /usr/local/bin/
+COPY --from=builder-aggregator \
+    /src/target/$PROFILE/aggregation_job_creator \
+    /src/target/$PROFILE/aggregation_job_driver \
+    /src/target/$PROFILE/collection_job_driver \
+    /usr/local/bin/
 EXPOSE 8080
 ENTRYPOINT ["/usr/bin/supervisord", "-c", "/etc/janus/supervisord.conf"]
