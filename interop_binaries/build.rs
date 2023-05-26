@@ -58,13 +58,13 @@ fn main() {
                             "--build-arg=PROFILE=small",
                             "--build-arg=BINARY=janus_interop_client",
                             "--load",
+                            &format!("--iidfile={image_id_file_name}"),
+                            &format!(
+                                "--cache-from=type=gha,scope={}-interop-small",
+                                env::var("GITHUB_REF_NAME").unwrap_or_else(|_| "main".to_string())
+                            ),
+                            ".",
                         ])
-                        .arg(format!("--iidfile={image_id_file_name}"))
-                        .arg(format!(
-                            "--cache-from=type=gha,scope={}-interop-small",
-                            env::var("GITHUB_REF_NAME").unwrap_or_else(|_| "main".to_string())
-                        ))
-                        .arg(".")
                         .current_dir("..")
                         .output()
                         .expect("Failed to execute `docker build` for interop client");
@@ -92,13 +92,13 @@ fn main() {
                             "--file=Dockerfile.interop_aggregator",
                             "--build-arg=PROFILE=small",
                             "--load",
+                            &format!("--iidfile={image_id_file_name}"),
+                            &format!(
+                                "--cache-from=type=gha,scope={}-interop-small",
+                                env::var("GITHUB_REF_NAME").unwrap_or_else(|_| "main".to_string())
+                            ),
+                            ".",
                         ])
-                        .arg(format!("--iidfile={image_id_file_name}"))
-                        .arg(format!(
-                            "--cache-from=type=gha,scope={}-interop-small",
-                            env::var("GITHUB_REF_NAME").unwrap_or_else(|_| "main".to_string())
-                        ))
-                        .arg(".")
                         .current_dir("..")
                         .output()
                         .expect("Failed to execute `docker build` for interop aggregator");
@@ -127,13 +127,13 @@ fn main() {
                             "--build-arg=PROFILE=small",
                             "--build-arg=BINARY=janus_interop_collector",
                             "--load",
+                            &format!("--iidfile={image_id_file_name}"),
+                            &format!(
+                                "--cache-from=type=gha,scope={}-interop-small",
+                                env::var("GITHUB_REF_NAME").unwrap_or_else(|_| "main".to_string())
+                            ),
+                            ".",
                         ])
-                        .arg(format!("--iidfile={image_id_file_name}"))
-                        .arg(format!(
-                            "--cache-from=type=gha,scope={}-interop-small",
-                            env::var("GITHUB_REF_NAME").unwrap_or_else(|_| "main".to_string())
-                        ))
-                        .arg(".")
                         .current_dir("..")
                         .output()
                         .expect("Failed to execute `docker build` for interop collector");
