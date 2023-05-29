@@ -18,7 +18,7 @@ kube-openssl = []
 anyhow = "1"
 async-trait = "0.1"
 backoff = { version = "0.4", features = ["tokio"] }
-base64 = "0.21.1"
+base64 = "0.21.2"
 futures = "0.3.28"
 hex = "0.4"
 janus_aggregator = { path = "../aggregator", features = ["test-util"] }

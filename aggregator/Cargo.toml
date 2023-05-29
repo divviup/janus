@@ -32,7 +32,7 @@ async-trait = "0.1"
 anyhow = "1"
 atty = "0.2"
 backoff = { version = "0.4.0", features = ["tokio"] }
-base64 = "0.21.1"
+base64 = "0.21.2"
 bytes = "1.4.0"
 chrono = "0.4"
 clap = { version = "4.3.0", features = ["derive", "env"] }

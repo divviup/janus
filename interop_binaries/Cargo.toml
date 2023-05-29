@@ -24,7 +24,7 @@ testcontainer = [
 [dependencies]
 anyhow = "1"
 backoff = { version = "0.4", features = ["tokio"] }
-base64 = "0.21.1"
+base64 = "0.21.2"
 clap = "4.3.0"
 futures = { version = "0.3.28", optional = true }
 hex = { version = "0.4", optional = true }
