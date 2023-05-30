@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
     datastore::{self, Datastore},
+    instrumented,
     task::Task,
     SecretBytes,
 };
@@ -20,10 +21,9 @@ use querystring::querify;
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use ring::constant_time;
 use std::{str::FromStr, sync::Arc};
-use tracing::{error, info, info_span, warn, Instrument, Span};
+use tracing::{error, warn};
 use trillium::{Conn, Handler, Status};
 use trillium_api::{api, Halt, Json, State};
-use trillium_macros::Handler;
 use trillium_opentelemetry::metrics;
 use trillium_router::{Router, RouterConnExt};
 
@@ -455,37 +455,6 @@ impl ConnExt for Conn {
             warn!(err = ?err, "Couldn't parse task_id parameter");
             Status::BadRequest
         })
-    }
-}
-
-pub fn instrumented<H: Handler>(handler: H) -> impl Handler {
-    InstrumentedHandler(handler)
-}
-
-struct InstrumentedHandlerSpan(Span);
-
-#[derive(Handler)]
-struct InstrumentedHandler<H>(#[handler(except = [run, before_send])] H);
-
-impl<H: Handler> InstrumentedHandler<H> {
-    async fn run(&self, mut conn: Conn) -> Conn {
-        let route = conn.route().expect("no route in conn").to_string();
-        let method = conn.method();
-        let span = info_span!("endpoint", route, %method);
-        conn.set_state(InstrumentedHandlerSpan(span.clone()));
-        self.0.run(conn).instrument(span).await
-    }
-
-    async fn before_send(&self, conn: Conn) -> Conn {
-        if let Some(span) = conn.state::<InstrumentedHandlerSpan>() {
-            let _entered = span.0.enter();
-            let status = conn
-                .status()
-                .as_ref()
-                .map_or("unknown", Status::canonical_reason);
-            info!(status, "Finished handling request");
-        }
-        conn
     }
 }
 
