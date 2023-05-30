@@ -20,7 +20,7 @@ use querystring::querify;
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use ring::constant_time;
 use std::{str::FromStr, sync::Arc};
-use tracing::{error, info_span, warn, Instrument};
+use tracing::{error, info, info_span, warn, Instrument, Span};
 use trillium::{Conn, Handler, Status};
 use trillium_api::{api, Halt, Json, State};
 use trillium_macros::Handler;
@@ -462,16 +462,29 @@ pub fn instrumented<H: Handler>(handler: H) -> impl Handler {
     InstrumentedHandler(handler)
 }
 
+struct InstrumentedHandlerSpan(Span);
+
 #[derive(Handler)]
-struct InstrumentedHandler<H>(#[handler(except = run)] H);
+struct InstrumentedHandler<H>(#[handler(except = [run, before_send])] H);
 
 impl<H: Handler> InstrumentedHandler<H> {
-    async fn run(&self, conn: Conn) -> Conn {
+    async fn run(&self, mut conn: Conn) -> Conn {
         let route = conn.route().expect("no route in conn").to_string();
-        self.0
-            .run(conn)
-            .instrument(info_span!("endpoint", route = route))
-            .await
+        let span = info_span!("endpoint", route = route);
+        conn.set_state(InstrumentedHandlerSpan(span.clone()));
+        self.0.run(conn).instrument(span).await
+    }
+
+    async fn before_send(&self, conn: Conn) -> Conn {
+        if let Some(span) = conn.state::<InstrumentedHandlerSpan>() {
+            let _entered = span.0.enter();
+            let status = conn
+                .status()
+                .as_ref()
+                .map_or("unknown", Status::canonical_reason);
+            info!(status, "Finished handling request");
+        }
+        conn
     }
 }
 
