@@ -40,6 +40,9 @@ tagged `janus_aggregator`, `janus_aggregation_job_creator`,
 `janus_interop_client`, `janus_interop_aggregator`, and
 `janus_interop_collector` by default.
 
+Pre-built container images are available at
+[us-west2-docker.pkg.dev/divviup-artifacts-public/janus](https://us-west2-docker.pkg.dev/divviup-artifacts-public/janus).
+
 ## Running tests
 
 Tests require that [`docker`](https://www.docker.com) and

@@ -113,6 +113,26 @@ appropriate for deployments which need to retain data across deployments.
 
 [sqlx-cli]: https://crates.io/crates/sqlx-cli
 
+### Datastore Keys
+
+Certain fields in the database are stored in an encrypted form, using
+AES-128-GCM. Encryption keys must be provided to each Janus component at runtime
+to perform this encryption and decryption. Generate a random 16-byte key using a
+cryptographically secure PRNG, encode it using [base64url][base64url], and pass
+it via the `DATASTORE_KEYS` environment variable or `--datastore-keys` command
+line argument to each process.
+
+Multiple keys can be provided, in order to rotate encryption keys. After
+base64url-encoding each key, concatenate them, separated by commas, and pass the
+comma separated list through the environment variable or command line argument
+as before. The first key in the list is treated as the "primary" key, and will
+be used for encrypting all newly-written data. All other keys will only be used
+to decrypt data. Note that eager re-encryption of data is not supported yet, so
+plan to keep any previous keys in the datastore keys list until all data
+encrypted under them has been deleted.
+
+[base64url]: https://datatracker.ietf.org/doc/html/rfc4648#section-5
+
 ## `janus_cli provision-tasks`
 
 Currently, the simplest way to set up DAP tasks inside Janus is via the
