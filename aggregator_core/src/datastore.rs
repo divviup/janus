@@ -5922,6 +5922,12 @@ mod tests {
 
     #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
+    async fn down_migrations(ephemeral_datastore: EphemeralDatastore) {
+        ephemeral_datastore.downgrade(0).await.unwrap();
+    }
+
+    #[rstest_reuse::apply(schema_versions_template)]
+    #[tokio::test]
     async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
         let ds = ephemeral_datastore.datastore(MockClock::default()).await;

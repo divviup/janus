@@ -4,7 +4,10 @@ use janus_core::time::Clock;
 use lazy_static::lazy_static;
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
-use sqlx::{migrate::Migrator, Connection, PgConnection};
+use sqlx::{
+    migrate::{Migrate, MigrateError, Migrator},
+    Connection, PgConnection,
+};
 use std::{
     path::PathBuf,
     str::FromStr,
@@ -97,6 +100,7 @@ pub struct EphemeralDatastore {
     connection_string: String,
     pool: Pool,
     datastore_key_bytes: Vec<u8>,
+    migrator: Migrator,
 }
 
 impl EphemeralDatastore {
@@ -129,6 +133,38 @@ impl EphemeralDatastore {
         let datastore_key =
             LessSafeKey::new(UnboundKey::new(&AES_128_GCM, &self.datastore_key_bytes).unwrap());
         Crypter::new(Vec::from([datastore_key]))
+    }
+
+    pub async fn downgrade(&self, target: i64) -> Result<(), EphemeralDatastoreError> {
+        let mut connection = PgConnection::connect(&self.connection_string)
+            .await
+            .unwrap();
+
+        let current_version = connection
+            .list_applied_migrations()
+            .await?
+            .iter()
+            .max_by(|a, b| a.version.cmp(&b.version))
+            .unwrap()
+            .version;
+        if target >= current_version {
+            return Err(EphemeralDatastoreError::InvalidParameter(format!(
+                "target version ({}) must be less than the current database version ({})",
+                target, current_version,
+            )));
+        }
+
+        // Run down migrations one at a time to provide better context when
+        // one fails.
+        for v in (target..current_version).rev() {
+            if let Err(e) = self.migrator.undo(&mut connection, v).await {
+                return Err(EphemeralDatastoreError::DowngradeError {
+                    target_version: v,
+                    source: e,
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -179,12 +215,26 @@ pub async fn ephemeral_datastore_max_schema_version(max_schema_version: i64) -> 
         connection_string,
         pool,
         datastore_key_bytes: generate_aead_key_bytes(),
+        migrator,
     }
 }
 
 /// Creates a new, empty EphemeralDatastore with all schema migrations applied to it.
 pub async fn ephemeral_datastore() -> EphemeralDatastore {
     ephemeral_datastore_max_schema_version(i64::MAX).await
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum EphemeralDatastoreError {
+    #[error("DB migration error: {0}")]
+    MigrateError(#[from] MigrateError),
+    #[error("failed to downgrade to version {target_version:?}: {source:?}")]
+    DowngradeError {
+        target_version: i64,
+        source: MigrateError,
+    },
+    #[error("invalid parameter: {0}")]
+    InvalidParameter(String),
 }
 
 pub fn generate_aead_key_bytes() -> Vec<u8> {
