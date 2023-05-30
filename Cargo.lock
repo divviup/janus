@@ -4064,9 +4064,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-stackdriver"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da79dbf8b5b472e2d53b9a02c50771a05077a592c5f49d7fed86d59da53ca544"
+checksum = "ac98e757a488cc11d6a84a52d223b970e11c99e5158cc2ff07b8544ccc260078"
 dependencies = [
  "Inflector",
  "serde",
