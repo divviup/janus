@@ -192,6 +192,11 @@ impl Task {
         if self.hpke_keys.is_empty() {
             return Err(Error::InvalidParameter("hpke_keys"));
         }
+        if let QueryType::FixedSize { max_batch_size } = self.query_type() {
+            if *max_batch_size < self.min_batch_size() {
+                return Err(Error::InvalidParameter("max_batch_size"));
+            }
+        }
         Ok(())
     }
 
