@@ -68,18 +68,18 @@ jobs:
     - name: Expose GitHub Runtime
       uses: crazy-max/ghaction-github-runtime@v2
     - name: Build minimal janus_messages
-      run: cargo build --package janus_messages --no-default-features
+      run: cargo build --profile ci --package janus_messages --no-default-features
     - name: Build janus_core
-      run: cargo build --package janus_core
+      run: cargo build --profile ci --package janus_core
     # Note: keep Build & Test steps consecutive, and match flags other than `--no-run`.
     - name: Build
-      run: cargo test --no-run --locked --all-targets
+      run: cargo test --profile ci --no-run --locked --all-targets
     - name: Test
       id: test
       env:
         JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
         DIVVIUP_TS_INTEROP_CONTAINER: ${{ steps.default-input-values.outputs.divviup_ts_interop_container }}
-      run: cargo test --locked --all-targets
+      run: cargo test --profile ci --locked --all-targets
       # Continue on error so we can upload logs
       continue-on-error: true
     - name: Upload container logs
@@ -121,11 +121,11 @@ jobs:
     - name: Format
       run: cargo fmt --message-format human -- --check
     - name: Clippy
-      run: cargo clippy --workspace --all-targets
+      run: cargo clippy --profile ci --workspace --all-targets
     - name: Clippy (all features)
-      run: cargo clippy --workspace --all-targets --all-features
+      run: cargo clippy --profile ci --workspace --all-targets --all-features
     - name: Document
-      run: cargo doc --workspace
+      run: cargo doc --profile ci --workspace
 
   janus_docker:
     runs-on: ubuntu-latest
