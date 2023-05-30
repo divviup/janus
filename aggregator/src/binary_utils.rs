@@ -145,8 +145,13 @@ pub async fn datastore<C: Clock>(
                 .context("couldn't base64-decode datastore keys")
                 .and_then(|k| {
                     Ok(LessSafeKey::new(
-                        UnboundKey::new(&AES_128_GCM, k.as_ref())
-                            .map_err(|_| anyhow!("couldn't parse datastore keys as keys"))?,
+                        UnboundKey::new(&AES_128_GCM, k.as_ref()).map_err(|_| {
+                            anyhow!(
+                                "couldn't parse datastore keys, expected {} bytes, got {}",
+                                AES_128_GCM.key_len(),
+                                k.len()
+                            )
+                        })?,
                     ))
                 })
         })
