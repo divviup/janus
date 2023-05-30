@@ -470,7 +470,8 @@ struct InstrumentedHandler<H>(#[handler(except = [run, before_send])] H);
 impl<H: Handler> InstrumentedHandler<H> {
     async fn run(&self, mut conn: Conn) -> Conn {
         let route = conn.route().expect("no route in conn").to_string();
-        let span = info_span!("endpoint", route = route);
+        let method = conn.method();
+        let span = info_span!("endpoint", route, %method);
         conn.set_state(InstrumentedHandlerSpan(span.clone()));
         self.0.run(conn).instrument(span).await
     }
