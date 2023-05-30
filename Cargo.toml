@@ -42,7 +42,7 @@ janus_messages = { version = "0.5", path = "messages" }
 k8s-openapi = { version = "0.18.0", features = ["v1_24"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
 kube = { version = "0.82.2", default-features = false, features = ["client", "rustls-tls"] }
 opentelemetry = { version = "0.19", features = ["metrics"] }
-prio = { version = "0.12.1", features = ["multithreaded"] }
+prio = { version = "0.12.2", features = ["multithreaded"] }
 serde = { version = "1.0.163", features = ["derive"] }
 rstest = "0.17.0"
 trillium = "0.2.9"
