@@ -71,13 +71,19 @@ pub mod test_util;
 ///
 /// [1]: https://docs.rs/rstest_reuse/latest/rstest_reuse/
 macro_rules! supported_schema_versions {
-    ($( $i:literal ),*) => {
-        const SUPPORTED_SCHEMA_VERSIONS: &[i64] = &[$($i),*];
+    ( $i_latest:literal, $( $i:literal ),* ) => {
+        const SUPPORTED_SCHEMA_VERSIONS: &[i64] = &[$i_latest, $($i),*];
 
         #[cfg(test)]
         #[rstest_reuse::template]
         #[rstest::rstest]
-        $(#[case(ephemeral_datastore_max_schema_version($i))])*
+        // Test the latest supported schema version.
+        #[case(ephemeral_datastore_schema_version($i_latest))]
+        // Test the remaining supported schema versions.
+        $(#[case(ephemeral_datastore_schema_version($i))])*
+        // Test the remaining supported schema versions by taking a
+        // database at the latest schema and downgrading it.
+        $(#[case(ephemeral_datastore_schema_version_by_downgrade($i))])*
         async fn schema_versions_template(
             #[future(awt)]
             #[case]
@@ -90,7 +96,9 @@ macro_rules! supported_schema_versions {
 
 // List of schema versions that this version of Janus can safely run on. If any other schema
 // version is seen, [`Datastore::new`] fails.
-supported_schema_versions!(9);
+//
+// Note that the latest supported version must be first in the list.
+supported_schema_versions!(11, 10, 9);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -5863,7 +5871,9 @@ mod tests {
             },
             schema_versions_template,
             test_util::{
-                ephemeral_datastore_schema_version, generate_aead_key, EphemeralDatastore,
+                ephemeral_datastore_schema_version,
+                ephemeral_datastore_schema_version_by_downgrade, generate_aead_key,
+                EphemeralDatastore,
             },
             Crypter, Datastore, Error, Transaction,
         },

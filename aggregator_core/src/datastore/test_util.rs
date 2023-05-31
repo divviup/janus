@@ -222,6 +222,16 @@ pub async fn ephemeral_datastore() -> EphemeralDatastore {
     ephemeral_datastore_schema_version(i64::MAX).await
 }
 
+/// Creates a new, empty EphemeralDatabase by applying all available schema migrations,
+/// then downgrading to the target schema version.
+pub async fn ephemeral_datastore_schema_version_by_downgrade(
+    schema_version: i64,
+) -> EphemeralDatastore {
+    let datastore = ephemeral_datastore().await;
+    datastore.downgrade(schema_version).await;
+    datastore
+}
+
 pub fn generate_aead_key_bytes() -> Vec<u8> {
     thread_rng()
         .sample_iter(Standard)
