@@ -5861,6 +5861,10 @@ pub mod models {
 
 #[cfg(test)]
 mod tests {
+    // This function is only used when there are multiple supported versions.
+    #[allow(unused_imports)]
+    use crate::datastore::test_util::ephemeral_datastore_schema_version_by_downgrade;
+
     use crate::{
         datastore::{
             models::{
@@ -5871,15 +5875,14 @@ mod tests {
             },
             schema_versions_template,
             test_util::{
-                ephemeral_datastore_schema_version,
-                ephemeral_datastore_schema_version_by_downgrade, generate_aead_key,
-                EphemeralDatastore,
+                ephemeral_datastore_schema_version, generate_aead_key, EphemeralDatastore,
             },
             Crypter, Datastore, Error, Transaction,
         },
         query_type::CollectableQueryType,
         task::{self, test_util::TaskBuilder, Task},
     };
+
     use assert_matches::assert_matches;
     use async_trait::async_trait;
     use chrono::NaiveDate;
@@ -5931,7 +5934,7 @@ mod tests {
     }
 
     #[rstest::rstest]
-    #[case(ephemeral_datastore_max_schema_version(i64::MAX))]
+    #[case(ephemeral_datastore_schema_version(i64::MAX))]
     #[tokio::test]
     async fn down_migrations(
         #[future(awt)]
