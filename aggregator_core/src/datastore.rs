@@ -5928,7 +5928,7 @@ mod tests {
         #[case]
         ephemeral_datastore: EphemeralDatastore,
     ) {
-        ephemeral_datastore.downgrade(0).await.unwrap();
+        ephemeral_datastore.downgrade(0).await;
     }
 
     #[rstest_reuse::apply(schema_versions_template)]
