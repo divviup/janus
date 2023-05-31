@@ -2059,7 +2059,6 @@ dependencies = [
  "tracing",
  "trillium",
  "trillium-api",
- "trillium-macros",
  "trillium-opentelemetry",
  "trillium-router",
  "trillium-testing",
@@ -2115,6 +2114,9 @@ dependencies = [
  "tokio-postgres",
  "tracing",
  "tracing-log",
+ "trillium",
+ "trillium-macros",
+ "trillium-router",
  "url",
  "uuid",
 ]

@@ -1,8 +1,7 @@
 use super::{Aggregator, Config, Error};
 use crate::aggregator::problem_details::ProblemDetailsConnExt;
 use async_trait::async_trait;
-use janus_aggregator_api::instrumented;
-use janus_aggregator_core::datastore::Datastore;
+use janus_aggregator_core::{datastore::Datastore, instrumented};
 use janus_core::{
     http::extract_bearer_token,
     task::{AuthenticationToken, DapAuthToken, DAP_AUTH_HEADER},
