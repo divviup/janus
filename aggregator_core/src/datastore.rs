@@ -71,7 +71,7 @@ pub mod test_util;
 ///
 /// [1]: https://docs.rs/rstest_reuse/latest/rstest_reuse/
 macro_rules! supported_schema_versions {
-    ( $i_latest:literal, $( $i:literal ),* ) => {
+    ( $i_latest:literal $(,)? $( $i:literal ),* ) => {
         const SUPPORTED_SCHEMA_VERSIONS: &[i64] = &[$i_latest, $($i),*];
 
         #[cfg(test)]
@@ -98,7 +98,7 @@ macro_rules! supported_schema_versions {
 // version is seen, [`Datastore::new`] fails.
 //
 // Note that the latest supported version must be first in the list.
-supported_schema_versions!(11, 10, 9);
+supported_schema_versions!(9);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
