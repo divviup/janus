@@ -54,8 +54,9 @@ trillium-router = "0.3.5"
 trillium-testing = "0.5.0"
 trillium-tokio = "0.3.1"
 
-[profile.dev]
+[profile.ci]
 # Disabling debug info improves build speeds & reduces build artifact sizes, which helps CI caching.
+inherits = "dev"
 debug = 0
 
 [profile.small]
