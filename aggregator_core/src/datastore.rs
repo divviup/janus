@@ -5863,7 +5863,7 @@ mod tests {
             },
             schema_versions_template,
             test_util::{
-                ephemeral_datastore_max_schema_version, generate_aead_key, EphemeralDatastore,
+                ephemeral_datastore_schema_version, generate_aead_key, EphemeralDatastore,
             },
             Crypter, Datastore, Error, Transaction,
         },
