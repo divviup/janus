@@ -158,9 +158,10 @@ impl EphemeralDatastore {
         // Run down migrations one at a time to provide better context when
         // one fails.
         for v in (target..current_version).rev() {
-            if let Err(e) = self.migrator.undo(&mut connection, v).await {
-                panic!("failed to downgrade to version {}: {}", v, e);
-            }
+            self.migrator
+                .undo(&mut connection, v)
+                .await
+                .unwrap_or_else(|e| panic!("failed to downgrade to version {}: {}", v, e));
         }
     }
 }
