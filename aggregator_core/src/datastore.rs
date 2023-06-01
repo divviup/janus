@@ -5877,7 +5877,7 @@ mod tests {
             test_util::{
                 ephemeral_datastore_schema_version, generate_aead_key, EphemeralDatastore,
             },
-            Crypter, Datastore, Error, Transaction,
+            Crypter, Datastore, Error, Transaction, SUPPORTED_SCHEMA_VERSIONS,
         },
         query_type::CollectableQueryType,
         task::{self, test_util::TaskBuilder, Task},
@@ -5916,6 +5916,13 @@ mod tests {
         time::Duration as StdDuration,
     };
     use tokio::time::timeout;
+
+    #[test]
+    fn check_supported_versions() {
+        if SUPPORTED_SCHEMA_VERSIONS[0] != *SUPPORTED_SCHEMA_VERSIONS.iter().max().unwrap() {
+            panic!("the latest supported schema version must be first in the list");
+        }
+    }
 
     #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
