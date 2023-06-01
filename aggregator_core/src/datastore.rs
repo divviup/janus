@@ -5920,6 +5920,17 @@ mod tests {
         assert_matches!(error, Error::DbState(_));
     }
 
+    #[rstest::rstest]
+    #[case(ephemeral_datastore_max_schema_version(i64::MAX))]
+    #[tokio::test]
+    async fn down_migrations(
+        #[future(awt)]
+        #[case]
+        ephemeral_datastore: EphemeralDatastore,
+    ) {
+        ephemeral_datastore.downgrade(0).await;
+    }
+
     #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
     async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {

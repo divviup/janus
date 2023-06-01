@@ -4,7 +4,10 @@ use janus_core::time::Clock;
 use lazy_static::lazy_static;
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
-use sqlx::{migrate::Migrator, Connection, PgConnection};
+use sqlx::{
+    migrate::{Migrate, Migrator},
+    Connection, PgConnection,
+};
 use std::{
     path::PathBuf,
     str::FromStr,
@@ -97,6 +100,7 @@ pub struct EphemeralDatastore {
     connection_string: String,
     pool: Pool,
     datastore_key_bytes: Vec<u8>,
+    migrator: Migrator,
 }
 
 impl EphemeralDatastore {
@@ -129,6 +133,36 @@ impl EphemeralDatastore {
         let datastore_key =
             LessSafeKey::new(UnboundKey::new(&AES_128_GCM, &self.datastore_key_bytes).unwrap());
         Crypter::new(Vec::from([datastore_key]))
+    }
+
+    pub async fn downgrade(&self, target: i64) {
+        let mut connection = PgConnection::connect(&self.connection_string)
+            .await
+            .unwrap();
+
+        let current_version = connection
+            .list_applied_migrations()
+            .await
+            .unwrap()
+            .iter()
+            .max_by(|a, b| a.version.cmp(&b.version))
+            .unwrap()
+            .version;
+        if target >= current_version {
+            panic!(
+                "target version ({}) must be less than the current database version ({})",
+                target, current_version,
+            );
+        }
+
+        // Run down migrations one at a time to provide better context when
+        // one fails.
+        for v in (target..current_version).rev() {
+            self.migrator
+                .undo(&mut connection, v)
+                .await
+                .unwrap_or_else(|e| panic!("failed to downgrade to version {}: {}", v, e));
+        }
     }
 }
 
@@ -179,6 +213,7 @@ pub async fn ephemeral_datastore_max_schema_version(max_schema_version: i64) -> 
         connection_string,
         pool,
         datastore_key_bytes: generate_aead_key_bytes(),
+        migrator,
     }
 }
 
