@@ -1,0 +1,56 @@
+name: ci-migrations
+
+on:
+  pull_request:
+    paths:
+      - "db/**"
+
+jobs:
+  janus_migrations:
+    runs-on: ubuntu-latest
+    env:
+      BASE_SHA: "${{ github.event.pull_request.base.sha }}"
+    if: github.event_name == 'pull_request'
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Check that existing migrations have not changed
+      run: |
+        DIFF="$(git diff "$BASE_SHA" --name-status db/)"
+        printf "%s\n" "$DIFF"
+
+        if [ -n "$DIFF" ] && grep -qPv '^A\b' <<<"$DIFF"; then
+          echo "fatal: migrations cannot be modified or removed, only added."
+          exit 1
+        fi
+
+    - name: Ensure all migrations have the proper filename
+      run: |
+        REGEX='^(README.md)|([0-9]{14}_[a-z_]+\.(down|up)\.sql$)'
+        INVALID_FILES=$(find db/ -mindepth 1 -printf "%f\n" | grep -Pv "$REGEX" || true)
+
+        if [ -n "$INVALID_FILES" ]; then
+          printf "%s\n" "$INVALID_FILES"
+          echo "fatal: all files in db/ must have a proper filename"
+          echo "format must follow $REGEX"
+          exit 1
+        fi
+
+    - name: Ensure a down migration for each up migration
+      run: |
+        if [ "$(find db/ -name '*.down.sql' | wc -l)" != "$(find db/ -name '*.up.sql' | wc -l)" ]; then
+          echo "fatal: there must be a corresponding down migration for every up migration"
+          exit 1
+        fi
+
+    - name: Ensure migrations are sequential
+      run: |
+        for DIRECTION in {down,up}; do
+          SEQUENCE=$(find db/ -name "*.$DIRECTION.sql" -printf "%f\n" | cut -d_ -f1 | sed 's/^0*//' | sort -n)
+          if [ "$(seq 1 "$(wc -l <<<"$SEQUENCE")")" != "$SEQUENCE" ]; then
+            echo "fatal: SQL migrations must be numbered sequentially"
+            exit 1
+          fi
+        done
