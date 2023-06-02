@@ -502,25 +502,46 @@ impl<C: Clock> TaskAggregator<C> {
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
-            VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { length } => {
+            VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum {
+                length,
+                noise_param,
+            } => {
                 let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>> =
-                    Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, *length)?;
+                    Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
+                        2,
+                        *length,
+                        *noise_param,
+                    )?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3FixedPoint16BitBoundedL2VecSum(Arc::new(vdaf), verify_key)
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
-            VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { length } => {
+            VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum {
+                length,
+                noise_param,
+            } => {
                 let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>> =
-                    Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, *length)?;
+                    Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
+                        2,
+                        *length,
+                        *noise_param,
+                    )?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3FixedPoint32BitBoundedL2VecSum(Arc::new(vdaf), verify_key)
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
-            VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { length } => {
+            VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum {
+                length,
+                noise_param,
+            } => {
                 let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>> =
-                    Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, *length)?;
+                    Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
+                        2,
+                        *length,
+                        *noise_param,
+                    )?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3FixedPoint64BitBoundedL2VecSum(Arc::new(vdaf), verify_key)
             }

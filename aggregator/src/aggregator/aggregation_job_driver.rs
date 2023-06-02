@@ -663,6 +663,11 @@ impl AggregationJobDriver {
             report_aggregations_to_write.push(report_aggregation.with_state(new_state));
         }
 
+        // Postprocess the aggregated shares. This allows, e.g., for central differential privacy,
+        // but the implementation is experimental.
+        #[cfg(feature = "experimental")]
+        accumulator.postprocess(&vdaf)?;
+
         // Write everything back to storage.
         let mut aggregation_job_writer = AggregationJobWriter::new(Arc::clone(&task));
         let new_round = aggregation_job.round().increment();

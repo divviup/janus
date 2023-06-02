@@ -14,6 +14,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = []
+experimental = ["janus_aggregator_core/experimental"]
 fpvec_bounded_l2 = ["dep:fixed", "janus_core/fpvec_bounded_l2"]
 tokio-console = ["dep:console-subscriber"]
 jaeger = ["dep:tracing-opentelemetry", "dep:opentelemetry-jaeger"]

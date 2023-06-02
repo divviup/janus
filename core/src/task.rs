@@ -4,6 +4,8 @@ use base64::{
 };
 use derivative::Derivative;
 use http::header::{HeaderValue, AUTHORIZATION};
+#[cfg(feature = "fpvec_bounded_l2")]
+use prio::flp::types::fixedpoint_l2::PrivacyParameterType;
 use rand::{distributions::Standard, prelude::Distribution};
 use reqwest::Url;
 use ring::constant_time;
@@ -35,13 +37,22 @@ pub enum VdafInstance {
     Prio3Histogram { buckets: Vec<u64> },
     /// A `Prio3` 16-bit fixed point vector sum with bounded L2 norm.
     #[cfg(feature = "fpvec_bounded_l2")]
-    Prio3FixedPoint16BitBoundedL2VecSum { length: usize },
+    Prio3FixedPoint16BitBoundedL2VecSum {
+        length: usize,
+        noise_param: PrivacyParameterType,
+    },
     /// A `Prio3` 32-bit fixed point vector sum with bounded L2 norm.
     #[cfg(feature = "fpvec_bounded_l2")]
-    Prio3FixedPoint32BitBoundedL2VecSum { length: usize },
+    Prio3FixedPoint32BitBoundedL2VecSum {
+        length: usize,
+        noise_param: PrivacyParameterType,
+    },
     /// A `Prio3` 64-bit fixedpoint vector sum with bounded L2 norm.
     #[cfg(feature = "fpvec_bounded_l2")]
-    Prio3FixedPoint64BitBoundedL2VecSum { length: usize },
+    Prio3FixedPoint64BitBoundedL2VecSum {
+        length: usize,
+        noise_param: PrivacyParameterType,
+    },
     /// The `poplar1` VDAF. Support for this VDAF is experimental.
     Poplar1 { bits: usize },
 
@@ -167,7 +178,10 @@ macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
     // Provide the dispatched type only, don't construct a VDAF instance.
     (impl match fpvec_bounded_l2 $vdaf_instance:expr, (_, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
         match $vdaf_instance {
-            ::janus_core::task::VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { length } => {
+            ::janus_core::task::VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum {
+                length,
+                noise_param,
+            } => {
                 type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<
                     ::fixed::FixedI16<::fixed::types::extra::U15>,
                 >;
@@ -175,7 +189,10 @@ macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
                 $body
             }
 
-            ::janus_core::task::VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { length } => {
+            ::janus_core::task::VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum {
+                length,
+                noise_param,
+            } => {
                 type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<
                     ::fixed::FixedI32<::fixed::types::extra::U31>,
                 >;
@@ -183,7 +200,10 @@ macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
                 $body
             }
 
-            ::janus_core::task::VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { length } => {
+            ::janus_core::task::VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum {
+                length,
+                noise_param,
+            } => {
                 type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<
                     ::fixed::FixedI64<::fixed::types::extra::U63>,
                 >;
@@ -198,10 +218,15 @@ macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
     // Construct a VDAF instance, and provide that to the block as well.
     (impl match fpvec_bounded_l2 $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
         match $vdaf_instance {
-            ::janus_core::task::VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { length } => {
+            ::janus_core::task::VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum {
+                length,
+                noise_param,
+            } => {
                 let $vdaf =
                     ::prio::vdaf::prio3::Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
-                        2, *length,
+                        2,
+                        *length,
+                        *noise_param,
                     )?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<
                     ::fixed::FixedI16<::fixed::types::extra::U15>,
@@ -210,10 +235,15 @@ macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
                 $body
             }
 
-            ::janus_core::task::VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { length } => {
+            ::janus_core::task::VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum {
+                length,
+                noise_param,
+            } => {
                 let $vdaf =
                     ::prio::vdaf::prio3::Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
-                        2, *length,
+                        2,
+                        *length,
+                        *noise_param,
                     )?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<
                     ::fixed::FixedI32<::fixed::types::extra::U31>,
@@ -222,10 +252,15 @@ macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
                 $body
             }
 
-            ::janus_core::task::VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { length } => {
+            ::janus_core::task::VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum {
+                length,
+                noise_param,
+            } => {
                 let $vdaf =
                     ::prio::vdaf::prio3::Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
-                        2, *length,
+                        2,
+                        *length,
+                        *noise_param,
                     )?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<
                     ::fixed::FixedI64<::fixed::types::extra::U63>,

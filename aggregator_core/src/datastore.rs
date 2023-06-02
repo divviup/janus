@@ -5150,6 +5150,14 @@ pub mod models {
                 ..self
             })
         }
+
+        #[cfg(feature = "experimental")]
+        pub fn postprocess(&mut self, vdaf: &A) -> Result<(), anyhow::Error> {
+            if let Some(aggregate_share) = &mut self.aggregate_share {
+                vdaf.postprocess(&self.aggregation_parameter, aggregate_share)?
+            }
+            Ok(())
+        }
     }
 
     impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>

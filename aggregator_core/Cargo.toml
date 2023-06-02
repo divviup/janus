@@ -10,6 +10,7 @@ version.workspace = true
 
 [features]
 default = []
+experimental = ["prio/experimental"]
 test-util = [
     "dep:hex",
     "dep:lazy_static",

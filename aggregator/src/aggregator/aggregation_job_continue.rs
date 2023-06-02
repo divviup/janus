@@ -199,6 +199,11 @@ impl VdafOps {
             }
         }
 
+        // Postprocess the aggregated shares. This allows, e.g., for central differential privacy,
+        // but the implementation is experimental.
+        #[cfg(feature = "experimental")]
+        accumulator.postprocess(&vdaf).unwrap();
+
         // Write accumulated aggregation values back to the datastore; mark any reports that can't
         // be aggregated because the batch is collected with error BatchCollected.
         let unwritable_reports = accumulator.flush_to_datastore(tx, &vdaf).await?;
