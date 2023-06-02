@@ -168,7 +168,7 @@ impl EphemeralDatastore {
 
 /// Create a new, empty EphemeralDatastore with all schema migrations up to the specified version
 /// applied to it.
-pub async fn ephemeral_datastore_max_schema_version(max_schema_version: i64) -> EphemeralDatastore {
+pub async fn ephemeral_datastore_schema_version(schema_version: i64) -> EphemeralDatastore {
     let db = EphemeralDatabase::shared().await;
     let db_name = format!("janus_test_{}", hex::encode(random::<[u8; 16]>()));
     trace!("Creating ephemeral postgres datastore {db_name}");
@@ -197,7 +197,7 @@ pub async fn ephemeral_datastore_max_schema_version(max_schema_version: i64) -> 
     migrator.migrations = migrator
         .migrations
         .iter()
-        .filter(|migration| migration.version <= max_schema_version)
+        .filter(|migration| migration.version <= schema_version)
         .cloned()
         .collect();
 
@@ -219,7 +219,17 @@ pub async fn ephemeral_datastore_max_schema_version(max_schema_version: i64) -> 
 
 /// Creates a new, empty EphemeralDatastore with all schema migrations applied to it.
 pub async fn ephemeral_datastore() -> EphemeralDatastore {
-    ephemeral_datastore_max_schema_version(i64::MAX).await
+    ephemeral_datastore_schema_version(i64::MAX).await
+}
+
+/// Creates a new, empty EphemeralDatabase by applying all available schema migrations,
+/// then downgrading to the target schema version.
+pub async fn ephemeral_datastore_schema_version_by_downgrade(
+    schema_version: i64,
+) -> EphemeralDatastore {
+    let datastore = ephemeral_datastore().await;
+    datastore.downgrade(schema_version).await;
+    datastore
 }
 
 pub fn generate_aead_key_bytes() -> Vec<u8> {

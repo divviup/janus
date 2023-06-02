@@ -71,13 +71,19 @@ pub mod test_util;
 ///
 /// [1]: https://docs.rs/rstest_reuse/latest/rstest_reuse/
 macro_rules! supported_schema_versions {
-    ($( $i:literal ),*) => {
-        const SUPPORTED_SCHEMA_VERSIONS: &[i64] = &[$($i),*];
+    ( $i_latest:literal $(,)? $( $i:literal ),* ) => {
+        const SUPPORTED_SCHEMA_VERSIONS: &[i64] = &[$i_latest, $($i),*];
 
         #[cfg(test)]
         #[rstest_reuse::template]
         #[rstest::rstest]
-        $(#[case(ephemeral_datastore_max_schema_version($i))])*
+        // Test the latest supported schema version.
+        #[case(ephemeral_datastore_schema_version($i_latest))]
+        // Test the remaining supported schema versions.
+        $(#[case(ephemeral_datastore_schema_version($i))])*
+        // Test the remaining supported schema versions by taking a
+        // database at the latest schema and downgrading it.
+        $(#[case(ephemeral_datastore_schema_version_by_downgrade($i))])*
         async fn schema_versions_template(
             #[future(awt)]
             #[case]
@@ -90,6 +96,8 @@ macro_rules! supported_schema_versions {
 
 // List of schema versions that this version of Janus can safely run on. If any other schema
 // version is seen, [`Datastore::new`] fails.
+//
+// Note that the latest supported version must be first in the list.
 supported_schema_versions!(9);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
@@ -5853,6 +5861,10 @@ pub mod models {
 
 #[cfg(test)]
 mod tests {
+    // This function is only used when there are multiple supported versions.
+    #[allow(unused_imports)]
+    use crate::datastore::test_util::ephemeral_datastore_schema_version_by_downgrade;
+
     use crate::{
         datastore::{
             models::{
@@ -5863,13 +5875,14 @@ mod tests {
             },
             schema_versions_template,
             test_util::{
-                ephemeral_datastore_max_schema_version, generate_aead_key, EphemeralDatastore,
+                ephemeral_datastore_schema_version, generate_aead_key, EphemeralDatastore,
             },
-            Crypter, Datastore, Error, Transaction,
+            Crypter, Datastore, Error, Transaction, SUPPORTED_SCHEMA_VERSIONS,
         },
         query_type::CollectableQueryType,
         task::{self, test_util::TaskBuilder, Task},
     };
+
     use assert_matches::assert_matches;
     use async_trait::async_trait;
     use chrono::NaiveDate;
@@ -5904,6 +5917,13 @@ mod tests {
     };
     use tokio::time::timeout;
 
+    #[test]
+    fn check_supported_versions() {
+        if SUPPORTED_SCHEMA_VERSIONS[0] != *SUPPORTED_SCHEMA_VERSIONS.iter().max().unwrap() {
+            panic!("the latest supported schema version must be first in the list");
+        }
+    }
+
     #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
     async fn reject_unsupported_schema_version(ephemeral_datastore: EphemeralDatastore) {
@@ -5921,7 +5941,7 @@ mod tests {
     }
 
     #[rstest::rstest]
-    #[case(ephemeral_datastore_max_schema_version(i64::MAX))]
+    #[case(ephemeral_datastore_schema_version(i64::MAX))]
     #[tokio::test]
     async fn down_migrations(
         #[future(awt)]
