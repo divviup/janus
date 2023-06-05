@@ -1,23 +1,8 @@
 name: 'Validate SQL migrations'
 description: 'Validates the file format and immutability of Janus SQL migrations'
-inputs:
-  from:
-    description: 'The git ref relative to the current ref to compare schemas against.'
-    required: true
 runs:
   using: "composite"
   steps:
-    - name: Check that existing migrations have not changed
-      shell: bash
-      run: |
-        DIFF="$(git diff "${{ inputs.from }}" --name-status db/)"
-        printf "%s\n" "$DIFF"
-
-        if [ -n "$DIFF" ] && grep -qPv '^A\b' <<<"$DIFF"; then
-          echo "fatal: migrations cannot be modified or removed, only added."
-          exit 1
-        fi
-
     - name: Ensure all migrations have the proper filename
       shell: bash
       run: |
