@@ -60,4 +60,4 @@ janus_core = { path = ".", features = ["test-util"] }
 kube.workspace = true
 mockito = "1.0.2"
 serde_test = "1.0.163"
-url = "2.3.1"
+url = "2.4.0"
