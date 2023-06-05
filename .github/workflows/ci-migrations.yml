@@ -18,6 +18,7 @@ jobs:
     - uses: actions/checkout@v3
       with:
         fetch-depth: 0
-    - uses: "./.github/actions/validate-migrations"
+    - name: Check validity of migrations
+      uses: "./.github/actions/validate-migrations"
       with:
         from: "${{ github.event.pull_request.base.sha }}"
