@@ -8,6 +8,7 @@ runs:
   using: "composite"
   steps:
     - name: Check that existing migrations have not changed
+      shell: bash
       run: |
         DIFF="$(git diff "${{ inputs.from }}" --name-status db/)"
         printf "%s\n" "$DIFF"
@@ -18,6 +19,7 @@ runs:
         fi
 
     - name: Ensure all migrations have the proper filename
+      shell: bash
       run: |
         REGEX='^(README.md)|([0-9]{14}_[a-z_]+\.(down|up)\.sql$)'
         INVALID_FILES=$(find db/ -mindepth 1 -printf "%f\n" | grep -Pv "$REGEX" || true)
@@ -30,6 +32,7 @@ runs:
         fi
 
     - name: Ensure a down migration for each up migration
+      shell: bash
       run: |
         if [ "$(find db/ -name '*.down.sql' | wc -l)" != "$(find db/ -name '*.up.sql' | wc -l)" ]; then
           echo "fatal: there must be a corresponding down migration for every up migration"
@@ -37,6 +40,7 @@ runs:
         fi
 
     - name: Ensure migrations are sequential
+      shell: bash
       run: |
         for DIRECTION in {down,up}; do
           SEQUENCE=$(find db/ -name "*.$DIRECTION.sql" -printf "%f\n" | cut -d_ -f1 | sed 's/^0*//' | sort -n)
