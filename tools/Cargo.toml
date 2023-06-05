@@ -14,7 +14,7 @@ fpvec_bounded_l2 = ["dep:fixed", "janus_collector/fpvec_bounded_l2", "prio/exper
 [dependencies]
 anyhow = "1"
 base64 = "0.21.2"
-clap = { version = "4.3.0", features = ["cargo", "derive", "env"] }
+clap = { version = "4.3.2", features = ["cargo", "derive", "env"] }
 derivative = "2.2.0"
 fixed = { version = "1.23", optional = true }
 janus_collector.workspace = true
