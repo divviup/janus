@@ -1,1 +1,0 @@
-ALTER TABLE tasks ALTER COLUMN task_expiration DROP NOT NULL;
