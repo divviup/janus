@@ -13,19 +13,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
     - id: "gcp-auth"
       name: "Authenticate to GCP"
       uses: "google-github-actions/auth@v1"
       with:
         workload_identity_provider: ${{ vars.GCP_ARTIFACT_PUBLISHER_WORKLOAD_IDENTITY_PROVIDER }}
         service_account: ${{ vars.GCP_ARTIFACT_PUBLISHER_DEPLOY_SERVICE_ACCOUNT }}
-    - name: Get the version
+    - name: Determine latest and previous version
       id: get_version
       run: |
         VERSION=${GITHUB_REF/refs\/tags\//}
-        echo "MINOR_VERSION=$(echo ${VERSION} | awk -F'.' '{if (NF != 3) {exit 1}; printf "%s.%s", $1, $2}')" >> $GITHUB_OUTPUT
+        echo "minor_version=$(echo ${VERSION} | awk -F'.' '{if (NF != 3) {exit 1}; printf "%s.%s", $1, $2}')" >> $GITHUB_OUTPUT
+
+        PREVIOUS=$(
+          git tag |
+            grep -P '^[0-9]+\.[0-9]+\.[0-9]+$' |
+            sort -t. -k1,1rn -k2,2rn -k3,3rn |
+            grep -PA1 "^$VERSION\$" | grep -Pv "^$VERSION\$"
+        )
+        echo "previous_version=$PREVIOUS" >> $GITHUB_OUTPUT
+    - name: Check validity of migrations
+      uses: "./.github/actions/validate-migrations"
+      with:
+        from: "${{ steps.get_version.outputs.previous_version }}"
     - name: "Upload schema file(s)"
       run: |-
         gcloud alpha storage cp --recursive \
           db \
-          gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.MINOR_VERSION }}/
+          gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.minor_version }}/
