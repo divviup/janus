@@ -35,7 +35,7 @@ jobs:
     - name: Check validity of migrations
       uses: "./.github/actions/validate-migrations"
     - name: Check that existing migrations have not changed
-      if: ${{ !inputs.force }}
+      if: '!inputs.force'
       run: |
         # Overwite the migrations on the local ref so that we can use `git diff` to compare.
         rm -f db/*.sql
@@ -57,13 +57,13 @@ jobs:
           exit 1
         fi
     - name: "Upload schema file(s)"
-      if: ${{ !inputs.force }}
+      if: '!inputs.force'
       run: |-
         gcloud alpha storage cp --recursive --no-clobber \
           db \
           gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.minor_version }}/
     - name: "Overwrite schema file(s)"
-      if: ${{ inputs.force }}
+      if: inputs.force
       run: |-
         gcloud alpha storage rm --recursive gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.minor_version }}/
         gcloud alpha storage cp --recursive \
