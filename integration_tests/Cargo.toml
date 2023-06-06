@@ -32,7 +32,7 @@ serde = { workspace = true, optional = true }
 serde_json = "1.0.96"
 testcontainers = "0.14.0"
 tokio = { version = "1", features = ["full", "tracing"] }
-url = { version = "2.3.1", features = ["serde"] }
+url = { version = "2.4.0", features = ["serde"] }
 
 [dev-dependencies]
 http = "0.2"
