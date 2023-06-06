@@ -19,6 +19,7 @@ jobs:
         fetch-depth: 0
 
     - name: Check that existing migrations have not changed
+      if: github.event_name == "pull_request"
       run: |
         DIFF="$(git diff "$BASE_SHA" --name-status db/)"
         printf "%s\n" "$DIFF"
