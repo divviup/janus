@@ -11,8 +11,6 @@ on:
 jobs:
   janus_migrations:
     runs-on: ubuntu-latest
-    env:
-      BASE_SHA: "${{ github.event.pull_request.base.sha }}"
     steps:
     - uses: actions/checkout@v3
       with:
@@ -20,6 +18,8 @@ jobs:
 
     - name: Check that existing migrations have not changed
       if: github.event_name == "pull_request"
+      env:
+        BASE_SHA: "${{ github.event.pull_request.base.sha }}"
       run: |
         DIFF="$(git diff "$BASE_SHA" --name-status db/)"
         printf "%s\n" "$DIFF"
