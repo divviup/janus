@@ -41,7 +41,7 @@ jobs:
           "$TEMP"
 
         # --diff-filter=a includes all differences except added files.
-        if ! git diff --no-index --name-status --diff-filter=a "$TEMP/db" "./db"; then
+        if ! git diff --no-index --diff-filter=a "$TEMP/db" "./db"; then
           echo "fatal: migrations cannot be modified or removed, only added"
           exit 1
         fi
