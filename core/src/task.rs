@@ -8,7 +8,7 @@ use rand::{distributions::Standard, prelude::Distribution};
 use reqwest::Url;
 use ring::constant_time;
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
-use std::str;
+use std::{fmt, str};
 
 /// HTTP header where auth tokens are provided in messages between participants.
 pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
@@ -20,7 +20,8 @@ pub const PRIO3_VERIFY_KEY_LENGTH: usize = 16;
 /// [draft-irtf-cfrg-vdaf-03][1] and implementations in [`prio::vdaf::prio3`].
 ///
 /// [1]: https://datatracker.ietf.org/doc/draft-irtf-cfrg-vdaf/03/
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Derivative, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derivative(Debug)]
 #[non_exhaustive]
 pub enum VdafInstance {
     /// A `Prio3` counter.
@@ -32,7 +33,10 @@ pub enum VdafInstance {
     /// A vector of `Prio3` sums.
     Prio3SumVec { bits: usize, length: usize },
     /// A `Prio3` histogram.
-    Prio3Histogram { buckets: Vec<u64> },
+    Prio3Histogram {
+        #[derivative(Debug(format_with = "bucket_count"))]
+        buckets: Vec<u64>,
+    },
     /// A `Prio3` 16-bit fixed point vector sum with bounded L2 norm.
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3FixedPoint16BitBoundedL2VecSum { length: usize },
@@ -57,6 +61,10 @@ pub enum VdafInstance {
     #[cfg(feature = "test-util")]
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
     FakeFailsPrepStep,
+}
+
+fn bucket_count(buckets: &Vec<u64>, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "[{} buckets]", buckets.len() + 1)
 }
 
 impl VdafInstance {
