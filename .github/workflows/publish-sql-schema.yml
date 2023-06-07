@@ -4,6 +4,12 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      force:
+        description: force overwrite of migrations
+        default: false
+        required: false
+        type: boolean
 
 jobs:
   push-schema:
@@ -23,9 +29,32 @@ jobs:
       id: get_version
       run: |
         VERSION=${GITHUB_REF/refs\/tags\//}
-        echo "MINOR_VERSION=$(echo ${VERSION} | awk -F'.' '{if (NF != 3) {exit 1}; printf "%s.%s", $1, $2}')" >> $GITHUB_OUTPUT
+        echo "minor_version=$(echo ${VERSION} | awk -F'.' '{if (NF != 3) {exit 1}; printf "%s.%s", $1, $2}')" >> $GITHUB_OUTPUT
+    - name: Check validity of migrations
+      uses: "./.github/actions/validate-migrations"
+    - name: Check that existing migrations have not changed
+      if: '!inputs.force'
+      run: |
+        TEMP=$(mktemp -d)
+        gcloud alpha storage cp --recursive \
+          "gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.minor_version }}/db" \
+          "$TEMP"
+
+        # --diff-filter=a includes all differences except added files.
+        if ! git diff --no-index --diff-filter=a "$TEMP/db" "./db"; then
+          echo "fatal: migrations cannot be modified or removed, only added"
+          exit 1
+        fi
     - name: "Upload schema file(s)"
+      if: '!inputs.force'
       run: |-
+        gcloud alpha storage cp --recursive --no-clobber \
+          db \
+          gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.minor_version }}/
+    - name: "Overwrite schema file(s)"
+      if: inputs.force
+      run: |-
+        gcloud alpha storage rm --recursive gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.minor_version }}/
         gcloud alpha storage cp --recursive \
           db \
-          gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.MINOR_VERSION }}/
+          gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.minor_version }}/
