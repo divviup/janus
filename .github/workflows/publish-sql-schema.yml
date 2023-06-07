@@ -29,7 +29,7 @@ jobs:
       id: get_version
       run: |
         VERSION=${GITHUB_REF/refs\/tags\//}
-        echo "MINOR_VERSION=$(echo ${VERSION} | awk -F'.' '{if (NF != 3) {exit 1}; printf "%s.%s", $1, $2}')" >> $GITHUB_OUTPUT
+        echo "minor_version=$(echo ${VERSION} | awk -F'.' '{if (NF != 3) {exit 1}; printf "%s.%s", $1, $2}')" >> $GITHUB_OUTPUT
     - name: Check validity of migrations
       uses: "./.github/actions/validate-migrations"
     - name: Check that existing migrations have not changed
