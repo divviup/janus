@@ -35,23 +35,12 @@ jobs:
     - name: Check that existing migrations have not changed
       if: '!inputs.force'
       run: |
-        # Overwite the migrations on the local ref so that we can use `git diff` to compare.
-        rm -f db/*.sql
-        trap "git reset --hard" EXIT
-        gcloud alpha storage cp --recursive "gs://janus-artifacts-sql-schemas/$MINOR_VERSION/db/*.sql" db/
-
-        git add db/*.sql
-        DIFF=$(git diff --name-status HEAD db/)
-        printf "%s\n" "$DIFF"
-
-        # The meaning of added and removed files are reversed when comparing this
-        # way. If a file comes up deleted, that means that the local git ref has
-        # introduced a new file that is not present in the remote. This is permissible.
-        # If a file comes up added, that means that the local ref has removed an
-        # existing migration which was readded by the overwrite step. This is not
-        # permitted.
-        if [ -n "$DIFF" ] && grep -qPv '^D\b' <<<"$DIFF"; then
-          echo "fatal: migrations cannot be modified or removed, only added."
+        TEMP=$(mktemp -d)
+        gcloud alpha storage cp --recursive \
+          "gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.minor_version }}/db" \
+          "$TEMP"
+        if ! git diff --no-index --name-status --diff-filter=CDMRTUXB "$TEMP/db" "./db"; then
+          echo "fatal: migrations cannot be modified or removed, only added"
           exit 1
         fi
     - name: "Upload schema file(s)"
