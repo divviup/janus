@@ -4814,9 +4814,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-opentelemetry"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9cf4382553673f7ccce1f2bbc43b2f344cc68ab681dce8a79f7941857e4208f1"
+checksum = "b4a2a2411d01474be6b26f9ee2b5e9b3e02f4a4143462eb04d9bc905517de91b"
 dependencies = [
  "opentelemetry",
  "trillium",
