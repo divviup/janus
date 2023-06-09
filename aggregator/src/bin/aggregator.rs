@@ -334,7 +334,9 @@ mod tests {
         url: "postgres://postgres:postgres@localhost:5432/postgres"
         connection_pool_timeouts_secs: 60
     logging_config:
-        open_telemetry_config: jaeger
+        open_telemetry_config:
+            otlp:
+                endpoint: "http://localhost:4317"
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
@@ -344,7 +346,12 @@ mod tests {
             .common_config()
             .logging_config
             .open_telemetry_config,
-            Some(OpenTelemetryTraceConfiguration::Jaeger),
+            Some(OpenTelemetryTraceConfiguration::Otlp(
+                OtlpTraceConfiguration {
+                    endpoint: "http://localhost:4317".to_string(),
+                    metadata: HashMap::new()
+                }
+            )),
         );
 
         assert_eq!(

@@ -81,8 +81,6 @@ its configuration and operation.
 
 `janus_aggregator` has the following features available.
 
-* `jaeger`: Enables tracing support and a Jaeger exporter; see the
-  [documentation](docs/CONFIGURING_TRACING.md) for configuration instructions.
 * `otlp`: Enables OTLP exporter support for both metrics and tracing. See the
   [metrics](docs/CONFIGURING_METRICS.md) and
   [tracing](docs/CONFIGURING_TRACING.md) documentation for configuration

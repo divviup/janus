@@ -26,7 +26,7 @@ pub enum Error {
     SetGlobalTracingSubscriber(#[from] tracing::subscriber::SetGlobalDefaultError),
     #[error("logging error: {0}")]
     SetGlobalLogger(#[from] tracing_log::log_tracer::SetLoggerError),
-    #[cfg(any(feature = "jaeger", feature = "otlp"))]
+    #[cfg(feature = "otlp")]
     #[error(transparent)]
     OpenTelemetry(#[from] opentelemetry::trace::TraceError),
     #[cfg(feature = "otlp")]
@@ -85,7 +85,6 @@ pub struct TokioConsoleConfiguration {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OpenTelemetryTraceConfiguration {
-    Jaeger,
     Otlp(OtlpTraceConfiguration),
 }
 
@@ -174,25 +173,6 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
         ));
     }
 
-    #[cfg(feature = "jaeger")]
-    if let Some(OpenTelemetryTraceConfiguration::Jaeger) = &config.open_telemetry_config {
-        let tracer = opentelemetry_jaeger::new_agent_pipeline()
-            .with_service_name("janus_aggregator")
-            .install_batch(opentelemetry::runtime::Tokio)?;
-        let telemetry = tracing_opentelemetry::layer()
-            .with_threads(true)
-            .with_tracer(tracer);
-        layers.push(telemetry.boxed());
-    }
-
-    #[cfg(not(feature = "jaeger"))]
-    if let Some(OpenTelemetryTraceConfiguration::Jaeger) = &config.open_telemetry_config {
-        return Err(Error::Other(
-            "The OpenTelemetry Jaeger subscriber was enabled in the configuration file, but \
-             support was not enabled at compile time. Rebuild with `--features jaeger`.",
-        ));
-    }
-
     #[cfg(feature = "otlp")]
     if let Some(OpenTelemetryTraceConfiguration::Otlp(otlp_config)) = &config.open_telemetry_config
     {
@@ -248,7 +228,7 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
 }
 
 pub(crate) fn cleanup_trace_subscriber(_config: &TraceConfiguration) {
-    #[cfg(any(feature = "jaeger", feature = "otlp"))]
+    #[cfg(feature = "otlp")]
     if _config.open_telemetry_config.is_some() {
         // Flush buffered traces in the OpenTelemetry pipeline.
         opentelemetry::global::shutdown_tracer_provider();
