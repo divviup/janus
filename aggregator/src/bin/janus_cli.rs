@@ -39,7 +39,11 @@ async fn main() -> Result<()> {
 
     record_build_info_gauge();
 
-    debug!(?command_line_options, ?config_file, "Starting up");
+    info!(
+        common_options = ?&command_line_options.common_options,
+        config = ?config_file,
+        "Starting up"
+    );
 
     if command_line_options.dry_run {
         info!("DRY RUN: no persistent changes will be made")
