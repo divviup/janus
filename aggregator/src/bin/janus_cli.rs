@@ -7,7 +7,7 @@ use janus_aggregator::{
     },
     config::{BinaryConfig, CommonConfig},
     metrics::{install_metrics_exporter, MetricsExporterHandle},
-    trace::install_trace_subscriber,
+    trace::{cleanup_trace_subscriber, install_trace_subscriber},
 };
 use janus_aggregator_core::{
     datastore::{self, Datastore},
@@ -49,10 +49,16 @@ async fn main() -> Result<()> {
         info!("DRY RUN: no persistent changes will be made")
     }
 
-    command_line_options
+    let logging_config = config_file.common_config.logging_config.clone();
+
+    let result = command_line_options
         .cmd
         .execute(&command_line_options, &config_file)
-        .await
+        .await;
+
+    cleanup_trace_subscriber(&logging_config);
+
+    result
 }
 
 #[derive(Debug, Parser)]
