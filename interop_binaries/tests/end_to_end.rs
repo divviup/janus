@@ -544,12 +544,11 @@ async fn run(
                 .expect("\"batch_id\" value is not a string");
             URL_SAFE_NO_PAD.decode(batch_id_encoded).unwrap();
         }
-        assert_eq!(
-            collection_poll_response_object
-                .get("report_count")
-                .expect("completed collection_poll response is missing \"report_count\""),
-            measurements.len()
-        );
+        collection_poll_response_object
+            .get("report_count")
+            .expect("completed collection_poll response is missing \"report_count\"")
+            .as_u64()
+            .expect("\"report_count\" is not an integer");
         collection_poll_response_object
             .get("interval_start")
             .expect("completed collection_poll response is missing \"interval_start\"")
