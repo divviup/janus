@@ -52,7 +52,7 @@ async fn run(
         }
         QueryKind::FixedSize => {
             let query_type = json!(FixedSize::CODE as u8);
-            (query_type, Some(json!(10)))
+            (query_type, Some(json!(measurements.len())))
         }
     };
 
@@ -268,7 +268,7 @@ async fn run(
         "vdaf_verify_key": vdaf_verify_key_encoded,
         "max_batch_query_count": 1,
         "query_type": query_type_json,
-        "min_batch_size": 1,
+        "min_batch_size": measurements.len(),
         "time_precision": TIME_PRECISION,
         "collector_hpke_config": collector_hpke_config_encoded,
     });
@@ -320,7 +320,7 @@ async fn run(
         "vdaf_verify_key": vdaf_verify_key_encoded,
         "max_batch_query_count": 1,
         "query_type": query_type_json,
-        "min_batch_size": 1,
+        "min_batch_size": measurements.len(),
         "time_precision": TIME_PRECISION,
         "collector_hpke_config": collector_hpke_config_encoded,
     });
