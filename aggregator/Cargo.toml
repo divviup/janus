@@ -88,7 +88,7 @@ hex = { version = "0.4.3", features = ["serde"] }
 hyper = "0.14.26"
 janus_aggregator = { path = ".", features = ["test-util"] }
 mockito = "1.0.2"
-tempfile = "3.5.0"
+tempfile = "3.6.0"
 tokio = { version = "1", features = ["test-util"] }  # ensure this remains compatible with the non-dev dependency
 trycmd = "0.14.16"
 wait-timeout = "0.2.0"
