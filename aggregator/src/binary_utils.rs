@@ -283,28 +283,7 @@ where
         .context("failed to install metrics exporter")?;
 
     // Create build info metrics gauge.
-    let meter = opentelemetry::global::meter("janus_aggregator");
-    let gauge = meter
-        .u64_observable_gauge("janus_build_info")
-        .with_description(
-            "A metric with a constant '1' value labeled with build-time version information.",
-        )
-        .init();
-    let mut git_revision: &str = git_version!(fallback = "unknown");
-    if git_revision == "unknown" {
-        if let Some(value) = option_env!("GIT_REVISION") {
-            git_revision = value;
-        }
-    }
-    gauge.observe(
-        &Context::current(),
-        1,
-        &[
-            KeyValue::new("version", env!("CARGO_PKG_VERSION")),
-            KeyValue::new("revision", git_revision),
-            KeyValue::new("rust_version", env!("RUSTC_SEMVER")),
-        ],
-    );
+    record_build_info_gauge();
 
     info!(common_options = ?options.common_options(), ?config, "Starting up");
 
@@ -441,6 +420,31 @@ pub async fn setup_server(
     };
 
     Ok((address, future))
+}
+
+pub fn record_build_info_gauge() {
+    let meter = opentelemetry::global::meter("janus_aggregator");
+    let gauge = meter
+        .u64_observable_gauge("janus_build_info")
+        .with_description(
+            "A metric with a constant '1' value labeled with build-time version information.",
+        )
+        .init();
+    let mut git_revision: &str = git_version!(fallback = "unknown");
+    if git_revision == "unknown" {
+        if let Some(value) = option_env!("GIT_REVISION") {
+            git_revision = value;
+        }
+    }
+    gauge.observe(
+        &Context::current(),
+        1,
+        &[
+            KeyValue::new("version", env!("CARGO_PKG_VERSION")),
+            KeyValue::new("revision", git_revision),
+            KeyValue::new("rust_version", env!("RUSTC_SEMVER")),
+        ],
+    );
 }
 
 #[cfg(test)]

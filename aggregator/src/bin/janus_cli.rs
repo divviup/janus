@@ -2,10 +2,12 @@ use anyhow::{anyhow, Context, Result};
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 use clap::Parser;
 use janus_aggregator::{
-    binary_utils::{database_pool, datastore, read_config, CommonBinaryOptions},
+    binary_utils::{
+        database_pool, datastore, read_config, record_build_info_gauge, CommonBinaryOptions,
+    },
     config::{BinaryConfig, CommonConfig},
-    metrics::install_metrics_exporter,
-    trace::install_trace_subscriber,
+    metrics::{install_metrics_exporter, MetricsExporterHandle},
+    trace::{cleanup_trace_subscriber, install_trace_subscriber},
 };
 use janus_aggregator_core::{
     datastore::{self, Datastore},
@@ -32,18 +34,31 @@ async fn main() -> Result<()> {
     let command_line_options = CommandLineOptions::parse();
     let config_file: ConfigFile = read_config(&command_line_options.common_options)?;
 
-    install_tracing_and_metrics_handlers(config_file.common_config()).await?;
+    let _metrics_handler =
+        install_tracing_and_metrics_handlers(config_file.common_config()).await?;
 
-    debug!(?command_line_options, ?config_file, "Starting up");
+    record_build_info_gauge();
+
+    info!(
+        common_options = ?&command_line_options.common_options,
+        config = ?config_file,
+        "Starting up"
+    );
 
     if command_line_options.dry_run {
         info!("DRY RUN: no persistent changes will be made")
     }
 
-    command_line_options
+    let logging_config = config_file.common_config.logging_config.clone();
+
+    let result = command_line_options
         .cmd
         .execute(&command_line_options, &config_file)
-        .await
+        .await;
+
+    cleanup_trace_subscriber(&logging_config);
+
+    result
 }
 
 #[derive(Debug, Parser)]
@@ -135,14 +150,14 @@ impl Command {
     }
 }
 
-async fn install_tracing_and_metrics_handlers(config: &CommonConfig) -> Result<()> {
+async fn install_tracing_and_metrics_handlers(
+    config: &CommonConfig,
+) -> Result<MetricsExporterHandle> {
     install_trace_subscriber(&config.logging_config)
         .context("couldn't install tracing subscriber")?;
-    let _metrics_exporter = install_metrics_exporter(&config.metrics_config)
+    install_metrics_exporter(&config.metrics_config)
         .await
-        .context("failed to install metrics exporter")?;
-
-    Ok(())
+        .context("failed to install metrics exporter")
 }
 
 async fn provision_tasks<C: Clock>(

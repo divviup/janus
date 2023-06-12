@@ -227,7 +227,7 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
     Ok(())
 }
 
-pub(crate) fn cleanup_trace_subscriber(_config: &TraceConfiguration) {
+pub fn cleanup_trace_subscriber(_config: &TraceConfiguration) {
     #[cfg(feature = "otlp")]
     if _config.open_telemetry_config.is_some() {
         // Flush buffered traces in the OpenTelemetry pipeline.
