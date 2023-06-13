@@ -7,7 +7,7 @@ use janus_aggregator::{
     },
     config::{BinaryConfig, CommonConfig},
     metrics::{install_metrics_exporter, MetricsExporterHandle},
-    trace::{cleanup_trace_subscriber, install_trace_subscriber},
+    trace::{install_trace_subscriber, TraceGuards},
 };
 use janus_aggregator_core::{
     datastore::{self, Datastore},
@@ -34,8 +34,7 @@ async fn main() -> Result<()> {
     let command_line_options = CommandLineOptions::parse();
     let config_file: ConfigFile = read_config(&command_line_options.common_options)?;
 
-    let _metrics_handler =
-        install_tracing_and_metrics_handlers(config_file.common_config()).await?;
+    let _guards = install_tracing_and_metrics_handlers(config_file.common_config()).await?;
 
     record_build_info_gauge();
 
@@ -49,16 +48,10 @@ async fn main() -> Result<()> {
         info!("DRY RUN: no persistent changes will be made")
     }
 
-    let logging_config = config_file.common_config.logging_config.clone();
-
-    let result = command_line_options
+    command_line_options
         .cmd
         .execute(&command_line_options, &config_file)
-        .await;
-
-    cleanup_trace_subscriber(&logging_config);
-
-    result
+        .await
 }
 
 #[derive(Debug, Parser)]
@@ -152,12 +145,13 @@ impl Command {
 
 async fn install_tracing_and_metrics_handlers(
     config: &CommonConfig,
-) -> Result<MetricsExporterHandle> {
-    install_trace_subscriber(&config.logging_config)
+) -> Result<(TraceGuards, MetricsExporterHandle)> {
+    let trace_guard = install_trace_subscriber(&config.logging_config)
         .context("couldn't install tracing subscriber")?;
-    install_metrics_exporter(&config.metrics_config)
+    let metrics_guard = install_metrics_exporter(&config.metrics_config)
         .await
-        .context("failed to install metrics exporter")
+        .context("failed to install metrics exporter")?;
+    Ok((trace_guard, metrics_guard))
 }
 
 async fn provision_tasks<C: Clock>(

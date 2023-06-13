@@ -5,7 +5,7 @@ pub mod job_driver;
 use crate::{
     config::{BinaryConfig, DbConfig},
     metrics::{install_metrics_exporter, MetricsExporterConfiguration},
-    trace::{cleanup_trace_subscriber, install_trace_subscriber, OpenTelemetryTraceConfiguration},
+    trace::{install_trace_subscriber, OpenTelemetryTraceConfiguration},
 };
 use anyhow::{anyhow, Context as _, Result};
 use backoff::{future::retry, ExponentialBackoff};
@@ -276,7 +276,7 @@ where
     let config: Config = read_config(options.common_options())?;
 
     // Install tracing/metrics handlers.
-    install_trace_subscriber(&config.common_config().logging_config)
+    let _guards = install_trace_subscriber(&config.common_config().logging_config)
         .context("couldn't install tracing subscriber")?;
     let _metrics_exporter = install_metrics_exporter(&config.common_config().metrics_config)
         .await
@@ -303,8 +303,6 @@ where
     .await
     .context("couldn't create datastore")?;
 
-    let logging_config = config.common_config().logging_config.clone();
-
     let health_check_listen_address = config.common_config().health_check_listen_address;
     let healthz_task_handle =
         tokio::task::spawn(
@@ -320,8 +318,6 @@ where
     .await;
 
     healthz_task_handle.abort();
-
-    cleanup_trace_subscriber(&logging_config);
 
     result
 }

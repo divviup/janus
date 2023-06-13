@@ -3,6 +3,7 @@
 use atty::{self, Stream};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr};
+use tracing_chrome::{ChromeLayerBuilder, TraceStyle};
 use tracing_log::LogTracer;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Layer, Registry};
 
@@ -63,6 +64,9 @@ pub struct TraceConfiguration {
     /// Configuration for OpenTelemetry traces, with a choice of exporters.
     #[serde(default, with = "serde_yaml::with::singleton_map")]
     pub open_telemetry_config: Option<OpenTelemetryTraceConfiguration>,
+    /// If true, outputs traces to a JSON file compatible with Chrome's trace viewer format.
+    #[serde(default)]
+    pub chrome: bool,
 }
 
 /// Configuration related to tokio-console.
@@ -111,7 +115,7 @@ fn base_layer<S>() -> tracing_subscriber::fmt::Layer<S> {
 /// Configures and installs a tracing subscriber, to capture events logged with
 /// [`tracing::info`] and the like. Captured events are written to stdout, with
 /// formatting affected by the provided [`TraceConfiguration`].
-pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error> {
+pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<TraceGuards, Error> {
     // If stdout is not a tty or if forced by config, output logs as JSON
     // structures
     let output_json = atty::isnt(Stream::Stdout) || config.force_json_output;
@@ -217,6 +221,16 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
         ));
     }
 
+    let mut chrome_guard = None;
+    if config.chrome {
+        let (layer, guard) = ChromeLayerBuilder::new()
+            .trace_style(TraceStyle::Async)
+            .include_args(true)
+            .build();
+        chrome_guard = Some(guard);
+        layers.push(layer.boxed());
+    }
+
     let subscriber = Registry::default().with(layers);
 
     tracing::subscriber::set_global_default(subscriber)?;
@@ -224,13 +238,22 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
     // Install a logger that converts logs into tracing events
     LogTracer::init()?;
 
-    Ok(())
+    Ok(TraceGuards {
+        uses_otel_tracer: config.open_telemetry_config.is_some(),
+        _chrome_guard: chrome_guard,
+    })
 }
 
-pub fn cleanup_trace_subscriber(_config: &TraceConfiguration) {
-    #[cfg(feature = "otlp")]
-    if _config.open_telemetry_config.is_some() {
-        // Flush buffered traces in the OpenTelemetry pipeline.
-        opentelemetry::global::shutdown_tracer_provider();
+pub struct TraceGuards {
+    uses_otel_tracer: bool,
+    _chrome_guard: Option<tracing_chrome::FlushGuard>,
+}
+
+impl Drop for TraceGuards {
+    fn drop(&mut self) {
+        if self.uses_otel_tracer {
+            // Flush buffered traces in the OpenTelemetry pipeline.
+            opentelemetry::global::shutdown_tracer_provider();
+        }
     }
 }
