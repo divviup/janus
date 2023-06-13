@@ -204,6 +204,7 @@ impl<C: Clock> Datastore<C> {
 
     /// See [`Datastore::run_tx`]. This method additionally allows specifying a name for the
     /// transaction, for use in database-related metrics.
+    #[tracing::instrument(level = "trace", skip(self, f))]
     pub async fn run_tx_with_name<F, T>(&self, name: &'static str, f: F) -> Result<T, Error>
     where
         for<'a> F:
@@ -236,6 +237,7 @@ impl<C: Clock> Datastore<C> {
         }
     }
 
+    #[tracing::instrument(level = "trace", skip_all)]
     async fn run_tx_once<F, T>(&self, f: &F) -> (Result<T, Error>, bool)
     where
         for<'a> F:
