@@ -153,6 +153,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
     ///
     /// A call to write, successful or not, does not change the internal state of the aggregation
     /// job writer; calling write again will cause the same set of aggregation jobs to be written.
+    #[tracing::instrument(skip(self, tx), err)]
     pub async fn write<C>(
         &self,
         tx: &Transaction<'_, C>,

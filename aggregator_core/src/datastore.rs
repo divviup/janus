@@ -204,6 +204,7 @@ impl<C: Clock> Datastore<C> {
 
     /// See [`Datastore::run_tx`]. This method additionally allows specifying a name for the
     /// transaction, for use in database-related metrics.
+    #[tracing::instrument(level = "trace", skip(self, f))]
     pub async fn run_tx_with_name<F, T>(&self, name: &'static str, f: F) -> Result<T, Error>
     where
         for<'a> F:
@@ -236,6 +237,7 @@ impl<C: Clock> Datastore<C> {
         }
     }
 
+    #[tracing::instrument(level = "trace", skip_all)]
     async fn run_tx_once<F, T>(&self, f: &F) -> (Result<T, Error>, bool)
     where
         for<'a> F:
@@ -1485,6 +1487,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Return the number of reports in the provided task & batch, regardless of whether the reports
     /// have been aggregated or collected. Applies only to fixed-size queries.
+    #[tracing::instrument(skip(self), err)]
     pub async fn count_client_reports_for_batch_id(
         &self,
         task_id: &TaskId,
@@ -1763,6 +1766,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// aggregation jobs. At most `maximum_acquire_count` jobs are acquired. The job is acquired
     /// with a "lease" that will time out; the desired duration of the lease is a parameter, and the
     /// returned lease provides the absolute timestamp at which the lease is no longer live.
+    #[tracing::instrument(skip(self), err)]
     pub async fn acquire_incomplete_aggregation_jobs(
         &self,
         lease_duration: &StdDuration,
@@ -1829,6 +1833,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// release_aggregation_job releases an acquired (via e.g. acquire_incomplete_aggregation_jobs)
     /// aggregation job. It returns an error if the aggregation job has no current lease.
+    #[tracing::instrument(skip(self), err)]
     pub async fn release_aggregation_job(
         &self,
         lease: &Lease<AcquiredAggregationJob>,
@@ -2361,6 +2366,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Returns all collection jobs for the given task which include the given timestamp. Applies only
     /// to time-interval tasks.
+    #[tracing::instrument(skip(self), err)]
     pub async fn get_collection_jobs_including_time<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
@@ -2405,6 +2411,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Returns all collection jobs for the given task whose collect intervals intersect with the given
     /// interval. Applies only to time-interval tasks.
+    #[tracing::instrument(skip(self), err)]
     pub async fn get_collection_jobs_intersecting_interval<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
@@ -2455,6 +2462,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Retrieves all collection jobs for the given batch identifier. Multiple collection jobs may be
     /// returned with distinct aggregation parameters.
+    #[tracing::instrument(skip(self), err)]
     pub async fn get_collection_jobs_by_batch_identifier<
         const SEED_SIZE: usize,
         Q: QueryType,
@@ -2657,6 +2665,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// collection jobs. At most `maximum_acquire_count` jobs are acquired. The job is acquired with
     /// a "lease" that will time out; the desired duration of the lease is a parameter, and the
     /// lease expiration time is returned.
+    #[tracing::instrument(skip(self), err)]
     pub async fn acquire_incomplete_collection_jobs(
         &self,
         lease_duration: &StdDuration,
@@ -2717,6 +2726,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// release_collection_job releases an acquired (via e.g. acquire_incomplete_collection_jobs)
     /// collect job. It returns an error if the collection job has no current lease.
+    #[tracing::instrument(skip(self), err)]
     pub async fn release_collection_job(
         &self,
         lease: &Lease<AcquiredCollectionJob>,
@@ -2811,6 +2821,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Retrieves an existing batch aggregation.
+    #[tracing::instrument(skip(self, aggregation_parameter), err)]
     pub async fn get_batch_aggregation<
         const SEED_SIZE: usize,
         Q: QueryType,
@@ -2861,6 +2872,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Retrieves all batch aggregations stored for a given batch, identified by task ID, batch
     /// identifier, and aggregation parameter.
+    #[tracing::instrument(skip(self, aggregation_parameter), err)]
     pub async fn get_batch_aggregations_for_batch<
         const SEED_SIZE: usize,
         Q: QueryType,
@@ -3145,6 +3157,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Returns all aggregate share jobs for the given task which include the given timestamp.
     /// Applies only to time-interval tasks.
+    #[tracing::instrument(skip(self), err)]
     pub async fn get_aggregate_share_jobs_including_time<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
@@ -3192,6 +3205,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Returns all aggregate share jobs for the given task whose collect intervals intersect with
     /// the given interval. Applies only to time-interval tasks.
+    #[tracing::instrument(skip(self), err)]
     pub async fn get_aggregate_share_jobs_intersecting_interval<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
@@ -3239,6 +3253,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Returns all aggregate share jobs for the given task with the given batch identifier.
     /// Multiple aggregate share jobs may be returned with distinct aggregation parameters.
+    #[tracing::instrument(skip(self), err)]
     pub async fn get_aggregate_share_jobs_by_batch_identifier<
         const SEED_SIZE: usize,
         Q: QueryType,
@@ -3387,6 +3402,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Writes an outstanding batch. (This method does not take an [`OutstandingBatch`] as several
     /// of the included values are read implicitly.)
+    #[tracing::instrument(skip(self), err)]
     pub async fn put_outstanding_batch(
         &self,
         task_id: &TaskId,
@@ -3412,6 +3428,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Retrieves all [`OutstandingBatch`]es for a given task.
+    #[tracing::instrument(skip(self), err)]
     pub async fn get_outstanding_batches_for_task(
         &self,
         task_id: &TaskId,
@@ -3484,6 +3501,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Deletes an outstanding batch.
+    #[tracing::instrument(skip(self), err)]
     pub async fn delete_outstanding_batch(
         &self,
         task_id: &TaskId,
@@ -3548,6 +3566,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Puts a `batch` into the datastore. Returns `MutationTargetAlreadyExists` if the batch is
     /// already stored.
+    #[tracing::instrument(skip(self), err)]
     pub async fn put_batch<
         const SEED_SIZE: usize,
         Q: QueryType,
@@ -3583,6 +3602,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Updates a given `batch` in the datastore. Returns `MutationTargetNotFound` if no such batch
     /// is currently stored.
+    #[tracing::instrument(skip(self), err)]
     pub async fn update_batch<
         const SEED_SIZE: usize,
         Q: QueryType,
@@ -3617,6 +3637,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Gets a given `batch` from the datastore, based on the primary key. Returns `None` if no such
     /// batch is stored in the datastore.
+    #[tracing::instrument(skip(self), err)]
     pub async fn get_batch<
         const SEED_SIZE: usize,
         Q: QueryType,
@@ -5621,10 +5642,12 @@ pub mod models {
 
     /// Represents the state of a given batch (and aggregation parameter).
 
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Derivative)]
+    #[derivative(Debug)]
     pub struct Batch<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> {
         task_id: TaskId,
         batch_identifier: Q::BatchIdentifier,
+        #[derivative(Debug = "ignore")]
         aggregation_parameter: A::AggregationParam,
         state: BatchState,
         outstanding_aggregation_jobs: u64,

@@ -399,7 +399,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         }
     }
 
-    #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     async fn create_aggregation_jobs_for_time_interval_task_no_param<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()>,
@@ -501,7 +500,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .await?)
     }
 
-    #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     async fn create_aggregation_jobs_for_fixed_size_task_no_param<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()>,
@@ -702,7 +700,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     /// be used with VDAFs that have non-unit type aggregation parameters.
     // This is only used in tests thus far.
     #[cfg(test)]
-    #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     async fn create_aggregation_jobs_for_task_with_param<const SEED_SIZE: usize, A>(
         self: Arc<Self>,
         task: Arc<Task>,

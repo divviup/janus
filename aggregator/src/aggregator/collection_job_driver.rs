@@ -73,6 +73,7 @@ impl CollectionJobDriver {
     /// will not yield a result. The collection job lease will eventually expire, allowing a later run
     /// of the collection job driver to try again. Both aggregate shares will be recomputed at that
     /// time.
+    #[tracing::instrument(skip(self, datastore), err)]
     pub async fn step_collection_job<C: Clock>(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -104,7 +105,6 @@ impl CollectionJobDriver {
         }
     }
 
-    #[tracing::instrument(skip(self, datastore), err)]
     async fn step_collection_job_generic<
         const SEED_SIZE: usize,
         C: Clock,
