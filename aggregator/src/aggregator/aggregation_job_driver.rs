@@ -34,7 +34,7 @@ use prio::{
 use reqwest::Method;
 use std::{collections::HashSet, hash::Hash, sync::Arc, time::Duration};
 use tokio::try_join;
-use tracing::{info, warn};
+use tracing::{info, trace_span, warn};
 
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -338,14 +338,17 @@ impl AggregationJobDriver {
             }
 
             // Initialize the leader's preparation state from the input share.
-            let (prep_state, prep_share) = match vdaf.prepare_init(
-                verify_key.as_bytes(),
-                Role::Leader.index().unwrap(),
-                aggregation_job.aggregation_parameter(),
-                report.metadata().id().as_ref(),
-                report.public_share(),
-                report.leader_input_share(),
-            ) {
+            let prepare_init_res = trace_span!("VDAF preparation").in_scope(|| {
+                vdaf.prepare_init(
+                    verify_key.as_bytes(),
+                    Role::Leader.index().unwrap(),
+                    aggregation_job.aggregation_parameter(),
+                    report.metadata().id().as_ref(),
+                    report.public_share(),
+                    report.leader_input_share(),
+                )
+            });
+            let (prep_state, prep_share) = match prepare_init_res {
                 Ok(prep_state_and_share) => prep_state_and_share,
                 Err(error) => {
                     info!(report_id = %report_aggregation.report_id(), ?error, "Couldn't initialize leader's preparation state");
@@ -460,9 +463,9 @@ impl AggregationJobDriver {
                 };
 
                 // Step our own state.
-                let leader_transition = match vdaf
-                    .prepare_step(prep_state.clone(), prep_msg.clone())
-                {
+                let prepare_step_res = trace_span!("VDAF preparation")
+                    .in_scope(|| vdaf.prepare_step(prep_state.clone(), prep_msg.clone()));
+                let leader_transition = match prepare_step_res {
                     Ok(leader_transition) => leader_transition,
                     Err(error) => {
                         info!(report_id = %report_aggregation.report_id(), ?error, "Prepare step failed");

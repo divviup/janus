@@ -77,7 +77,7 @@ use std::{
     time::{Duration as StdDuration, Instant},
 };
 use tokio::{sync::Mutex, try_join};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace_span, warn};
 use url::Url;
 
 pub mod accumulator;
@@ -1330,18 +1330,29 @@ impl VdafOps {
             // associated with the task and computes the first state transition. [...] If either
             // step fails, then the aggregator MUST fail with error `vdaf-prep-error`. (§4.4.2.2)
             let init_rslt = shares.and_then(|(public_share, input_share)| {
-                vdaf
-                    .prepare_init(
-                        verify_key.as_bytes(),
-                        Role::Helper.index().unwrap(),
-                        &agg_param,
-                        report_share.metadata().id().as_ref(),
-                        &public_share,
-                        &input_share,
-                    )
+                trace_span!("VDAF preparation")
+                    .in_scope(|| {
+                        vdaf.prepare_init(
+                            verify_key.as_bytes(),
+                            Role::Helper.index().unwrap(),
+                            &agg_param,
+                            report_share.metadata().id().as_ref(),
+                            &public_share,
+                            &input_share,
+                        )
+                    })
                     .map_err(|error| {
-                        info!(task_id = %task.id(), report_id = %report_share.metadata().id(), ?error, "Couldn't prepare_init report share");
-                        aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "prepare_init_failure")]);
+                        info!(
+                            task_id = %task.id(),
+                            report_id = %report_share.metadata().id(),
+                            ?error,
+                            "Couldn't prepare_init report share"
+                        );
+                        aggregate_step_failure_counter.add(
+                            &Context::current(),
+                            1,
+                            &[KeyValue::new("type", "prepare_init_failure")],
+                        );
                         ReportShareError::VdafPrepError
                     })
             });

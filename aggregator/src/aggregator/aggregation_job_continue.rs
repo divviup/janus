@@ -22,7 +22,7 @@ use prio::{
 };
 use std::{io::Cursor, sync::Arc};
 use tokio::try_join;
-use tracing::info;
+use tracing::{info, trace_span};
 
 impl VdafOps {
     /// Step the helper's aggregation job to the next round of VDAF preparation using the round `n`
@@ -134,7 +134,9 @@ impl VdafOps {
             };
 
             // Compute the next transition.
-            match vdaf.prepare_step(prep_state.clone(), prep_msg) {
+            let prepare_step_res = trace_span!("VDAF preparation")
+                .in_scope(|| vdaf.prepare_step(prep_state.clone(), prep_msg));
+            match prepare_step_res {
                 Ok(PrepareTransition::Continue(prep_state, prep_share)) => {
                     *report_aggregation = report_aggregation
                         .clone()
