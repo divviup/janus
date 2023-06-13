@@ -18,7 +18,7 @@
 //! use url::Url;
 //!
 //! # async fn run() {
-//! // Supply DAP task paramenters.
+//! // Supply DAP task parameters.
 //! let task_id = random();
 //! let hpke_keypair = janus_core::hpke::generate_hpke_config_and_private_key(
 //!     HpkeConfigId::from(0),

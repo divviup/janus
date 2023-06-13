@@ -70,12 +70,13 @@ impl<H: Handler> InstrumentedHandler<H> {
 
     async fn before_send(&self, conn: Conn) -> Conn {
         if let Some(span) = conn.state::<InstrumentedHandlerSpan>() {
-            let _entered = span.0.enter();
-            let status = conn
-                .status()
-                .as_ref()
-                .map_or("unknown", Status::canonical_reason);
-            info!(status, "Finished handling request");
+            span.0.in_scope(|| {
+                let status = conn
+                    .status()
+                    .as_ref()
+                    .map_or("unknown", Status::canonical_reason);
+                info!(status, "Finished handling request");
+            });
         }
         conn
     }
