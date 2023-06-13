@@ -812,6 +812,19 @@ macro_rules! vdaf_ops_dispatch {
 }
 
 impl VdafOps {
+    #[tracing::instrument(
+        skip(
+            self,
+            clock,
+            upload_decrypt_failure_counter,
+            upload_decode_failure_counter,
+            task,
+            report_writer,
+            report
+        ),
+        fields(task_id = ?task.id()),
+        err
+    )]
     async fn handle_upload<C: Clock>(
         &self,
         clock: &C,
@@ -855,6 +868,11 @@ impl VdafOps {
 
     /// Implements the `/aggregate` endpoint for initialization requests for the helper, described
     /// in §4.4.4.1 & §4.4.4.2 of draft-gpew-priv-ppm.
+    #[tracing::instrument(
+        skip(self, datastore, aggregate_step_failure_counter, task, req_bytes),
+        fields(task_id = ?task.id()),
+        err
+    )]
     async fn handle_aggregate_init<C: Clock>(
         &self,
         datastore: &Datastore<C>,
@@ -895,6 +913,11 @@ impl VdafOps {
         }
     }
 
+    #[tracing::instrument(
+        skip(self, datastore, aggregate_step_failure_counter, task, req, request_hash),
+        fields(task_id = ?task.id()),
+        err
+    )]
     async fn handle_aggregate_continue<C: Clock>(
         &self,
         datastore: &Datastore<C>,
@@ -1666,12 +1689,17 @@ impl VdafOps {
     }
 
     /// Handle requests to the leader to create a collection job.
+    #[tracing::instrument(
+        skip(self, datastore, task, collection_req_bytes),
+        fields(task_id = ?task.id()),
+        err
+    )]
     async fn handle_create_collection_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
         task: Arc<Task>,
         collection_job_id: &CollectionJobId,
-        collect_req_bytes: &[u8],
+        collection_req_bytes: &[u8],
     ) -> Result<(), Error> {
         match task.query_type() {
             task::QueryType::TimeInterval => {
@@ -1681,7 +1709,7 @@ impl VdafOps {
                         TimeInterval,
                         VdafType,
                         _,
-                    >(datastore, task, Arc::clone(vdaf), collection_job_id, collect_req_bytes)
+                    >(datastore, task, Arc::clone(vdaf), collection_job_id, collection_req_bytes)
                     .await
                 })
             }
@@ -1692,14 +1720,13 @@ impl VdafOps {
                         FixedSize,
                         VdafType,
                         _,
-                    >(datastore, task, Arc::clone(vdaf), collection_job_id, collect_req_bytes)
+                    >(datastore, task, Arc::clone(vdaf), collection_job_id, collection_req_bytes)
                     .await
                 })
             }
         }
     }
 
-    #[tracing::instrument(skip(datastore, task, req_bytes), fields(task_id = ?task.id()), err)]
     async fn handle_create_collection_job_generic<
         const SEED_SIZE: usize,
         Q: CollectableQueryType,
@@ -1967,6 +1994,7 @@ impl VdafOps {
     /// Handle GET requests to a collection job URI obtained from the leader's `/collect` endpoint.
     /// The return value is an encoded `CollectResp<Q>`.
     /// https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.1
+    #[tracing::instrument(skip(self, datastore, task), fields(task_id = ?task.id()), err)]
     async fn handle_get_collection_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
@@ -2141,6 +2169,7 @@ impl VdafOps {
         }
     }
 
+    #[tracing::instrument(skip(self, datastore, task), fields(task_id = ?task.id()), err)]
     async fn handle_delete_collection_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
@@ -2217,6 +2246,11 @@ impl VdafOps {
     }
 
     /// Implements the `/aggregate_share` endpoint for the helper, described in §4.4.4.3
+    #[tracing::instrument(
+        skip(self, datastore, clock, task, req_bytes),
+        fields(task_id = ?task.id()),
+        err
+    )]
     async fn handle_aggregate_share<C: Clock>(
         &self,
         datastore: &Datastore<C>,
