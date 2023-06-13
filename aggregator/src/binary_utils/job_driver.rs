@@ -4,7 +4,7 @@ use chrono::NaiveDateTime;
 use janus_aggregator_core::datastore::{self, models::Lease};
 use janus_core::{time::Clock, Runtime};
 use opentelemetry::{
-    metrics::{Meter, Unit},
+    metrics::{Histogram, Meter, Unit},
     Context, KeyValue,
 };
 use std::{
@@ -93,7 +93,6 @@ where
     }
 
     /// Run this job driver, periodically seeking incomplete jobs and stepping them.
-    #[tracing::instrument(skip(self))]
     pub async fn run(self: Arc<Self>) -> Infallible {
         // Create metric recorders.
         let job_acquire_time_histogram = self
@@ -121,7 +120,7 @@ where
             //
             // Unwrap safety: Semaphore::acquire is documented as only returning an error if the
             // semaphore is closed, and we never close this semaphore.
-            let _ = sem.acquire().await.unwrap();
+            drop(sem.acquire().await.unwrap());
 
             // Acquire some jobs which are ready to be stepped.
             //
@@ -134,45 +133,16 @@ where
             // (we'll pick up any additional jobs on the next iteration of this loop). We can't
             // overestimate since this task is the only place that permits are acquired.
             let max_acquire_count = sem.available_permits();
-            debug!(%max_acquire_count, "Acquiring jobs");
-            let start = Instant::now();
-            let leases = (self.incomplete_job_acquirer)(max_acquire_count).await;
-            let leases = match leases {
-                Ok(leases) => leases,
-                Err(error) => {
-                    error!(?error, "Couldn't acquire jobs");
 
-                    // Go ahead and step job discovery delay in this error case to ensure we don't
-                    // tightly loop running transactions that will fail without any delay.
-                    job_discovery_delay = self.step_job_discovery_delay(job_discovery_delay);
-                    job_acquire_time_histogram.record(
-                        &Context::current(),
-                        start.elapsed().as_secs_f64(),
-                        &[KeyValue::new("status", "error")],
-                    );
-                    continue;
-                }
-            };
-            job_acquire_time_histogram.record(
-                &Context::current(),
-                start.elapsed().as_secs_f64(),
-                &[KeyValue::new("status", "success")],
-            );
-            if leases.is_empty() {
-                debug!("No jobs available");
-                job_discovery_delay = self.step_job_discovery_delay(job_discovery_delay);
-                continue;
-            }
-            assert!(
-                leases.len() <= max_acquire_count,
-                "Acquired {} jobs exceeding maximum of {}",
-                leases.len(),
-                max_acquire_count
-            );
-            debug!(acquired_job_count = leases.len(), "Acquired jobs");
+            let leases = self
+                .run_job_acquisition(
+                    &mut job_discovery_delay,
+                    max_acquire_count,
+                    &job_acquire_time_histogram,
+                )
+                .await;
 
             // Start up tasks for each acquired job.
-            job_discovery_delay = Duration::ZERO;
             for lease in leases {
                 self.runtime.spawn({
                     // We acquire a semaphore in the job-discovery task rather than inside the new
@@ -220,6 +190,53 @@ where
                 });
             }
         }
+    }
+
+    #[tracing::instrument(skip(self, job_acquire_time_histogram))]
+    async fn run_job_acquisition(
+        self: &Arc<Self>,
+        job_discovery_delay: &mut Duration,
+        max_acquire_count: usize,
+        job_acquire_time_histogram: &Histogram<f64>,
+    ) -> Vec<Lease<AcquiredJob>> {
+        debug!(%max_acquire_count, "Acquiring jobs");
+        let start = Instant::now();
+        let leases = (self.incomplete_job_acquirer)(max_acquire_count).await;
+        let leases = match leases {
+            Ok(leases) => leases,
+            Err(error) => {
+                error!(?error, "Couldn't acquire jobs");
+
+                // Go ahead and step job discovery delay in this error case to ensure we don't
+                // tightly loop running transactions that will fail without any delay.
+                *job_discovery_delay = self.step_job_discovery_delay(*job_discovery_delay);
+                job_acquire_time_histogram.record(
+                    &Context::current(),
+                    start.elapsed().as_secs_f64(),
+                    &[KeyValue::new("status", "error")],
+                );
+                return Vec::new();
+            }
+        };
+        job_acquire_time_histogram.record(
+            &Context::current(),
+            start.elapsed().as_secs_f64(),
+            &[KeyValue::new("status", "success")],
+        );
+        if leases.is_empty() {
+            debug!("No jobs available");
+            *job_discovery_delay = self.step_job_discovery_delay(*job_discovery_delay);
+            return Vec::new();
+        }
+        assert!(
+            leases.len() <= max_acquire_count,
+            "Acquired {} jobs exceeding maximum of {}",
+            leases.len(),
+            max_acquire_count
+        );
+        debug!(acquired_job_count = leases.len(), "Acquired jobs");
+        *job_discovery_delay = Duration::ZERO;
+        leases
     }
 
     fn step_job_discovery_delay(&self, delay: Duration) -> Duration {
