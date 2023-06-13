@@ -198,9 +198,7 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
         // would otherwise drown out root spans from the application.
         let filter = Targets::new()
             .with_default(LevelFilter::TRACE)
-            .with_target("h2::proto::streams::prioritize", LevelFilter::OFF)
-            .with_target("h2::proto::streams::store", LevelFilter::OFF)
-            .with_target("h2::codec::framed_write", LevelFilter::OFF);
+            .with_target("h2", LevelFilter::OFF);
 
         let telemetry = tracing_opentelemetry::layer()
             .with_threads(true)
