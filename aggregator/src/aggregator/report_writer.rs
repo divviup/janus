@@ -57,6 +57,7 @@ impl<C: Clock> ReportWriteBatcher<C> {
         rslt_rx.await.unwrap()
     }
 
+    #[tracing::instrument(skip(ds, report_rx))]
     async fn run_upload_batcher(
         ds: Arc<Datastore<C>>,
         mut report_rx: ReportWriteBatcherReceiver<C>,
@@ -110,6 +111,7 @@ impl<C: Clock> ReportWriteBatcher<C> {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     async fn write_batch(
         ds: Arc<Datastore<C>>,
         report_writers: Vec<Box<dyn ReportWriter<C>>>,
