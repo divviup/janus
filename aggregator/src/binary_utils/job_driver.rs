@@ -93,7 +93,6 @@ where
     }
 
     /// Run this job driver, periodically seeking incomplete jobs and stepping them.
-    #[tracing::instrument(skip(self))]
     pub async fn run(self: Arc<Self>) -> Infallible {
         // Create metric recorders.
         let job_acquire_time_histogram = self

@@ -89,7 +89,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         }
     }
 
-    #[tracing::instrument(skip(self))]
     pub async fn run(self: Arc<Self>) -> Infallible {
         // TODO(#224): add support for handling only a subset of tasks in a single job (i.e. sharding).
 
