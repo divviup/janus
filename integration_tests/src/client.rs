@@ -119,7 +119,7 @@ impl InteropClient {
                        divviup_ts_interop_client"
                     .to_string(),
                 tag: "dap-draft-04@sha256:\
-                      ad6fa3f6fa6f732ccf8291692e250ffa0cc50acd31bb393d98ebaec0f1d2f48c"
+                      43ccdf68e319c677f12f0cb730c63e73b872477cf0e1310b727f449b74a14ac2"
                     .to_string(),
             }
         }
