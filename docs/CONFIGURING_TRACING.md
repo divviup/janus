@@ -3,6 +3,12 @@
 Tracing spans from Janus components can be exported to distributed tracing
 systems through the OpenTelemetry SDK, and various exporters.
 
+Verbosity of traces can be controlled by setting the `RUST_TRACE` environment
+variable to a [filter][EnvFilter], just as with `RUST_LOG` for log output. By
+default, all spans and events of severity `INFO` or higher will be exported.
+
+[EnvFilter]: https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html
+
 ## Jaeger
 
 [Jaeger](https://www.jaegertracing.io/) is a software stack that stores,
