@@ -318,7 +318,7 @@ impl From<Task> for AggregatorAddTaskRequest {
 }
 
 pub fn install_tracing_subscriber() -> anyhow::Result<()> {
-    let stdout_filter = EnvFilter::from_default_env();
+    let stdout_filter = EnvFilter::try_from_default_env()?;
     let layer = tracing_subscriber::fmt::layer()
         .with_thread_ids(true)
         .with_level(true)

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr};
 use tracing_chrome::{ChromeLayerBuilder, TraceStyle};
 use tracing_log::LogTracer;
-use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Layer, Registry};
+use tracing_subscriber::{filter::FromEnvError, layer::SubscriberExt, EnvFilter, Layer, Registry};
 
 #[cfg(feature = "otlp")]
 use {
@@ -36,6 +36,8 @@ pub enum Error {
     #[cfg(feature = "otlp")]
     #[error(transparent)]
     TonicMetadataValue(#[from] tonic::metadata::errors::InvalidMetadataValue),
+    #[error("bad log/trace filter: {0}")]
+    FromEnv(#[from] FromEnvError),
     #[error("{0}")]
     Other(&'static str),
 }
@@ -123,7 +125,7 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<TraceGuar
 
     // Configure filters with RUST_LOG env var. Format discussed at
     // https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html
-    let stdout_filter = EnvFilter::from_default_env();
+    let stdout_filter = EnvFilter::try_from_default_env()?;
 
     let mut layers = Vec::new();
     match (
