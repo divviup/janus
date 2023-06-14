@@ -85,5 +85,5 @@ worker_lease_clock_skew_allowance_secs: 60
 maximum_attempts_before_failure: 10
 
 # Number of sharded database records per batch aggregation. Must not be greater
-# than the equivalent setting in the collection job driver.
+# than the equivalent setting in the collection job driver. (required)
 batch_aggregation_shard_count: 32
