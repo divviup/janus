@@ -117,69 +117,82 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
         loop {
             tasks_update_ticker.tick().await;
-            debug!("Updating tasks");
             let start = Instant::now();
-            let tasks = self
-                .datastore
-                .run_tx_with_name("aggregation_job_creator_get_tasks", |tx| {
-                    Box::pin(async move { tx.get_tasks().await })
-                })
-                .await;
-            let tasks = match tasks {
-                Ok(tasks) => tasks
-                    .into_iter()
-                    .filter_map(|task| match task.role() {
-                        Role::Leader => Some((*task.id(), task)),
-                        _ => None,
-                    })
-                    .collect::<HashMap<_, _>>(),
 
+            let result = self
+                .update_tasks(
+                    &mut job_creation_task_shutdown_handles,
+                    &job_creation_time_histogram,
+                )
+                .await;
+
+            let status = match result {
+                Ok(()) => "success",
                 Err(error) => {
                     error!(?error, "Couldn't update tasks");
-                    task_update_time_histogram.record(
-                        &Context::current(),
-                        start.elapsed().as_secs_f64(),
-                        &[KeyValue::new("status", "error")],
-                    );
-                    continue;
+                    "error"
                 }
             };
-
-            // Stop job creation tasks for no-longer-existing tasks.
-            job_creation_task_shutdown_handles.retain(|task_id, _| {
-                if tasks.contains_key(task_id) {
-                    return true;
-                }
-                // We don't need to send on the channel: dropping the sender is enough to cause the
-                // receiver future to resolve with a RecvError, which will trigger shutdown.
-                info!(%task_id, "Stopping job creation worker");
-                false
-            });
-
-            // Start job creation tasks for newly-discovered tasks.
-            for (task_id, task) in tasks {
-                if job_creation_task_shutdown_handles.contains_key(&task_id) {
-                    continue;
-                }
-                info!(%task_id, "Starting job creation worker");
-                let (tx, rx) = oneshot::channel();
-                job_creation_task_shutdown_handles.insert(task_id, tx);
-                tokio::task::spawn({
-                    let (this, job_creation_time_histogram) =
-                        (Arc::clone(&self), job_creation_time_histogram.clone());
-                    async move {
-                        this.run_for_task(rx, job_creation_time_histogram, Arc::new(task))
-                            .await
-                    }
-                });
-            }
 
             task_update_time_histogram.record(
                 &Context::current(),
                 start.elapsed().as_secs_f64(),
-                &[KeyValue::new("status", "success")],
+                &[KeyValue::new("status", status)],
             );
         }
+    }
+
+    #[tracing::instrument(skip_all, err)]
+    async fn update_tasks(
+        self: &Arc<Self>,
+        job_creation_task_shutdown_handles: &mut HashMap<TaskId, Sender<()>>,
+        job_creation_time_histogram: &Histogram<f64>,
+    ) -> Result<(), datastore::Error> {
+        debug!("Updating tasks");
+        let tasks = self
+            .datastore
+            .run_tx_with_name("aggregation_job_creator_get_tasks", |tx| {
+                Box::pin(async move { tx.get_tasks().await })
+            })
+            .await?;
+        let tasks = tasks
+            .into_iter()
+            .filter_map(|task| match task.role() {
+                Role::Leader => Some((*task.id(), task)),
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
+
+        // Stop job creation tasks for no-longer-existing tasks.
+        job_creation_task_shutdown_handles.retain(|task_id, _| {
+            if tasks.contains_key(task_id) {
+                return true;
+            }
+            // We don't need to send on the channel: dropping the sender is enough to cause the
+            // receiver future to resolve with a RecvError, which will trigger shutdown.
+            info!(%task_id, "Stopping job creation worker");
+            false
+        });
+
+        // Start job creation tasks for newly-discovered tasks.
+        for (task_id, task) in tasks {
+            if job_creation_task_shutdown_handles.contains_key(&task_id) {
+                continue;
+            }
+            info!(%task_id, "Starting job creation worker");
+            let (tx, rx) = oneshot::channel();
+            job_creation_task_shutdown_handles.insert(task_id, tx);
+            tokio::task::spawn({
+                let (this, job_creation_time_histogram) =
+                    (Arc::clone(self), job_creation_time_histogram.clone());
+                async move {
+                    this.run_for_task(rx, job_creation_time_histogram, Arc::new(task))
+                        .await
+                }
+            });
+        }
+
+        Ok(())
     }
 
     #[tracing::instrument(skip(self, shutdown, job_creation_time_histogram))]
