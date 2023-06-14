@@ -21,7 +21,8 @@ use janus_core::{time::Clock, vdaf_dispatch};
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
-    PartialBatchSelector, PrepareStep, PrepareStepResult, ReportShare, ReportShareError, Role,
+    PartialBatchSelector, PrepareStep, PrepareStepResult, ReportId, ReportShare, ReportShareError,
+    Role,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -32,7 +33,12 @@ use prio::{
     vdaf::{self, PrepareTransition},
 };
 use reqwest::Method;
-use std::{collections::HashSet, hash::Hash, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    hash::Hash,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::try_join;
 use tracing::{info, warn};
 
@@ -169,7 +175,7 @@ impl AggregationJobDriver {
                     // Read client reports, but only for report aggregations in state START.
                     // TODO(#224): create "get_client_reports_for_aggregation_job" datastore
                     // operation to avoid needing to join many futures?
-                    let client_reports =
+                    let client_reports: HashMap<_, _> =
                         try_join_all(report_aggregations.iter().filter_map(|report_aggregation| {
                             if report_aggregation.state() == &ReportAggregationState::Start {
                                 Some(
@@ -184,13 +190,9 @@ impl AggregationJobDriver {
                                             *report_aggregation.report_id(),
                                             lease.leased().task_id(),
                                         ))
-                                        .and_then(|maybe_report| {
-                                            maybe_report.ok_or_else(|| {
-                                                anyhow!(
-                                                    "couldn't find report {} for task {}",
-                                                    report_aggregation.report_id(),
-                                                    lease.leased().task_id(),
-                                                )
+                                        .map(|report| {
+                                            report.map(|report| {
+                                                (*report_aggregation.report_id(), report)
                                             })
                                         })
                                         .map_err(|err| datastore::Error::User(err.into()))
@@ -200,7 +202,10 @@ impl AggregationJobDriver {
                                 None
                             }
                         }))
-                        .await?;
+                        .await?
+                        .into_iter()
+                        .flatten()
+                        .collect();
 
                     Ok((
                         Arc::new(task),
@@ -276,7 +281,7 @@ impl AggregationJobDriver {
         task: Arc<Task>,
         aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-        client_reports: Vec<LeaderStoredReport<SEED_SIZE, A>>,
+        client_reports: HashMap<ReportId, LeaderStoredReport<SEED_SIZE, A>>,
         verify_key: VerifyKey<SEED_SIZE>,
     ) -> Result<()>
     where
@@ -290,25 +295,10 @@ impl AggregationJobDriver {
         A::InputShare: PartialEq + Send + Sync,
         A::PublicShare: PartialEq + Send + Sync,
     {
-        // Zip the report aggregations at start with the client reports, verifying that their IDs
-        // match. We use asserts here as the conditions we are checking should be guaranteed by the
-        // caller.
         let report_aggregations: Vec<_> = report_aggregations
             .into_iter()
             .filter(|report_aggregation| {
                 report_aggregation.state() == &ReportAggregationState::Start
-            })
-            .collect();
-        assert_eq!(report_aggregations.len(), client_reports.len());
-        let reports: Vec<_> = report_aggregations
-            .into_iter()
-            .zip(client_reports.into_iter())
-            .inspect(|(report_aggregation, client_report)| {
-                assert_eq!(report_aggregation.task_id(), client_report.task_id());
-                assert_eq!(
-                    report_aggregation.report_id(),
-                    client_report.metadata().id()
-                );
             })
             .collect();
 
@@ -317,7 +307,23 @@ impl AggregationJobDriver {
         let mut report_aggregations_to_write = Vec::new();
         let mut report_shares = Vec::new();
         let mut stepped_aggregations = Vec::new();
-        for (report_aggregation, report) in reports {
+        for report_aggregation in report_aggregations {
+            // Look up report.
+            let report = if let Some(report) = client_reports.get(report_aggregation.report_id()) {
+                report
+            } else {
+                info!(report_id = %report_aggregation.report_id(), "Attempted to aggregate missing report (most likely garbage collected)");
+                self.aggregate_step_failure_counter.add(
+                    &Context::current(),
+                    1,
+                    &[KeyValue::new("type", "missing_client_report")],
+                );
+                report_aggregations_to_write.push(report_aggregation.with_state(
+                    ReportAggregationState::Failed(ReportShareError::ReportDropped),
+                ));
+                continue;
+            };
+
             // Check for repeated extensions.
             let mut extension_types = HashSet::new();
             if !report
@@ -1260,6 +1266,7 @@ mod tests {
             ]),
             transcript.input_shares.clone(),
         );
+        let missing_report_id = random();
         let aggregation_job_id = random();
 
         let lease = ds
@@ -1313,6 +1320,19 @@ mod tests {
                         *repeated_extension_report.metadata().id(),
                         *repeated_extension_report.metadata().time(),
                         1,
+                        None,
+                        ReportAggregationState::Start,
+                    ))
+                    .await?;
+                    tx.put_report_aggregation(&ReportAggregation::<
+                        PRIO3_VERIFY_KEY_LENGTH,
+                        Prio3Count,
+                    >::new(
+                        *task.id(),
+                        aggregation_job_id,
+                        missing_report_id,
+                        time,
+                        2,
                         None,
                         ReportAggregationState::Start,
                     ))
@@ -1448,6 +1468,16 @@ mod tests {
                 None,
                 ReportAggregationState::Failed(ReportShareError::UnrecognizedMessage),
             );
+        let want_missing_report_report_aggregation =
+            ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
+                *task.id(),
+                aggregation_job_id,
+                missing_report_id,
+                time,
+                2,
+                None,
+                ReportAggregationState::Failed(ReportShareError::ReportDropped),
+            );
         let want_batch = Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
             *task.id(),
             batch_identifier,
@@ -1460,6 +1490,7 @@ mod tests {
             got_aggregation_job,
             got_report_aggregation,
             got_repeated_extension_report_aggregation,
+            got_missing_report_report_aggregation,
             got_batch,
         ) = ds
             .run_tx(|tx| {
@@ -1497,6 +1528,16 @@ mod tests {
                         )
                         .await?
                         .unwrap();
+                    let missing_report_report_aggregation = tx
+                        .get_report_aggregation(
+                            vdaf.as_ref(),
+                            &Role::Leader,
+                            task.id(),
+                            &aggregation_job_id,
+                            &missing_report_id,
+                        )
+                        .await?
+                        .unwrap();
                     let batch = tx
                         .get_batch(task.id(), &batch_identifier, &())
                         .await?
@@ -1505,6 +1546,7 @@ mod tests {
                         aggregation_job,
                         report_aggregation,
                         repeated_extension_report_aggregation,
+                        missing_report_report_aggregation,
                         batch,
                     ))
                 })
@@ -1517,6 +1559,10 @@ mod tests {
         assert_eq!(
             want_repeated_extension_report_aggregation,
             got_repeated_extension_report_aggregation
+        );
+        assert_eq!(
+            want_missing_report_report_aggregation,
+            got_missing_report_report_aggregation
         );
         assert_eq!(want_batch, got_batch);
     }

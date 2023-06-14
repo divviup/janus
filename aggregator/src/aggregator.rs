@@ -126,6 +126,7 @@ pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
         "helper_step_failure",
         "plaintext_input_share_decode_failure",
         "duplicate_extension",
+        "missing_client_report",
     ] {
         aggregate_step_failure_counter.add(
             &Context::current(),

@@ -19,6 +19,8 @@ use tokio::sync::{oneshot, Mutex};
 use tokio_postgres::{connect, Config, NoTls};
 use tracing::trace;
 
+use super::SUPPORTED_SCHEMA_VERSIONS;
+
 struct EphemeralDatabase {
     port_number: u16,
     shutdown_barrier: Arc<Barrier>,
@@ -219,7 +221,13 @@ pub async fn ephemeral_datastore_schema_version(schema_version: i64) -> Ephemera
 
 /// Creates a new, empty EphemeralDatastore with all schema migrations applied to it.
 pub async fn ephemeral_datastore() -> EphemeralDatastore {
-    ephemeral_datastore_schema_version(i64::MAX).await
+    ephemeral_datastore_schema_version(
+        *SUPPORTED_SCHEMA_VERSIONS
+            .iter()
+            .max()
+            .expect("SUPPORTED_SCHEMA_VERSIONS is empty"),
+    )
+    .await
 }
 
 /// Creates a new, empty EphemeralDatabase by applying all available schema migrations,
