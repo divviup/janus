@@ -121,7 +121,7 @@ fn make_trace_filter() -> Result<EnvFilter, FromEnvError> {
     EnvFilter::builder()
         .with_default_directive(Level::INFO.into())
         .with_env_var("RUST_TRACE")
-        .try_from_env()
+        .from_env()
 }
 
 /// Configures and installs a tracing subscriber, to capture events logged with
@@ -134,7 +134,7 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<TraceGuar
 
     // Configure filters with RUST_LOG env var. Format discussed at
     // https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html
-    let stdout_filter = EnvFilter::try_from_default_env()?;
+    let stdout_filter = EnvFilter::builder().from_env()?;
 
     let mut layers = Vec::new();
     match (

@@ -144,7 +144,7 @@ pub fn roundtrip_encoding<T: Serialize + DeserializeOwned + Debug + Eq>(value: T
 pub fn install_test_trace_subscriber() {
     static INSTALL_TRACE_SUBSCRIBER: Once = Once::new();
     INSTALL_TRACE_SUBSCRIBER.call_once(|| {
-        let stdout_filter = EnvFilter::try_from_default_env().unwrap();
+        let stdout_filter = EnvFilter::builder().from_env().unwrap();
         let layer = tracing_subscriber::fmt::layer()
             .with_thread_ids(true)
             .with_level(true)
