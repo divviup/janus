@@ -167,6 +167,7 @@ pub mod test_util {
                     ]),
                 },
             )),
+            chrome: false,
         }
     }
 

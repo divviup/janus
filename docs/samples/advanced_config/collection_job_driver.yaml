@@ -39,6 +39,11 @@ logging_config:
       metadata:
         key: "value"
 
+  # Flag to write tracing spans and events to JSON files. This is compatible
+  # with Chrome's trace viewer, available at `chrome://tracing`, and
+  # Perfetto, at https://ui.perfetto.dev/. (optional)
+  chrome: false
+
 # Metrics configuration. (optional)
 metrics_config:
   # Metrics exporter configuration. This contains a map with single key, either
@@ -81,4 +86,5 @@ maximum_attempts_before_failure: 10
 
 # Number of sharded database records per batch aggregation. Must not be less
 # than the equivalent setting in the aggregator and aggregation job driver.
+# (required)
 batch_aggregation_shard_count: 32
