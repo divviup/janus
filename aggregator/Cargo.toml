@@ -40,7 +40,7 @@ backoff = { version = "0.4.0", features = ["tokio"] }
 base64 = "0.21.2"
 bytes = "1.4.0"
 chrono.workspace = true
-clap = { version = "4.3.3", features = ["derive", "env"] }
+clap = { version = "4.3.4", features = ["derive", "env"] }
 console-subscriber = { version = "0.1.9", optional = true }
 deadpool = { version = "0.9.5", features = ["rt_tokio_1"] }
 deadpool-postgres = "0.10.5"
