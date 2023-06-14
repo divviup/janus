@@ -3,6 +3,7 @@
 use atty::{self, Stream};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr};
+use tracing::Level;
 use tracing_chrome::{ChromeLayerBuilder, TraceStyle};
 use tracing_log::LogTracer;
 use tracing_subscriber::{filter::FromEnvError, layer::SubscriberExt, EnvFilter, Layer, Registry};
@@ -17,7 +18,6 @@ use {
     opentelemetry_semantic_conventions::resource::SERVICE_NAME,
     std::str::FromStr,
     tonic::metadata::{MetadataKey, MetadataMap, MetadataValue},
-    tracing_subscriber::filter::{LevelFilter, Targets},
 };
 
 /// Errors from initializing trace subscriber.
@@ -115,6 +115,15 @@ fn base_layer<S>() -> tracing_subscriber::fmt::Layer<S> {
         .with_line_number(true)
 }
 
+/// Construct a filter to be used with tracing-opentelemetry and tracing-chrome, based on the
+/// contents of the `RUST_TRACE` environment variable.
+fn make_trace_filter() -> Result<EnvFilter, FromEnvError> {
+    EnvFilter::builder()
+        .with_default_directive(Level::INFO.into())
+        .with_env_var("RUST_TRACE")
+        .try_from_env()
+}
+
 /// Configures and installs a tracing subscriber, to capture events logged with
 /// [`tracing::info`] and the like. Captured events are written to stdout, with
 /// formatting affected by the provided [`TraceConfiguration`].
@@ -201,16 +210,10 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<TraceGuar
             ]))))
             .install_batch(opentelemetry::runtime::Tokio)?;
 
-        // Filter out some spans from h2, internal to the OTLP exporter (via tonic). These spans
-        // would otherwise drown out root spans from the application.
-        let filter = Targets::new()
-            .with_default(LevelFilter::TRACE)
-            .with_target("h2", LevelFilter::OFF);
-
         let telemetry = tracing_opentelemetry::layer()
             .with_threads(true)
             .with_tracer(tracer)
-            .with_filter(filter);
+            .with_filter(make_trace_filter()?);
         layers.push(telemetry.boxed());
     }
 
@@ -229,7 +232,7 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<TraceGuar
             .include_args(true)
             .build();
         chrome_guard = Some(guard);
-        layers.push(layer.boxed());
+        layers.push(layer.with_filter(make_trace_filter()?).boxed());
     }
 
     let subscriber = Registry::default().with(layers);
