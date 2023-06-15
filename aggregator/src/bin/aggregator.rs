@@ -17,13 +17,15 @@ use std::{iter::Iterator, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::join;
 use tracing::info;
 use trillium::Headers;
+use trillium_tokio::Stopper;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     janus_main::<_, Options, Config, _, _>(RealClock::default(), |ctx| async move {
         let datastore = Arc::new(ctx.datastore);
-        let shutdown_signal =
-            setup_signal_handler().context("failed to register SIGTERM signal handler")?;
+        let stopper = Stopper::new();
+        setup_signal_handler(stopper.clone())
+            .context("failed to register SIGTERM signal handler")?;
         let response_headers = ctx
             .config
             .response_headers()
@@ -38,7 +40,7 @@ async fn main() -> Result<()> {
         let (aggregator_bound_address, aggregator_server) = setup_server(
             ctx.config.listen_address,
             response_headers.clone(),
-            shutdown_signal,
+            stopper.clone(),
             aggregator_handler,
         )
         .await
@@ -67,12 +69,10 @@ async fn main() -> Result<()> {
                     janus_aggregator_api::Config { auth_tokens },
                 );
 
-                let shutdown_signal =
-                    setup_signal_handler().context("failed to register SIGTERM signal handler")?;
                 let (aggregator_api_bound_address, aggregator_api_server) = setup_server(
                     aggregator_api_listen_address,
                     response_headers,
-                    shutdown_signal,
+                    stopper.clone(),
                     aggregator_api_handler,
                 )
                 .await

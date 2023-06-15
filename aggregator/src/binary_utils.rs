@@ -339,33 +339,21 @@ async fn health_endpoint_server(address: SocketAddr) {
         .await;
 }
 
-/// Register a signal handler for SIGTERM, and return a future that will become ready when a
-/// SIGTERM signal is received.
-pub fn setup_signal_handler() -> Result<impl Future<Output = ()>, std::io::Error> {
+/// Register a signal handler for SIGTERM, and stop the [`Stopper`] when a SIGTERM signal is
+/// received.
+pub fn setup_signal_handler(stopper: Stopper) -> Result<(), std::io::Error> {
     let mut signal_stream = signal_hook_tokio::Signals::new([signal_hook::consts::SIGTERM])?;
     let handle = signal_stream.handle();
-    let (sender, receiver) = futures::channel::oneshot::channel();
-    let mut sender = Some(sender);
     tokio::spawn(async move {
         while let Some(signal) = signal_stream.next().await {
             if signal == signal_hook::consts::SIGTERM {
-                if let Some(sender) = sender.take() {
-                    // This may return Err(()) if the receiver has been dropped already. If
-                    // that is the case, the consumer must be shut down already, so we can
-                    // safely ignore the error case.
-                    let _ = sender.send(());
-                    handle.close();
-                    break;
-                }
+                stopper.stop();
+                handle.close();
+                break;
             }
         }
     });
-    Ok(async move {
-        // The receiver may return Err(Canceled) if the sender has been dropped. By inspection, the
-        // sender always has a message sent across it before it is dropped, and the async task it
-        // is owned by will not terminate before that happens.
-        receiver.await.unwrap_or_default()
-    })
+    Ok(())
 }
 
 /// Construct a server that listens on the provided [`SocketAddr`] and services requests with
@@ -375,18 +363,9 @@ pub fn setup_signal_handler() -> Result<impl Future<Output = ()>, std::io::Error
 pub async fn setup_server(
     listen_address: SocketAddr,
     response_headers: Headers,
-    shutdown_signal: impl Future<Output = ()> + Send + 'static,
+    stopper: Stopper,
     handler: impl Handler,
 ) -> anyhow::Result<(SocketAddr, impl Future<Output = ()> + 'static)> {
-    let stopper = Stopper::new();
-    tokio::spawn({
-        let stopper = stopper.clone();
-        async move {
-            shutdown_signal.await;
-            stopper.stop();
-        }
-    });
-
     let (sender, receiver) = oneshot::channel();
     let init = Init::new(|info: Info| async move {
         // Ignore error if the receiver is dropped.

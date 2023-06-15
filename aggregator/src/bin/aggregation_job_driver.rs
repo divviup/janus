@@ -10,7 +10,7 @@ use janus_aggregator::{
 use janus_core::{time::RealClock, TokioRuntime};
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, sync::Arc, time::Duration};
-use tokio::select;
+use trillium_tokio::Stopper;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -34,8 +34,9 @@ async fn main() -> anyhow::Result<()> {
         ));
         let lease_duration =
             Duration::from_secs(ctx.config.job_driver_config.worker_lease_duration_secs);
-        let shutdown_signal =
-            setup_signal_handler().context("failed to register SIGTERM signal handler")?;
+        let stopper = Stopper::new();
+        setup_signal_handler(stopper.clone())
+            .context("failed to register SIGTERM signal handler")?;
 
         // Start running.
         let job_driver = Arc::new(JobDriver::new(
@@ -57,10 +58,7 @@ async fn main() -> anyhow::Result<()> {
                 ctx.config.job_driver_config.maximum_attempts_before_failure,
             ),
         ));
-        select! {
-            _ = job_driver.run() => {}
-            _ = shutdown_signal => {}
-        };
+        stopper.stop_future(job_driver.run()).await;
 
         Ok(())
     })
