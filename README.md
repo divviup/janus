@@ -6,6 +6,9 @@
 
 Janus is an experimental implementation of the [Distributed Aggregation Protocol
 (DAP) specification](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/).
+Currently it supports VDAFs with trivial aggregation parameters only, e.g.
+Prio3. VDAFs with nontrivial aggregation parameters (e.g. Poplar1) are not yet
+supported.
 
 Janus is currently in active development.
 
