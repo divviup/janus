@@ -9,13 +9,14 @@ use janus_core::time::RealClock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::select;
+use trillium_tokio::Stopper;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     janus_main::<_, Options, Config, _, _>(RealClock::default(), |ctx| async move {
-        let shutdown_signal =
-            setup_signal_handler().context("failed to register SIGTERM signal handler")?;
+        let stopper = Stopper::new();
+        setup_signal_handler(stopper.clone())
+            .context("failed to register SIGTERM signal handler")?;
 
         // Start creating aggregation jobs.
         let aggregation_job_creator = Arc::new(AggregationJobCreator::new(
@@ -25,10 +26,7 @@ async fn main() -> anyhow::Result<()> {
             ctx.config.min_aggregation_job_size,
             ctx.config.max_aggregation_job_size,
         ));
-        select! {
-            _ = aggregation_job_creator.run() => {}
-            _ = shutdown_signal => {}
-        };
+        stopper.stop_future(aggregation_job_creator.run()).await;
 
         Ok(())
     })
