@@ -125,7 +125,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                 Q::to_batch_identifier(
                     &self.task,
                     info.aggregation_job.partial_batch_identifier(),
-                    ra.report_metadata().time(),
+                    ra.time(),
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
