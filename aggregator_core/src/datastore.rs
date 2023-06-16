@@ -98,7 +98,7 @@ macro_rules! supported_schema_versions {
 // version is seen, [`Datastore::new`] fails.
 //
 // Note that the latest supported version must be first in the list.
-supported_schema_versions!(9);
+supported_schema_versions!(10);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -1334,7 +1334,7 @@ impl<C: Clock> Transaction<'_, C> {
                         ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                         WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
                     ) AS report_aggs
-                    ON report_aggs.client_report_id = client_reports.id
+                    ON report_aggs.client_report_id = client_reports.report_id  -- this join is very inefficient, fix before deploying in non-test scenario
                     AND report_aggs.aggregation_param = collection_jobs.aggregation_param
                     WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
                     AND collection_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
@@ -1969,13 +1969,12 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "SELECT 1 FROM report_aggregations
-                JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
                 JOIN aggregation_jobs
                     ON aggregation_jobs.id = report_aggregations.aggregation_job_id
-                WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                    AND client_reports.report_id = $2
-                    AND aggregation_jobs.aggregation_param = $3
-                    AND aggregation_jobs.aggregation_job_id != $4",
+                WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                  AND report_aggregations.client_report_id = $2
+                  AND aggregation_jobs.aggregation_param = $3
+                  AND aggregation_jobs.aggregation_job_id != $4",
             )
             .await?;
         Ok(self
@@ -2011,17 +2010,16 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "SELECT
-                    client_reports.report_id, client_reports.client_timestamp,
-                    report_aggregations.ord, report_aggregations.state,
-                    report_aggregations.prep_state, report_aggregations.prep_msg,
-                    report_aggregations.error_code, report_aggregations.last_prep_step
+                    report_aggregations.client_timestamp, report_aggregations.ord,
+                    report_aggregations.state, report_aggregations.prep_state,
+                    report_aggregations.prep_msg, report_aggregations.error_code,
+                    report_aggregations.last_prep_step
                 FROM report_aggregations
-                JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
                 JOIN aggregation_jobs
                     ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 WHERE aggregation_jobs.aggregation_job_id = $1
-                  AND client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $2)
-                  AND client_reports.report_id = $3",
+                  AND aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $2)
+                  AND report_aggregations.client_report_id = $3",
             )
             .await?;
         self.query_opt(
@@ -2065,16 +2063,15 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "SELECT
-                    client_reports.report_id, client_reports.client_timestamp,
+                    report_aggregations.client_report_id, report_aggregations.client_timestamp,
                     report_aggregations.ord, report_aggregations.state,
                     report_aggregations.prep_state, report_aggregations.prep_msg,
                     report_aggregations.error_code, report_aggregations.last_prep_step
                 FROM report_aggregations
-                JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
                 JOIN aggregation_jobs
                     ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 WHERE aggregation_jobs.aggregation_job_id = $1
-                  AND client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $2)
+                  AND aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $2)
                 ORDER BY report_aggregations.ord ASC",
             )
             .await?;
@@ -2093,7 +2090,7 @@ impl<C: Clock> Transaction<'_, C> {
                 role,
                 task_id,
                 aggregation_job_id,
-                &row.get_bytea_and_convert::<ReportId>("report_id")?,
+                &row.get_bytea_and_convert::<ReportId>("client_report_id")?,
                 &row,
             )
         })
@@ -2118,13 +2115,12 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "SELECT
-                    aggregation_jobs.aggregation_job_id, client_reports.report_id,
-                    client_reports.client_timestamp, report_aggregations.ord,
+                    aggregation_jobs.aggregation_job_id, report_aggregations.client_report_id,
+                    report_aggregations.client_timestamp, report_aggregations.ord,
                     report_aggregations.state, report_aggregations.prep_state,
                     report_aggregations.prep_msg, report_aggregations.error_code,
                     report_aggregations.last_prep_step
                 FROM report_aggregations
-                JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
                 JOIN aggregation_jobs
                     ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)",
@@ -2139,7 +2135,7 @@ impl<C: Clock> Transaction<'_, C> {
                     role,
                     task_id,
                     &row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?,
-                    &row.get_bytea_and_convert::<ReportId>("report_id")?,
+                    &row.get_bytea_and_convert::<ReportId>("client_report_id")?,
                     &row,
                 )
             })
@@ -2246,22 +2242,18 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "INSERT INTO report_aggregations
-                    (aggregation_job_id, client_report_id, ord, state, prep_state, prep_msg,
-                    error_code, last_prep_step)
+                    (aggregation_job_id, client_report_id, client_timestamp, ord, state, prep_state,
+                     prep_msg, error_code, last_prep_step)
                 VALUES ((SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1),
-                        (SELECT id FROM client_reports
-                            WHERE task_id = (SELECT id FROM tasks WHERE task_id = $2)
-                            AND report_id = $3),
-                        $4, $5, $6, $7, $8, $9)",
+                        $2, $3, $4, $5, $6, $7, $8, $9)",
             )
             .await?;
         self.execute(
             &stmt,
             &[
-                /* aggregation_job_id */
-                &report_aggregation.aggregation_job_id().as_ref(),
-                /* task_id */ &report_aggregation.task_id().as_ref(),
-                /* report_id */ &report_aggregation.report_id().as_ref(),
+                /* aggregation_job_id */ &report_aggregation.aggregation_job_id().as_ref(),
+                /* client_report_id */ &report_aggregation.report_id().as_ref(),
+                /* client_timestamp */ &report_aggregation.time().as_naive_date_time()?,
                 /* ord */ &TryInto::<i64>::try_into(report_aggregation.ord())?,
                 /* state */ &report_aggregation.state().state_code(),
                 /* prep_state */ &encoded_state_values.prep_state,
@@ -2293,21 +2285,23 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "UPDATE report_aggregations SET
-                    ord = $1, state = $2, prep_state = $3, prep_msg = $4, error_code = $5,
-                    last_prep_step = $6
-                WHERE aggregation_job_id = (SELECT id FROM aggregation_jobs WHERE
-                    aggregation_job_id = $7)
-                AND client_report_id = (SELECT id FROM client_reports
-                    WHERE task_id = (SELECT id FROM tasks WHERE task_id = $8)
-                    AND report_id = $9)",
+                    state = $1, prep_state = $2, prep_msg = $3, error_code = $4,
+                    last_prep_step = $5
+                WHERE aggregation_job_id = (
+                    SELECT id FROM aggregation_jobs
+                    WHERE aggregation_job_id = $6
+                      AND task_id = (SELECT id FROM tasks WHERE task_id = $7))
+                  AND client_report_id = $8
+                  AND client_timestamp = $9
+                  AND ord = $10",
             )
             .await?;
         check_single_row_mutation(
             self.execute(
                 &stmt,
                 &[
-                    /* ord */ &TryInto::<i64>::try_into(report_aggregation.ord())?,
-                    /* state */ &report_aggregation.state().state_code(),
+                    /* state */
+                    &report_aggregation.state().state_code(),
                     /* prep_state */ &encoded_state_values.prep_state,
                     /* prep_msg */ &encoded_state_values.prep_msg,
                     /* error_code */ &encoded_state_values.report_share_err,
@@ -2315,7 +2309,9 @@ impl<C: Clock> Transaction<'_, C> {
                     /* aggregation_job_id */
                     &report_aggregation.aggregation_job_id().as_ref(),
                     /* task_id */ &report_aggregation.task_id().as_ref(),
-                    /* report_id */ &report_aggregation.report_id().as_ref(),
+                    /* client_report_id */ &report_aggregation.report_id().as_ref(),
+                    /* client_timestamp */ &report_aggregation.time().as_naive_date_time()?,
+                    /* ord */ &TryInto::<i64>::try_into(report_aggregation.ord())?,
                 ],
             )
             .await?,
@@ -3738,7 +3734,7 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1) AND client_timestamp < $2
                 AND NOT EXISTS(
                     SELECT FROM report_aggregations
-                    WHERE report_aggregations.client_report_id = client_reports.id)",
+                    WHERE report_aggregations.client_report_id = client_reports.report_id)  -- TODO(#1467): this join is very slow, fix before deploying",
             )
             .await?;
         self.execute(
@@ -7926,8 +7922,11 @@ mod tests {
                 *want_report_aggregation.aggregation_job_id(),
                 *want_report_aggregation.report_id(),
                 *want_report_aggregation.time(),
-                want_report_aggregation.ord() + 10,
-                want_report_aggregation.last_prep_step().cloned(),
+                want_report_aggregation.ord(),
+                Some(PrepareStep::new(
+                    report_id,
+                    PrepareStepResult::Continued(format!("updated_prep_msg_{ord}").into()),
+                )),
                 want_report_aggregation.state().clone(),
             );
 
