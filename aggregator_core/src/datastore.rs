@@ -3713,7 +3713,7 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1) AND client_timestamp < $2
                 AND NOT EXISTS(
                     SELECT FROM report_aggregations
-                    WHERE report_aggregations.client_report_id = client_reports.report_id)  -- this join is very slow, fix before deploying",
+                    WHERE report_aggregations.client_report_id = client_reports.report_id)  -- TODO(#1467): this join is very slow, fix before deploying",
             )
             .await?;
         self.execute(
