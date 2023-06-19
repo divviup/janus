@@ -70,6 +70,6 @@ fixed = "1.23"
 hex = { version = "0.4", features = ["serde"] }  # ensure this remains compatible with the non-dev dependency
 janus_core = { path = ".", features = ["test-util"] }
 kube.workspace = true
-mockito = "1.0.2"
+mockito = "1.1.0"
 serde_test = "1.0.164"
 url = "2.4.0"
