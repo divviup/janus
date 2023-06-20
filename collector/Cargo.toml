@@ -39,5 +39,5 @@ url = "2.4.0"
 assert_matches = "1"
 janus_collector = { path = ".", features = ["fpvec_bounded_l2", "test-util"] }
 janus_core = { workspace = true, features = ["fpvec_bounded_l2", "test-util"] }
-mockito = "1.0.2"
+mockito = "1.1.0"
 rand = "0.8"
