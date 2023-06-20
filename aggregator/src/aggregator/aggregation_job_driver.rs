@@ -52,6 +52,8 @@ pub struct AggregationJobDriver {
     #[derivative(Debug = "ignore")]
     job_cancel_counter: Counter<u64>,
     #[derivative(Debug = "ignore")]
+    job_retry_counter: Counter<u64>,
+    #[derivative(Debug = "ignore")]
     http_request_duration_histogram: Histogram<f64>,
 }
 
@@ -69,6 +71,12 @@ impl AggregationJobDriver {
             .init();
         job_cancel_counter.add(&Context::current(), 0, &[]);
 
+        let job_retry_counter = meter
+            .u64_counter("janus_job_retries")
+            .with_description("Count of retried job steps.")
+            .init();
+        job_retry_counter.add(&Context::current(), 0, &[]);
+
         let http_request_duration_histogram = meter
             .f64_histogram("janus_http_request_duration_seconds")
             .with_description(
@@ -82,6 +90,7 @@ impl AggregationJobDriver {
             http_client,
             aggregate_step_failure_counter,
             job_cancel_counter,
+            job_retry_counter,
             http_request_duration_histogram,
         }
     }
@@ -864,6 +873,10 @@ impl AggregationJobDriver {
                     );
                     this.job_cancel_counter.add(&Context::current(), 1, &[]);
                     return this.cancel_aggregation_job(datastore, lease).await;
+                }
+
+                if lease.lease_attempts() > 1 {
+                    this.job_retry_counter.add(&Context::current(), 1, &[]);
                 }
 
                 this.step_aggregation_job(datastore, Arc::new(lease)).await
