@@ -1594,13 +1594,28 @@ impl<C: Clock> Transaction<'_, C> {
         {
             Some(e) => e,
             None => {
-                // This should never happen: if we got 0 affected rows earlier, there must be a row
-                // matching the task ID and report ID.
-                panic!(
-                    "found no existing report for task ID {} and report ID {}",
-                    new_report.task_id(),
-                    new_report.metadata().id(),
-                )
+                // This codepath can be taken due to a quirk of how the Repeatable Read isolation
+                // level works. It cannot occur at the Serializable isolation level.
+                //
+                // For this codepath to be taken, two writers must concurrently choose to write the
+                // same client report (by task & report ID), and this report must not already exist
+                // in the datastore.
+                //
+                // One writer will succeed. The other will receive a unique constraint violation on
+                // (task_id, report_id), since unique constraints are still enforced even in the
+                // presence of snapshot isolation. They will then receive `None` from the
+                // `get_client_report` call, since their snapshot is from before the successful
+                // writer's write, and fall into this codepath.
+                //
+                // The failing writer can't do anything about this problem while in its current
+                // transaction: further attempts to read the client report will continue to return
+                // `None` (since all reads in the same transaction are from the same snapshot), so
+                // so it can't evaluate idempotency. All it can do is give up on this transaction
+                // and try again, by calling `retry` and returning an error; once it retries, it
+                // will be able to read the report written by the successful writer. (It doesn't
+                // matter what error we return here, as the transaction will be retried.)
+                self.retry();
+                return Err(Error::MutationTargetAlreadyExists);
             }
         };
 
