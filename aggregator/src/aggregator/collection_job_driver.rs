@@ -426,6 +426,12 @@ impl CollectionJobDriver {
                         .await;
                 }
 
+                if collection_job_lease.lease_attempts() > 1 {
+                    this.metrics
+                        .job_steps_retried_counter
+                        .add(&Context::current(), 1, &[]);
+                }
+
                 this.step_collection_job(datastore, Arc::new(collection_job_lease))
                     .await
             })
@@ -442,6 +448,7 @@ struct CollectionJobDriverMetrics {
     jobs_already_finished_counter: Counter<u64>,
     deleted_jobs_encountered_counter: Counter<u64>,
     unexpected_job_state_counter: Counter<u64>,
+    job_steps_retried_counter: Counter<u64>,
 }
 
 impl CollectionJobDriverMetrics {
@@ -493,6 +500,12 @@ impl CollectionJobDriverMetrics {
             .init();
         unexpected_job_state_counter.add(&Context::current(), 0, &[]);
 
+        let job_steps_retried_counter = meter
+            .u64_counter("janus_job_retries")
+            .with_description("Count of retried job steps.")
+            .init();
+        job_steps_retried_counter.add(&Context::current(), 0, &[]);
+
         Self {
             jobs_finished_counter,
             http_request_duration_histogram,
@@ -500,6 +513,7 @@ impl CollectionJobDriverMetrics {
             jobs_already_finished_counter,
             deleted_jobs_encountered_counter,
             unexpected_job_state_counter,
+            job_steps_retried_counter,
         }
     }
 }
