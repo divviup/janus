@@ -273,6 +273,9 @@ impl TryFrom<&Task> for NewTaskRequest {
 const DIVVIUP_CONTENT_TYPE: &str = "application/vnd.divviup+json;version=0.1";
 
 async fn divviup_api_create_task(port_forward: &PortForward, task: &Task) {
+    // TODO(#1528): divviup-api is responsible for provisioning the task into both aggregators. This
+    // will need to adopt its new task creation message.
+
     let client = reqwest::Client::new();
     // Create an account first. (We should be implicitly logged in as a testing user already,
     // assuming divviup-api was built with the integration-testing feature)
