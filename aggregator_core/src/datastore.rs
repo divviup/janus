@@ -1063,7 +1063,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// Retrieves report & report aggregation metrics for a given task: either a tuple
     /// `Some((report_count, report_aggregation_count))`, or None if the task does not exist.
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_task_metrics(&self, task_id: TaskId) -> Result<Option<(u64, u64)>, Error> {
+    pub async fn get_task_metrics(&self, task_id: &TaskId) -> Result<Option<(u64, u64)>, Error> {
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -1073,8 +1073,10 @@ impl<C: Clock> Transaction<'_, C> {
                      WHERE tasks.task_id = $1
                        AND client_reports.client_timestamp >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)) AS report_count,
                     (SELECT COUNT(*) FROM aggregation_jobs
+                     JOIN tasks ON tasks.id = aggregation_jobs.task_id
                      RIGHT JOIN report_aggregations ON report_aggregations.aggregation_job_id = aggregation_jobs.id
-                     WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)) AS report_aggregation_count",
+                     WHERE tasks.task_id = $1
+                       AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)) AS report_aggregation_count",
             )
             .await?;
         let row = self
@@ -1301,7 +1303,7 @@ impl<C: Clock> Transaction<'_, C> {
                 "UPDATE client_reports SET aggregation_started = TRUE
                 WHERE id IN (
                     SELECT client_reports.id FROM client_reports
-                    JOIN tasks on tasks.id = client_reports.task_id
+                    JOIN tasks ON tasks.id = client_reports.task_id
                     WHERE tasks.task_id = $1
                       AND client_reports.aggregation_started = FALSE
                       AND client_reports.client_timestamp >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
@@ -1479,10 +1481,11 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT COUNT(DISTINCT report_aggregations.client_report_id) AS count
                 FROM report_aggregations
-                JOIN aggregation_jobs ON aggregation_jobs.id =
-                  report_aggregations.aggregation_job_id
-                WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                  AND aggregation_jobs.batch_id = $2",
+                JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                WHERE tasks.task_id = $1
+                  AND aggregation_jobs.batch_id = $2
+                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         let row = self
@@ -1491,6 +1494,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* task_id */ task_id.as_ref(),
                     /* batch_id */ &batch_id.get_encoded(),
+                    /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
             )
             .await?;
@@ -1574,7 +1578,7 @@ impl<C: Clock> Transaction<'_, C> {
                     .prepare_cached(
                         "DELETE FROM client_reports
                         USING tasks
-                        WHERE client_reports.id = tasks.task_id
+                        WHERE client_reports.task_id = tasks.id
                           AND tasks.task_id = $1
                           AND client_reports.report_id = $2",
                     )
@@ -1692,14 +1696,13 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "SELECT
-                    aggregation_param,
-                    batch_id,
-                    client_timestamp_interval,
-                    state,
-                    round,
+                    aggregation_param, batch_id, client_timestamp_interval, state, round,
                     last_continue_request_hash
-                FROM aggregation_jobs JOIN tasks ON tasks.id = aggregation_jobs.task_id
-                WHERE tasks.task_id = $1 AND aggregation_jobs.aggregation_job_id = $2",
+                FROM aggregation_jobs
+                JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                WHERE tasks.task_id = $1
+                  AND aggregation_jobs.aggregation_job_id = $2
+                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query_opt(
@@ -1707,6 +1710,7 @@ impl<C: Clock> Transaction<'_, C> {
             &[
                 /* task_id */ &task_id.as_ref(),
                 /* aggregation_job_id */ &aggregation_job_id.as_ref(),
+                /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
         .await?
@@ -1729,28 +1733,31 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "SELECT
-                    aggregation_job_id,
-                    aggregation_param,
-                    batch_id,
-                    client_timestamp_interval,
-                    state,
-                    round,
-                    last_continue_request_hash
-                FROM aggregation_jobs JOIN tasks ON tasks.id = aggregation_jobs.task_id
-                WHERE tasks.task_id = $1",
+                    aggregation_job_id, aggregation_param, batch_id, client_timestamp_interval,
+                    state, round, last_continue_request_hash
+                FROM aggregation_jobs
+                JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                WHERE tasks.task_id = $1
+                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
-        self.query(&stmt, &[/* task_id */ &task_id.as_ref()])
-            .await?
-            .into_iter()
-            .map(|row| {
-                Self::aggregation_job_from_row(
-                    task_id,
-                    &row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?,
-                    &row,
-                )
-            })
-            .collect()
+        self.query(
+            &stmt,
+            &[
+                /* task_id */ &task_id.as_ref(),
+                /* now */ &self.clock.now().as_naive_date_time()?,
+            ],
+        )
+        .await?
+        .into_iter()
+        .map(|row| {
+            Self::aggregation_job_from_row(
+                task_id,
+                &row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?,
+                &row,
+            )
+        })
+        .collect()
     }
 
     fn aggregation_job_from_row<
@@ -1812,12 +1819,13 @@ impl<C: Clock> Transaction<'_, C> {
                     lease_attempts = lease_attempts + 1
                 FROM tasks
                 WHERE tasks.id = aggregation_jobs.task_id
-                AND aggregation_jobs.id IN (
+                  AND aggregation_jobs.id IN (
                     SELECT aggregation_jobs.id FROM aggregation_jobs
-                    JOIN tasks on tasks.id = aggregation_jobs.task_id
+                    JOIN tasks ON tasks.id = aggregation_jobs.task_id
                     WHERE tasks.aggregator_role = 'LEADER'
-                    AND aggregation_jobs.state = 'IN_PROGRESS'
-                    AND aggregation_jobs.lease_expiry <= $2
+                      AND aggregation_jobs.state = 'IN_PROGRESS'
+                      AND aggregation_jobs.lease_expiry <= $2
+                      AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
                     FOR UPDATE SKIP LOCKED LIMIT $3
                 )
                 RETURNING tasks.task_id, tasks.query_type, tasks.vdaf,
@@ -1871,7 +1879,8 @@ impl<C: Clock> Transaction<'_, C> {
                   AND tasks.task_id = $1
                   AND aggregation_jobs.aggregation_job_id = $2
                   AND aggregation_jobs.lease_expiry = $3
-                  AND aggregation_jobs.lease_token = $4",
+                  AND aggregation_jobs.lease_token = $4
+                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($5::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         check_single_row_mutation(
@@ -1883,6 +1892,7 @@ impl<C: Clock> Transaction<'_, C> {
                     &lease.leased().aggregation_job_id().as_ref(),
                     /* lease_expiry */ &lease.lease_expiry_time(),
                     /* lease_token */ &lease.lease_token().as_ref(),
+                    /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
             )
             .await?,
@@ -1902,22 +1912,15 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "INSERT INTO aggregation_jobs
-                (
-                    task_id,
-                    aggregation_job_id,
-                    aggregation_param,
-                    batch_id,
-                    client_timestamp_interval,
-                    state,
-                    round,
-                    last_continue_request_hash
-                )
+                    (task_id, aggregation_job_id, aggregation_param, batch_id,
+                    client_timestamp_interval, state, round, last_continue_request_hash)
                 VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8)
-                ON CONFLICT DO NOTHING",
+                ON CONFLICT DO NOTHING
+                RETURNING UPPER(client_timestamp_interval) < COALESCE($9::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP) AS is_expired",
             )
             .await?;
-        check_insert(
-            self.execute(
+        let rows = self
+            .query(
                 &stmt,
                 &[
                     /* task_id */ &aggregation_job.task_id().as_ref(),
@@ -1932,10 +1935,38 @@ impl<C: Clock> Transaction<'_, C> {
                     /* round */ &(u16::from(aggregation_job.round()) as i32),
                     /* last_continue_request_hash */
                     &aggregation_job.last_continue_request_hash(),
+                    /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
             )
-            .await?,
-        )
+            .await?;
+        let row_count = rows.len().try_into()?;
+
+        if let Some(row) = rows.into_iter().next() {
+            // We got a row back, meaning we wrote an aggregation job. We check that it wasn't
+            // expired per the task's report_expiry_age, but otherwise we are done.
+            if row.get("is_expired") {
+                let stmt = self
+                    .prepare_cached(
+                        "DELETE FROM aggregation_jobs
+                        USING tasks
+                        WHERE aggregation_jobs.task_id = tasks.id
+                          AND tasks.task_id = $1
+                          AND aggregation_jobs.aggregation_job_id = $2",
+                    )
+                    .await?;
+                self.execute(
+                    &stmt,
+                    &[
+                        /* task_id */ &aggregation_job.task_id().as_ref(),
+                        /* aggregation_job_id */ &aggregation_job.id().as_ref(),
+                    ],
+                )
+                .await?;
+                return Ok(());
+            }
+        }
+
+        check_insert(row_count)
     }
 
     /// update_aggregation_job updates a stored aggregation job.
@@ -1954,8 +1985,10 @@ impl<C: Clock> Transaction<'_, C> {
                     state = $1,
                     round = $2,
                     last_continue_request_hash = $3
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $4)
-                  AND aggregation_job_id = $5",
+                FROM tasks
+                WHERE tasks.task_id = $4
+                  AND aggregation_jobs.aggregation_job_id = $5
+                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($6::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         check_single_row_mutation(
@@ -1967,8 +2000,8 @@ impl<C: Clock> Transaction<'_, C> {
                     /* last_continue_request_hash */
                     &aggregation_job.last_continue_request_hash(),
                     /* task_id */ &aggregation_job.task_id().as_ref(),
-                    /* aggregation_job_id */
-                    &aggregation_job.id().as_ref(),
+                    /* aggregation_job_id */ &aggregation_job.id().as_ref(),
+                    /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
             )
             .await?,
@@ -1991,12 +2024,13 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "SELECT 1 FROM report_aggregations
-                JOIN aggregation_jobs
-                    ON aggregation_jobs.id = report_aggregations.aggregation_job_id
-                WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                WHERE tasks.task_id = $1
                   AND report_aggregations.client_report_id = $2
                   AND aggregation_jobs.aggregation_param = $3
-                  AND aggregation_jobs.aggregation_job_id != $4",
+                  AND aggregation_jobs.aggregation_job_id != $4
+                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($5::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         Ok(self
@@ -2007,6 +2041,7 @@ impl<C: Clock> Transaction<'_, C> {
                     /* report_id */ &report_id.as_ref(),
                     /* aggregation_param */ &aggregation_param.get_encoded(),
                     /* aggregation_job_id */ &aggregation_job_id.as_ref(),
+                    /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
             )
             .await
@@ -2037,19 +2072,21 @@ impl<C: Clock> Transaction<'_, C> {
                     report_aggregations.prep_msg, report_aggregations.error_code,
                     report_aggregations.last_prep_step
                 FROM report_aggregations
-                JOIN aggregation_jobs
-                    ON aggregation_jobs.id = report_aggregations.aggregation_job_id
-                WHERE aggregation_jobs.aggregation_job_id = $1
-                  AND aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $2)
-                  AND report_aggregations.client_report_id = $3",
+                JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                WHERE tasks.task_id = $1
+                  AND aggregation_jobs.aggregation_job_id = $2
+                  AND report_aggregations.client_report_id = $3
+                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query_opt(
             &stmt,
             &[
-                /* aggregation_job_id */ &aggregation_job_id.as_ref(),
                 /* task_id */ &task_id.as_ref(),
+                /* aggregation_job_id */ &aggregation_job_id.as_ref(),
                 /* report_id */ &report_id.as_ref(),
+                /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
         .await?
@@ -2090,18 +2127,20 @@ impl<C: Clock> Transaction<'_, C> {
                     report_aggregations.prep_state, report_aggregations.prep_msg,
                     report_aggregations.error_code, report_aggregations.last_prep_step
                 FROM report_aggregations
-                JOIN aggregation_jobs
-                    ON aggregation_jobs.id = report_aggregations.aggregation_job_id
-                WHERE aggregation_jobs.aggregation_job_id = $1
-                  AND aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $2)
+                JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                WHERE tasks.task_id = $1
+                  AND aggregation_jobs.aggregation_job_id = $2
+                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
                 ORDER BY report_aggregations.ord ASC",
             )
             .await?;
         self.query(
             &stmt,
             &[
-                /* aggregation_job_id */ &aggregation_job_id.as_ref(),
                 /* task_id */ &task_id.as_ref(),
+                /* aggregation_job_id */ &aggregation_job_id.as_ref(),
+                /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
         .await?
@@ -2143,25 +2182,32 @@ impl<C: Clock> Transaction<'_, C> {
                     report_aggregations.prep_msg, report_aggregations.error_code,
                     report_aggregations.last_prep_step
                 FROM report_aggregations
-                JOIN aggregation_jobs
-                    ON aggregation_jobs.id = report_aggregations.aggregation_job_id
-                WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+                JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                WHERE tasks.task_id = $1
+                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
-        self.query(&stmt, &[/* task_id */ &task_id.as_ref()])
-            .await?
-            .into_iter()
-            .map(|row| {
-                Self::report_aggregation_from_row(
-                    vdaf,
-                    role,
-                    task_id,
-                    &row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?,
-                    &row.get_bytea_and_convert::<ReportId>("client_report_id")?,
-                    &row,
-                )
-            })
-            .collect()
+        self.query(
+            &stmt,
+            &[
+                /* task_id */ &task_id.as_ref(),
+                /* now */ &self.clock.now().as_naive_date_time()?,
+            ],
+        )
+        .await?
+        .into_iter()
+        .map(|row| {
+            Self::report_aggregation_from_row(
+                vdaf,
+                role,
+                task_id,
+                &row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?,
+                &row.get_bytea_and_convert::<ReportId>("client_report_id")?,
+                &row,
+            )
+        })
+        .collect()
     }
 
     fn report_aggregation_from_row<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>(
@@ -2266,13 +2312,19 @@ impl<C: Clock> Transaction<'_, C> {
                 "INSERT INTO report_aggregations
                     (aggregation_job_id, client_report_id, client_timestamp, ord, state, prep_state,
                      prep_msg, error_code, last_prep_step)
-                VALUES ((SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1),
-                        $2, $3, $4, $5, $6, $7, $8, $9)",
+                SELECT aggregation_jobs.id, $3, $4, $5, $6, $7, $8, $9, $10
+                FROM aggregation_jobs
+                JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                WHERE tasks.task_id = $1
+                  AND aggregation_job_id = $2
+                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($11::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                ON CONFLICT DO NOTHING",
             )
             .await?;
         self.execute(
             &stmt,
             &[
+                /* task_id */ &report_aggregation.task_id().as_ref(),
                 /* aggregation_job_id */ &report_aggregation.aggregation_job_id().as_ref(),
                 /* client_report_id */ &report_aggregation.report_id().as_ref(),
                 /* client_timestamp */ &report_aggregation.time().as_naive_date_time()?,
@@ -2282,6 +2334,7 @@ impl<C: Clock> Transaction<'_, C> {
                 /* prep_msg */ &encoded_state_values.prep_msg,
                 /* error_code */ &encoded_state_values.report_share_err,
                 /* last_prep_step */ &encoded_last_prep_step,
+                /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
         .await?;
@@ -2306,16 +2359,17 @@ impl<C: Clock> Transaction<'_, C> {
 
         let stmt = self
             .prepare_cached(
-                "UPDATE report_aggregations SET
-                    state = $1, prep_state = $2, prep_msg = $3, error_code = $4,
-                    last_prep_step = $5
-                WHERE aggregation_job_id = (
-                    SELECT id FROM aggregation_jobs
-                    WHERE aggregation_job_id = $6
-                      AND task_id = (SELECT id FROM tasks WHERE task_id = $7))
-                  AND client_report_id = $8
-                  AND client_timestamp = $9
-                  AND ord = $10",
+                "UPDATE report_aggregations
+                SET state = $1, prep_state = $2, prep_msg = $3, error_code = $4, last_prep_step = $5
+                FROM aggregation_jobs, tasks
+                WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
+                  AND aggregation_jobs.task_id = tasks.id
+                  AND aggregation_jobs.aggregation_job_id = $6
+                  AND tasks.task_id = $7
+                  AND report_aggregations.client_report_id = $8
+                  AND report_aggregations.client_timestamp = $9
+                  AND report_aggregations.ord = $10
+                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($11::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         check_single_row_mutation(
@@ -2334,6 +2388,7 @@ impl<C: Clock> Transaction<'_, C> {
                     /* client_report_id */ &report_aggregation.report_id().as_ref(),
                     /* client_timestamp */ &report_aggregation.time().as_naive_date_time()?,
                     /* ord */ &TryInto::<i64>::try_into(report_aggregation.ord())?,
+                    /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
             )
             .await?,
@@ -2703,7 +2758,7 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE tasks.id = collection_jobs.task_id
                   AND collection_jobs.id IN (
                     SELECT collection_jobs.id FROM collection_jobs
-                    JOIN tasks on tasks.id = collection_jobs.task_id
+                    JOIN tasks ON tasks.id = collection_jobs.task_id
                     WHERE tasks.aggregator_role = 'LEADER'
                       AND collection_jobs.state = 'COLLECTABLE'
                       AND collection_jobs.lease_expiry <= $2
@@ -3481,6 +3536,7 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         batch_id: &BatchId,
     ) -> Result<RangeInclusive<usize>, Error> {
+        // TODO(#1467): fix this to work in presence of GC.
         let stmt = self
             .prepare_cached(
                 "WITH batch_report_aggregation_statuses AS
@@ -3552,6 +3608,7 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         min_report_count: u64,
     ) -> Result<Option<BatchId>, Error> {
+        // TODO(#1467): fix this to work in presence of GC.
         let stmt = self
             .prepare_cached(
                 "WITH batches AS (
@@ -3777,68 +3834,18 @@ impl<C: Clock> Transaction<'_, C> {
     pub async fn delete_expired_aggregation_artifacts(
         &self,
         task_id: &TaskId,
-        oldest_allowed_report_timestamp: Time,
     ) -> Result<(), Error> {
         let stmt = self
             .prepare_cached(
                 "WITH aggregation_jobs_to_delete AS (
-                    SELECT id FROM aggregation_jobs
-                    WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                      AND UPPER(client_timestamp_interval) <= $2
-                      AND NOT EXISTS (
-                          SELECT id FROM collection_jobs
-                          WHERE aggregation_jobs.task_id = collection_jobs.task_id
-                            AND (aggregation_jobs.batch_id = collection_jobs.batch_identifier
-                              OR aggregation_jobs.client_timestamp_interval &&
-                                collection_jobs.batch_interval))
-                      AND NOT EXISTS (
-                          SELECT id FROM aggregate_share_jobs
-                          WHERE aggregation_jobs.task_id = aggregate_share_jobs.task_id
-                            AND (aggregation_jobs.batch_id = aggregate_share_jobs.batch_identifier
-                              OR aggregation_jobs.client_timestamp_interval &&
-                                aggregate_share_jobs.batch_interval)
-                      )
-                      AND NOT EXISTS (
-                          SELECT id FROM outstanding_batches
-                          WHERE aggregation_jobs.task_id = outstanding_batches.task_id
-                            AND aggregation_jobs.batch_id = outstanding_batches.batch_id)
+                    SELECT aggregation_jobs.id FROM aggregation_jobs
+                    JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                    WHERE tasks.task_id = $1
+                      AND UPPER(aggregation_jobs.client_timestamp_interval) < COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
                 ),
                 deleted_report_aggregations AS (
                     DELETE FROM report_aggregations
-                    WHERE report_aggregations.aggregation_job_id IN (
-                        SELECT id FROM aggregation_jobs_to_delete)
-                ),
-                deleted_batch_aggregations AS (
-                    DELETE FROM batch_aggregations
-                    WHERE
-                        (
-                            batch_aggregations.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                            AND UPPER(batch_aggregations.batch_interval) <= $2
-                            AND NOT EXISTS (
-                                SELECT id FROM collection_jobs
-                                WHERE batch_aggregations.task_id = collection_jobs.task_id
-                                    AND (batch_aggregations.batch_identifier =
-                                         collection_jobs.batch_identifier
-                                      OR batch_aggregations.batch_interval <@
-                                         collection_jobs.batch_interval))
-                            AND NOT EXISTS (
-                                SELECT id FROM aggregate_share_jobs
-                                WHERE batch_aggregations.task_id = aggregate_share_jobs.task_id
-                                    AND (batch_aggregations.batch_identifier =
-                                        aggregate_share_jobs.batch_identifier
-                                      OR batch_aggregations.batch_interval <@
-                                        aggregate_share_jobs.batch_interval)
-                            )
-                            AND NOT EXISTS (
-                                SELECT id FROM outstanding_batches
-                                WHERE batch_aggregations.task_id = outstanding_batches.task_id
-                                    AND batch_aggregations.batch_identifier =
-                                        outstanding_batches.batch_id)
-                        ) OR batch_aggregations.batch_identifier IN (
-                            SELECT batch_id FROM aggregation_jobs
-                            WHERE aggregation_jobs.id IN (SELECT id FROM
-                                aggregation_jobs_to_delete)
-                        )
+                    WHERE aggregation_job_id IN (SELECT id FROM aggregation_jobs_to_delete)
                 )
                 DELETE FROM aggregation_jobs
                 WHERE id IN (SELECT id FROM aggregation_jobs_to_delete)",
@@ -3848,8 +3855,7 @@ impl<C: Clock> Transaction<'_, C> {
             &stmt,
             &[
                 /* task_id */ &task_id.get_encoded(),
-                /* client_timestamp */
-                &oldest_allowed_report_timestamp.as_naive_date_time()?,
+                /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
         .await?;
@@ -6105,139 +6111,192 @@ mod tests {
     async fn get_task_metrics(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        let clock = MockClock::default();
-        let ds = ephemeral_datastore.datastore(clock.clone()).await;
+        const REPORT_COUNT: usize = 5;
+        const REPORT_AGGREGATION_COUNT: usize = 2;
         const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
-        let report_expiry_age = clock
-            .now()
-            .difference(&OLDEST_ALLOWED_REPORT_TIMESTAMP)
-            .unwrap();
+        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
 
-        ds.run_tx(|tx| {
-            Box::pin(async move {
-                let task = TaskBuilder::new(
-                    task::QueryType::TimeInterval,
-                    VdafInstance::Fake,
-                    Role::Leader,
-                )
-                .with_report_expiry_age(Some(report_expiry_age))
-                .build();
-                let other_task = TaskBuilder::new(
-                    task::QueryType::TimeInterval,
-                    VdafInstance::Fake,
-                    Role::Leader,
-                )
-                .build();
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
-                const REPORT_COUNT: usize = 5;
-                const REPORT_AGGREGATION_COUNT: usize = 2;
+        let task_id = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    let task = TaskBuilder::new(
+                        task::QueryType::TimeInterval,
+                        VdafInstance::Fake,
+                        Role::Leader,
+                    )
+                    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+                    .build();
+                    let other_task = TaskBuilder::new(
+                        task::QueryType::TimeInterval,
+                        VdafInstance::Fake,
+                        Role::Leader,
+                    )
+                    .build();
 
-                let reports: Vec<_> = iter::repeat_with(|| {
-                    LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP)
-                })
-                .take(REPORT_COUNT)
-                .chain(
-                    iter::repeat_with(|| {
+                    let reports: Vec<_> = iter::repeat_with(|| {
+                        LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP)
+                    })
+                    .take(REPORT_COUNT)
+                    .collect();
+                    let expired_reports: Vec<_> = iter::repeat_with(|| {
                         LeaderStoredReport::new_dummy(
                             *task.id(),
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                .sub(&Duration::from_seconds(1))
+                                .sub(&Duration::from_seconds(2))
                                 .unwrap(),
                         )
                     })
-                    .take(12),
-                )
-                .collect();
-                let other_reports: Vec<_> = iter::repeat_with(|| {
-                    LeaderStoredReport::new_dummy(
-                        *other_task.id(),
-                        Time::from_seconds_since_epoch(0),
-                    )
-                })
-                .take(22)
-                .collect();
+                    .take(REPORT_COUNT)
+                    .collect();
+                    let other_reports: Vec<_> = iter::repeat_with(|| {
+                        LeaderStoredReport::new_dummy(
+                            *other_task.id(),
+                            Time::from_seconds_since_epoch(0),
+                        )
+                    })
+                    .take(22)
+                    .collect();
 
-                let aggregation_job = AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                    *task.id(),
-                    random(),
-                    AggregationParam(0),
-                    (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
-                    AggregationJobState::InProgress,
-                    AggregationJobRound::from(0),
-                );
-                let other_aggregation_job =
-                    AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                        *other_task.id(),
+                    let aggregation_job = AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
                         random(),
                         AggregationParam(0),
                         (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
+                        Interval::new(
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .sub(&Duration::from_seconds(1))
+                                .unwrap(),
+                            Duration::from_seconds(2),
+                        )
+                        .unwrap(),
                         AggregationJobState::InProgress,
                         AggregationJobRound::from(0),
                     );
-
-                let report_aggregations: Vec<_> = reports
-                    .iter()
-                    .take(REPORT_AGGREGATION_COUNT)
-                    .enumerate()
-                    .map(|(ord, report)| {
-                        ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                    let expired_aggregation_job =
+                        AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                             *task.id(),
-                            *aggregation_job.id(),
-                            *report.metadata().id(),
-                            *report.metadata().time(),
-                            ord.try_into().unwrap(),
-                            None,
-                            ReportAggregationState::Start,
-                        )
-                    })
-                    .collect();
-                let other_report_aggregations: Vec<_> = other_reports
-                    .iter()
-                    .take(13)
-                    .enumerate()
-                    .map(|(ord, report)| {
-                        ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                            random(),
+                            AggregationParam(0),
+                            (),
+                            Interval::new(
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(2))
+                                    .unwrap(),
+                                Duration::from_seconds(1),
+                            )
+                            .unwrap(),
+                            AggregationJobState::InProgress,
+                            AggregationJobRound::from(0),
+                        );
+                    let other_aggregation_job =
+                        AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                             *other_task.id(),
-                            *other_aggregation_job.id(),
-                            *report.metadata().id(),
-                            *report.metadata().time(),
-                            ord.try_into().unwrap(),
-                            None,
-                            ReportAggregationState::Start,
-                        )
-                    })
-                    .collect();
+                            random(),
+                            AggregationParam(0),
+                            (),
+                            Interval::new(
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(1))
+                                    .unwrap(),
+                                Duration::from_seconds(2),
+                            )
+                            .unwrap(),
+                            AggregationJobState::InProgress,
+                            AggregationJobRound::from(0),
+                        );
 
-                tx.put_task(&task).await?;
-                tx.put_task(&other_task).await?;
-                try_join_all(
-                    reports
+                    let report_aggregations: Vec<_> = reports
                         .iter()
-                        .chain(other_reports.iter())
-                        .map(|report| async move {
-                            tx.put_client_report(&dummy_vdaf::Vdaf::new(), report).await
-                        }),
-                )
-                .await?;
-                tx.put_aggregation_job(&aggregation_job).await?;
-                tx.put_aggregation_job(&other_aggregation_job).await?;
-                try_join_all(
-                    report_aggregations
+                        .take(REPORT_AGGREGATION_COUNT)
+                        .enumerate()
+                        .map(|(ord, report)| {
+                            ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                                *task.id(),
+                                *aggregation_job.id(),
+                                *report.metadata().id(),
+                                *report.metadata().time(),
+                                ord.try_into().unwrap(),
+                                None,
+                                ReportAggregationState::Start,
+                            )
+                        })
+                        .collect();
+                    let expired_report_aggregations: Vec<_> = expired_reports
                         .iter()
-                        .chain(other_report_aggregations.iter())
-                        .map(|report_aggregation| async move {
-                            tx.put_report_aggregation(report_aggregation).await
-                        }),
-                )
-                .await?;
+                        .take(REPORT_AGGREGATION_COUNT)
+                        .enumerate()
+                        .map(|(ord, report)| {
+                            ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                                *task.id(),
+                                *expired_aggregation_job.id(),
+                                *report.metadata().id(),
+                                *report.metadata().time(),
+                                ord.try_into().unwrap(),
+                                None,
+                                ReportAggregationState::Start,
+                            )
+                        })
+                        .collect();
+                    let other_report_aggregations: Vec<_> = other_reports
+                        .iter()
+                        .take(13)
+                        .enumerate()
+                        .map(|(ord, report)| {
+                            ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                                *other_task.id(),
+                                *other_aggregation_job.id(),
+                                *report.metadata().id(),
+                                *report.metadata().time(),
+                                ord.try_into().unwrap(),
+                                None,
+                                ReportAggregationState::Start,
+                            )
+                        })
+                        .collect();
 
+                    tx.put_task(&task).await?;
+                    tx.put_task(&other_task).await?;
+                    try_join_all(
+                        reports
+                            .iter()
+                            .chain(expired_reports.iter())
+                            .chain(other_reports.iter())
+                            .map(|report| async move {
+                                tx.put_client_report(&dummy_vdaf::Vdaf::new(), report).await
+                            }),
+                    )
+                    .await?;
+                    tx.put_aggregation_job(&aggregation_job).await?;
+                    tx.put_aggregation_job(&expired_aggregation_job).await?;
+                    tx.put_aggregation_job(&other_aggregation_job).await?;
+                    try_join_all(
+                        report_aggregations
+                            .iter()
+                            .chain(expired_report_aggregations.iter())
+                            .chain(other_report_aggregations.iter())
+                            .map(|report_aggregation| async move {
+                                tx.put_report_aggregation(report_aggregation).await
+                            }),
+                    )
+                    .await?;
+
+                    Ok(*task.id())
+                })
+            })
+            .await
+            .unwrap();
+
+        // Advance the clock to "enable" report expiry.
+        clock.advance(&REPORT_EXPIRY_AGE);
+
+        ds.run_tx(|tx| {
+            Box::pin(async move {
                 // Verify we get the correct results when we check metrics on our target task.
                 assert_eq!(
-                    tx.get_task_metrics(*task.id()).await.unwrap(),
+                    tx.get_task_metrics(&task_id).await.unwrap(),
                     Some((
                         REPORT_COUNT.try_into().unwrap(),
                         REPORT_AGGREGATION_COUNT.try_into().unwrap()
@@ -6245,7 +6304,7 @@ mod tests {
                 );
 
                 // Verify that we get None if we ask about a task that doesn't exist.
-                assert_eq!(tx.get_task_metrics(random()).await.unwrap(), None);
+                assert_eq!(tx.get_task_metrics(&random()).await.unwrap(), None);
 
                 Ok(())
             })
@@ -6750,13 +6809,18 @@ mod tests {
     #[tokio::test]
     async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+
+        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
+        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task = TaskBuilder::new(
             task::QueryType::FixedSize { max_batch_size: 10 },
             VdafInstance::Fake,
             Role::Leader,
         )
+        .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
         .build();
         let unrelated_task = TaskBuilder::new(
             task::QueryType::FixedSize { max_batch_size: 10 },
@@ -6777,13 +6841,45 @@ mod tests {
                     // Create a batch for the first task containing two reports, which has started
                     // aggregation twice with two different aggregation parameters.
                     let batch_id = random();
-                    let report_0 = LeaderStoredReport::new_dummy(
+                    let expired_report = LeaderStoredReport::new_dummy(
                         *task.id(),
-                        Time::from_seconds_since_epoch(12340),
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP
+                            .sub(&Duration::from_seconds(2))
+                            .unwrap(),
                     );
+                    let report_0 =
+                        LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
                     let report_1 = LeaderStoredReport::new_dummy(
                         *task.id(),
-                        Time::from_seconds_since_epoch(12345),
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP
+                            .add(&Duration::from_seconds(1))
+                            .unwrap(),
+                    );
+
+                    let expired_aggregation_job =
+                        AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            random(),
+                            AggregationParam(22),
+                            batch_id,
+                            Interval::new(
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(2))
+                                    .unwrap(),
+                                Duration::from_seconds(1),
+                            )
+                            .unwrap(),
+                            AggregationJobState::InProgress,
+                            AggregationJobRound::from(0),
+                        );
+                    let expired_report_aggregation = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        *expired_aggregation_job.id(),
+                        *expired_report.metadata().id(),
+                        *expired_report.metadata().time(),
+                        0,
+                        None,
+                        ReportAggregationState::Start,
                     );
 
                     let aggregation_job_0 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
@@ -6791,7 +6887,7 @@ mod tests {
                         random(),
                         AggregationParam(22),
                         batch_id,
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(2))
                             .unwrap(),
                         AggregationJobState::InProgress,
                         AggregationJobRound::from(0),
@@ -6802,7 +6898,7 @@ mod tests {
                             *aggregation_job_0.id(),
                             *report_0.metadata().id(),
                             *report_0.metadata().time(),
-                            0,
+                            1,
                             None,
                             ReportAggregationState::Start,
                         );
@@ -6812,7 +6908,7 @@ mod tests {
                             *aggregation_job_0.id(),
                             *report_1.metadata().id(),
                             *report_1.metadata().time(),
-                            1,
+                            2,
                             None,
                             ReportAggregationState::Start,
                         );
@@ -6848,9 +6944,15 @@ mod tests {
                             ReportAggregationState::Start,
                         );
 
+                    tx.put_client_report(&dummy_vdaf::Vdaf::new(), &expired_report)
+                        .await?;
                     tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report_0)
                         .await?;
                     tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report_1)
+                        .await?;
+
+                    tx.put_aggregation_job(&expired_aggregation_job).await?;
+                    tx.put_report_aggregation(&expired_report_aggregation)
                         .await?;
 
                     tx.put_aggregation_job(&aggregation_job_0).await?;
@@ -6870,6 +6972,9 @@ mod tests {
             })
             .await
             .unwrap();
+
+        // Advance the clock to "enable" report expiry.
+        clock.advance(&REPORT_EXPIRY_AGE);
 
         let report_count = ds
             .run_tx(|tx| {
@@ -6984,7 +7089,11 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+
+        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
+        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         // We use a dummy VDAF & fixed-size task for this test, to better exercise the
         // serialization/deserialization roundtrip of the batch_identifier & aggregation_param.
@@ -6993,6 +7102,7 @@ mod tests {
             VdafInstance::Fake,
             Role::Leader,
         )
+        .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
         .build();
         let batch_id = random();
         let leader_aggregation_job = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
@@ -7000,11 +7110,7 @@ mod tests {
             random(),
             AggregationParam(23),
             batch_id,
-            Interval::new(
-                Time::from_seconds_since_epoch(5432),
-                Duration::from_seconds(1234),
-            )
-            .unwrap(),
+            Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1)).unwrap(),
             AggregationJobState::InProgress,
             AggregationJobRound::from(0),
         );
@@ -7013,11 +7119,7 @@ mod tests {
             random(),
             AggregationParam(23),
             random(),
-            Interval::new(
-                Time::from_seconds_since_epoch(1007),
-                Duration::from_seconds(6209),
-            )
-            .unwrap(),
+            Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1)).unwrap(),
             AggregationJobState::InProgress,
             AggregationJobRound::from(0),
         );
@@ -7042,6 +7144,9 @@ mod tests {
         })
         .await
         .unwrap();
+
+        // Advance the clock to "enable" report expiry.
+        clock.advance(&REPORT_EXPIRY_AGE);
 
         let (got_leader_aggregation_job, got_helper_aggregation_job) = ds
             .run_tx(|tx| {
@@ -7126,8 +7231,14 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(Some(new_leader_aggregation_job), got_leader_aggregation_job);
-        assert_eq!(Some(new_helper_aggregation_job), got_helper_aggregation_job);
+        assert_eq!(
+            Some(new_leader_aggregation_job.clone()),
+            got_leader_aggregation_job
+        );
+        assert_eq!(
+            Some(new_helper_aggregation_job.clone()),
+            got_helper_aggregation_job
+        );
 
         // Trying to write an aggregation job again should fail.
         let new_leader_aggregation_job = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
@@ -7157,6 +7268,37 @@ mod tests {
         })
         .await
         .unwrap();
+
+        // Advance the clock to verify that the aggregation jobs have expired & are no longer
+        // returned.
+        clock.advance(&Duration::from_seconds(2));
+        let (got_leader_aggregation_job, got_helper_aggregation_job) = ds
+            .run_tx(|tx| {
+                let (new_leader_aggregation_job, new_helper_aggregation_job) = (
+                    new_leader_aggregation_job.clone(),
+                    new_helper_aggregation_job.clone(),
+                );
+                Box::pin(async move {
+                    Ok((
+                        tx.get_aggregation_job::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            new_leader_aggregation_job.task_id(),
+                            new_leader_aggregation_job.id(),
+                        )
+                        .await
+                        .unwrap(),
+                        tx.get_aggregation_job::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            new_helper_aggregation_job.task_id(),
+                            new_helper_aggregation_job.id(),
+                        )
+                        .await
+                        .unwrap(),
+                    ))
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(None, got_leader_aggregation_job);
+        assert_eq!(None, got_helper_aggregation_job);
     }
 
     #[rstest_reuse::apply(schema_versions_template)]
@@ -7164,7 +7306,11 @@ mod tests {
     async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore) {
         // Setup: insert a few aggregation jobs.
         install_test_trace_subscriber();
-        let clock = MockClock::default();
+
+        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
+        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
+        const LEASE_DURATION: StdDuration = StdDuration::from_secs(300);
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         const AGGREGATION_JOB_COUNT: usize = 10;
@@ -7173,6 +7319,7 @@ mod tests {
             VdafInstance::Prio3Count,
             Role::Leader,
         )
+        .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
         .build();
         let mut aggregation_job_ids: Vec<_> = thread_rng()
             .sample_iter(Standard)
@@ -7199,7 +7346,11 @@ mod tests {
                             (),
                             (),
                             Interval::new(
-                                Time::from_seconds_since_epoch(0),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(LEASE_DURATION.as_secs()))
+                                    .unwrap()
+                                    .add(&Duration::from_seconds(LEASE_DURATION.as_secs()))
+                                    .unwrap(),
                                 Duration::from_seconds(1),
                             )
                             .unwrap(),
@@ -7221,10 +7372,27 @@ mod tests {
                     random(),
                     (),
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
                         .unwrap(),
                     AggregationJobState::Finished,
                     AggregationJobRound::from(1),
+                ))
+                .await?;
+
+                // Write an expired aggregation job. We don't want to retrieve this one, either.
+                tx.put_aggregation_job(&AggregationJob::<
+                    PRIO3_VERIFY_KEY_LENGTH,
+                    TimeInterval,
+                    Prio3Count,
+                >::new(
+                    *task.id(),
+                    random(),
+                    (),
+                    (),
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                        .unwrap(),
+                    AggregationJobState::InProgress,
+                    AggregationJobRound::from(0),
                 ))
                 .await?;
 
@@ -7257,11 +7425,13 @@ mod tests {
         .await
         .unwrap();
 
+        // Advance the clock to "enable" report expiry.
+        clock.advance(&REPORT_EXPIRY_AGE);
+
         // Run: run several transactions that all call acquire_incomplete_aggregation_jobs
         // concurrently. (We do things concurrently in an attempt to make sure the
         // mutual-exclusivity works properly.)
         const CONCURRENT_TX_COUNT: usize = 10;
-        const LEASE_DURATION: StdDuration = StdDuration::from_secs(300);
         const MAXIMUM_ACQUIRE_COUNT: usize = 4;
 
         // Sanity check constants: ensure we acquire jobs across multiple calls to exercise the
@@ -7628,9 +7798,11 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
-        let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
+        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
+
+        let report_id = random();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let verify_key: [u8; PRIO3_VERIFY_KEY_LENGTH] = random();
         let vdaf_transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), &report_id, &0);
@@ -7649,15 +7821,18 @@ mod tests {
         .into_iter()
         .enumerate()
         {
+            let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+            let ds = ephemeral_datastore.datastore(clock.clone()).await;
+
             let task = TaskBuilder::new(
                 task::QueryType::TimeInterval,
                 VdafInstance::Prio3Count,
                 Role::Leader,
             )
+            .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
             .build();
             let aggregation_job_id = random();
-            let time = Time::from_seconds_since_epoch(12345);
-            let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+            let report_id = random();
 
             let want_report_aggregation = ds
                 .run_tx(|tx| {
@@ -7674,7 +7849,7 @@ mod tests {
                             (),
                             (),
                             Interval::new(
-                                Time::from_seconds_since_epoch(0),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP,
                                 Duration::from_seconds(1),
                             )
                             .unwrap(),
@@ -7685,7 +7860,7 @@ mod tests {
                         tx.put_report_share(
                             task.id(),
                             &ReportShare::new(
-                                ReportMetadata::new(report_id, time),
+                                ReportMetadata::new(report_id, OLDEST_ALLOWED_REPORT_TIMESTAMP),
                                 Vec::from("public_share"),
                                 HpkeCiphertext::new(
                                     HpkeConfigId::from(12),
@@ -7700,7 +7875,7 @@ mod tests {
                             *task.id(),
                             aggregation_job_id,
                             report_id,
-                            time,
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP,
                             ord.try_into().unwrap(),
                             Some(PrepareStep::new(
                                 report_id,
@@ -7714,6 +7889,9 @@ mod tests {
                 })
                 .await
                 .unwrap();
+
+            // Advance the clock to "enable" report expiry.
+            clock.advance(&REPORT_EXPIRY_AGE);
 
             let got_report_aggregation = ds
                 .run_tx(|tx| {
@@ -7774,25 +7952,52 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(Some(want_report_aggregation), got_report_aggregation);
+
+            // Advance the clock again to expire relevant datastore items.
+            clock.advance(&REPORT_EXPIRY_AGE);
+
+            let got_report_aggregation = ds
+                .run_tx(|tx| {
+                    let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
+                    Box::pin(async move {
+                        tx.get_report_aggregation(
+                            vdaf.as_ref(),
+                            &Role::Leader,
+                            task.id(),
+                            &aggregation_job_id,
+                            &report_id,
+                        )
+                        .await
+                    })
+                })
+                .await
+                .unwrap();
+            assert_eq!(None, got_report_aggregation);
         }
     }
 
     #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn check_report_aggregation_exists(ephemeral_datastore: EphemeralDatastore) {
+    async fn check_other_report_aggregation_exists(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+
+        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
+        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
+
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
             VdafInstance::Fake,
             Role::Helper,
         )
+        .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
         .build();
 
         ds.put_task(&task).await.unwrap();
 
         let aggregation_job_id = random();
-        let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        let report_id = random();
 
         ds.run_tx(|tx| {
             let task_id = *task.id();
@@ -7802,7 +8007,7 @@ mod tests {
                     aggregation_job_id,
                     dummy_vdaf::AggregationParam(0),
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
                         .unwrap(),
                     AggregationJobState::InProgress,
                     AggregationJobRound::from(0),
@@ -7811,7 +8016,7 @@ mod tests {
                 tx.put_report_share(
                     &task_id,
                     &ReportShare::new(
-                        ReportMetadata::new(report_id, Time::from_seconds_since_epoch(12345)),
+                        ReportMetadata::new(report_id, OLDEST_ALLOWED_REPORT_TIMESTAMP),
                         Vec::from("public_share"),
                         HpkeCiphertext::new(
                             HpkeConfigId::from(12),
@@ -7826,7 +8031,7 @@ mod tests {
                     task_id,
                     aggregation_job_id,
                     report_id,
-                    Time::from_seconds_since_epoch(12345),
+                    OLDEST_ALLOWED_REPORT_TIMESTAMP,
                     0,
                     None,
                     ReportAggregationState::Start,
@@ -7837,6 +8042,9 @@ mod tests {
         })
         .await
         .unwrap();
+
+        // Advance the clock to "enable" report expiry.
+        clock.advance(&REPORT_EXPIRY_AGE);
 
         ds.run_tx(|tx| {
             let task_id = *task.id();
@@ -7900,6 +8108,28 @@ mod tests {
         })
         .await
         .unwrap();
+
+        // Advance the clock again to expire all relevant datastore items.
+        clock.advance(&REPORT_EXPIRY_AGE);
+
+        ds.run_tx(|tx| {
+            let task_id = *task.id();
+            Box::pin(async move {
+                assert!(!tx
+                    .check_other_report_aggregation_exists::<0, dummy_vdaf::Vdaf>(
+                        &task_id,
+                        &report_id,
+                        &dummy_vdaf::AggregationParam(0),
+                        &random(),
+                    )
+                    .await
+                    .unwrap());
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
     }
 
     #[rstest_reuse::apply(schema_versions_template)]
@@ -7951,9 +8181,13 @@ mod tests {
     #[tokio::test]
     async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
-        let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
+        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
+
+        let report_id = random();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let verify_key: [u8; PRIO3_VERIFY_KEY_LENGTH] = random();
         let vdaf_transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), &report_id, &0);
@@ -7963,9 +8197,9 @@ mod tests {
             VdafInstance::Prio3Count,
             Role::Leader,
         )
+        .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
         .build();
         let aggregation_job_id = random();
-        let time = Time::from_seconds_since_epoch(12345);
 
         let want_report_aggregations = ds
             .run_tx(|tx| {
@@ -7985,7 +8219,7 @@ mod tests {
                         aggregation_job_id,
                         (),
                         (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
                         AggregationJobRound::from(0),
@@ -8006,7 +8240,7 @@ mod tests {
                         tx.put_report_share(
                             task.id(),
                             &ReportShare::new(
-                                ReportMetadata::new(report_id, time),
+                                ReportMetadata::new(report_id, OLDEST_ALLOWED_REPORT_TIMESTAMP),
                                 Vec::from("public_share"),
                                 HpkeCiphertext::new(
                                     HpkeConfigId::from(12),
@@ -8021,7 +8255,7 @@ mod tests {
                             *task.id(),
                             aggregation_job_id,
                             report_id,
-                            time,
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP,
                             ord.try_into().unwrap(),
                             Some(PrepareStep::new(report_id, PrepareStepResult::Finished)),
                             state.clone(),
@@ -8034,6 +8268,9 @@ mod tests {
             })
             .await
             .unwrap();
+
+        // Advance the clock to "enable" report expiry.
+        clock.advance(&REPORT_EXPIRY_AGE);
 
         let got_report_aggregations = ds
             .run_tx(|tx| {
@@ -8051,6 +8288,26 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(want_report_aggregations, got_report_aggregations);
+
+        // Advance the clock again to expire relevant datastore entities.
+        clock.advance(&REPORT_EXPIRY_AGE);
+
+        let got_report_aggregations = ds
+            .run_tx(|tx| {
+                let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
+                Box::pin(async move {
+                    tx.get_report_aggregations_for_aggregation_job(
+                        vdaf.as_ref(),
+                        &Role::Leader,
+                        task.id(),
+                        &aggregation_job_id,
+                    )
+                    .await
+                })
+            })
+            .await
+            .unwrap();
+        assert!(got_report_aggregations.is_empty());
     }
 
     #[tokio::test]
@@ -10260,7 +10517,9 @@ mod tests {
     async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        let clock = MockClock::default();
+        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
+        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
         let vdaf = dummy_vdaf::Vdaf::new();
 
@@ -10271,9 +10530,8 @@ mod tests {
             client_timestamps: &[Time],
         ) -> (
             Q::BatchIdentifier,
-            AggregationJobId,   // aggregation job ID
-            Q::BatchIdentifier, // batch aggregation ID
-            Vec<ReportId>,      // client report IDs
+            AggregationJobId, // aggregation job ID
+            Vec<ReportId>,    // client report IDs
         ) {
             let batch_identifier = Q::batch_identifier_for_client_timestamps(client_timestamps);
 
@@ -10286,25 +10544,12 @@ mod tests {
                 report_ids_and_timestamps.push((*report.metadata().id(), *client_timestamp));
             }
 
-            // We arbitrarily extend the client_timestamp_interval by one second in each direction
-            // in order to test that GC occurs correctly even if aggregation jobs overlap with, but
-            // are not contained within, collection jobs.
-            let min_client_timestamp = client_timestamps
-                .iter()
-                .min()
-                .unwrap()
-                .sub(&Duration::from_seconds(1))
-                .unwrap();
-            let max_client_timestamp = client_timestamps
-                .iter()
-                .max()
-                .unwrap()
-                .add(&Duration::from_seconds(1))
-                .unwrap();
+            let min_client_timestamp = client_timestamps.iter().min().unwrap();
+            let max_client_timestamp = client_timestamps.iter().max().unwrap();
             let client_timestamp_interval = Interval::new(
-                min_client_timestamp,
+                *min_client_timestamp,
                 max_client_timestamp
-                    .difference(&min_client_timestamp)
+                    .difference(min_client_timestamp)
                     .unwrap()
                     .add(&Duration::from_seconds(1))
                     .unwrap(),
@@ -10338,24 +10583,9 @@ mod tests {
                     .unwrap();
             }
 
-            let shortened_batch_identifier = Q::shortened_batch_identifier(&batch_identifier);
-            let batch_aggregation = BatchAggregation::<0, Q, dummy_vdaf::Vdaf>::new(
-                *task_id,
-                shortened_batch_identifier.clone(),
-                AggregationParam(0),
-                0,
-                BatchAggregationState::Aggregating,
-                None,
-                0,
-                client_timestamp_interval,
-                ReportIdChecksum::default(),
-            );
-            tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
-
             (
                 batch_identifier,
                 *aggregation_job.id(),
-                shortened_batch_identifier,
                 report_ids_and_timestamps
                     .into_iter()
                     .map(|(report_id, _)| report_id)
@@ -10363,15 +10593,12 @@ mod tests {
             )
         }
 
-        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
         let (
             leader_time_interval_task_id,
             helper_time_interval_task_id,
             leader_fixed_size_task_id,
             helper_fixed_size_task_id,
-            other_task_id,
             want_aggregation_job_ids,
-            want_batch_aggregation_ids,
             want_report_ids,
         ) = ds
             .run_tx(|tx| {
@@ -10381,39 +10608,35 @@ mod tests {
                         VdafInstance::Fake,
                         Role::Leader,
                     )
+                    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                     .build();
                     let helper_time_interval_task = TaskBuilder::new(
                         task::QueryType::TimeInterval,
                         VdafInstance::Fake,
                         Role::Helper,
                     )
+                    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                     .build();
                     let leader_fixed_size_task = TaskBuilder::new(
                         task::QueryType::FixedSize { max_batch_size: 10 },
                         VdafInstance::Fake,
                         Role::Leader,
                     )
+                    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                     .build();
                     let helper_fixed_size_task = TaskBuilder::new(
                         task::QueryType::FixedSize { max_batch_size: 10 },
                         VdafInstance::Fake,
                         Role::Helper,
                     )
-                    .build();
-                    let other_task = TaskBuilder::new(
-                        task::QueryType::TimeInterval,
-                        VdafInstance::Fake,
-                        Role::Leader,
-                    )
+                    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                     .build();
                     tx.put_task(&leader_time_interval_task).await?;
                     tx.put_task(&helper_time_interval_task).await?;
                     tx.put_task(&leader_fixed_size_task).await?;
                     tx.put_task(&helper_fixed_size_task).await?;
-                    tx.put_task(&other_task).await?;
 
                     let mut aggregation_job_ids = HashSet::new();
-                    let mut batch_aggregation_ids = HashSet::new();
                     let mut all_report_ids = HashSet::new();
 
                     // Leader, time-interval aggregation job with old reports [GC'ed].
@@ -10432,7 +10655,7 @@ mod tests {
                     .await;
 
                     // Leader, time-interval aggregation job with old & new reports [not GC'ed].
-                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
+                    let (_, aggregation_job_id, report_ids) =
                         write_aggregation_artifacts::<TimeInterval>(
                             tx,
                             leader_time_interval_task.id(),
@@ -10447,11 +10670,10 @@ mod tests {
                         )
                         .await;
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Leader, time-interval aggregation job with new reports [not GC'ed].
-                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
+                    let (_, aggregation_job_id, report_ids) =
                         write_aggregation_artifacts::<TimeInterval>(
                             tx,
                             leader_time_interval_task.id(),
@@ -10466,37 +10688,6 @@ mod tests {
                         )
                         .await;
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
-                    all_report_ids.extend(report_ids);
-
-                    // Leader, time-interval aggregation job with attached collection job [not GC'ed].
-                    let (batch_identifier, aggregation_job_id, batch_aggregation_id, report_ids) =
-                        write_aggregation_artifacts::<TimeInterval>(
-                            tx,
-                            leader_time_interval_task.id(),
-                            &[
-                                OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(10))
-                                    .unwrap(),
-                                OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(9))
-                                    .unwrap(),
-                            ],
-                        )
-                        .await;
-                    tx.put_collection_job(
-                        &CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                            *leader_time_interval_task.id(),
-                            random(),
-                            batch_identifier,
-                            AggregationParam(0),
-                            CollectionJobState::Start,
-                        ),
-                    )
-                    .await
-                    .unwrap();
-                    aggregation_job_ids.insert(aggregation_job_id);
-                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Helper, time-interval aggregation job with old reports [GC'ed].
@@ -10515,7 +10706,7 @@ mod tests {
                     .await;
 
                     // Helper, time-interval task with old & new reports [not GC'ed].
-                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
+                    let (_, aggregation_job_id, report_ids) =
                         write_aggregation_artifacts::<TimeInterval>(
                             tx,
                             helper_time_interval_task.id(),
@@ -10530,11 +10721,10 @@ mod tests {
                         )
                         .await;
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Helper, time-interval task with new reports [not GC'ed].
-                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
+                    let (_, aggregation_job_id, report_ids) =
                         write_aggregation_artifacts::<TimeInterval>(
                             tx,
                             helper_time_interval_task.id(),
@@ -10549,38 +10739,6 @@ mod tests {
                         )
                         .await;
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
-                    all_report_ids.extend(report_ids);
-
-                    // Helper, time-interval task with attached aggregate share job [not GC'ed].
-                    let (batch_identifier, aggregation_job_id, batch_aggregation_id, report_ids) =
-                        write_aggregation_artifacts::<TimeInterval>(
-                            tx,
-                            helper_time_interval_task.id(),
-                            &[
-                                OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(10))
-                                    .unwrap(),
-                                OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(9))
-                                    .unwrap(),
-                            ],
-                        )
-                        .await;
-                    tx.put_aggregate_share_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        &AggregateShareJob::new(
-                            *helper_time_interval_task.id(),
-                            batch_identifier,
-                            AggregationParam(23),
-                            AggregateShare(5),
-                            2,
-                            random(),
-                        ),
-                    )
-                    .await
-                    .unwrap();
-                    aggregation_job_ids.insert(aggregation_job_id);
-                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Leader, fixed-size aggregation job with old reports [GC'ed].
@@ -10599,7 +10757,7 @@ mod tests {
                     .await;
 
                     // Leader, fixed-size aggregation job with old & new reports [not GC'ed].
-                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
+                    let (_, aggregation_job_id, report_ids) =
                         write_aggregation_artifacts::<FixedSize>(
                             tx,
                             leader_fixed_size_task.id(),
@@ -10614,11 +10772,10 @@ mod tests {
                         )
                         .await;
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Leader, fixed-size aggregation job with new reports [not GC'ed].
-                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
+                    let (_, aggregation_job_id, report_ids) =
                         write_aggregation_artifacts::<FixedSize>(
                             tx,
                             leader_fixed_size_task.id(),
@@ -10633,57 +10790,6 @@ mod tests {
                         )
                         .await;
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
-                    all_report_ids.extend(report_ids);
-
-                    // Leader, fixed-size aggregation job with attached collection job [not GC'ed].
-                    let (batch_identifier, aggregation_job_id, batch_aggregation_id, report_ids) =
-                        write_aggregation_artifacts::<FixedSize>(
-                            tx,
-                            leader_fixed_size_task.id(),
-                            &[
-                                OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(10))
-                                    .unwrap(),
-                                OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(9))
-                                    .unwrap(),
-                            ],
-                        )
-                        .await;
-                    tx.put_collection_job(&CollectionJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
-                        *leader_fixed_size_task.id(),
-                        random(),
-                        batch_identifier,
-                        AggregationParam(0),
-                        CollectionJobState::Start,
-                    ))
-                    .await
-                    .unwrap();
-                    aggregation_job_ids.insert(aggregation_job_id);
-                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
-                    all_report_ids.extend(report_ids);
-
-                    // Leader, fixed-size aggregation job with attached outstanding batch [not GC'ed].
-                    let (batch_identifier, aggregation_job_id, batch_aggregation_id, report_ids) =
-                        write_aggregation_artifacts::<FixedSize>(
-                            tx,
-                            leader_fixed_size_task.id(),
-                            &[
-                                OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(8))
-                                    .unwrap(),
-                                OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(7))
-                                    .unwrap(),
-                            ],
-                        )
-                        .await;
-                    tx.put_outstanding_batch(leader_fixed_size_task.id(), &batch_identifier)
-                        .await
-                        .unwrap();
-                    aggregation_job_ids.insert(aggregation_job_id);
-                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Helper, fixed-size aggregation job with old reports [GC'ed].
@@ -10702,7 +10808,7 @@ mod tests {
                     .await;
 
                     // Helper, fixed-size aggregation job with old & new reports [not GC'ed].
-                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
+                    let (_, aggregation_job_id, report_ids) =
                         write_aggregation_artifacts::<FixedSize>(
                             tx,
                             helper_fixed_size_task.id(),
@@ -10717,11 +10823,10 @@ mod tests {
                         )
                         .await;
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Helper, fixed-size aggregation job with new reports [not GC'ed].
-                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
+                    let (_, aggregation_job_id, report_ids) =
                         write_aggregation_artifacts::<FixedSize>(
                             tx,
                             helper_fixed_size_task.id(),
@@ -10736,57 +10841,6 @@ mod tests {
                         )
                         .await;
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
-                    all_report_ids.extend(report_ids);
-
-                    // Helper, fixed-size aggregation job with attached aggregate share job [not GC'ed].
-                    let (batch_identifier, aggregation_job_id, batch_aggregation_id, report_ids) =
-                        write_aggregation_artifacts::<FixedSize>(
-                            tx,
-                            helper_fixed_size_task.id(),
-                            &[
-                                OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(10))
-                                    .unwrap(),
-                                OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(9))
-                                    .unwrap(),
-                            ],
-                        )
-                        .await;
-                    tx.put_aggregate_share_job::<0, FixedSize, dummy_vdaf::Vdaf>(
-                        &AggregateShareJob::new(
-                            *helper_fixed_size_task.id(),
-                            batch_identifier,
-                            AggregationParam(23),
-                            AggregateShare(5),
-                            2,
-                            random(),
-                        ),
-                    )
-                    .await
-                    .unwrap();
-                    aggregation_job_ids.insert(aggregation_job_id);
-                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
-                    all_report_ids.extend(report_ids);
-
-                    // Aggregation job for a different task [not GC'ed].
-                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
-                        write_aggregation_artifacts::<TimeInterval>(
-                            tx,
-                            other_task.id(),
-                            &[
-                                OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(8))
-                                    .unwrap(),
-                                OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(7))
-                                    .unwrap(),
-                            ],
-                        )
-                        .await;
-                    aggregation_job_ids.insert(aggregation_job_id);
-                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     Ok((
@@ -10794,9 +10848,7 @@ mod tests {
                         *helper_time_interval_task.id(),
                         *leader_fixed_size_task.id(),
                         *helper_fixed_size_task.id(),
-                        *other_task.id(),
                         aggregation_job_ids,
-                        batch_aggregation_ids,
                         all_report_ids,
                     ))
                 })
@@ -10804,29 +10856,20 @@ mod tests {
             .await
             .unwrap();
 
+        // Advance the clock to "enable" report expiry.
+        clock.advance(&REPORT_EXPIRY_AGE);
+
         // Run.
         ds.run_tx(|tx| {
             Box::pin(async move {
-                tx.delete_expired_aggregation_artifacts(
-                    &leader_time_interval_task_id,
-                    OLDEST_ALLOWED_REPORT_TIMESTAMP,
-                )
-                .await?;
-                tx.delete_expired_aggregation_artifacts(
-                    &helper_time_interval_task_id,
-                    OLDEST_ALLOWED_REPORT_TIMESTAMP,
-                )
-                .await?;
-                tx.delete_expired_aggregation_artifacts(
-                    &leader_fixed_size_task_id,
-                    OLDEST_ALLOWED_REPORT_TIMESTAMP,
-                )
-                .await?;
-                tx.delete_expired_aggregation_artifacts(
-                    &helper_fixed_size_task_id,
-                    OLDEST_ALLOWED_REPORT_TIMESTAMP,
-                )
-                .await?;
+                tx.delete_expired_aggregation_artifacts(&leader_time_interval_task_id)
+                    .await?;
+                tx.delete_expired_aggregation_artifacts(&helper_time_interval_task_id)
+                    .await?;
+                tx.delete_expired_aggregation_artifacts(&leader_fixed_size_task_id)
+                    .await?;
+                tx.delete_expired_aggregation_artifacts(&helper_fixed_size_task_id)
+                    .await?;
                 Ok(())
             })
         })
@@ -10834,7 +10877,7 @@ mod tests {
         .unwrap();
 
         // Verify.
-        let (got_aggregation_job_ids, got_batch_aggregation_ids, got_report_ids) = ds
+        let (got_aggregation_job_ids, got_report_ids) = ds
             .run_tx(|tx| {
                 let vdaf = vdaf.clone();
                 Box::pin(async move {
@@ -10870,71 +10913,10 @@ mod tests {
                         .unwrap()
                         .into_iter()
                         .map(|job| *job.id());
-                    let other_task_aggregation_job_ids = tx
-                        .get_aggregation_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                            &other_task_id,
-                        )
-                        .await
-                        .unwrap()
-                        .into_iter()
-                        .map(|job| *job.id());
                     let got_aggregation_job_ids = leader_time_interval_aggregation_job_ids
                         .chain(helper_time_interval_aggregation_job_ids)
                         .chain(leader_fixed_size_aggregation_job_ids)
                         .chain(helper_fixed_size_aggregation_job_ids)
-                        .chain(other_task_aggregation_job_ids)
-                        .collect();
-
-                    let leader_time_interval_batch_aggregation_ids = tx
-                        .get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                            &vdaf,
-                            &leader_time_interval_task_id,
-                        )
-                        .await
-                        .unwrap()
-                        .into_iter()
-                        .map(|agg| agg.batch_identifier().get_encoded());
-                    let helper_time_interval_batch_aggregation_ids = tx
-                        .get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                            &vdaf,
-                            &helper_time_interval_task_id,
-                        )
-                        .await
-                        .unwrap()
-                        .into_iter()
-                        .map(|agg| agg.batch_identifier().get_encoded());
-                    let leader_fixed_size_batch_aggregation_ids = tx
-                        .get_batch_aggregations_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
-                            &vdaf,
-                            &leader_fixed_size_task_id,
-                        )
-                        .await
-                        .unwrap()
-                        .into_iter()
-                        .map(|agg| agg.batch_identifier().get_encoded());
-                    let helper_fixed_size_batch_aggregation_ids = tx
-                        .get_batch_aggregations_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
-                            &vdaf,
-                            &helper_fixed_size_task_id,
-                        )
-                        .await
-                        .unwrap()
-                        .into_iter()
-                        .map(|agg| agg.batch_identifier().get_encoded());
-                    let other_task_batch_aggregation_ids = tx
-                        .get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                            &vdaf,
-                            &other_task_id,
-                        )
-                        .await
-                        .unwrap()
-                        .into_iter()
-                        .map(|agg| agg.batch_identifier().get_encoded());
-                    let got_batch_aggregation_ids = leader_time_interval_batch_aggregation_ids
-                        .chain(helper_time_interval_batch_aggregation_ids)
-                        .chain(leader_fixed_size_batch_aggregation_ids)
-                        .chain(helper_fixed_size_batch_aggregation_ids)
-                        .chain(other_task_batch_aggregation_ids)
                         .collect();
 
                     let leader_time_interval_report_aggregations = tx
@@ -10969,34 +10951,20 @@ mod tests {
                         )
                         .await
                         .unwrap();
-                    let other_task_report_aggregations = tx
-                        .get_report_aggregations_for_task::<0, dummy_vdaf::Vdaf>(
-                            &vdaf,
-                            &Role::Leader,
-                            &other_task_id,
-                        )
-                        .await
-                        .unwrap();
                     let got_report_ids = leader_time_interval_report_aggregations
                         .into_iter()
                         .chain(helper_time_interval_report_aggregations)
                         .chain(leader_fixed_size_report_aggregations)
                         .chain(helper_fixed_size_report_aggregations)
-                        .chain(other_task_report_aggregations)
                         .map(|report_aggregation| *report_aggregation.report_id())
                         .collect();
 
-                    Ok((
-                        got_aggregation_job_ids,
-                        got_batch_aggregation_ids,
-                        got_report_ids,
-                    ))
+                    Ok((got_aggregation_job_ids, got_report_ids))
                 })
             })
             .await
             .unwrap();
         assert_eq!(want_aggregation_job_ids, got_aggregation_job_ids);
-        assert_eq!(want_batch_aggregation_ids, got_batch_aggregation_ids);
         assert_eq!(want_report_ids, got_report_ids);
     }
 
