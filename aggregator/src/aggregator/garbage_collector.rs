@@ -66,8 +66,7 @@ impl<C: Clock> GarbageCollector<C> {
                     .await?;
 
                     // Find and delete old client reports.
-                    tx.delete_expired_client_reports(task.id(), oldest_allowed_report_timestamp)
-                        .await?;
+                    tx.delete_expired_client_reports(task.id()).await?;
 
                     Ok(())
                 })

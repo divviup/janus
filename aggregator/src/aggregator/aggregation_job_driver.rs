@@ -2937,7 +2937,7 @@ mod tests {
             runtime_manager.wait_for_completed_tasks("stepper", i).await;
             // Advance the clock by the lease duration, so that the job driver can pick up the job
             // and try again.
-            clock.advance(Duration::from_seconds(600));
+            clock.advance(&Duration::from_seconds(600));
         }
         task_handle.abort();
 

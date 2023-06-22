@@ -51,7 +51,7 @@ impl MockClock {
         }
     }
 
-    pub fn advance(&self, dur: Duration) {
+    pub fn advance(&self, dur: &Duration) {
         let mut current_time = self.current_time.lock().unwrap();
         *current_time = current_time
             .as_seconds_since_epoch()
