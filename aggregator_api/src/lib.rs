@@ -23,7 +23,7 @@ use ring::{
     constant_time,
     digest::{digest, SHA256},
 };
-use std::{str::FromStr, sync::Arc};
+use std::{str::FromStr, sync::Arc, unreachable};
 use tracing::{error, warn};
 use trillium::{Conn, Handler, Status};
 use trillium_api::{api, Halt, Json, State};
@@ -145,6 +145,13 @@ async fn post_task<C: Clock>(
     // representations will be harmonized.
     // https://github.com/divviup/janus/issues/1524
 
+    if !matches!(req.role, Role::Leader | Role::Helper) {
+        return Err(Error::new(
+            format!("invalid role {}", req.role),
+            Status::BadRequest,
+        ));
+    }
+
     // struct `aggregator_core::task::Task` expects to get two aggregator endpoint URLs, but only
     // the one for the peer aggregator is in the incoming request (or for that matter, is ever used
     // by Janus), so we insert a fake URL for "self".
@@ -153,12 +160,7 @@ async fn post_task<C: Clock>(
     let aggregator_endpoints = match req.role {
         Role::Leader => Vec::from([fake_aggregator_url, req.peer_aggregator_endpoint]),
         Role::Helper => Vec::from([req.peer_aggregator_endpoint, fake_aggregator_url]),
-        role => {
-            return Err(Error::new(
-                format!("invalid role {role}"),
-                Status::BadRequest,
-            ))
-        }
+        _ => unreachable!(),
     };
 
     let vdaf_verify_key_bytes = URL_SAFE_NO_PAD
@@ -184,7 +186,7 @@ async fn post_task<C: Clock>(
     // 32 byte task ID by taking SHA-256(VDAF verify key).
     // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-04#name-verification-key-requiremen
     let task_id = TaskId::try_from(digest(&SHA256, &vdaf_verify_key_bytes).as_ref())
-        .map_err(|err| Error::new(err.to_string(), Status::BadRequest))?;
+        .map_err(|err| Error::new(err.to_string(), Status::InternalServerError))?;
 
     let vdaf_verify_keys = Vec::from([SecretBytes::new(vdaf_verify_key_bytes)]);
 
@@ -229,24 +231,14 @@ async fn post_task<C: Clock>(
             Vec::from([AuthenticationToken::DapAuth(random())])
         }
 
-        role => {
-            return Err(Error::new(
-                format!("invalid role {role}"),
-                Status::BadRequest,
-            ))
-        }
+        _ => unreachable!(),
     };
 
     let collector_auth_tokens = match req.role {
         // TODO(#472): switch to generating bearer tokens by default
         Role::Leader => Vec::from([AuthenticationToken::DapAuth(random())]),
         Role::Helper => Vec::new(),
-        role => {
-            return Err(Error::new(
-                format!("invalid role {role}"),
-                Status::BadRequest,
-            ))
-        }
+        _ => unreachable!(),
     };
     let hpke_keys = Vec::from([generate_hpke_config_and_private_key(
         random(),
@@ -699,6 +691,48 @@ mod tests {
             get("/task_ids").run_async(&handler).await,
             Status::Unauthorized,
             "",
+        );
+    }
+
+    #[tokio::test]
+    async fn post_task_bad_role() {
+        // Setup: create a datastore & handler.
+        let (handler, _ephemeral_datastore) = setup_api_test().await;
+
+        let vdaf_verify_key =
+            SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
+        let aggregator_auth_token = AuthenticationToken::DapAuth(random());
+
+        let req = PostTaskReq {
+            peer_aggregator_endpoint: "http://aggregator.endpoint".try_into().unwrap(),
+            query_type: QueryType::TimeInterval,
+            vdaf: VdafInstance::Prio3Count,
+            role: Role::Collector,
+            vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
+            max_batch_query_count: 12,
+            task_expiration: Some(Time::from_seconds_since_epoch(12345)),
+            min_batch_size: 223,
+            time_precision: Duration::from_seconds(62),
+            collector_hpke_config: generate_hpke_config_and_private_key(
+                random(),
+                HpkeKemId::X25519HkdfSha256,
+                HpkeKdfId::HkdfSha256,
+                HpkeAeadId::Aes128Gcm,
+            )
+            .config()
+            .clone(),
+            aggregator_auth_token: Some(URL_SAFE_NO_PAD.encode(&aggregator_auth_token)),
+        };
+        assert_response!(
+            post("/tasks")
+                .with_request_body(serde_json::to_vec(&req).unwrap())
+                .with_request_header(
+                    "Authorization",
+                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
+                )
+                .run_async(&handler)
+                .await,
+            Status::BadRequest
         );
     }
 
