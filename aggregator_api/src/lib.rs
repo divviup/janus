@@ -2,7 +2,7 @@
 
 use crate::models::{GetTaskIdsResp, PostTaskReq};
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
     datastore::{self, Datastore},
     instrumented,
@@ -161,12 +161,14 @@ async fn post_task<C: Clock>(
         }
     };
 
-    let vdaf_verify_key_bytes = STANDARD.decode(&req.vdaf_verify_key).map_err(|err| {
-        Error::new(
-            format!("Invalid base64 value for vdaf_verify_key: {err}"),
-            Status::BadRequest,
-        )
-    })?;
+    let vdaf_verify_key_bytes = URL_SAFE_NO_PAD
+        .decode(&req.vdaf_verify_key)
+        .map_err(|err| {
+            Error::new(
+                format!("Invalid base64 value for vdaf_verify_key: {err}"),
+                Status::BadRequest,
+            )
+        })?;
     if vdaf_verify_key_bytes.len() != req.vdaf.verify_key_length() {
         return Err(Error::new(
             format!(
@@ -195,7 +197,7 @@ async fn post_task<C: Clock>(
                     Status::BadRequest,
                 )
             })?;
-            let token_bytes = STANDARD.decode(encoded).map_err(|err| {
+            let token_bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|err| {
                 Error::new(
                     format!("Invalid base64 value for aggregator_auth_token: {err}"),
                     Status::BadRequest,
@@ -368,7 +370,7 @@ async fn get_task_metrics<C: Clock>(
 }
 
 mod models {
-    use base64::{engine::general_purpose::STANDARD, Engine};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use janus_aggregator_core::task::{QueryType, Task};
     use janus_core::task::VdafInstance;
     use janus_messages::{Duration, HpkeConfig, Role, TaskId, Time};
@@ -493,7 +495,7 @@ mod models {
                     if task.collector_auth_tokens().len() != 1 {
                         return Err("illegal number of collector auth tokens in task");
                     } else {
-                        Some(STANDARD.encode(task.collector_auth_tokens()[0].as_ref()))
+                        Some(URL_SAFE_NO_PAD.encode(task.collector_auth_tokens()[0].as_ref()))
                     }
                 }
                 Role::Helper => None,
@@ -513,14 +515,15 @@ mod models {
                 query_type: *task.query_type(),
                 vdaf: task.vdaf().clone(),
                 role: *task.role(),
-                vdaf_verify_key: STANDARD.encode(task.vdaf_verify_keys()[0].as_ref()),
+                vdaf_verify_key: URL_SAFE_NO_PAD.encode(task.vdaf_verify_keys()[0].as_ref()),
                 max_batch_query_count: task.max_batch_query_count(),
                 task_expiration: task.task_expiration().copied(),
                 report_expiry_age: task.report_expiry_age().cloned(),
                 min_batch_size: task.min_batch_size(),
                 time_precision: *task.time_precision(),
                 tolerable_clock_skew: *task.tolerable_clock_skew(),
-                aggregator_auth_token: STANDARD.encode(task.aggregator_auth_tokens()[0].as_ref()),
+                aggregator_auth_token: URL_SAFE_NO_PAD
+                    .encode(task.aggregator_auth_tokens()[0].as_ref()),
                 collector_auth_token,
                 collector_hpke_config: task.collector_hpke_config().clone(),
                 aggregator_hpke_configs,
@@ -559,7 +562,10 @@ mod tests {
         models::{GetTaskIdsResp, GetTaskMetricsResp, PostTaskReq, TaskResp},
         Config,
     };
-    use base64::{engine::general_purpose::STANDARD, Engine};
+    use base64::{
+        engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+        Engine,
+    };
     use futures::future::try_join_all;
     use janus_aggregator_core::{
         datastore::{
@@ -710,7 +716,7 @@ mod tests {
             query_type: QueryType::TimeInterval,
             vdaf: VdafInstance::Prio3Count,
             role: Role::Helper,
-            vdaf_verify_key: STANDARD.encode(&vdaf_verify_key),
+            vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
             max_batch_query_count: 12,
             task_expiration: Some(Time::from_seconds_since_epoch(12345)),
             min_batch_size: 223,
@@ -723,7 +729,7 @@ mod tests {
             )
             .config()
             .clone(),
-            aggregator_auth_token: Some(STANDARD.encode(&aggregator_auth_token)),
+            aggregator_auth_token: Some(URL_SAFE_NO_PAD.encode(&aggregator_auth_token)),
         };
         assert_response!(
             post("/tasks")
@@ -751,7 +757,7 @@ mod tests {
             query_type: QueryType::TimeInterval,
             vdaf: VdafInstance::Prio3Count,
             role: Role::Helper,
-            vdaf_verify_key: STANDARD.encode(&vdaf_verify_key),
+            vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
             max_batch_query_count: 12,
             task_expiration: Some(Time::from_seconds_since_epoch(12345)),
             min_batch_size: 223,
@@ -829,7 +835,7 @@ mod tests {
             query_type: QueryType::TimeInterval,
             vdaf: VdafInstance::Prio3Count,
             role: Role::Helper,
-            vdaf_verify_key: STANDARD.encode(&vdaf_verify_key),
+            vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
             max_batch_query_count: 12,
             task_expiration: Some(Time::from_seconds_since_epoch(12345)),
             min_batch_size: 223,
@@ -842,7 +848,7 @@ mod tests {
             )
             .config()
             .clone(),
-            aggregator_auth_token: Some(STANDARD.encode(&aggregator_auth_token)),
+            aggregator_auth_token: Some(URL_SAFE_NO_PAD.encode(&aggregator_auth_token)),
         };
         assert_response!(
             post("/tasks")
@@ -874,7 +880,7 @@ mod tests {
             query_type: QueryType::TimeInterval,
             vdaf: VdafInstance::Prio3Count,
             role: Role::Leader,
-            vdaf_verify_key: STANDARD.encode(&vdaf_verify_key),
+            vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
             max_batch_query_count: 12,
             task_expiration: Some(Time::from_seconds_since_epoch(12345)),
             min_batch_size: 223,
@@ -887,7 +893,7 @@ mod tests {
             )
             .config()
             .clone(),
-            aggregator_auth_token: Some(STANDARD.encode(&aggregator_auth_token)),
+            aggregator_auth_token: Some(URL_SAFE_NO_PAD.encode(&aggregator_auth_token)),
         };
         let mut conn = post("/tasks")
             .with_request_body(serde_json::to_vec(&req).unwrap())
@@ -962,7 +968,7 @@ mod tests {
             query_type: QueryType::TimeInterval,
             vdaf: VdafInstance::Prio3Count,
             role: Role::Leader,
-            vdaf_verify_key: STANDARD.encode(&vdaf_verify_key),
+            vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
             max_batch_query_count: 12,
             task_expiration: Some(Time::from_seconds_since_epoch(12345)),
             min_batch_size: 223,
@@ -1571,7 +1577,7 @@ mod tests {
                     variant: "Leader",
                 },
                 Token::Str("vdaf_verify_key"),
-                Token::Str("dmRhZiB2ZXJpZnkga2V5IQ=="),
+                Token::Str("dmRhZiB2ZXJpZnkga2V5IQ"),
                 Token::Str("max_batch_query_count"),
                 Token::U64(1),
                 Token::Str("task_expiration"),
@@ -1587,7 +1593,7 @@ mod tests {
                 Token::NewtypeStruct { name: "Duration" },
                 Token::U64(60),
                 Token::Str("aggregator_auth_token"),
-                Token::Str("YWdncmVnYXRvci0xMjM0NTY3OA=="),
+                Token::Str("YWdncmVnYXRvci0xMjM0NTY3OA"),
                 Token::Str("collector_auth_token"),
                 Token::Some,
                 Token::Str("Y29sbGVjdG9yLWFiY2RlZjAw"),
