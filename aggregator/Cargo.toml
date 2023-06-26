@@ -44,7 +44,7 @@ futures = "0.3.28"
 http = "0.2.9"
 http-api-problem = "0.56.0"
 hyper = "0.14.26"
-itertools = "0.10.5"
+itertools = "0.11.0"
 janus_core = { path = "../core" }
 janus_messages = { path = "../messages" }
 k8s-openapi.workspace = true
