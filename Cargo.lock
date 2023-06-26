@@ -1611,6 +1611,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1638,7 +1647,7 @@ dependencies = [
  "http",
  "http-api-problem",
  "hyper",
- "itertools",
+ "itertools 0.11.0",
  "janus_aggregator",
  "janus_core",
  "janus_messages",
@@ -1787,7 +1796,7 @@ dependencies = [
  "futures",
  "hex",
  "http",
- "itertools",
+ "itertools 0.11.0",
  "janus_aggregator",
  "janus_client",
  "janus_collector",
@@ -2699,7 +2708,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7345d5f0e08c0536d7ac7229952590239e77abf0a0100a1b1d890add6ea96364"
 dependencies = [
  "anyhow",
- "itertools",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
@@ -3375,7 +3384,7 @@ version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c12bc9199d1db8234678b7051747c07f517cdcf019262d1847b94ec8b1aee3e"
 dependencies = [
- "itertools",
+ "itertools 0.10.5",
  "nom",
  "unicode_categories",
 ]

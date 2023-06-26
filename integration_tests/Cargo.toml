@@ -41,6 +41,6 @@ url = { version = "2.4.0", features = ["serde"] }
 
 [dev-dependencies]
 http = "0.2"
-itertools = "0.10"
+itertools = "0.11"
 janus_collector = { path = "../collector", features = ["test-util"] }
 tempfile = "3"
