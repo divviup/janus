@@ -264,6 +264,9 @@ pub trait IntervalExt: Sized {
     /// Returns a new minimal [`Interval`] that contains both this interval and `other`.
     fn merge(&self, other: &Self) -> Result<Self, Error>;
 
+    // Returns a new minimal [`Interval`] that contains both this interval and the given time.
+    fn merged_with(&self, time: &Time) -> Result<Self, Error>;
+
     /// Returns a 0-length `[Interval]` that contains exactly the provided [`Time`].
     fn from_time(time: &Time) -> Result<Self, Error>;
 
@@ -291,6 +294,10 @@ impl IntervalExt for Interval {
 
         // This can't actually fail for any valid Intervals
         Self::new(*min_time, max_time.difference(min_time)?)
+    }
+
+    fn merged_with(&self, time: &Time) -> Result<Self, Error> {
+        self.merge(&Self::from_time(time)?)
     }
 
     fn from_time(time: &Time) -> Result<Self, Error> {

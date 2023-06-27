@@ -582,7 +582,7 @@ mod tests {
         report_id::ReportIdChecksumExt,
         task::{AuthenticationToken, VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
         test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf},
-        time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
+        time::{Clock, DurationExt, MockClock, TimeExt},
     };
     use janus_messages::{
         query_type::TimeInterval, AggregateShare as AggregateShareMessage, AggregateShareAad,
@@ -2640,7 +2640,6 @@ mod tests {
                     BatchAggregationState::Aggregating,
                     agg.aggregate_share().cloned(),
                     agg.report_count(),
-                    *agg.client_timestamp_interval(),
                     *agg.checksum(),
                 )
             })
@@ -2669,7 +2668,6 @@ mod tests {
                 BatchAggregationState::Aggregating,
                 Some(aggregate_share),
                 2,
-                Interval::from_time(report_metadata_0.time()).unwrap(),
                 checksum,
             ),])
         );
@@ -2946,7 +2944,6 @@ mod tests {
                     BatchAggregationState::Aggregating,
                     agg.aggregate_share().cloned(),
                     agg.report_count(),
-                    *agg.client_timestamp_interval(),
                     *agg.checksum(),
                 )
             })
@@ -2980,7 +2977,6 @@ mod tests {
                 BatchAggregationState::Aggregating,
                 Some(first_aggregate_share),
                 3,
-                Interval::from_time(report_metadata_0.time()).unwrap(),
                 first_checksum,
             ),
         );
@@ -4020,6 +4016,7 @@ mod tests {
                         aggregation_param,
                         BatchState::Open,
                         1,
+                        batch_interval,
                     ))
                     .await?;
                     Ok(())
@@ -4045,6 +4042,7 @@ mod tests {
             aggregation_param,
             BatchState::Closing,
             1,
+            batch_interval,
         )]);
 
         let (got_collection_job, got_batches) = test_case
@@ -4080,55 +4078,6 @@ mod tests {
                 let task = test_case.task.clone();
                 let helper_aggregate_share_bytes = helper_aggregate_share.get_encoded();
                 Box::pin(async move {
-                    for (ord, spanned_interval) in [
-                        // These intervals fall into the first and second time-precision-length
-                        // intervals, so we expect the spanned interval in the collect result to
-                        // contain both of them.
-                        Interval::new(
-                            Time::from_seconds_since_epoch(1000),
-                            Duration::from_seconds(1000),
-                        )
-                        .unwrap(),
-                        Interval::new(
-                            Time::from_seconds_since_epoch(task.time_precision().as_seconds()),
-                            Duration::from_seconds(2000),
-                        )
-                        .unwrap(),
-                    ]
-                    .into_iter()
-                    .enumerate()
-                    {
-                        tx.put_aggregation_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                            &AggregationJob::new(
-                                *task.id(),
-                                random(),
-                                dummy_vdaf::AggregationParam::default(),
-                                (),
-                                spanned_interval,
-                                AggregationJobState::Finished,
-                                AggregationJobRound::from(1),
-                            ),
-                        )
-                        .await
-                        .unwrap();
-
-                        tx.put_batch_aggregation::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                            &BatchAggregation::new(
-                                *task.id(),
-                                batch_interval,
-                                dummy_vdaf::AggregationParam::default(),
-                                ord as u64,
-                                BatchAggregationState::Aggregating,
-                                Some(leader_aggregate_share),
-                                6,
-                                spanned_interval,
-                                ReportIdChecksum::default(),
-                            ),
-                        )
-                        .await
-                        .unwrap();
-                    }
-
                     let encrypted_helper_aggregate_share = hpke::seal(
                         task.collector_hpke_config(),
                         &HpkeApplicationInfo::new(
@@ -4184,14 +4133,7 @@ mod tests {
         let collect_resp = Collection::<TimeInterval>::get_decoded(body_bytes.as_ref()).unwrap();
 
         assert_eq!(collect_resp.report_count(), 12);
-        assert_eq!(
-            collect_resp.interval(),
-            &Interval::new(
-                Time::from_seconds_since_epoch(0),
-                Duration::from_seconds(test_case.task.time_precision().as_seconds() * 2),
-            )
-            .unwrap()
-        );
+        assert_eq!(collect_resp.interval(), &batch_interval);
         assert_eq!(collect_resp.encrypted_aggregate_shares().len(), 2);
 
         let decrypted_leader_aggregate_share = hpke::open(
@@ -4281,7 +4223,6 @@ mod tests {
                         BatchAggregationState::Aggregating,
                         Some(dummy_vdaf::AggregateShare(0)),
                         10,
-                        interval,
                         ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                     ))
                     .await
@@ -4356,7 +4297,6 @@ mod tests {
                         BatchAggregationState::Aggregating,
                         Some(dummy_vdaf::AggregateShare(0)),
                         10,
-                        interval,
                         ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                     ))
                     .await
@@ -4729,7 +4669,6 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(64)),
                             5,
-                            interval_1,
                             ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                         ))
                         .await?;
@@ -4751,7 +4690,6 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(128)),
                             5,
-                            interval_2,
                             ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                         ))
                         .await?;
@@ -4773,7 +4711,6 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(256)),
                             5,
-                            interval_3,
                             ReportIdChecksum::get_decoded(&[4; 32]).unwrap(),
                         ))
                         .await?;
@@ -4795,7 +4732,6 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(512)),
                             5,
-                            interval_4,
                             ReportIdChecksum::get_decoded(&[8; 32]).unwrap(),
                         ))
                         .await?;

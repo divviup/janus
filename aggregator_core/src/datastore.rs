@@ -96,7 +96,7 @@ macro_rules! supported_schema_versions {
 // version is seen, [`Datastore::new`] fails.
 //
 // Note that the latest supported version must be first in the list.
-supported_schema_versions!(10);
+supported_schema_versions!(11);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -2909,8 +2909,7 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<Option<BatchAggregation<SEED_SIZE, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
-                "SELECT
-                    state, aggregate_share, report_count, client_timestamp_interval, checksum
+                "SELECT state, aggregate_share, report_count, checksum
                 FROM batch_aggregations
                 WHERE
                     task_id = (SELECT id FROM tasks WHERE task_id = $1)
@@ -2959,8 +2958,7 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<Vec<BatchAggregation<SEED_SIZE, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
-                "SELECT
-                    ord, state, aggregate_share, report_count, client_timestamp_interval, checksum
+                "SELECT ord, state, aggregate_share, report_count, checksum
                 FROM batch_aggregations
                 WHERE
                     task_id = (SELECT id FROM tasks WHERE task_id = $1)
@@ -3006,7 +3004,7 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT
                     batch_identifier, aggregation_param, ord, state, aggregate_share, report_count,
-                    client_timestamp_interval, checksum
+                    checksum
                 FROM batch_aggregations
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             )
@@ -3056,9 +3054,6 @@ impl<C: Clock> Transaction<'_, C> {
             .map_err(|_| Error::DbState("aggregate_share couldn't be parsed".to_string()))?;
         let report_count = row.get_bigint_and_convert("report_count")?;
         let checksum = ReportIdChecksum::get_decoded(row.get("checksum"))?;
-        let client_timestamp_interval = row
-            .get::<_, SqlInterval>("client_timestamp_interval")
-            .as_interval();
         Ok(BatchAggregation::new(
             task_id,
             batch_identifier,
@@ -3067,7 +3062,6 @@ impl<C: Clock> Transaction<'_, C> {
             state,
             aggregate_share,
             report_count,
-            client_timestamp_interval,
             checksum,
         ))
     }
@@ -3093,11 +3087,9 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "INSERT INTO batch_aggregations (
                     task_id, batch_identifier, batch_interval, aggregation_param, ord, state,
-                    aggregate_share, report_count, client_timestamp_interval, checksum
+                    aggregate_share, report_count, checksum
                 )
-                VALUES (
-                    (SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8, $9, $10
-                )
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8, $9)
                 ON CONFLICT DO NOTHING",
             )
             .await?;
@@ -3117,8 +3109,6 @@ impl<C: Clock> Transaction<'_, C> {
                     &batch_aggregation.aggregate_share().map(Encode::get_encoded),
                     /* report_count */
                     &i64::try_from(batch_aggregation.report_count())?,
-                    /* client_timestamp_interval */
-                    &SqlInterval::from(batch_aggregation.client_timestamp_interval()),
                     /* checksum */ &batch_aggregation.checksum().get_encoded(),
                 ],
             )
@@ -3148,13 +3138,12 @@ impl<C: Clock> Transaction<'_, C> {
                     state = $1,
                     aggregate_share = $2,
                     report_count = $3,
-                    client_timestamp_interval = $4,
-                    checksum = $5
+                    checksum = $4
                 WHERE
-                    task_id = (SELECT id from TASKS WHERE task_id = $6)
-                    AND batch_identifier = $7
-                    AND aggregation_param = $8
-                    AND ord = $9",
+                    task_id = (SELECT id from TASKS WHERE task_id = $5)
+                    AND batch_identifier = $6
+                    AND aggregation_param = $7
+                    AND ord = $8",
             )
             .await?;
         check_single_row_mutation(
@@ -3167,8 +3156,6 @@ impl<C: Clock> Transaction<'_, C> {
                     &batch_aggregation.aggregate_share().map(Encode::get_encoded),
                     /* report_count */
                     &i64::try_from(batch_aggregation.report_count())?,
-                    /* client_timestamp_interval */
-                    &SqlInterval::from(batch_aggregation.client_timestamp_interval()),
                     /* checksum */ &batch_aggregation.checksum().get_encoded(),
                     /* task_id */ &batch_aggregation.task_id().as_ref(),
                     /* batch_identifier */
@@ -3654,8 +3641,8 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "INSERT INTO batches
                     (task_id, batch_identifier, aggregation_param, state,
-                    outstanding_aggregation_jobs)
-                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5)
+                    outstanding_aggregation_jobs, client_timestamp_interval)
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6)
                 ON CONFLICT DO NOTHING",
             )
             .await?;
@@ -3669,6 +3656,8 @@ impl<C: Clock> Transaction<'_, C> {
                     /* state */ &batch.state(),
                     /* outstanding_aggregation_jobs */
                     &i64::try_from(batch.outstanding_aggregation_jobs())?,
+                    /* client_timestamp_interval */
+                    &SqlInterval::from(batch.client_timestamp_interval()),
                 ],
             )
             .await?,
@@ -3688,10 +3677,11 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<(), Error> {
         let stmt = self
             .prepare_cached(
-                "UPDATE batches SET state = $1, outstanding_aggregation_jobs = $2
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $3)
-                  AND batch_identifier = $4
-                  AND aggregation_param = $5",
+                "UPDATE batches
+                SET state = $1, outstanding_aggregation_jobs = $2, client_timestamp_interval = $3
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $4)
+                  AND batch_identifier = $5
+                  AND aggregation_param = $6",
             )
             .await?;
         check_single_row_mutation(
@@ -3701,6 +3691,8 @@ impl<C: Clock> Transaction<'_, C> {
                     /* state */ &batch.state(),
                     /* outstanding_aggregation_jobs */
                     &i64::try_from(batch.outstanding_aggregation_jobs())?,
+                    /* client_timestamp_interval */
+                    &SqlInterval::from(batch.client_timestamp_interval()),
                     /* task_id */ &batch.task_id().as_ref(),
                     /* batch_identifier */ &batch.batch_identifier().get_encoded(),
                     /* aggregation_param */ &batch.aggregation_parameter().get_encoded(),
@@ -3725,7 +3717,7 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<Option<Batch<SEED_SIZE, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
-                "SELECT state, outstanding_aggregation_jobs FROM batches
+                "SELECT state, outstanding_aggregation_jobs, client_timestamp_interval FROM batches
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
                   AND batch_identifier = $2
                   AND aggregation_param = $3",
@@ -3762,7 +3754,9 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<Vec<Batch<SEED_SIZE, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
-                "SELECT batch_identifier, aggregation_param, state, outstanding_aggregation_jobs
+                "SELECT
+                    batch_identifier, aggregation_param, state, outstanding_aggregation_jobs,
+                    client_timestamp_interval
                 FROM batches
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             )
@@ -3790,12 +3784,16 @@ impl<C: Clock> Transaction<'_, C> {
         let outstanding_aggregation_jobs = row
             .get::<_, i64>("outstanding_aggregation_jobs")
             .try_into()?;
+        let client_timestamp_interval = row
+            .get::<_, SqlInterval>("client_timestamp_interval")
+            .as_interval();
         Ok(Batch::new(
             task_id,
             batch_identifier,
             aggregation_parameter,
             state,
             outstanding_aggregation_jobs,
+            client_timestamp_interval,
         ))
     }
 
@@ -5072,9 +5070,6 @@ pub mod models {
         aggregate_share: Option<A::AggregateShare>,
         /// The number of reports currently included in this aggregate sahre.
         report_count: u64,
-        /// The minimal interval of time spanned by the reports included in this batch aggregation,
-        /// which may be smaller than the batch interval (for time interval tasks).
-        client_timestamp_interval: Interval,
         /// Checksum over the aggregated report shares, as described in §4.4.4.3.
         #[derivative(Debug = "ignore")]
         checksum: ReportIdChecksum,
@@ -5093,7 +5088,6 @@ pub mod models {
             state: BatchAggregationState,
             aggregate_share: Option<A::AggregateShare>,
             report_count: u64,
-            client_timestamp_interval: Interval,
             checksum: ReportIdChecksum,
         ) -> Self {
             Self {
@@ -5104,7 +5098,6 @@ pub mod models {
                 state,
                 aggregate_share,
                 report_count,
-                client_timestamp_interval,
                 checksum,
             }
         }
@@ -5155,12 +5148,6 @@ pub mod models {
             self.report_count
         }
 
-        /// Returns the minimal interval of time spanned by the reports included in this batch
-        /// aggregation, which may be smaller than the batch interval (for time interval tasks).
-        pub fn client_timestamp_interval(&self) -> &Interval {
-            &self.client_timestamp_interval
-        }
-
         /// Returns the checksum associated with this batch aggregation.
         pub fn checksum(&self) -> &ReportIdChecksum {
             &self.checksum
@@ -5190,10 +5177,6 @@ pub mod models {
             Ok(Self {
                 aggregate_share: merged_aggregate_share,
                 report_count: self.report_count + other.report_count(),
-                client_timestamp_interval: self
-                    .client_timestamp_interval
-                    .merge(&other.client_timestamp_interval)
-                    .map_err(|err| Error::User(err.into()))?,
                 checksum: self.checksum.combined_with(other.checksum()),
                 ..self
             })
@@ -5670,6 +5653,7 @@ pub mod models {
         aggregation_parameter: A::AggregationParam,
         state: BatchState,
         outstanding_aggregation_jobs: u64,
+        client_timestamp_interval: Interval,
     }
 
     impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
@@ -5682,6 +5666,7 @@ pub mod models {
             aggregation_parameter: A::AggregationParam,
             state: BatchState,
             outstanding_aggregation_jobs: u64,
+            client_timestamp_interval: Interval,
         ) -> Self {
             Self {
                 task_id,
@@ -5689,6 +5674,7 @@ pub mod models {
                 aggregation_parameter,
                 state,
                 outstanding_aggregation_jobs,
+                client_timestamp_interval,
             }
         }
 
@@ -5730,6 +5716,20 @@ pub mod models {
                 ..self
             }
         }
+
+        /// Gets the minimal interval of time spanned by the reports included in this batch.
+        pub fn client_timestamp_interval(&self) -> &Interval {
+            &self.client_timestamp_interval
+        }
+
+        /// Returns a new batch equivalent to the current batch, but with the given client timestamp
+        /// interval.
+        pub fn with_client_timestamp_interval(self, client_timestamp_interval: Interval) -> Self {
+            Self {
+                client_timestamp_interval,
+                ..self
+            }
+        }
     }
 
     impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
@@ -5744,6 +5744,7 @@ pub mod models {
                 && self.aggregation_parameter == other.aggregation_parameter
                 && self.state == other.state
                 && self.outstanding_aggregation_jobs == other.outstanding_aggregation_jobs
+                && self.client_timestamp_interval == other.client_timestamp_interval
         }
     }
 
@@ -5766,6 +5767,7 @@ pub mod models {
             self.aggregation_parameter.hash(state);
             self.state.hash(state);
             self.outstanding_aggregation_jobs.hash(state);
+            self.client_timestamp_interval.hash(state);
         }
     }
 
@@ -9625,7 +9627,6 @@ mod tests {
                         BatchAggregationState::Aggregating,
                         Some(aggregate_share),
                         0,
-                        Interval::new(Time::from_seconds_since_epoch(100), time_precision).unwrap(),
                         ReportIdChecksum::default(),
                     );
 
@@ -9638,7 +9639,6 @@ mod tests {
                         BatchAggregationState::Collected,
                         None,
                         0,
-                        Interval::new(Time::from_seconds_since_epoch(200), time_precision).unwrap(),
                         ReportIdChecksum::default(),
                     );
 
@@ -9651,7 +9651,6 @@ mod tests {
                         BatchAggregationState::Aggregating,
                         Some(aggregate_share),
                         0,
-                        Interval::new(Time::from_seconds_since_epoch(300), time_precision).unwrap(),
                         ReportIdChecksum::default(),
                     );
 
@@ -9665,7 +9664,6 @@ mod tests {
                         BatchAggregationState::Collected,
                         None,
                         0,
-                        Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
                         ReportIdChecksum::default(),
                     ),
                 )
@@ -9691,7 +9689,6 @@ mod tests {
                         BatchAggregationState::Aggregating,
                         Some(aggregate_share),
                         0,
-                        Interval::new(Time::from_seconds_since_epoch(100), time_precision).unwrap(),
                         ReportIdChecksum::default(),
                     ),
                 )
@@ -9707,7 +9704,6 @@ mod tests {
                         BatchAggregationState::Collected,
                         None,
                         0,
-                        Interval::new(Time::from_seconds_since_epoch(400), time_precision).unwrap(),
                         ReportIdChecksum::default(),
                     ),
                 )
@@ -9723,7 +9719,6 @@ mod tests {
                         BatchAggregationState::Aggregating,
                         Some(aggregate_share),
                         0,
-                        Interval::new(Time::from_seconds_since_epoch(200), time_precision).unwrap(),
                         ReportIdChecksum::default(),
                     ),
                 )
@@ -9768,7 +9763,6 @@ mod tests {
                         *first_batch_aggregation.state(),
                         Some(AggregateShare(92)),
                         1,
-                        *first_batch_aggregation.client_timestamp_interval(),
                         ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
                     );
                 tx.update_batch_aggregation(&first_batch_aggregation)
@@ -9836,9 +9830,6 @@ mod tests {
                 let batch_id = random();
                 let aggregate_share = AggregateShare(23);
                 let aggregation_param = AggregationParam(12);
-                let interval =
-                    Interval::new(Time::from_seconds_since_epoch(100), *task.time_precision())
-                        .unwrap();
 
                 tx.put_task(&task).await?;
                 tx.put_task(&other_task).await?;
@@ -9851,7 +9842,6 @@ mod tests {
                     BatchAggregationState::Aggregating,
                     Some(aggregate_share),
                     0,
-                    interval,
                     ReportIdChecksum::default(),
                 );
 
@@ -9872,7 +9862,6 @@ mod tests {
                     BatchAggregationState::Collected,
                     None,
                     0,
-                    interval,
                     ReportIdChecksum::default(),
                 ))
                 .await?;
@@ -9886,7 +9875,6 @@ mod tests {
                     BatchAggregationState::Aggregating,
                     Some(aggregate_share),
                     0,
-                    interval,
                     ReportIdChecksum::default(),
                 ))
                 .await?;
@@ -9900,7 +9888,6 @@ mod tests {
                     BatchAggregationState::Collected,
                     None,
                     0,
-                    interval,
                     ReportIdChecksum::default(),
                 ))
                 .await?;
@@ -9924,7 +9911,6 @@ mod tests {
                     *batch_aggregation.state(),
                     None,
                     1,
-                    *batch_aggregation.client_timestamp_interval(),
                     ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
                 );
                 tx.update_batch_aggregation(&batch_aggregation).await?;
@@ -10259,6 +10245,11 @@ mod tests {
                     AggregationParam(2),
                     BatchState::Closing,
                     1,
+                    Interval::new(
+                        Time::from_seconds_since_epoch(100),
+                        Duration::from_seconds(100),
+                    )
+                    .unwrap(),
                 );
 
                 tx.put_task(
