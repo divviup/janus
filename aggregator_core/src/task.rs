@@ -94,7 +94,8 @@ pub struct Task {
     /// The time after which the task is considered invalid.
     task_expiration: Option<Time>,
     /// The age after which a report is considered to be "expired" and will be considered a
-    /// candidate for garbage collection.
+    /// candidate for garbage collection. A value of `None` indicates that garbage collection is
+    /// disabled.
     report_expiry_age: Option<Duration>,
     /// The minimum number of reports in a batch to allow it to be collected.
     min_batch_size: u64,

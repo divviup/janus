@@ -346,7 +346,7 @@ async fn get_task_metrics<C: Clock>(
 
     let (reports, report_aggregations) = ds
         .run_tx_with_name("get_task_metrics", |tx| {
-            Box::pin(async move { tx.get_task_metrics(task_id).await })
+            Box::pin(async move { tx.get_task_metrics(&task_id).await })
         })
         .await
         .map_err(|err| {
