@@ -3637,17 +3637,19 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         batch: &Batch<SEED_SIZE, Q, A>,
     ) -> Result<(), Error> {
+        // XXX: update tests
         let stmt = self
             .prepare_cached(
                 "INSERT INTO batches
                     (task_id, batch_identifier, aggregation_param, state,
                     outstanding_aggregation_jobs, client_timestamp_interval)
                 VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6)
-                ON CONFLICT DO NOTHING",
+                ON CONFLICT DO NOTHING
+                RETURNING UPPER(client_timestamp_interval) < COALESCE($7::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP) AS is_expired",
             )
             .await?;
-        check_insert(
-            self.execute(
+        let rows = self
+            .query(
                 &stmt,
                 &[
                     /* task_id */ &batch.task_id().as_ref(),
@@ -3658,10 +3660,40 @@ impl<C: Clock> Transaction<'_, C> {
                     &i64::try_from(batch.outstanding_aggregation_jobs())?,
                     /* client_timestamp_interval */
                     &SqlInterval::from(batch.client_timestamp_interval()),
+                    /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
             )
-            .await?,
-        )
+            .await?;
+        let row_count = rows.len().try_into()?;
+
+        if let Some(row) = rows.into_iter().next() {
+            // We got a row back, meaning we wrote a batch. We check that it wasn't expired per the
+            // task's report_expiry_age, but otherwise we are done.
+            if row.get("is_expired") {
+                let stmt = self
+                    .prepare_cached(
+                        "DELETE FROM batches
+                        USING tasks
+                        WHERE batches.task_id = tasks.id
+                          AND tasks.task_id = $1
+                          AND batches.batch_identifier = $2
+                          AND batches.aggregation_param = $3",
+                    )
+                    .await?;
+                self.execute(
+                    &stmt,
+                    &[
+                        /* task_id */ &batch.task_id().as_ref(),
+                        /* batch_identifier */ &batch.batch_identifier().get_encoded(),
+                        /* aggregation_param */ &batch.aggregation_parameter().get_encoded(),
+                    ],
+                )
+                .await?;
+                return Ok(());
+            }
+        }
+
+        check_insert(row_count)
     }
 
     /// Updates a given `batch` in the datastore. Returns `MutationTargetNotFound` if no such batch
@@ -3675,13 +3707,17 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         batch: &Batch<SEED_SIZE, Q, A>,
     ) -> Result<(), Error> {
+        // XXX: update tests
         let stmt = self
             .prepare_cached(
                 "UPDATE batches
                 SET state = $1, outstanding_aggregation_jobs = $2, client_timestamp_interval = $3
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $4)
+                FROM tasks
+                WHERE batches.task_id = tasks.id
+                  AND tasks.task_id = $4
                   AND batch_identifier = $5
-                  AND aggregation_param = $6",
+                  AND aggregation_param = $6
+                  AND UPPER(client_timestamp_interval) >= COALESCE($7::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         check_single_row_mutation(
@@ -3696,6 +3732,7 @@ impl<C: Clock> Transaction<'_, C> {
                     /* task_id */ &batch.task_id().as_ref(),
                     /* batch_identifier */ &batch.batch_identifier().get_encoded(),
                     /* aggregation_param */ &batch.aggregation_parameter().get_encoded(),
+                    /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
             )
             .await?,
@@ -3715,12 +3752,15 @@ impl<C: Clock> Transaction<'_, C> {
         batch_identifier: &Q::BatchIdentifier,
         aggregation_parameter: &A::AggregationParam,
     ) -> Result<Option<Batch<SEED_SIZE, Q, A>>, Error> {
+        // XXX: update tests
         let stmt = self
             .prepare_cached(
                 "SELECT state, outstanding_aggregation_jobs, client_timestamp_interval FROM batches
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                JOIN tasks ON tasks.id = batches.task_id
+                WHERE tasks.task_id = $1
                   AND batch_identifier = $2
-                  AND aggregation_param = $3",
+                  AND aggregation_param = $3
+                  AND UPPER(client_timestamp_interval) >= COALESCE($4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query_opt(
@@ -3729,6 +3769,7 @@ impl<C: Clock> Transaction<'_, C> {
                 /* task_id */ task_id.as_ref(),
                 /* batch_identifier */ &batch_identifier.get_encoded(),
                 /* aggregation_param */ &aggregation_parameter.get_encoded(),
+                /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
         .await?
@@ -3758,20 +3799,27 @@ impl<C: Clock> Transaction<'_, C> {
                     batch_identifier, aggregation_param, state, outstanding_aggregation_jobs,
                     client_timestamp_interval
                 FROM batches
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+                JOIN tasks ON tasks.id = batches.task_id
+                WHERE tasks.task_id = $1
+                  AND UPPER(client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
-        self.query(&stmt, &[/* task_id */ task_id.as_ref()])
-            .await?
-            .into_iter()
-            .map(|row| {
-                let batch_identifier =
-                    Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
-                let aggregation_parameter =
-                    A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
-                Self::batch_from_row(*task_id, batch_identifier, aggregation_parameter, row)
-            })
-            .collect()
+        self.query(
+            &stmt,
+            &[
+                /* task_id */ task_id.as_ref(),
+                /* now */ &self.clock.now().as_naive_date_time()?,
+            ],
+        )
+        .await?
+        .into_iter()
+        .map(|row| {
+            let batch_identifier = Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
+            let aggregation_parameter =
+                A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
+            Self::batch_from_row(*task_id, batch_identifier, aggregation_parameter, row)
+        })
+        .collect()
     }
 
     fn batch_from_row<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>(
@@ -10234,24 +10282,23 @@ mod tests {
     async fn roundtrip_batch(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        let clock = MockClock::default();
+        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
+        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
-        ds.run_tx(|tx| {
-            Box::pin(async move {
-                let want_batch = Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
-                    random(),
-                    random(),
-                    AggregationParam(2),
-                    BatchState::Closing,
-                    1,
-                    Interval::new(
-                        Time::from_seconds_since_epoch(100),
-                        Duration::from_seconds(100),
-                    )
-                    .unwrap(),
-                );
+        let want_batch = Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+            random(),
+            random(),
+            AggregationParam(2),
+            BatchState::Closing,
+            1,
+            Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1)).unwrap(),
+        );
 
+        ds.run_tx(|tx| {
+            let want_batch = want_batch.clone();
+            Box::pin(async move {
                 tx.put_task(
                     &TaskBuilder::new(
                         task::QueryType::FixedSize { max_batch_size: 10 },
@@ -10259,11 +10306,24 @@ mod tests {
                         Role::Leader,
                     )
                     .with_id(*want_batch.task_id())
+                    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                     .build(),
                 )
                 .await?;
                 tx.put_batch(&want_batch).await?;
 
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        // Advance the clock to "enable" report expiry.
+        clock.advance(&REPORT_EXPIRY_AGE);
+
+        ds.run_tx(|tx| {
+            let want_batch = want_batch.clone();
+            Box::pin(async move {
                 // Try reading the batch back, and verify that modifying any of the primary key
                 // attributes causes None to be returned.
                 assert_eq!(
@@ -10319,6 +10379,29 @@ mod tests {
                     .await?
                     .as_ref(),
                     Some(&want_batch)
+                );
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        // Advance the clock to expire the batch.
+        clock.advance(&REPORT_EXPIRY_AGE);
+
+        ds.run_tx(|tx| {
+            let want_batch = want_batch.clone();
+            Box::pin(async move {
+                // Try reading the batch back, and verify it is expired.
+                assert_eq!(
+                    tx.get_batch::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        want_batch.task_id(),
+                        want_batch.batch_identifier(),
+                        want_batch.aggregation_parameter()
+                    )
+                    .await?,
+                    None
                 );
 
                 Ok(())
