@@ -3468,10 +3468,14 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         batch_id: &BatchId,
     ) -> Result<(), Error> {
+        // XXX
         let stmt = self
             .prepare_cached(
-                "INSERT INTO outstanding_batches (task_id, batch_id)
-                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2)",
+                "WITH batch AS (SELECT client_timestamp_interval FROM batches WHERE batch_identifier = $2)
+                INSERT INTO outstanding_batches (task_id, batch_id)
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2)
+                ON CONFLICT DO NOTHING
+                RETURNING UPPER(batch.client_timestamp_interval) < COALESCE($3::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP) AS is_expired",
             )
             .await?;
 
@@ -3480,6 +3484,7 @@ impl<C: Clock> Transaction<'_, C> {
             &[
                 /* task_id */ task_id.as_ref(),
                 /* batch_id */ batch_id.as_ref(),
+                /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
         .await?;
@@ -3493,22 +3498,32 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         task_id: &TaskId,
     ) -> Result<Vec<OutstandingBatch>, Error> {
+        // XXX: update tests
         let stmt = self
             .prepare_cached(
                 "SELECT batch_id FROM outstanding_batches
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+                JOIN tasks ON tasks.id = outstanding_batches.task_id
+                JOIN batches ON batches.batch_identifier = outstanding_batches.batch_id
+                WHERE tasks.task_id = $1
+                  AND UPPER(batches.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
 
         try_join_all(
-            self.query(&stmt, &[/* task_id */ task_id.as_ref()])
-                .await?
-                .into_iter()
-                .map(|row| async move {
-                    let batch_id = BatchId::get_decoded(row.get("batch_id"))?;
-                    let size = self.read_batch_size(task_id, &batch_id).await?;
-                    Ok(OutstandingBatch::new(*task_id, batch_id, size))
-                }),
+            self.query(
+                &stmt,
+                &[
+                    /* task_id */ task_id.as_ref(),
+                    /* now */ &self.clock.now().as_naive_date_time()?,
+                ],
+            )
+            .await?
+            .into_iter()
+            .map(|row| async move {
+                let batch_id = BatchId::get_decoded(row.get("batch_id"))?;
+                let size = self.read_batch_size(task_id, &batch_id).await?;
+                Ok(OutstandingBatch::new(*task_id, batch_id, size))
+            }),
         )
         .await
     }
@@ -3595,6 +3610,7 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         min_report_count: u64,
     ) -> Result<Option<BatchId>, Error> {
+        // XXX
         // TODO(#1467): fix this to work in presence of GC.
         let stmt = self
             .prepare_cached(
@@ -3637,7 +3653,7 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         batch: &Batch<SEED_SIZE, Q, A>,
     ) -> Result<(), Error> {
-        // XXX: update tests
+        // XXX: bookmark
         let stmt = self
             .prepare_cached(
                 "INSERT INTO batches
@@ -3707,7 +3723,6 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         batch: &Batch<SEED_SIZE, Q, A>,
     ) -> Result<(), Error> {
-        // XXX: update tests
         let stmt = self
             .prepare_cached(
                 "UPDATE batches
@@ -3752,7 +3767,6 @@ impl<C: Clock> Transaction<'_, C> {
         batch_identifier: &Q::BatchIdentifier,
         aggregation_parameter: &A::AggregationParam,
     ) -> Result<Option<Batch<SEED_SIZE, Q, A>>, Error> {
-        // XXX: update tests
         let stmt = self
             .prepare_cached(
                 "SELECT state, outstanding_aggregation_jobs, client_timestamp_interval FROM batches
