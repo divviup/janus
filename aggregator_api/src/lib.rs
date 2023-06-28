@@ -25,7 +25,12 @@ use ring::{
 };
 use std::{str::FromStr, sync::Arc, unreachable};
 use tracing::{error, warn};
-use trillium::{Conn, Handler, Status};
+use trillium::{
+    Conn, Handler,
+    KnownHeaderName::{Accept, ContentType},
+    Status,
+    Status::{NotAcceptable, UnsupportedMediaType},
+};
 use trillium_api::{api, Halt, Json, State};
 use trillium_opentelemetry::metrics;
 use trillium_router::{Router, RouterConnExt};
@@ -35,6 +40,39 @@ use url::Url;
 #[derive(Clone)]
 pub struct Config {
     pub auth_tokens: Vec<SecretBytes>,
+}
+
+/// Content type
+const CONTENT_TYPE: &str = "application/vnd.janus.aggregator+json;version=0.1";
+
+struct ReplaceMimeTypes;
+
+#[trillium::async_trait]
+impl Handler for ReplaceMimeTypes {
+    async fn run(&self, mut conn: Conn) -> Conn {
+        // Content-Type should either be the versioned API, or nothing for e.g. GET or DELETE
+        // requests (no response body)
+        let request_headers = conn.inner_mut().request_headers_mut();
+        if let Some(CONTENT_TYPE) | None = request_headers.get_str(ContentType) {
+            request_headers.insert(ContentType, "application/json");
+        } else {
+            return conn.with_status(UnsupportedMediaType).halt();
+        }
+
+        // Accept should always be the versioned API
+        if Some(CONTENT_TYPE) == request_headers.get_str(Accept) {
+            request_headers.insert(Accept, "application/json");
+        } else {
+            return conn.with_status(NotAcceptable).halt();
+        }
+
+        conn
+    }
+
+    async fn before_send(&self, conn: Conn) -> Conn {
+        // API responses should always have versioned API content type
+        conn.with_header(ContentType, CONTENT_TYPE)
+    }
 }
 
 /// Returns a new handler for an instance of the aggregator API, backed by the given datastore,
@@ -48,6 +86,8 @@ pub fn aggregator_api_handler<C: Clock>(ds: Arc<Datastore<C>>, cfg: Config) -> i
         metrics("janus_aggregator_api").with_route(|conn| conn.route().map(ToString::to_string)),
         // Authorization check.
         api(auth_check),
+        // Check content type and accept headers
+        ReplaceMimeTypes,
         // Main functionality router.
         Router::new()
             .get("/task_ids", instrumented(api(get_task_ids::<C>)))
@@ -552,7 +592,7 @@ mod tests {
     use crate::{
         aggregator_api_handler,
         models::{GetTaskIdsResp, GetTaskMetricsResp, PostTaskReq, TaskResp},
-        Config,
+        Config, CONTENT_TYPE,
     };
     use base64::{
         engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
@@ -647,6 +687,7 @@ mod tests {
                     "Authorization",
                     format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
                 )
+                .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
             Status::Ok,
@@ -663,6 +704,7 @@ mod tests {
                 "Authorization",
                 format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
             )
+            .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
             .await,
             Status::Ok,
@@ -680,6 +722,7 @@ mod tests {
                 "Authorization",
                 format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
             )
+            .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
             .await,
             Status::Ok,
@@ -688,9 +731,25 @@ mod tests {
 
         // Verify: unauthorized requests are denied appropriately.
         assert_response!(
-            get("/task_ids").run_async(&handler).await,
+            get("/task_ids")
+                .with_request_header("Accept", CONTENT_TYPE)
+                .run_async(&handler)
+                .await,
             Status::Unauthorized,
             "",
+        );
+
+        // Verify: requests without the Accept header are denied.
+        assert_response!(
+            get("/task_ids")
+                .with_request_header(
+                    "Authorization",
+                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
+                )
+                .run_async(&handler)
+                .await,
+            Status::NotAcceptable,
+            ""
         );
     }
 
@@ -730,6 +789,8 @@ mod tests {
                     "Authorization",
                     format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
                 )
+                .with_request_header("Accept", CONTENT_TYPE)
+                .with_request_header("Content-Type", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
             Status::BadRequest
@@ -768,6 +829,8 @@ mod tests {
         assert_response!(
             post("/tasks")
                 .with_request_body(serde_json::to_vec(&req).unwrap())
+                .with_request_header("Accept", CONTENT_TYPE)
+                .with_request_header("Content-Type", CONTENT_TYPE)
                 // no Authorization header
                 .run_async(&handler)
                 .await,
@@ -812,6 +875,8 @@ mod tests {
                 "Authorization",
                 format!("Bearer {}", STANDARD.encode(AUTH_TOKEN)),
             )
+            .with_request_header("Accept", CONTENT_TYPE)
+            .with_request_header("Content-Type", CONTENT_TYPE)
             .run_async(&handler)
             .await;
         assert_status!(conn, Status::Ok);
@@ -891,6 +956,8 @@ mod tests {
                     "Authorization",
                     format!("Bearer {}", STANDARD.encode(AUTH_TOKEN)),
                 )
+                .with_request_header("Accept", CONTENT_TYPE)
+                .with_request_header("Content-Type", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
             Status::BadRequest
@@ -935,6 +1002,8 @@ mod tests {
                 "Authorization",
                 format!("Bearer {}", STANDARD.encode(AUTH_TOKEN)),
             )
+            .with_request_header("Accept", CONTENT_TYPE)
+            .with_request_header("Content-Type", CONTENT_TYPE)
             .run_async(&handler)
             .await;
         assert_status!(conn, Status::Ok);
@@ -1025,6 +1094,8 @@ mod tests {
                     "Authorization",
                     format!("Bearer {}", STANDARD.encode(AUTH_TOKEN)),
                 )
+                .with_request_header("Accept", CONTENT_TYPE)
+                .with_request_header("Content-Type", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
             Status::BadRequest
@@ -1059,6 +1130,7 @@ mod tests {
                 "Authorization",
                 format!("Bearer {}", STANDARD.encode(AUTH_TOKEN)),
             )
+            .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
             .await;
         assert_status!(conn, Status::Ok);
@@ -1080,6 +1152,7 @@ mod tests {
                     "Authorization",
                     format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
                 )
+                .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
             Status::NotFound,
@@ -1089,6 +1162,7 @@ mod tests {
         // Verify: unauthorized requests are denied appropriately.
         assert_response!(
             get(&format!("/tasks/{}", task.id()))
+                .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
             Status::Unauthorized,
@@ -1124,6 +1198,7 @@ mod tests {
                     "Authorization",
                     format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
                 )
+                .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
             Status::NoContent,
@@ -1146,6 +1221,7 @@ mod tests {
                     "Authorization",
                     format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
                 )
+                .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
             Status::NotFound,
@@ -1159,6 +1235,7 @@ mod tests {
                     "Authorization",
                     format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
                 )
+                .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
             Status::NotFound,
@@ -1168,6 +1245,7 @@ mod tests {
         // Verify: unauthorized requests are denied appropriately.
         assert_response!(
             delete(&format!("/tasks/{}", &task_id))
+                .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
             Status::Unauthorized,
@@ -1255,6 +1333,7 @@ mod tests {
                     "Authorization",
                     format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
                 )
+                .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
             Status::Ok,
@@ -1272,6 +1351,7 @@ mod tests {
                     "Authorization",
                     format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
                 )
+                .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
             Status::NotFound,
@@ -1281,6 +1361,7 @@ mod tests {
         // Verify: unauthorized requests are denied appropriately.
         assert_response!(
             get(&format!("/tasks/{}/metrics", &task_id))
+                .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
             Status::Unauthorized,
