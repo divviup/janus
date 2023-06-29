@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose::STANDARD, Engine};
 use clap::Parser;
 use janus_aggregator::{
     aggregator::{self, garbage_collector::GarbageCollector, http_handlers::aggregator_handler},
@@ -11,8 +10,8 @@ use janus_aggregator::{
     config::{BinaryConfig, CommonConfig, TaskprovConfig},
 };
 use janus_aggregator_api::{self, aggregator_api_handler};
-use janus_aggregator_core::{datastore::Datastore, SecretBytes};
-use janus_core::time::RealClock;
+use janus_aggregator_core::datastore::Datastore;
+use janus_core::{task::AuthenticationToken, time::RealClock};
 use serde::{Deserialize, Serialize};
 use std::{
     future::{ready, Future},
@@ -154,11 +153,9 @@ fn build_aggregator_api_handler<'a>(
         .iter()
         .filter(|token| !token.is_empty())
         .map(|token| {
-            let token_bytes = STANDARD
-                .decode(token)
-                .context("couldn't base64-decode aggregator API auth token")?;
-
-            Ok(SecretBytes::new(token_bytes))
+            // Aggregator API auth tokens are always bearer tokens
+            AuthenticationToken::new_bearer_token_from_string(token)
+                .context("invalid aggregator API auth token")
         })
         .collect::<Result<Vec<_>>>()?;
 
