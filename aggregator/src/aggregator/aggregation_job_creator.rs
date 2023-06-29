@@ -728,11 +728,11 @@ mod tests {
             dummy_vdaf::{self},
             install_test_trace_subscriber,
         },
-        time::{Clock, MockClock},
+        time::{Clock, IntervalExt, MockClock},
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
-        AggregationJobRound, ReportId, Role, TaskId, Time,
+        AggregationJobRound, Interval, ReportId, Role, TaskId, Time,
     };
     use prio::vdaf::{self, prio3::Prio3Count};
     use std::{collections::HashSet, iter, sync::Arc, time::Duration};
@@ -858,7 +858,8 @@ mod tests {
                 batch_identifier,
                 (),
                 BatchState::Open,
-                1
+                1,
+                Interval::from_time(&report_time).unwrap(),
             )])
         );
 
@@ -972,6 +973,7 @@ mod tests {
                 (),
                 BatchState::Open,
                 agg_jobs.len().try_into().unwrap(),
+                Interval::from_time(&report_time).unwrap(),
             )])
         );
     }
@@ -1093,7 +1095,8 @@ mod tests {
                 batch_identifier,
                 (),
                 BatchState::Open,
-                1
+                1,
+                Interval::from_time(&report_time).unwrap(),
             )])
         );
     }
@@ -1144,6 +1147,7 @@ mod tests {
                         (),
                         BatchState::Closed,
                         0,
+                        Interval::from_time(&report_time).unwrap(),
                     ),
                 )
                 .await?;
@@ -1216,6 +1220,7 @@ mod tests {
                 (),
                 BatchState::Closed,
                 0,
+                Interval::from_time(&report_time).unwrap(),
             )])
         );
     }
@@ -1369,6 +1374,7 @@ mod tests {
                     (),
                     BatchState::Open,
                     5,
+                    Interval::from_time(&report_time).unwrap(),
                 ),
                 Batch::new(
                     *task.id(),
@@ -1376,6 +1382,7 @@ mod tests {
                     (),
                     BatchState::Open,
                     4,
+                    Interval::from_time(&report_time).unwrap(),
                 ),
             ])
         );

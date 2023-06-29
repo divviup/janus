@@ -3,8 +3,9 @@ use http::StatusCode;
 use janus_aggregator_core::{
     datastore::{
         models::{
-            AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
-            CollectionJobState, LeaderStoredReport, ReportAggregation, ReportAggregationState,
+            AggregationJob, AggregationJobState, Batch, BatchAggregation, BatchAggregationState,
+            BatchState, CollectionJobState, LeaderStoredReport, ReportAggregation,
+            ReportAggregationState,
         },
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
@@ -214,10 +215,20 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(0)),
                             task.min_batch_size() + 1,
-                            interval,
                             ReportIdChecksum::default(),
                         ),
                     )
+                    .await
+                    .unwrap();
+
+                    tx.put_batch::<0, FixedSize, dummy_vdaf::Vdaf>(&Batch::new(
+                        *task.id(),
+                        batch_id,
+                        dummy_vdaf::AggregationParam::default(),
+                        BatchState::Closed,
+                        0,
+                        interval,
+                    ))
                     .await
                     .unwrap();
 

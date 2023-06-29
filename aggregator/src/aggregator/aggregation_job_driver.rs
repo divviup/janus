@@ -1045,6 +1045,7 @@ mod tests {
                             (),
                             BatchState::Closing,
                             1,
+                            Interval::from_time(&time).unwrap(),
                         ),
                     )
                     .await?;
@@ -1175,6 +1176,7 @@ mod tests {
             (),
             BatchState::Closed,
             0,
+            Interval::from_time(&time).unwrap(),
         );
         let want_collection_job = collection_job.with_state(CollectionJobState::Collectable);
 
@@ -1361,6 +1363,7 @@ mod tests {
                             (),
                             BatchState::Closing,
                             1,
+                            Interval::from_time(&time).unwrap(),
                         ),
                     )
                     .await?;
@@ -1500,6 +1503,7 @@ mod tests {
             (),
             BatchState::Closing,
             1,
+            Interval::from_time(&time).unwrap(),
         );
 
         let (
@@ -1678,6 +1682,7 @@ mod tests {
                             (),
                             BatchState::Open,
                             1,
+                            Interval::from_time(report.metadata().time()).unwrap(),
                         ),
                     )
                     .await?;
@@ -1798,6 +1803,7 @@ mod tests {
             (),
             BatchState::Open,
             1,
+            Interval::from_time(report.metadata().time()).unwrap(),
         );
 
         let (got_aggregation_job, got_report_aggregation, got_batch) = ds
@@ -1954,6 +1960,7 @@ mod tests {
                             (),
                             BatchState::Closing,
                             1,
+                            Interval::from_time(report.metadata().time()).unwrap(),
                         ),
                     )
                     .await?;
@@ -1964,6 +1971,7 @@ mod tests {
                             (),
                             BatchState::Closing,
                             1,
+                            Interval::EMPTY,
                         ),
                     )
                     .await?;
@@ -2098,7 +2106,6 @@ mod tests {
             BatchAggregationState::Aggregating,
             Some(leader_aggregate_share),
             1,
-            Interval::from_time(report.metadata().time()).unwrap(),
             ReportIdChecksum::for_report_id(report.metadata().id()),
         )]);
         let want_active_batch = Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
@@ -2107,6 +2114,7 @@ mod tests {
             (),
             BatchState::Closed,
             0,
+            Interval::from_time(report.metadata().time()).unwrap(),
         );
         let want_other_batch = Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
             *task.id(),
@@ -2114,6 +2122,7 @@ mod tests {
             (),
             BatchState::Closing,
             1,
+            Interval::EMPTY,
         );
 
         let (
@@ -2207,7 +2216,6 @@ mod tests {
                     *agg.state(),
                     agg.aggregate_share().cloned(),
                     agg.report_count(),
-                    *agg.client_timestamp_interval(),
                     *agg.checksum(),
                 )
             })
@@ -2327,6 +2335,7 @@ mod tests {
                             (),
                             BatchState::Closing,
                             1,
+                            Interval::from_time(report.metadata().time()).unwrap(),
                         ),
                     )
                     .await?;
@@ -2456,7 +2465,6 @@ mod tests {
             BatchAggregationState::Aggregating,
             Some(leader_aggregate_share),
             1,
-            Interval::from_time(report.metadata().time()).unwrap(),
             ReportIdChecksum::for_report_id(report.metadata().id()),
         )]);
         let want_batch = Batch::<PRIO3_VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
@@ -2465,6 +2473,7 @@ mod tests {
             (),
             BatchState::Closed,
             0,
+            Interval::from_time(report.metadata().time()).unwrap(),
         );
         let want_collection_job = collection_job.with_state(CollectionJobState::Collectable);
 
@@ -2535,7 +2544,6 @@ mod tests {
                     *agg.state(),
                     agg.aggregate_share().cloned(),
                     agg.report_count(),
-                    *agg.client_timestamp_interval(),
                     *agg.checksum(),
                 )
             })
@@ -2634,6 +2642,7 @@ mod tests {
                             (),
                             BatchState::Open,
                             1,
+                            Interval::from_time(report.metadata().time()).unwrap(),
                         ),
                     )
                     .await?;
@@ -2669,6 +2678,7 @@ mod tests {
             (),
             BatchState::Open,
             0,
+            Interval::from_time(report.metadata().time()).unwrap(),
         );
 
         let (got_aggregation_job, got_report_aggregation, got_batch, got_leases) = ds
@@ -2848,6 +2858,7 @@ mod tests {
                         (),
                         BatchState::Open,
                         1,
+                        Interval::from_time(report.metadata().time()).unwrap(),
                     ),
                 )
                 .await?;
@@ -2984,6 +2995,7 @@ mod tests {
                 (),
                 BatchState::Open,
                 0,
+                Interval::from_time(report.metadata().time()).unwrap(),
             ),
         );
     }

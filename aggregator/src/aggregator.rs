@@ -1935,6 +1935,7 @@ impl VdafOps {
                                         aggregation_param.as_ref().clone(),
                                         batch_state,
                                         0,
+                                        Interval::EMPTY,
                                     ),
                                 )),
 
@@ -2069,11 +2070,10 @@ impl VdafOps {
                             )
                         })?;
 
-                    let (batch_aggregations, _) = try_join!(
-                        Q::get_batch_aggregations_for_collection_identifier(
+                    let (batches, _) = try_join!(
+                        Q::get_batches_for_collection_identifier(
                             tx,
                             &task,
-                            vdaf.as_ref(),
                             collection_job.batch_identifier(),
                             collection_job.aggregation_parameter()
                         ),
@@ -2083,9 +2083,9 @@ impl VdafOps {
                     // Merge the intervals spanned by the constituent batch aggregations into the
                     // interval spanned by the collection.
                     let mut spanned_interval: Option<Interval> = None;
-                    for interval in batch_aggregations
+                    for interval in batches
                         .iter()
-                        .map(BatchAggregation::<SEED_SIZE, Q, A>::client_timestamp_interval)
+                        .map(Batch::<SEED_SIZE, Q, A>::client_timestamp_interval)
                     {
                         match spanned_interval {
                             Some(m) => spanned_interval = Some(m.merge(interval)?),
@@ -2519,7 +2519,6 @@ fn empty_batch_aggregations<
                 BatchAggregationState::Collected,
                 None,
                 0,
-                Interval::EMPTY,
                 ReportIdChecksum::default(),
             ))
         } else {

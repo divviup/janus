@@ -1,7 +1,7 @@
 use crate::{
     datastore::{
         self,
-        models::{AggregateShareJob, BatchAggregation, CollectionJob},
+        models::{AggregateShareJob, Batch, BatchAggregation, CollectionJob},
         Transaction,
     },
     task::Task,
@@ -263,6 +263,38 @@ pub trait CollectableQueryType: AccumulableQueryType {
                             &aggregation_param,
                         )
                         .await
+                    }
+                },
+            ),
+        )
+        .await?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>())
+    }
+
+    /// Retrieves all batches identified by the given collection identifier.
+    async fn get_batches_for_collection_identifier<
+        const SEED_SIZE: usize,
+        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        C: Clock,
+    >(
+        tx: &Transaction<C>,
+        task: &Task,
+        collection_identifier: &Self::BatchIdentifier,
+        aggregation_param: &A::AggregationParam,
+    ) -> Result<Vec<Batch<SEED_SIZE, Self, A>>, datastore::Error>
+    where
+        A::AggregationParam: Send + Sync,
+        A::AggregateShare: Send + Sync,
+    {
+        Ok(try_join_all(
+            Self::batch_identifiers_for_collection_identifier(task, collection_identifier).map(
+                |batch_identifier| {
+                    let (task_id, aggregation_param) = (*task.id(), aggregation_param.clone());
+                    async move {
+                        tx.get_batch(&task_id, &batch_identifier, &aggregation_param)
+                            .await
                     }
                 },
             ),
