@@ -3468,24 +3468,53 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         batch_id: &BatchId,
     ) -> Result<(), Error> {
-        // XXX
+        // XXX: update tests
         let stmt = self
             .prepare_cached(
                 "INSERT INTO outstanding_batches (task_id, batch_id)
-                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2)",
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2)
+                ON CONFLICT DO NOTHING
+                RETURNING UPPER((SELECT client_timestamp_interval FROM batches WHERE batch_identifier = $2)) < COALESCE($3::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP) AS is_expired",
             )
             .await?;
+        let rows = self
+            .query(
+                &stmt,
+                &[
+                    /* task_id */ task_id.as_ref(),
+                    /* batch_id */ batch_id.as_ref(),
+                    /* now */ &self.clock.now().as_naive_date_time()?,
+                ],
+            )
+            .await?;
+        let row_count = rows.len().try_into()?;
 
-        self.execute(
-            &stmt,
-            &[
-                /* task_id */ task_id.as_ref(),
-                /* batch_id */ batch_id.as_ref(),
-            ],
-        )
-        .await?;
+        if let Some(row) = rows.into_iter().next() {
+            // We got a row back, meaning we wrote an outstanding batch. We check that it wasn't
+            // expired per the task's report_expiry_age, but otherwise we are done.
+            if row.get("is_expired") {
+                let stmt = self
+                    .prepare_cached(
+                        "DELETE FROM outstanding_batches
+                        USING tasks
+                        WHERE outstanding_batches.task_id = tasks.id
+                          AND tasks.task_id = $1
+                          AND outstanding_batches.batch_id = $2",
+                    )
+                    .await?;
+                self.execute(
+                    &stmt,
+                    &[
+                        /* task_id */ task_id.as_ref(),
+                        /* batch_id */ batch_id.as_ref(),
+                    ],
+                )
+                .await?;
+                return Ok(());
+            }
+        }
 
-        Ok(())
+        check_insert(row_count)
     }
 
     /// Retrieves all [`OutstandingBatch`]es for a given task.
@@ -3606,7 +3635,7 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         min_report_count: u64,
     ) -> Result<Option<BatchId>, Error> {
-        // XXX
+        // XXX: update tests
         // TODO(#1467): fix this to work in presence of GC.
         let stmt = self
             .prepare_cached(
@@ -3615,12 +3644,17 @@ impl<C: Clock> Transaction<'_, C> {
                         outstanding_batches.batch_id AS batch_id,
                         COUNT(DISTINCT report_aggregations.client_report_id) AS count
                     FROM outstanding_batches
+                    JOIN tasks ON tasks.id = outstanding_batches.task_id
                     JOIN aggregation_jobs
-                      ON aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                      ON aggregation_jobs.task_id = tasks.id
                      AND aggregation_jobs.batch_id = outstanding_batches.batch_id
                     JOIN report_aggregations
                       ON report_aggregations.aggregation_job_id = aggregation_jobs.id
                      AND report_aggregations.state = 'FINISHED'
+                    JOIN batches
+                      ON batches.batch_identifier = outstanding_batches.batch_id
+                    WHERE tasks.task_id = $1
+                      AND UPPER(batches.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
                     GROUP BY outstanding_batches.batch_id
                 )
                 SELECT batch_id FROM batches WHERE count >= $2 LIMIT 1",
@@ -3631,6 +3665,7 @@ impl<C: Clock> Transaction<'_, C> {
             &[
                 /* task_id */ task_id.as_ref(),
                 /* min_report_count */ &i64::try_from(min_report_count)?,
+                /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
         .await?
@@ -10103,7 +10138,9 @@ mod tests {
     async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        let clock = MockClock::default();
+        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
+        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let (task_id, batch_id) = ds
@@ -10115,9 +10152,21 @@ mod tests {
                         VdafInstance::Fake,
                         Role::Leader,
                     )
+                    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                     .build();
                     tx.put_task(&task).await?;
                     let batch_id = random();
+
+                    tx.put_batch(&Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        batch_id,
+                        AggregationParam(0),
+                        BatchState::Closed,
+                        0,
+                        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
+                            .unwrap(),
+                    ))
+                    .await?;
                     tx.put_outstanding_batch(task.id(), &batch_id).await?;
 
                     // Write a few aggregation jobs & report aggregations to produce useful
@@ -10241,6 +10290,9 @@ mod tests {
             .await
             .unwrap();
 
+        // Advance the clock to "enable" report expiry.
+        clock.advance(&REPORT_EXPIRY_AGE);
+
         let (outstanding_batches, outstanding_batch_1, outstanding_batch_2, outstanding_batch_3) =
             ds.run_tx(|tx| {
                 Box::pin(async move {
@@ -10269,6 +10321,21 @@ mod tests {
         assert_eq!(outstanding_batch_1, Some(batch_id));
         assert_eq!(outstanding_batch_2, Some(batch_id));
         assert_eq!(outstanding_batch_3, None);
+
+        // Advance the clock further to trigger expiration of the written batches.
+        clock.advance(&REPORT_EXPIRY_AGE);
+
+        // Verify that the batch is no longer available.
+        let outstanding_batches = ds
+            .run_tx(|tx| {
+                Box::pin(async move { tx.get_outstanding_batches_for_task(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert!(outstanding_batches.is_empty());
+
+        // Reset the clock to "un-expire" the written batches. (...don't try this in prod.)
+        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
         // Delete the outstanding batch, then check that it is no longer available.
         ds.run_tx(|tx| {
