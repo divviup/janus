@@ -21,7 +21,7 @@ use janus_core::{
     time::{Clock, TimeExt},
 };
 use janus_messages::{
-    query_type::{QueryType, TimeInterval},
+    query_type::{FixedSize, QueryType, TimeInterval},
     AggregationJobId, BatchId, CollectionJobId, Duration, Extension, HpkeCiphertext, HpkeConfig,
     Interval, PrepareStep, ReportId, ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId,
     Time,
@@ -2406,6 +2406,7 @@ impl<C: Clock> Transaction<'_, C> {
         vdaf: &A,
         collection_job_id: &CollectionJobId,
     ) -> Result<Option<CollectionJob<SEED_SIZE, Q, A>>, Error> {
+        // XXX: update tests
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -2416,29 +2417,30 @@ impl<C: Clock> Transaction<'_, C> {
                     collection_jobs.report_count,
                     collection_jobs.helper_aggregate_share,
                     collection_jobs.leader_aggregate_share
-                FROM collection_jobs JOIN tasks ON tasks.id = collection_jobs.task_id
-                WHERE collection_jobs.collection_job_id = $1",
+                FROM collection_jobs
+                JOIN tasks ON tasks.id = collection_jobs.task_id
+                WHERE collection_jobs.collection_job_id = $1
+                  AND COALESCE(LOWER(collection_jobs.batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier))) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
-        self.query_opt(&stmt, &[&collection_job_id.as_ref()])
-            .await?
-            .map(|row| {
-                let task_id = TaskId::get_decoded(row.get("task_id"))?;
-                let batch_identifier =
-                    Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
-                Self::collection_job_from_row(
-                    vdaf,
-                    task_id,
-                    batch_identifier,
-                    *collection_job_id,
-                    &row,
-                )
-            })
-            .transpose()
+        self.query_opt(
+            &stmt,
+            &[
+                /* collection_job_id */ &collection_job_id.as_ref(),
+                /* now */ &self.clock.now().as_naive_date_time()?,
+            ],
+        )
+        .await?
+        .map(|row| {
+            let task_id = TaskId::get_decoded(row.get("task_id"))?;
+            let batch_identifier = Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
+            Self::collection_job_from_row(vdaf, task_id, batch_identifier, *collection_job_id, &row)
+        })
+        .transpose()
     }
 
-    /// Returns all collection jobs for the given task which include the given timestamp. Applies only
-    /// to time-interval tasks.
+    /// Returns all collection jobs for the given task which include the given timestamp. Applies
+    /// only to time-interval tasks.
     #[tracing::instrument(skip(self), err)]
     pub async fn get_collection_jobs_including_time<
         const SEED_SIZE: usize,
@@ -2449,6 +2451,7 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         timestamp: &Time,
     ) -> Result<Vec<CollectionJob<SEED_SIZE, TimeInterval, A>>, Error> {
+        // XXX: update tests
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -2461,7 +2464,8 @@ impl<C: Clock> Transaction<'_, C> {
                     collection_jobs.leader_aggregate_share
                 FROM collection_jobs JOIN tasks ON tasks.id = collection_jobs.task_id
                 WHERE tasks.task_id = $1
-                  AND collection_jobs.batch_interval @> $2::TIMESTAMP",
+                  AND collection_jobs.batch_interval @> $2::TIMESTAMP
+                  AND LOWER(collection_jobs.batch_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query(
@@ -2469,6 +2473,7 @@ impl<C: Clock> Transaction<'_, C> {
             &[
                 /* task_id */ task_id.as_ref(),
                 /* timestamp */ &timestamp.as_naive_date_time()?,
+                /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
         .await?
@@ -2482,8 +2487,8 @@ impl<C: Clock> Transaction<'_, C> {
         .collect()
     }
 
-    /// Returns all collection jobs for the given task whose collect intervals intersect with the given
-    /// interval. Applies only to time-interval tasks.
+    /// Returns all collection jobs for the given task whose collect intervals intersect with the
+    /// given interval. Applies only to time-interval tasks.
     #[tracing::instrument(skip(self), err)]
     pub async fn get_collection_jobs_intersecting_interval<
         const SEED_SIZE: usize,
@@ -2494,6 +2499,7 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         batch_interval: &Interval,
     ) -> Result<Vec<CollectionJob<SEED_SIZE, TimeInterval, A>>, Error> {
+        // XXX: update tests
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -2506,7 +2512,8 @@ impl<C: Clock> Transaction<'_, C> {
                     collection_jobs.leader_aggregate_share
                 FROM collection_jobs JOIN tasks ON tasks.id = collection_jobs.task_id
                 WHERE tasks.task_id = $1
-                  AND collection_jobs.batch_interval && $2",
+                  AND collection_jobs.batch_interval && $2
+                  AND LOWER(collection_jobs.batch_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query(
@@ -2514,6 +2521,7 @@ impl<C: Clock> Transaction<'_, C> {
             &[
                 /* task_id */ task_id.as_ref(),
                 /* batch_interval */ &SqlInterval::from(batch_interval),
+                /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
         .await?
@@ -2533,19 +2541,19 @@ impl<C: Clock> Transaction<'_, C> {
         .collect()
     }
 
-    /// Retrieves all collection jobs for the given batch identifier. Multiple collection jobs may be
-    /// returned with distinct aggregation parameters.
+    /// Retrieves all collection jobs for the given batch ID. Multiple collection jobs may be
+    /// returned with distinct aggregation parameters. Applies only to fixed-size tasks.
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_collection_jobs_by_batch_identifier<
+    pub async fn get_collection_jobs_by_batch_id<
         const SEED_SIZE: usize,
-        Q: QueryType,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
         vdaf: &A,
         task_id: &TaskId,
-        batch_identifier: &Q::BatchIdentifier,
-    ) -> Result<Vec<CollectionJob<SEED_SIZE, Q, A>>, Error> {
+        batch_id: &BatchId,
+    ) -> Result<Vec<CollectionJob<SEED_SIZE, FixedSize, A>>, Error> {
+        // XXX: update tests
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -2555,16 +2563,21 @@ impl<C: Clock> Transaction<'_, C> {
                     collection_jobs.report_count,
                     collection_jobs.helper_aggregate_share,
                     collection_jobs.leader_aggregate_share
-                FROM collection_jobs JOIN tasks ON tasks.id = collection_jobs.task_id
+                FROM collection_jobs
+                JOIN tasks ON tasks.id = collection_jobs.task_id
+                JOIN batches ON batches.task_id = collection_jobs.task_id
+                            AND batches.batch_identifier = collection_jobs.batch_identifier
                 WHERE tasks.task_id = $1
-                  AND collection_jobs.batch_identifier = $2",
+                  AND collection_jobs.batch_identifier = $2
+                  AND UPPER(batches.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query(
             &stmt,
             &[
                 /* task_id */ task_id.as_ref(),
-                /* batch_identifier */ &batch_identifier.get_encoded(),
+                /* batch_id */ &batch_id.get_encoded(),
+                /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
         .await?
@@ -2572,13 +2585,7 @@ impl<C: Clock> Transaction<'_, C> {
         .map(|row| {
             let collection_job_id =
                 row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-            Self::collection_job_from_row(
-                vdaf,
-                *task_id,
-                batch_identifier.clone(),
-                collection_job_id,
-                &row,
-            )
+            Self::collection_job_from_row(vdaf, *task_id, batch_id.clone(), collection_job_id, &row)
         })
         .collect()
     }
@@ -2603,27 +2610,28 @@ impl<C: Clock> Transaction<'_, C> {
                     collection_jobs.report_count,
                     collection_jobs.helper_aggregate_share,
                     collection_jobs.leader_aggregate_share
-                FROM collection_jobs JOIN tasks ON tasks.id = collection_jobs.task_id
-                WHERE tasks.task_id = $1",
+                FROM collection_jobs
+                JOIN tasks ON tasks.id = collection_jobs.task_id
+                WHERE tasks.task_id = $1
+                  AND COALESCE(LOWER(collection_jobs.batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier))) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
-        self.query(&stmt, &[/* task_id */ task_id.as_ref()])
-            .await?
-            .into_iter()
-            .map(|row| {
-                let collection_job_id =
-                    row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-                let batch_identifier =
-                    Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
-                Self::collection_job_from_row(
-                    vdaf,
-                    *task_id,
-                    batch_identifier,
-                    collection_job_id,
-                    &row,
-                )
-            })
-            .collect()
+        self.query(
+            &stmt,
+            &[
+                /* task_id */ task_id.as_ref(),
+                /* now */ &self.clock.now().as_naive_date_time()?,
+            ],
+        )
+        .await?
+        .into_iter()
+        .map(|row| {
+            let collection_job_id =
+                row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
+            let batch_identifier = Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
+            Self::collection_job_from_row(vdaf, *task_id, batch_identifier, collection_job_id, &row)
+        })
+        .collect()
     }
 
     fn collection_job_from_row<
@@ -2706,6 +2714,7 @@ impl<C: Clock> Transaction<'_, C> {
     where
         A::AggregationParam: std::fmt::Debug,
     {
+        // XXX
         let batch_interval =
             Q::to_batch_interval(collection_job.batch_identifier()).map(SqlInterval::from);
 
@@ -2744,6 +2753,7 @@ impl<C: Clock> Transaction<'_, C> {
         lease_duration: &StdDuration,
         maximum_acquire_count: usize,
     ) -> Result<Vec<Lease<AcquiredCollectionJob>>, Error> {
+        // XXX
         let now = self.clock.now().as_naive_date_time()?;
         let lease_expiry_time = add_naive_date_time_duration(&now, lease_duration)?;
         let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
@@ -2804,6 +2814,7 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         lease: &Lease<AcquiredCollectionJob>,
     ) -> Result<(), Error> {
+        // XXX
         let stmt = self
             .prepare_cached(
                 "UPDATE collection_jobs
@@ -2842,6 +2853,7 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         collection_job: &CollectionJob<SEED_SIZE, Q, A>,
     ) -> Result<(), Error> {
+        // XXX: update tests
         let (report_count, leader_aggregate_share, helper_aggregate_share) = match collection_job
             .state()
         {
@@ -2874,7 +2886,11 @@ impl<C: Clock> Transaction<'_, C> {
                     report_count = $2,
                     leader_aggregate_share = $3,
                     helper_aggregate_share = $4
-                WHERE collection_job_id = $5",
+                FROM tasks
+                WHERE tasks.id = collection_jobs.task_id
+                  AND tasks.task_id = $5
+                  AND collection_job_id = $6
+                  AND COALESCE(LOWER(collection_jobs.batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier))) >= COALESCE($7::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
 
@@ -2886,7 +2902,9 @@ impl<C: Clock> Transaction<'_, C> {
                     /* report_count */ &report_count,
                     /* leader_aggregate_share */ &leader_aggregate_share,
                     /* helper_aggregate_share */ &helper_aggregate_share,
+                    /* task_id */ &collection_job.task_id().as_ref(),
                     /* collection_job_id */ &collection_job.id().as_ref(),
+                    /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
             )
             .await?,
