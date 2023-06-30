@@ -9,7 +9,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-in-cluster = ["dep:k8s-openapi", "dep:kube", "dep:serde"]
+in-cluster = ["dep:k8s-openapi", "dep:kube"]
 
 [dependencies]
 anyhow.workspace = true
@@ -17,6 +17,7 @@ backoff = { version = "0.4", features = ["tokio"] }
 base64 = "0.21.2"
 futures = "0.3.28"
 hex = "0.4"
+http = "0.2"
 janus_aggregator = { workspace = true, features = ["test-util"] }
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
 janus_client.workspace = true
@@ -28,14 +29,13 @@ kube = { workspace = true, optional = true }
 prio.workspace = true
 rand = "0.8"
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
-serde = { workspace = true, optional = true }
+serde.workspace = true
 serde_json = "1.0.99"
 testcontainers = "0.14.0"
 tokio = { version = "1", features = ["full", "tracing"] }
 url = { version = "2.4.0", features = ["serde"] }
 
 [dev-dependencies]
-http = "0.2"
 itertools.workspace = true
 janus_collector = { workspace = true, features = ["test-util"] }
 tempfile = "3"

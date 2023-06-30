@@ -1300,8 +1300,7 @@ impl<C: Clock> Transaction<'_, C> {
         // TODO(#269): allow the number of returned results to be controlled?
         let stmt = self
             .prepare_cached(
-                "UPDATE client_reports SET aggregation_started = TRUE
-                WHERE id IN (
+                "WITH unaggregated_reports AS (
                     SELECT client_reports.id FROM client_reports
                     JOIN tasks ON tasks.id = client_reports.task_id
                     WHERE tasks.task_id = $1
@@ -1310,6 +1309,8 @@ impl<C: Clock> Transaction<'_, C> {
                     FOR UPDATE SKIP LOCKED
                     LIMIT 5000
                 )
+                UPDATE client_reports SET aggregation_started = TRUE
+                WHERE id IN (SELECT id FROM unaggregated_reports)
                 RETURNING report_id, client_timestamp",
             )
             .await?;
@@ -1813,21 +1814,22 @@ impl<C: Clock> Transaction<'_, C> {
         // per-row basis.
         let stmt = self
             .prepare_cached(
-                "UPDATE aggregation_jobs SET
+                "WITH incomplete_jobs AS (
+                    SELECT aggregation_jobs.id FROM aggregation_jobs
+                    JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                    WHERE tasks.aggregator_role = 'LEADER'
+                    AND aggregation_jobs.state = 'IN_PROGRESS'
+                    AND aggregation_jobs.lease_expiry <= $2
+                    AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                    FOR UPDATE SKIP LOCKED LIMIT $3
+                )
+                UPDATE aggregation_jobs SET
                     lease_expiry = $1,
                     lease_token = gen_random_bytes(16),
                     lease_attempts = lease_attempts + 1
                 FROM tasks
                 WHERE tasks.id = aggregation_jobs.task_id
-                  AND aggregation_jobs.id IN (
-                    SELECT aggregation_jobs.id FROM aggregation_jobs
-                    JOIN tasks ON tasks.id = aggregation_jobs.task_id
-                    WHERE tasks.aggregator_role = 'LEADER'
-                      AND aggregation_jobs.state = 'IN_PROGRESS'
-                      AND aggregation_jobs.lease_expiry <= $2
-                      AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
-                    FOR UPDATE SKIP LOCKED LIMIT $3
-                )
+                AND aggregation_jobs.id IN (SELECT id FROM incomplete_jobs)
                 RETURNING tasks.task_id, tasks.query_type, tasks.vdaf,
                           aggregation_jobs.aggregation_job_id, aggregation_jobs.lease_token,
                           aggregation_jobs.lease_attempts",
@@ -2760,19 +2762,21 @@ impl<C: Clock> Transaction<'_, C> {
 
         let stmt = self
             .prepare_cached(
-                "UPDATE collection_jobs SET
+                "WITH incomplete_jobs AS (
+                    SELECT collection_jobs.id FROM collection_jobs
+                    JOIN tasks ON tasks.id = collection_jobs.task_id
+                    WHERE tasks.aggregator_role = 'LEADER'
+                    AND collection_jobs.state = 'COLLECTABLE'
+                    AND collection_jobs.lease_expiry <= $2
+                    FOR UPDATE SKIP LOCKED LIMIT $3
+                )
+                UPDATE collection_jobs SET
                     lease_expiry = $1,
                     lease_token = gen_random_bytes(16),
                     lease_attempts = lease_attempts + 1
                 FROM tasks
                 WHERE tasks.id = collection_jobs.task_id
-                  AND collection_jobs.id IN (
-                    SELECT collection_jobs.id FROM collection_jobs
-                    JOIN tasks ON tasks.id = collection_jobs.task_id
-                    WHERE tasks.aggregator_role = 'LEADER'
-                      AND collection_jobs.state = 'COLLECTABLE'
-                      AND collection_jobs.lease_expiry <= $2
-                    FOR UPDATE SKIP LOCKED LIMIT $3)
+                AND collection_jobs.id IN (SELECT id FROM incomplete_jobs)
                 RETURNING tasks.task_id, tasks.query_type, tasks.vdaf,
                           collection_jobs.collection_job_id, collection_jobs.id,
                           collection_jobs.lease_token, collection_jobs.lease_attempts",

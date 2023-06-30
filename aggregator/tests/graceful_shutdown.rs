@@ -11,7 +11,7 @@ use janus_aggregator_core::{
 use janus_core::{task::VdafInstance, test_util::install_test_trace_subscriber, time::RealClock};
 use janus_messages::Role;
 use reqwest::Url;
-use serde_yaml::Mapping;
+use serde_yaml::{Mapping, Value};
 use std::{
     future::Future,
     io::{ErrorKind, Write},
@@ -243,10 +243,12 @@ async fn aggregator_shutdown() {
         "listen_address".into(),
         format!("{aggregator_listen_address}").into(),
     );
-    config.insert(
-        "aggregator_api_listen_address".into(),
+    let mut aggregator_api = Mapping::new();
+    aggregator_api.insert(
+        "listen_address".into(),
         format!("{aggregator_api_listen_address}").into(),
     );
+    config.insert("aggregator_api".into(), Value::Mapping(aggregator_api));
     config.insert("max_upload_batch_size".into(), 100.into());
     config.insert("max_upload_batch_write_delay_ms".into(), 250.into());
     config.insert("batch_aggregation_shard_count".into(), 32u64.into());
