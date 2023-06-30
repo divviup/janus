@@ -1306,7 +1306,7 @@ impl<C: Clock> Transaction<'_, C> {
                     WHERE tasks.task_id = $1
                       AND client_reports.aggregation_started = FALSE
                       AND client_reports.client_timestamp >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
-                    FOR UPDATE SKIP LOCKED
+                    FOR UPDATE OF client_reports SKIP LOCKED
                     LIMIT 5000
                 )
                 UPDATE client_reports SET aggregation_started = TRUE
@@ -1821,7 +1821,7 @@ impl<C: Clock> Transaction<'_, C> {
                     AND aggregation_jobs.state = 'IN_PROGRESS'
                     AND aggregation_jobs.lease_expiry <= $2
                     AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
-                    FOR UPDATE SKIP LOCKED LIMIT $3
+                    FOR UPDATE OF aggregation_jobs SKIP LOCKED LIMIT $3
                 )
                 UPDATE aggregation_jobs SET
                     lease_expiry = $1,
@@ -2758,7 +2758,7 @@ impl<C: Clock> Transaction<'_, C> {
                     WHERE tasks.aggregator_role = 'LEADER'
                     AND collection_jobs.state = 'COLLECTABLE'
                     AND collection_jobs.lease_expiry <= $2
-                    FOR UPDATE SKIP LOCKED LIMIT $3
+                    FOR UPDATE OF collection_jobs SKIP LOCKED LIMIT $3
                 )
                 UPDATE collection_jobs SET
                     lease_expiry = $1,
