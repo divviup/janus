@@ -176,6 +176,8 @@ async fn get_task_ids<C: Clock>(
 }
 
 /// A simple error type that holds a message and an HTTP status. This can be used as a [`Handler`].
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
 struct Error {
     message: String,
     status: Status,
@@ -316,15 +318,49 @@ async fn post_task<C: Clock>(
 
     ds.run_tx_with_name("post_task", |tx| {
         let task = Arc::clone(&task);
-        Box::pin(async move { tx.put_task(&task).await })
+        Box::pin(async move {
+            if let Some(existing_task) = tx.get_task(task.id()).await? {
+            // Check whether the existing task in the DB corresponds to the incoming task, ignoring
+            // those fields that are randomly generated.
+            if existing_task.aggregator_endpoints() == task.aggregator_endpoints()
+                && existing_task.query_type() == task.query_type()
+                && existing_task.vdaf() == task.vdaf()
+                && existing_task.vdaf_verify_keys() == task.vdaf_verify_keys()
+                && existing_task.role() == task.role()
+                && existing_task.max_batch_query_count() == task.max_batch_query_count()
+                && existing_task.task_expiration() == task.task_expiration()
+                && existing_task.min_batch_size() == task.min_batch_size()
+                && existing_task.time_precision() == task.time_precision()
+                && existing_task.collector_hpke_config() == task.collector_hpke_config() {
+                    return Ok(())
+                }
+
+                let err = Error::new(
+                    "task with same VDAF verify key and task ID already exists with different parameters".to_string(),
+                    Status::Conflict,
+                );
+                return Err(datastore::Error::User(err.into()));
+            }
+
+            tx.put_task(&task).await
+        })
     })
     .await
     .map_err(|err| {
-        error!(err = %err, "Database transaction error");
-        Error::new(
-            "Error storing task".to_string(),
-            Status::InternalServerError,
-        )
+        match err {
+            datastore::Error::User(user_err) if user_err.is::<Error>() => {
+                // unwrap safety: we checked if the downcast is valid in the guard
+                *user_err.downcast::<Error>().unwrap()
+            }
+            _ => {
+                error!(err = %err, "Database transaction error");
+                Error::new(
+                    "Error storing task".to_string(),
+                    Status::InternalServerError,
+                )
+            }
+        }
+
     })?;
 
     Ok(Json(TaskResp::try_from(task.as_ref()).map_err(|err| {
@@ -983,6 +1019,87 @@ mod tests {
                 .await,
             Status::BadRequest
         );
+    }
+
+    #[tokio::test]
+    async fn post_task_idempotence() {
+        // Setup: create a datastore & handler.
+        let (handler, ephemeral_datastore, _) = setup_api_test().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+
+        let vdaf_verify_key =
+            SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
+        let aggregator_auth_token = AuthenticationToken::DapAuth(random());
+
+        // Verify: posting a task creates a new task which matches the request.
+        let mut req = PostTaskReq {
+            peer_aggregator_endpoint: "http://aggregator.endpoint".try_into().unwrap(),
+            query_type: QueryType::TimeInterval,
+            vdaf: VdafInstance::Prio3Count,
+            role: Role::Leader,
+            vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
+            max_batch_query_count: 12,
+            task_expiration: Some(Time::from_seconds_since_epoch(12345)),
+            min_batch_size: 223,
+            time_precision: Duration::from_seconds(62),
+            collector_hpke_config: generate_hpke_config_and_private_key(
+                random(),
+                HpkeKemId::X25519HkdfSha256,
+                HpkeKdfId::HkdfSha256,
+                HpkeAeadId::Aes128Gcm,
+            )
+            .config()
+            .clone(),
+            aggregator_auth_token: Some(aggregator_auth_token.clone()),
+        };
+
+        let post_task = || async {
+            let mut conn = post("/tasks")
+                .with_request_body(serde_json::to_vec(&req).unwrap())
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+                .with_request_header("Accept", CONTENT_TYPE)
+                .with_request_header("Content-Type", CONTENT_TYPE)
+                .run_async(&handler)
+                .await;
+            assert_status!(conn, Status::Ok);
+            serde_json::from_slice::<TaskResp>(
+                &conn
+                    .take_response_body()
+                    .unwrap()
+                    .into_bytes()
+                    .await
+                    .unwrap(),
+            )
+            .unwrap()
+        };
+
+        let first_task_resp = post_task().await;
+        let second_task_resp = post_task().await;
+
+        assert_eq!(first_task_resp.task_id, second_task_resp.task_id);
+        assert_eq!(
+            first_task_resp.vdaf_verify_key,
+            second_task_resp.vdaf_verify_key
+        );
+
+        let got_tasks = ds
+            .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+            .await
+            .unwrap();
+
+        assert!(got_tasks.len() == 1);
+        assert_eq!(got_tasks[0].id(), &first_task_resp.task_id);
+
+        // Mutate the PostTaskReq and re-send it.
+        req.max_batch_query_count = 10;
+        let conn = post("/tasks")
+            .with_request_body(serde_json::to_vec(&req).unwrap())
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .with_request_header("Content-Type", CONTENT_TYPE)
+            .run_async(&handler)
+            .await;
+        assert_status!(conn, Status::Conflict);
     }
 
     /// Test the POST /tasks endpoint, with a leader task with all of the optional fields provided.
