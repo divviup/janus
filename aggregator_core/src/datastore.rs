@@ -1539,7 +1539,7 @@ impl<C: Clock> Transaction<'_, C> {
                 )
                 VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7)
                 ON CONFLICT DO NOTHING
-                RETURNING client_timestamp < COALESCE($3::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP) AS is_expired",
+                RETURNING COALESCE(client_timestamp < COALESCE($3::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
             )
             .await?;
         let rows = self
@@ -1918,7 +1918,7 @@ impl<C: Clock> Transaction<'_, C> {
                     client_timestamp_interval, state, round, last_continue_request_hash)
                 VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8)
                 ON CONFLICT DO NOTHING
-                RETURNING UPPER(client_timestamp_interval) < COALESCE($9::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP) AS is_expired",
+                RETURNING COALESCE(UPPER(client_timestamp_interval) < COALESCE($9::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
             )
             .await?;
         let rows = self
@@ -2408,7 +2408,6 @@ impl<C: Clock> Transaction<'_, C> {
         vdaf: &A,
         collection_job_id: &CollectionJobId,
     ) -> Result<Option<CollectionJob<SEED_SIZE, Q, A>>, Error> {
-        // XXX: update tests
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -2453,7 +2452,7 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         timestamp: &Time,
     ) -> Result<Vec<CollectionJob<SEED_SIZE, TimeInterval, A>>, Error> {
-        // XXX: update tests
+        // TODO(#1553): write unit test
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -2501,7 +2500,7 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         batch_interval: &Interval,
     ) -> Result<Vec<CollectionJob<SEED_SIZE, TimeInterval, A>>, Error> {
-        // XXX: update tests
+        // TODO(#1553): write unit test
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -2555,7 +2554,7 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         batch_id: &BatchId,
     ) -> Result<Vec<CollectionJob<SEED_SIZE, FixedSize, A>>, Error> {
-        // XXX: update tests
+        // TODO(#1553): write unit test
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -2716,7 +2715,6 @@ impl<C: Clock> Transaction<'_, C> {
     where
         A::AggregationParam: std::fmt::Debug,
     {
-        // XXX
         let batch_interval =
             Q::to_batch_interval(collection_job.batch_identifier()).map(SqlInterval::from);
 
@@ -2724,25 +2722,57 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "INSERT INTO collection_jobs
                     (collection_job_id, task_id, batch_identifier, batch_interval,
-                        aggregation_param, state)
-                VALUES ($1, (SELECT id FROM tasks WHERE task_id = $2), $3, $4, $5, $6)",
+                    aggregation_param, state)
+                VALUES ($1, (SELECT id FROM tasks WHERE task_id = $2), $3, $4, $5, $6)
+                ON CONFLICT DO NOTHING
+                RETURNING COALESCE(COALESCE(LOWER(batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier))) < COALESCE($7::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $2) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
             )
             .await?;
-        self.execute(
-            &stmt,
-            &[
-                /* collection_job_id */ collection_job.id().as_ref(),
-                /* task_id */ collection_job.task_id().as_ref(),
-                /* batch_identifier */ &collection_job.batch_identifier().get_encoded(),
-                /* batch_interval */ &batch_interval,
-                /* aggregation_param */
-                &collection_job.aggregation_parameter().get_encoded(),
-                /* state */ &collection_job.state().collection_job_state_code(),
-            ],
-        )
-        .await?;
 
-        Ok(())
+        let rows = self
+            .query(
+                &stmt,
+                &[
+                    /* collection_job_id */ collection_job.id().as_ref(),
+                    /* task_id */ collection_job.task_id().as_ref(),
+                    /* batch_identifier */ &collection_job.batch_identifier().get_encoded(),
+                    /* batch_interval */ &batch_interval,
+                    /* aggregation_param */
+                    &collection_job.aggregation_parameter().get_encoded(),
+                    /* state */
+                    &collection_job.state().collection_job_state_code(),
+                    /* now */ &self.clock.now().as_naive_date_time()?,
+                ],
+            )
+            .await?;
+        let row_count = rows.len().try_into()?;
+
+        if let Some(row) = rows.into_iter().next() {
+            // We got a row back, meaning we wrote a collection job. We check that it wasn't expired
+            // per the task's report_expiry_age, but otherwise we are done.
+            if row.get("is_expired") {
+                let stmt = self
+                    .prepare_cached(
+                        "DELETE FROM collection_jobs
+                        USING tasks
+                        WHERE collection_jobs.task_id = tasks.id
+                          AND tasks.task_id = $1
+                          AND collection_jobs.collection_job_id = $2",
+                    )
+                    .await?;
+                self.execute(
+                    &stmt,
+                    &[
+                        /* task_id */ collection_job.task_id().as_ref(),
+                        /* collection_job_id */ collection_job.id().as_ref(),
+                    ],
+                )
+                .await?;
+                return Ok(());
+            }
+        }
+
+        check_insert(row_count)
     }
 
     /// acquire_incomplete_collection_jobs retrieves & acquires the IDs of unclaimed incomplete
@@ -2755,7 +2785,6 @@ impl<C: Clock> Transaction<'_, C> {
         lease_duration: &StdDuration,
         maximum_acquire_count: usize,
     ) -> Result<Vec<Lease<AcquiredCollectionJob>>, Error> {
-        // XXX
         let now = self.clock.now().as_naive_date_time()?;
         let lease_expiry_time = add_naive_date_time_duration(&now, lease_duration)?;
         let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
@@ -2763,21 +2792,22 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "WITH incomplete_jobs AS (
-                    SELECT collection_jobs.id FROM collection_jobs
+                    SELECT collection_jobs.id, tasks.task_id, tasks.query_type, tasks.vdaf
+                    FROM collection_jobs
                     JOIN tasks ON tasks.id = collection_jobs.task_id
                     WHERE tasks.aggregator_role = 'LEADER'
-                    AND collection_jobs.state = 'COLLECTABLE'
-                    AND collection_jobs.lease_expiry <= $2
+                      AND collection_jobs.state = 'COLLECTABLE'
+                      AND collection_jobs.lease_expiry <= $2
+                      AND COALESCE(LOWER(collection_jobs.batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier))) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
                     FOR UPDATE SKIP LOCKED LIMIT $3
                 )
                 UPDATE collection_jobs SET
                     lease_expiry = $1,
                     lease_token = gen_random_bytes(16),
                     lease_attempts = lease_attempts + 1
-                FROM tasks
-                WHERE tasks.id = collection_jobs.task_id
-                AND collection_jobs.id IN (SELECT id FROM incomplete_jobs)
-                RETURNING tasks.task_id, tasks.query_type, tasks.vdaf,
+                FROM incomplete_jobs
+                WHERE collection_jobs.id = incomplete_jobs.id
+                RETURNING incomplete_jobs.task_id, incomplete_jobs.query_type, incomplete_jobs.vdaf,
                           collection_jobs.collection_job_id, collection_jobs.id,
                           collection_jobs.lease_token, collection_jobs.lease_attempts",
             )
@@ -2818,7 +2848,6 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         lease: &Lease<AcquiredCollectionJob>,
     ) -> Result<(), Error> {
-        // XXX
         let stmt = self
             .prepare_cached(
                 "UPDATE collection_jobs
@@ -2830,7 +2859,8 @@ impl<C: Clock> Transaction<'_, C> {
                   AND tasks.task_id = $1
                   AND collection_jobs.collection_job_id = $2
                   AND collection_jobs.lease_expiry = $3
-                  AND collection_jobs.lease_token = $4",
+                  AND collection_jobs.lease_token = $4
+                  AND COALESCE(LOWER(collection_jobs.batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier))) >= COALESCE($5::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         check_single_row_mutation(
@@ -2841,6 +2871,7 @@ impl<C: Clock> Transaction<'_, C> {
                     /* collection_job_id */ &lease.leased().collection_job_id().as_ref(),
                     /* lease_expiry */ &lease.lease_expiry_time(),
                     /* lease_token */ &lease.lease_token().as_ref(),
+                    /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
             )
             .await?,
@@ -2857,7 +2888,6 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         collection_job: &CollectionJob<SEED_SIZE, Q, A>,
     ) -> Result<(), Error> {
-        // XXX: update tests
         let (report_count, leader_aggregate_share, helper_aggregate_share) = match collection_job
             .state()
         {
@@ -3129,7 +3159,7 @@ impl<C: Clock> Transaction<'_, C> {
                 )
                 VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8, $9)
                 ON CONFLICT DO NOTHING
-                RETURNING UPPER((SELECT client_timestamp_interval FROM batches WHERE batch_identifier = $2 AND aggregation_param = $4)) < COALESCE($10::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP) AS is_expired",
+                RETURNING COALESCE(UPPER((SELECT client_timestamp_interval FROM batches WHERE batch_identifier = $2 AND aggregation_param = $4)) < COALESCE($10::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
             )
             .await?;
         let rows = self
@@ -3259,6 +3289,7 @@ impl<C: Clock> Transaction<'_, C> {
         batch_identifier: &Q::BatchIdentifier,
         aggregation_parameter: &A::AggregationParam,
     ) -> Result<Option<AggregateShareJob<SEED_SIZE, Q, A>>, Error> {
+        // XXX
         let stmt = self
             .prepare_cached(
                 "SELECT helper_aggregate_share, report_count, checksum FROM aggregate_share_jobs
@@ -3301,6 +3332,7 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         timestamp: &Time,
     ) -> Result<Vec<AggregateShareJob<SEED_SIZE, TimeInterval, A>>, Error> {
+        // XXX
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -3349,6 +3381,7 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         interval: &Interval,
     ) -> Result<Vec<AggregateShareJob<SEED_SIZE, TimeInterval, A>>, Error> {
+        // XXX
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -3398,6 +3431,7 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         batch_identifier: &Q::BatchIdentifier,
     ) -> Result<Vec<AggregateShareJob<SEED_SIZE, Q, A>>, Error> {
+        // XXX
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -3442,6 +3476,7 @@ impl<C: Clock> Transaction<'_, C> {
         vdaf: &A,
         task_id: &TaskId,
     ) -> Result<Vec<AggregateShareJob<SEED_SIZE, Q, A>>, Error> {
+        // XXX
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -3506,6 +3541,7 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         job: &AggregateShareJob<SEED_SIZE, Q, A>,
     ) -> Result<(), Error> {
+        // XXX
         let batch_interval = Q::to_batch_interval(job.batch_identifier()).map(SqlInterval::from);
 
         let stmt = self
@@ -3547,7 +3583,7 @@ impl<C: Clock> Transaction<'_, C> {
                 "INSERT INTO outstanding_batches (task_id, batch_id)
                 VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2)
                 ON CONFLICT DO NOTHING
-                RETURNING UPPER((SELECT client_timestamp_interval FROM batches WHERE batch_identifier = $2)) < COALESCE($3::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP) AS is_expired",
+                RETURNING COALESCE(UPPER((SELECT client_timestamp_interval FROM batches WHERE batch_identifier = $2)) < COALESCE($3::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
             )
             .await?;
         let rows = self
@@ -3762,7 +3798,7 @@ impl<C: Clock> Transaction<'_, C> {
                     outstanding_aggregation_jobs, client_timestamp_interval)
                 VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6)
                 ON CONFLICT DO NOTHING
-                RETURNING UPPER(client_timestamp_interval) < COALESCE($7::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP) AS is_expired",
+                RETURNING COALESCE(UPPER(client_timestamp_interval) < COALESCE($7::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
             )
             .await?;
         let rows = self
@@ -6124,6 +6160,9 @@ mod tests {
     };
     use tokio::time::timeout;
 
+    const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
+    const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
+
     #[test]
     fn check_supported_versions() {
         if SUPPORTED_SCHEMA_VERSIONS[0] != *SUPPORTED_SCHEMA_VERSIONS.iter().max().unwrap() {
@@ -6278,8 +6317,6 @@ mod tests {
 
         const REPORT_COUNT: usize = 5;
         const REPORT_AGGREGATION_COUNT: usize = 2;
-        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
-        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
@@ -6524,7 +6561,6 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
-        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
         let report_expiry_age = clock
             .now()
             .difference(&OLDEST_ALLOWED_REPORT_TIMESTAMP)
@@ -6667,8 +6703,6 @@ mod tests {
     async fn get_unaggregated_client_report_ids_for_task(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
-        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
         let report_interval = Interval::new(
@@ -6847,8 +6881,6 @@ mod tests {
     async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
-        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
@@ -6975,8 +7007,6 @@ mod tests {
     async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
-        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
@@ -7255,8 +7285,6 @@ mod tests {
     async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
-        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
@@ -7472,8 +7500,6 @@ mod tests {
         // Setup: insert a few aggregation jobs.
         install_test_trace_subscriber();
 
-        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
-        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
         const LEASE_DURATION: StdDuration = StdDuration::from_secs(300);
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
@@ -7964,9 +7990,6 @@ mod tests {
     async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
-        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
-
         let report_id = random();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let verify_key: [u8; PRIO3_VERIFY_KEY_LENGTH] = random();
@@ -8146,8 +8169,6 @@ mod tests {
     async fn check_other_report_aggregation_exists(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
-        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
@@ -8347,8 +8368,6 @@ mod tests {
     async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
-        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
@@ -8520,49 +8539,68 @@ mod tests {
     async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
+
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
             VdafInstance::Fake,
             Role::Leader,
         )
+        .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
         .build();
-        let first_batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(100),
-            Duration::from_seconds(100),
-        )
-        .unwrap();
+        let first_batch_interval =
+            Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(100)).unwrap();
         let second_batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(200),
+            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                .add(&Duration::from_seconds(100))
+                .unwrap(),
             Duration::from_seconds(200),
         )
         .unwrap();
         let aggregation_param = AggregationParam(13);
 
-        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+        let (first_collection_job, second_collection_job) = ds
+            .run_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move {
+                    tx.put_task(&task).await.unwrap();
+
+                    let first_collection_job =
+                        CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            random(),
+                            first_batch_interval,
+                            aggregation_param,
+                            CollectionJobState::Start,
+                        );
+                    tx.put_collection_job(&first_collection_job).await.unwrap();
+
+                    let second_collection_job =
+                        CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            random(),
+                            second_batch_interval,
+                            aggregation_param,
+                            CollectionJobState::Start,
+                        );
+                    tx.put_collection_job(&second_collection_job).await.unwrap();
+
+                    Ok((first_collection_job, second_collection_job))
+                })
+            })
+            .await
+            .unwrap();
+
+        // Advance the clock to "enable" report expiry.
+        clock.advance(&REPORT_EXPIRY_AGE);
 
         ds.run_tx(|tx| {
             let task = task.clone();
+            let first_collection_job = first_collection_job.clone();
+            let second_collection_job = second_collection_job.clone();
             Box::pin(async move {
-                tx.put_task(&task).await.unwrap();
-
                 let vdaf = dummy_vdaf::Vdaf::new();
-                let first_collection_job = CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                    *task.id(),
-                    random(),
-                    first_batch_interval,
-                    aggregation_param,
-                    CollectionJobState::Start,
-                );
-                tx.put_collection_job(&first_collection_job).await.unwrap();
-
-                let second_collection_job = CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                    *task.id(),
-                    random(),
-                    second_batch_interval,
-                    aggregation_param,
-                    CollectionJobState::Start,
-                );
-                tx.put_collection_job(&second_collection_job).await.unwrap();
 
                 let first_collection_job_again = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
@@ -8622,6 +8660,39 @@ mod tests {
                     .unwrap()
                     .unwrap();
                 assert_eq!(first_collection_job, updated_first_collection_job);
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        // Advance the clock again to expire everything that has been written.
+        clock.advance(&REPORT_EXPIRY_AGE);
+
+        ds.run_tx(|tx| {
+            let first_collection_job = first_collection_job.clone();
+            let second_collection_job = second_collection_job.clone();
+            Box::pin(async move {
+                let vdaf = dummy_vdaf::Vdaf::new();
+
+                let first_collection_job = tx
+                    .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &vdaf,
+                        first_collection_job.id(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(first_collection_job, None);
+
+                let second_collection_job = tx
+                    .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &vdaf,
+                        second_collection_job.id(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(second_collection_job, None);
 
                 Ok(())
             })
@@ -8761,6 +8832,7 @@ mod tests {
         batch_identifier: Q::BatchIdentifier,
         agg_param: AggregationParam,
         collection_job_id: Option<CollectionJobId>,
+        client_timestamp_interval: Interval,
         state: CollectionJobTestCaseState,
     }
 
@@ -8804,9 +8876,20 @@ mod tests {
                 }
 
                 for test_case in test_case.collection_job_test_cases.iter_mut() {
-                    let collection_job = CollectionJob::<0, Q, dummy_vdaf::Vdaf>::new(
+                    tx.put_batch(&Batch::<0, Q, dummy_vdaf::Vdaf>::new(
                         test_case.task_id,
-                        random(),
+                        test_case.batch_identifier.clone(),
+                        test_case.agg_param,
+                        BatchState::Closed,
+                        0,
+                        test_case.client_timestamp_interval,
+                    ))
+                    .await?;
+
+                    let collection_job_id = random();
+                    tx.put_collection_job(&CollectionJob::<0, Q, dummy_vdaf::Vdaf>::new(
+                        test_case.task_id,
+                        collection_job_id,
                         test_case.batch_identifier.clone(),
                         test_case.agg_param,
                         match test_case.state {
@@ -8826,9 +8909,10 @@ mod tests {
                             CollectionJobTestCaseState::Abandoned => CollectionJobState::Abandoned,
                             CollectionJobTestCaseState::Deleted => CollectionJobState::Deleted,
                         },
-                    );
-                    tx.put_collection_job(&collection_job).await?;
-                    test_case.collection_job_id = Some(*collection_job.id());
+                    ))
+                    .await?;
+
+                    test_case.collection_job_id = Some(collection_job_id);
                 }
 
                 Ok(test_case)
@@ -8934,6 +9018,7 @@ mod tests {
             batch_identifier: batch_interval,
             agg_param: AggregationParam(0),
             collection_job_id: None,
+            client_timestamp_interval: Interval::EMPTY,
             state: CollectionJobTestCaseState::Collectable,
         }]);
 
@@ -9066,6 +9151,11 @@ mod tests {
                     batch_identifier: batch_id,
                     agg_param: AggregationParam(0),
                     collection_job_id: None,
+                    client_timestamp_interval: Interval::new(
+                        Time::from_seconds_since_epoch(0),
+                        Duration::from_seconds(1),
+                    )
+                    .unwrap(),
                     state: CollectionJobTestCaseState::Collectable,
                 }]),
             },
@@ -9175,6 +9265,7 @@ mod tests {
             batch_identifier: batch_interval,
             agg_param: AggregationParam(0),
             collection_job_id: None,
+            client_timestamp_interval: Interval::EMPTY,
             state: CollectionJobTestCaseState::Start,
         }]);
 
@@ -9231,6 +9322,7 @@ mod tests {
             batch_identifier: batch_interval,
             agg_param: AggregationParam(0),
             collection_job_id: None,
+            client_timestamp_interval: Interval::EMPTY,
             state: CollectionJobTestCaseState::Start,
         }]);
 
@@ -9307,6 +9399,7 @@ mod tests {
                     .unwrap(),
                     agg_param: AggregationParam(0),
                     collection_job_id: None,
+                    client_timestamp_interval: Interval::EMPTY,
                     state: CollectionJobTestCaseState::Start,
                 }]),
             },
@@ -9360,6 +9453,7 @@ mod tests {
             batch_identifier: batch_interval,
             agg_param: AggregationParam(0),
             collection_job_id: None,
+            client_timestamp_interval: Interval::EMPTY,
             // collection job has already run to completion
             state: CollectionJobTestCaseState::Finished,
         }]);
@@ -9450,6 +9544,7 @@ mod tests {
             batch_identifier: batch_interval,
             agg_param: AggregationParam(0),
             collection_job_id: None,
+            client_timestamp_interval: Interval::EMPTY,
             state: CollectionJobTestCaseState::Start,
         }]);
 
@@ -9535,18 +9630,16 @@ mod tests {
                 batch_identifier: batch_interval,
                 agg_param: AggregationParam(0),
                 collection_job_id: None,
+                client_timestamp_interval: batch_interval,
                 state: CollectionJobTestCaseState::Collectable,
             },
             CollectionJobTestCase::<TimeInterval> {
                 should_be_acquired: true,
                 task_id,
-                batch_identifier: Interval::new(
-                    Time::from_seconds_since_epoch(0),
-                    Duration::from_seconds(100),
-                )
-                .unwrap(),
+                batch_identifier: batch_interval,
                 agg_param: AggregationParam(1),
                 collection_job_id: None,
+                client_timestamp_interval: batch_interval,
                 state: CollectionJobTestCaseState::Collectable,
             },
         ]);
@@ -9703,6 +9796,7 @@ mod tests {
                 batch_identifier: batch_interval,
                 agg_param: AggregationParam(0),
                 collection_job_id: None,
+                client_timestamp_interval: Interval::EMPTY,
                 state: CollectionJobTestCaseState::Finished,
             },
             CollectionJobTestCase::<TimeInterval> {
@@ -9711,6 +9805,7 @@ mod tests {
                 batch_identifier: batch_interval,
                 agg_param: AggregationParam(1),
                 collection_job_id: None,
+                client_timestamp_interval: Interval::EMPTY,
                 state: CollectionJobTestCaseState::Abandoned,
             },
             CollectionJobTestCase::<TimeInterval> {
@@ -9719,6 +9814,7 @@ mod tests {
                 batch_identifier: batch_interval,
                 agg_param: AggregationParam(2),
                 collection_job_id: None,
+                client_timestamp_interval: Interval::EMPTY,
                 state: CollectionJobTestCaseState::Deleted,
             },
         ]);
@@ -9756,8 +9852,6 @@ mod tests {
     async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
-        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
@@ -10076,8 +10170,6 @@ mod tests {
     async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
-        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
@@ -10384,8 +10476,6 @@ mod tests {
     async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
-        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
@@ -10604,8 +10694,6 @@ mod tests {
     async fn roundtrip_batch(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
-        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
@@ -10823,7 +10911,6 @@ mod tests {
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // Setup.
-        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
         let report_expiry_age = clock
             .now()
             .difference(&OLDEST_ALLOWED_REPORT_TIMESTAMP)
@@ -10913,8 +11000,6 @@ mod tests {
     async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
-        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
         let vdaf = dummy_vdaf::Vdaf::new();
@@ -11449,7 +11534,6 @@ mod tests {
             }
         }
 
-        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
         let (
             leader_time_interval_task_id,
             helper_time_interval_task_id,
