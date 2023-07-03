@@ -1,6 +1,6 @@
+use crate::TaskParameters;
 use anyhow::anyhow;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use janus_aggregator_core::task::Task;
 use janus_client::{aggregator_hpke_config, default_http_client, Client, ClientParameters};
 use janus_core::{task::VdafInstance, time::RealClock};
 use janus_interop_binaries::ContainerLogsDropGuard;
@@ -158,19 +158,21 @@ pub enum ClientBackend<'a> {
 impl<'a> ClientBackend<'a> {
     pub async fn build<V>(
         &self,
-        task: &Task,
-        aggregator_endpoints: Vec<Url>,
+        task_parameters: &TaskParameters,
+        (leader_port, helper_port): (u16, u16),
         vdaf: V,
     ) -> anyhow::Result<ClientImplementation<'a, V>>
     where
         V: vdaf::Client<16> + InteropClientEncoding,
     {
         match self {
-            ClientBackend::InProcess => {
-                ClientImplementation::new_in_process(task, aggregator_endpoints, vdaf)
-                    .await
-                    .map_err(Into::into)
-            }
+            ClientBackend::InProcess => ClientImplementation::new_in_process(
+                task_parameters,
+                (leader_port, helper_port),
+                vdaf,
+            )
+            .await
+            .map_err(Into::into),
             ClientBackend::Container {
                 container_client,
                 container_image,
@@ -179,7 +181,7 @@ impl<'a> ClientBackend<'a> {
                 container_client,
                 container_image.clone(),
                 network,
-                task,
+                task_parameters,
                 vdaf,
             )),
         }
@@ -216,19 +218,33 @@ where
     V: vdaf::Client<16> + InteropClientEncoding,
 {
     pub async fn new_in_process(
-        task: &Task,
-        aggregator_endpoints: Vec<Url>,
+        task_parameters: &TaskParameters,
+        (leader_port, helper_port): (u16, u16),
         vdaf: V,
     ) -> Result<ClientImplementation<'static, V>, janus_client::Error> {
-        let client_parameters =
-            ClientParameters::new(*task.id(), aggregator_endpoints, *task.time_precision());
+        let aggregator_endpoints = task_parameters
+            .endpoint_fragments
+            .port_forwarded_endpoints(leader_port, helper_port);
+        let client_parameters = ClientParameters::new(
+            task_parameters.task_id,
+            aggregator_endpoints,
+            task_parameters.time_precision,
+        );
         let http_client = default_http_client()?;
-        let leader_config =
-            aggregator_hpke_config(&client_parameters, &Role::Leader, task.id(), &http_client)
-                .await?;
-        let helper_config =
-            aggregator_hpke_config(&client_parameters, &Role::Helper, task.id(), &http_client)
-                .await?;
+        let leader_config = aggregator_hpke_config(
+            &client_parameters,
+            &Role::Leader,
+            &task_parameters.task_id,
+            &http_client,
+        )
+        .await?;
+        let helper_config = aggregator_hpke_config(
+            &client_parameters,
+            &Role::Helper,
+            &task_parameters.task_id,
+            &http_client,
+        )
+        .await?;
         let client = Client::new(
             client_parameters,
             vdaf,
@@ -244,7 +260,7 @@ where
         container_client: &'d Cli,
         container_image: InteropClient,
         network: &str,
-        task: &Task,
+        task_parameters: &TaskParameters,
         vdaf: V,
     ) -> Self {
         let random_part = hex::encode(random::<[u8; 4]>());
@@ -257,14 +273,17 @@ where
         let container = ContainerLogsDropGuard::new(container);
         let host_port = container.get_host_port_ipv4(8080);
         let http_client = reqwest::Client::new();
+        let aggregator_endpoints = task_parameters
+            .endpoint_fragments
+            .container_network_endpoints();
         ClientImplementation::Container(Box::new(ContainerClientImplementation {
             _container: container,
-            leader: task.aggregator_endpoints()[Role::Leader.index().unwrap()].clone(),
-            helper: task.aggregator_endpoints()[Role::Helper.index().unwrap()].clone(),
-            task_id: *task.id(),
-            time_precision: *task.time_precision(),
+            leader: aggregator_endpoints[Role::Leader.index().unwrap()].clone(),
+            helper: aggregator_endpoints[Role::Helper.index().unwrap()].clone(),
+            task_id: task_parameters.task_id,
+            time_precision: task_parameters.time_precision,
             vdaf,
-            vdaf_instance: task.vdaf().clone(),
+            vdaf_instance: task_parameters.vdaf.clone(),
             host_port,
             http_client,
         }))

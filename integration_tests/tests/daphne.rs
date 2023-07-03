@@ -18,10 +18,11 @@ async fn daphne_janus() {
 
     // Start servers.
     let network = generate_network_name();
-    let (collector_private_key, leader_task, helper_task) =
+    let (mut task_parameters, leader_task, helper_task) =
         test_task_builders(VdafInstance::Prio3Count, QueryType::TimeInterval);
 
     // Daphne is hardcoded to serve from a path starting with /v04/.
+    task_parameters.endpoint_fragments.leader_endpoint_path = "/v04/".to_string();
     let [leader_task, helper_task]: [Task; 2] = [leader_task, helper_task]
         .into_iter()
         .map(|task| {
@@ -39,9 +40,8 @@ async fn daphne_janus() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        &task_parameters,
         (leader.port(), helper.port()),
-        &leader_task,
-        &collector_private_key,
         &ClientBackend::InProcess,
     )
     .await;
@@ -54,10 +54,11 @@ async fn janus_daphne() {
 
     // Start servers.
     let network = generate_network_name();
-    let (collector_private_key, leader_task, helper_task) =
+    let (mut task_parameters, leader_task, helper_task) =
         test_task_builders(VdafInstance::Prio3Count, QueryType::TimeInterval);
 
     // Daphne is hardcoded to serve from a path starting with /v04/.
+    task_parameters.endpoint_fragments.helper_endpoint_path = "/v04/".to_string();
     let [leader_task, helper_task]: [Task; 2] = [leader_task, helper_task]
         .into_iter()
         .map(|task| {
@@ -75,9 +76,8 @@ async fn janus_daphne() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        &task_parameters,
         (leader.port(), helper.port()),
-        &leader_task,
-        &collector_private_key,
         &ClientBackend::InProcess,
     )
     .await;

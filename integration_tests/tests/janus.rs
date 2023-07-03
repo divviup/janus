@@ -1,11 +1,10 @@
 use common::{submit_measurements_and_verify_aggregate, test_task_builders};
-use janus_aggregator_core::task::{QueryType, Task};
+use janus_aggregator_core::task::QueryType;
 use janus_core::{
-    hpke::HpkePrivateKey,
     task::VdafInstance,
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
 };
-use janus_integration_tests::{client::ClientBackend, janus::Janus};
+use janus_integration_tests::{client::ClientBackend, janus::Janus, TaskParameters};
 use janus_interop_binaries::test_util::generate_network_name;
 use testcontainers::clients::Cli;
 
@@ -13,11 +12,9 @@ mod common;
 
 /// A pair of Janus instances, running in containers, against which integration tests may be run.
 struct JanusPair<'a> {
-    /// The leader's view of the task configured in both Janus aggregators.
-    leader_task: Task,
-    /// The private key corresponding to the collector HPKE configuration in the task configured in
-    /// both Janus aggregators.
-    collector_private_key: HpkePrivateKey,
+    /// Task parameters needed by the client and collector, for the task configured in both Janus
+    /// aggregators.
+    task_parameters: TaskParameters,
 
     /// Handle to the leader's resources, which are released on drop.
     leader: Janus<'a>,
@@ -33,17 +30,14 @@ impl<'a> JanusPair<'a> {
         vdaf: VdafInstance,
         query_type: QueryType,
     ) -> JanusPair<'a> {
-        let (collector_private_key, leader_task, helper_task) =
-            test_task_builders(vdaf, query_type);
+        let (task_parameters, leader_task, helper_task) = test_task_builders(vdaf, query_type);
 
-        let leader_task = leader_task.build();
         let network = generate_network_name();
-        let leader = Janus::new(container_client, &network, &leader_task).await;
+        let leader = Janus::new(container_client, &network, &leader_task.build()).await;
         let helper = Janus::new(container_client, &network, &helper_task.build()).await;
 
         Self {
-            leader_task,
-            collector_private_key,
+            task_parameters,
             leader,
             helper,
         }
@@ -66,9 +60,8 @@ async fn janus_janus_count() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
-        &janus_pair.leader_task,
-        &janus_pair.collector_private_key,
         &ClientBackend::InProcess,
     )
     .await;
@@ -90,9 +83,8 @@ async fn janus_janus_sum_16() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
-        &janus_pair.leader_task,
-        &janus_pair.collector_private_key,
         &ClientBackend::InProcess,
     )
     .await;
@@ -116,9 +108,8 @@ async fn janus_janus_histogram_4_buckets() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
-        &janus_pair.leader_task,
-        &janus_pair.collector_private_key,
         &ClientBackend::InProcess,
     )
     .await;
@@ -140,9 +131,8 @@ async fn janus_janus_count_vec_15() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
-        &janus_pair.leader_task,
-        &janus_pair.collector_private_key,
         &ClientBackend::InProcess,
     )
     .await;
@@ -164,9 +154,8 @@ async fn janus_janus_fixed_size() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
-        &janus_pair.leader_task,
-        &janus_pair.collector_private_key,
         &ClientBackend::InProcess,
     )
     .await;
@@ -189,9 +178,8 @@ async fn janus_janus_sum_vec() {
     .await;
 
     submit_measurements_and_verify_aggregate(
+        &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
-        &janus_pair.leader_task,
-        &janus_pair.collector_private_key,
         &ClientBackend::InProcess,
     )
     .await;
