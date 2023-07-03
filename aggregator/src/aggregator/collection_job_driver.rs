@@ -556,6 +556,7 @@ mod tests {
     use prio::codec::{Decode, Encode};
     use rand::random;
     use std::{str, sync::Arc, time::Duration as StdDuration};
+    use trillium_tokio::Stopper;
     use url::Url;
 
     async fn setup_collection_job_test_case(
@@ -1007,6 +1008,7 @@ mod tests {
         let mut runtime_manager = TestRuntimeManager::new();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let stopper = Stopper::new();
 
         let (task, _, collection_job) =
             setup_collection_job_test_case(&mut server, clock.clone(), Arc::clone(&ds), false)
@@ -1016,20 +1018,24 @@ mod tests {
         let meter = meter("collection_job_driver");
         let collection_job_driver =
             Arc::new(CollectionJobDriver::new(reqwest::Client::new(), &meter, 1));
-        let job_driver = Arc::new(JobDriver::new(
-            clock.clone(),
-            runtime_manager.with_label("stepper"),
-            meter,
-            StdDuration::from_secs(1),
-            StdDuration::from_secs(1),
-            10,
-            StdDuration::from_secs(60),
-            collection_job_driver.make_incomplete_job_acquirer_callback(
-                Arc::clone(&ds),
-                StdDuration::from_secs(600),
-            ),
-            collection_job_driver.make_job_stepper_callback(Arc::clone(&ds), 3),
-        ));
+        let job_driver = Arc::new(
+            JobDriver::new(
+                clock.clone(),
+                runtime_manager.with_label("stepper"),
+                meter,
+                stopper.clone(),
+                StdDuration::from_secs(1),
+                StdDuration::from_secs(1),
+                10,
+                StdDuration::from_secs(60),
+                collection_job_driver.make_incomplete_job_acquirer_callback(
+                    Arc::clone(&ds),
+                    StdDuration::from_secs(600),
+                ),
+                collection_job_driver.make_job_stepper_callback(Arc::clone(&ds), 3),
+            )
+            .unwrap(),
+        );
 
         // Set up three error responses from our mock helper. These will cause errors in the
         // leader, because the response body is empty and cannot be decoded.
@@ -1050,9 +1056,7 @@ mod tests {
             .await;
 
         // Start up the job driver.
-        let task_handle = runtime_manager
-            .with_label("driver")
-            .spawn(async move { job_driver.run().await });
+        let task_handle = runtime_manager.with_label("driver").spawn(job_driver.run());
 
         // Run the job driver until we try to step the collection job four times. The first three
         // attempts make network requests and fail, while the fourth attempt just marks the job
@@ -1065,7 +1069,8 @@ mod tests {
             clock.advance(&Duration::from_seconds(600));
         }
         // Shut down the job driver.
-        task_handle.abort();
+        stopper.stop();
+        task_handle.await.unwrap();
 
         // Check that the job driver made the HTTP requests we expected.
         failure_mock.assert_async().await;

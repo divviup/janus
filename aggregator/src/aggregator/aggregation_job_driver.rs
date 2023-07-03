@@ -942,6 +942,7 @@ mod tests {
     use rand::random;
     use reqwest::Url;
     use std::{borrow::Borrow, str, sync::Arc, time::Duration as StdDuration};
+    use trillium_tokio::Stopper;
 
     #[tokio::test]
     async fn aggregation_job_driver() {
@@ -1117,33 +1118,39 @@ mod tests {
             &meter,
             32,
         ));
+        let stopper = Stopper::new();
 
         // Run. Let the aggregation job driver step aggregation jobs, then kill it.
-        let aggregation_job_driver = Arc::new(JobDriver::new(
-            clock,
-            runtime_manager.with_label("stepper"),
-            meter,
-            StdDuration::from_secs(1),
-            StdDuration::from_secs(1),
-            10,
-            StdDuration::from_secs(60),
-            aggregation_job_driver.make_incomplete_job_acquirer_callback(
-                Arc::clone(&ds),
-                StdDuration::from_secs(600),
-            ),
-            aggregation_job_driver.make_job_stepper_callback(Arc::clone(&ds), 5),
-        ));
+        let aggregation_job_driver = Arc::new(
+            JobDriver::new(
+                clock,
+                runtime_manager.with_label("stepper"),
+                meter,
+                stopper.clone(),
+                StdDuration::from_secs(1),
+                StdDuration::from_secs(1),
+                10,
+                StdDuration::from_secs(60),
+                aggregation_job_driver.make_incomplete_job_acquirer_callback(
+                    Arc::clone(&ds),
+                    StdDuration::from_secs(600),
+                ),
+                aggregation_job_driver.make_job_stepper_callback(Arc::clone(&ds), 5),
+            )
+            .unwrap(),
+        );
 
-        let task_handle = runtime_manager.with_label("driver").spawn({
-            let aggregation_job_driver = aggregation_job_driver.clone();
-            async move { aggregation_job_driver.run().await }
-        });
+        let task_handle = runtime_manager
+            .with_label("driver")
+            .spawn(aggregation_job_driver.run());
 
         tracing::info!("awaiting stepper tasks");
-        // Wait for all of the aggregate job stepper tasks to complete.
+        // Wait for all of the aggregation job stepper tasks to complete.
         runtime_manager.wait_for_completed_tasks("stepper", 2).await;
-        // Stop the aggregate job driver task.
-        task_handle.abort();
+        // Stop the aggregation job driver.
+        stopper.stop();
+        // Wait for the aggregation job driver task to complete.
+        task_handle.await.unwrap();
 
         // Verify.
         for mocked_aggregate in mocked_aggregates {
@@ -2775,6 +2782,7 @@ mod tests {
         let mut runtime_manager = TestRuntimeManager::new();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let stopper = Stopper::new();
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -2876,20 +2884,24 @@ mod tests {
             &meter,
             32,
         ));
-        let job_driver = Arc::new(JobDriver::new(
-            clock.clone(),
-            runtime_manager.with_label("stepper"),
-            meter,
-            StdDuration::from_secs(1),
-            StdDuration::from_secs(1),
-            10,
-            StdDuration::from_secs(60),
-            aggregation_job_driver.make_incomplete_job_acquirer_callback(
-                Arc::clone(&ds),
-                StdDuration::from_secs(600),
-            ),
-            aggregation_job_driver.make_job_stepper_callback(Arc::clone(&ds), 3),
-        ));
+        let job_driver = Arc::new(
+            JobDriver::new(
+                clock.clone(),
+                runtime_manager.with_label("stepper"),
+                meter,
+                stopper.clone(),
+                StdDuration::from_secs(1),
+                StdDuration::from_secs(1),
+                10,
+                StdDuration::from_secs(60),
+                aggregation_job_driver.make_incomplete_job_acquirer_callback(
+                    Arc::clone(&ds),
+                    StdDuration::from_secs(600),
+                ),
+                aggregation_job_driver.make_job_stepper_callback(Arc::clone(&ds), 3),
+            )
+            .unwrap(),
+        );
 
         // Set up three error responses from our mock helper. These will cause errors in the
         // leader, because the response body is empty and cannot be decoded.
@@ -2936,9 +2948,7 @@ mod tests {
             .await;
 
         // Start up the job driver.
-        let task_handle = runtime_manager
-            .with_label("driver")
-            .spawn(async move { job_driver.run().await });
+        let task_handle = runtime_manager.with_label("driver").spawn(job_driver.run());
 
         // Run the job driver until we try to step the collection job four times. The first three
         // attempts make network requests and fail, while the fourth attempt just marks the job
@@ -2950,7 +2960,8 @@ mod tests {
             // and try again.
             clock.advance(&Duration::from_seconds(600));
         }
-        task_handle.abort();
+        stopper.stop();
+        task_handle.await.unwrap();
 
         // Check that the job driver made the HTTP requests we expected.
         failure_mock.assert_async().await;

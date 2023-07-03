@@ -43,6 +43,7 @@ async fn main() -> anyhow::Result<()> {
             ctx.clock,
             TokioRuntime,
             meter,
+            stopper,
             Duration::from_secs(ctx.config.job_driver_config.min_job_discovery_delay_secs),
             Duration::from_secs(ctx.config.job_driver_config.max_job_discovery_delay_secs),
             ctx.config.job_driver_config.max_concurrent_job_workers,
@@ -57,8 +58,8 @@ async fn main() -> anyhow::Result<()> {
                 Arc::clone(&datastore),
                 ctx.config.job_driver_config.maximum_attempts_before_failure,
             ),
-        ));
-        stopper.stop_future(job_driver.run()).await;
+        )?);
+        job_driver.run().await;
 
         Ok(())
     })
