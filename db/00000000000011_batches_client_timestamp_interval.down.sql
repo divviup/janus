@@ -1,2 +1,2 @@
 ALTER TABLE batches DROP COLUMN client_timestamp_interval;
-ALTER TABLE batch_aggregations ADD COLUMN client_timestamp_interval TSRANGE NOT NULL;
+ALTER TABLE aggregate_share_jobs DROP COLUMN client_timestamp_interval;

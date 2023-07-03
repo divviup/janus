@@ -215,6 +215,7 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(0)),
                             task.min_batch_size() + 1,
+                            interval,
                             ReportIdChecksum::default(),
                         ),
                     )

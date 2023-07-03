@@ -209,7 +209,7 @@ impl CollectionJobDriver {
             return Ok(());
         }
 
-        let (leader_aggregate_share, report_count, checksum) =
+        let (leader_aggregate_share, report_count, _, checksum) =
             compute_aggregate_share::<SEED_SIZE, Q, A>(&task, &batch_aggregations)
                 .await
                 .map_err(|e| datastore::Error::User(e.into()))?;
@@ -641,6 +641,7 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(0)),
                             5,
+                            Interval::from_time(&report_timestamp).unwrap(),
                             ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                         ),
                     )
@@ -658,6 +659,7 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(0)),
                             5,
+                            Interval::from_time(&report_timestamp).unwrap(),
                             ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                         ),
                     )
@@ -797,6 +799,7 @@ mod tests {
                         BatchAggregationState::Aggregating,
                         Some(dummy_vdaf::AggregateShare(0)),
                         5,
+                        Interval::from_time(&report_timestamp).unwrap(),
                         ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                     ),
                 )
@@ -815,6 +818,7 @@ mod tests {
                         BatchAggregationState::Aggregating,
                         Some(dummy_vdaf::AggregateShare(0)),
                         5,
+                        Interval::from_time(&report_timestamp).unwrap(),
                         ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                     ),
                 )
