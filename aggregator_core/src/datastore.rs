@@ -3289,14 +3289,15 @@ impl<C: Clock> Transaction<'_, C> {
         batch_identifier: &Q::BatchIdentifier,
         aggregation_parameter: &A::AggregationParam,
     ) -> Result<Option<AggregateShareJob<SEED_SIZE, Q, A>>, Error> {
-        // XXX
         let stmt = self
             .prepare_cached(
-                "SELECT helper_aggregate_share, report_count, checksum FROM aggregate_share_jobs
-                WHERE
-                    task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                    AND batch_identifier = $2
-                    AND aggregation_param = $3",
+                "SELECT helper_aggregate_share, report_count, checksum
+                FROM aggregate_share_jobs
+                JOIN tasks ON tasks.id = aggregate_share_jobs.task_id
+                WHERE tasks.task_id = $1
+                  AND batch_identifier = $2
+                  AND aggregation_param = $3
+                  AND COALESCE(COALESCE(LOWER(aggregate_share_jobs.batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = aggregate_share_jobs.task_id AND batches.batch_identifier = aggregate_share_jobs.batch_identifier))) >= COALESCE($4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE)",
             )
             .await?;
         self.query_opt(
@@ -3305,6 +3306,7 @@ impl<C: Clock> Transaction<'_, C> {
                 /* task_id */ &task_id.as_ref(),
                 /* batch_identifier */ &batch_identifier.get_encoded(),
                 /* aggregation_param */ &aggregation_parameter.get_encoded(),
+                /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
         .await?
@@ -3332,7 +3334,6 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         timestamp: &Time,
     ) -> Result<Vec<AggregateShareJob<SEED_SIZE, TimeInterval, A>>, Error> {
-        // XXX
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -3341,9 +3342,11 @@ impl<C: Clock> Transaction<'_, C> {
                     aggregate_share_jobs.helper_aggregate_share,
                     aggregate_share_jobs.report_count,
                     aggregate_share_jobs.checksum
-                FROM aggregate_share_jobs JOIN tasks ON tasks.id = aggregate_share_jobs.task_id
+                FROM aggregate_share_jobs
+                JOIN tasks ON tasks.id = aggregate_share_jobs.task_id
                 WHERE tasks.task_id = $1
-                  AND aggregate_share_jobs.batch_interval @> $2::TIMESTAMP",
+                  AND aggregate_share_jobs.batch_interval @> $2::TIMESTAMP
+                  AND COALESCE(LOWER(aggregate_share_jobs.batch_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE)",
             )
             .await?;
         self.query(
@@ -3351,6 +3354,7 @@ impl<C: Clock> Transaction<'_, C> {
             &[
                 /* task_id */ &task_id.as_ref(),
                 /* timestamp */ &timestamp.as_naive_date_time()?,
+                /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
         .await?
@@ -3381,7 +3385,6 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         interval: &Interval,
     ) -> Result<Vec<AggregateShareJob<SEED_SIZE, TimeInterval, A>>, Error> {
-        // XXX
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -3390,9 +3393,11 @@ impl<C: Clock> Transaction<'_, C> {
                     aggregate_share_jobs.helper_aggregate_share,
                     aggregate_share_jobs.report_count,
                     aggregate_share_jobs.checksum
-                FROM aggregate_share_jobs JOIN tasks ON tasks.id = aggregate_share_jobs.task_id
+                FROM aggregate_share_jobs
+                JOIN tasks ON tasks.id = aggregate_share_jobs.task_id
                 WHERE tasks.task_id = $1
-                  AND aggregate_share_jobs.batch_interval && $2",
+                  AND aggregate_share_jobs.batch_interval && $2
+                  AND COALESCE(LOWER(aggregate_share_jobs.batch_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE)",
             )
             .await?;
         self.query(
@@ -3400,6 +3405,7 @@ impl<C: Clock> Transaction<'_, C> {
             &[
                 /* task_id */ &task_id.as_ref(),
                 /* interval */ &SqlInterval::from(interval),
+                /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
         .await?
@@ -3420,18 +3426,17 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Returns all aggregate share jobs for the given task with the given batch identifier.
     /// Multiple aggregate share jobs may be returned with distinct aggregation parameters.
+    /// Applies only to fixed-size tasks.
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_aggregate_share_jobs_by_batch_identifier<
+    pub async fn get_aggregate_share_jobs_by_batch_id<
         const SEED_SIZE: usize,
-        Q: QueryType,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
         vdaf: &A,
         task_id: &TaskId,
-        batch_identifier: &Q::BatchIdentifier,
-    ) -> Result<Vec<AggregateShareJob<SEED_SIZE, Q, A>>, Error> {
-        // XXX
+        batch_id: &BatchId,
+    ) -> Result<Vec<AggregateShareJob<SEED_SIZE, FixedSize, A>>, Error> {
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -3441,14 +3446,16 @@ impl<C: Clock> Transaction<'_, C> {
                     aggregate_share_jobs.checksum
                 FROM aggregate_share_jobs JOIN tasks ON tasks.id = aggregate_share_jobs.task_id
                 WHERE tasks.task_id = $1
-                  AND aggregate_share_jobs.batch_identifier = $2",
+                  AND aggregate_share_jobs.batch_identifier = $2
+                  AND COALESCE(UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = aggregate_share_jobs.task_id AND batches.batch_identifier = aggregate_share_jobs.batch_identifier)) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE)",
             )
             .await?;
         self.query(
             &stmt,
             &[
                 /* task_id */ &task_id.as_ref(),
-                /* batch_identifier */ &batch_identifier.get_encoded(),
+                /* batch_id */ &batch_id.get_encoded(),
+                /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
         .await?
@@ -3458,7 +3465,7 @@ impl<C: Clock> Transaction<'_, C> {
             Self::aggregate_share_job_from_row(
                 vdaf,
                 task_id,
-                batch_identifier.clone(),
+                batch_id.clone(),
                 aggregation_param,
                 &row,
             )
@@ -3476,7 +3483,6 @@ impl<C: Clock> Transaction<'_, C> {
         vdaf: &A,
         task_id: &TaskId,
     ) -> Result<Vec<AggregateShareJob<SEED_SIZE, Q, A>>, Error> {
-        // XXX
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -3485,8 +3491,10 @@ impl<C: Clock> Transaction<'_, C> {
                     aggregate_share_jobs.helper_aggregate_share,
                     aggregate_share_jobs.report_count,
                     aggregate_share_jobs.checksum
-                FROM aggregate_share_jobs JOIN tasks ON tasks.id = aggregate_share_jobs.task_id
-                WHERE tasks.task_id = $1",
+                FROM aggregate_share_jobs
+                JOIN tasks ON tasks.id = aggregate_share_jobs.task_id
+                WHERE tasks.task_id = $1
+                  AND COALESCE(COALESCE(LOWER(aggregate_share_jobs.batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = aggregate_share_jobs.task_id AND batches.batch_identifier = aggregate_share_jobs.batch_identifier))) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE)",
             )
             .await?;
         self.query(&stmt, &[/* task_id */ &task_id.as_ref()])
@@ -3539,10 +3547,10 @@ impl<C: Clock> Transaction<'_, C> {
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
         &self,
-        job: &AggregateShareJob<SEED_SIZE, Q, A>,
+        aggregate_share_job: &AggregateShareJob<SEED_SIZE, Q, A>,
     ) -> Result<(), Error> {
-        // XXX
-        let batch_interval = Q::to_batch_interval(job.batch_identifier()).map(SqlInterval::from);
+        let batch_interval =
+            Q::to_batch_interval(aggregate_share_job.batch_identifier()).map(SqlInterval::from);
 
         let stmt = self
             .prepare_cached(
@@ -3550,24 +3558,61 @@ impl<C: Clock> Transaction<'_, C> {
                     task_id, batch_identifier, batch_interval, aggregation_param,
                     helper_aggregate_share, report_count, checksum
                 )
-                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7)",
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7)
+                ON CONFLICT DO NOTHING
+                RETURNING COALESCE(COALESCE(LOWER(aggregate_share_jobs.batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = aggregate_share_jobs.task_id AND batches.batch_identifier = aggregate_share_jobs.batch_identifier))) < COALESCE($8::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
             )
             .await?;
-        self.execute(
-            &stmt,
-            &[
-                /* task_id */ &job.task_id().as_ref(),
-                /* batch_identifier */ &job.batch_identifier().get_encoded(),
-                /* batch_interval */ &batch_interval,
-                /* aggregation_param */ &job.aggregation_parameter().get_encoded(),
-                /* helper_aggregate_share */ &job.helper_aggregate_share().get_encoded(),
-                /* report_count */ &i64::try_from(job.report_count())?,
-                /* checksum */ &job.checksum().get_encoded(),
-            ],
-        )
-        .await?;
+        let rows = self
+            .query(
+                &stmt,
+                &[
+                    /* task_id */ &aggregate_share_job.task_id().as_ref(),
+                    /* batch_identifier */
+                    &aggregate_share_job.batch_identifier().get_encoded(),
+                    /* batch_interval */ &batch_interval,
+                    /* aggregation_param */
+                    &aggregate_share_job.aggregation_parameter().get_encoded(),
+                    /* helper_aggregate_share */
+                    &aggregate_share_job.helper_aggregate_share().get_encoded(),
+                    /* report_count */ &i64::try_from(aggregate_share_job.report_count())?,
+                    /* checksum */ &aggregate_share_job.checksum().get_encoded(),
+                    /* now */ &self.clock.now().as_naive_date_time()?,
+                ],
+            )
+            .await?;
+        let row_count = rows.len().try_into()?;
 
-        Ok(())
+        if let Some(row) = rows.into_iter().next() {
+            // We got a row back, meaning we wrote a collection job. We check that it wasn't expired
+            // per the task's report_expiry_age, but otherwise we are done.
+            if row.get("is_expired") {
+                let stmt = self
+                    .prepare_cached(
+                        "DELETE FROM aggregate_share_jobs
+                        USING tasks
+                        WHERE aggregate_share_jobs.task_id = tasks.id
+                          AND tasks.task_id = $1
+                          AND aggregate_share_jobs.batch_identifier = $2
+                          AND aggregate_share_jobs.aggregation_param = $3",
+                    )
+                    .await?;
+                self.execute(
+                    &stmt,
+                    &[
+                        /* task_id */ aggregate_share_job.task_id().as_ref(),
+                        /* batch_identifier */
+                        &aggregate_share_job.batch_identifier().get_encoded(),
+                        /* aggregation_param */
+                        &aggregate_share_job.aggregation_parameter().get_encoded(),
+                    ],
+                )
+                .await?;
+                return Ok(());
+            }
+        }
+
+        check_insert(row_count)
     }
 
     /// Writes an outstanding batch. (This method does not take an [`OutstandingBatch`] as several
@@ -10364,81 +10409,91 @@ mod tests {
 
     #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
-    async fn roundtrip_aggregate_share_job(ephemeral_datastore: EphemeralDatastore) {
+    async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
 
-        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
-        ds.run_tx(|tx| {
-            Box::pin(async move {
-                let task =
-                    TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake, Role::Helper)
-                        .build();
-                tx.put_task(&task).await?;
+        let aggregate_share_job = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    let task = TaskBuilder::new(
+                        task::QueryType::TimeInterval,
+                        VdafInstance::Fake,
+                        Role::Helper,
+                    )
+                    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+                    .build();
+                    tx.put_task(&task).await?;
 
-                let vdaf = dummy_vdaf::Vdaf::new();
-                let aggregate_share = AggregateShare(42);
-                let batch_interval = Interval::new(
-                    Time::from_seconds_since_epoch(100),
-                    Duration::from_seconds(100),
-                )
-                .unwrap();
-                let other_batch_interval = Interval::new(
-                    Time::from_seconds_since_epoch(101),
-                    Duration::from_seconds(101),
-                )
-                .unwrap();
-                let report_count = 10;
-                let checksum = ReportIdChecksum::get_decoded(&[1; 32]).unwrap();
-                let aggregation_param = AggregationParam(11);
-
-                let aggregate_share_job =
-                    AggregateShareJob::new(
+                    let aggregate_share_job = AggregateShareJob::new(
                         *task.id(),
-                        batch_interval,
-                        aggregation_param,
-                        aggregate_share,
-                        report_count,
-                        checksum,
+                        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(100))
+                            .unwrap(),
+                        AggregationParam(11),
+                        AggregateShare(42),
+                        10,
+                        ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
                     );
 
-                tx.put_aggregate_share_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                    &aggregate_share_job,
-                )
-                .await
-                .unwrap();
+                    tx.put_aggregate_share_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &aggregate_share_job,
+                    )
+                    .await
+                    .unwrap();
 
-                let aggregate_share_job_again = tx
+                    Ok(aggregate_share_job)
+                })
+            })
+            .await
+            .unwrap();
+
+        // Advance the clock to "enable" report expiry.
+        clock.advance(&REPORT_EXPIRY_AGE);
+
+        ds.run_tx(|tx| {
+            let want_aggregate_share_job = aggregate_share_job.clone();
+            Box::pin(async move {
+                let vdaf = dummy_vdaf::Vdaf::new();
+
+                let got_aggregate_share_job = tx
                     .get_aggregate_share_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &vdaf,
-                        task.id(),
-                        &batch_interval,
-                        &aggregation_param,
+                        want_aggregate_share_job.task_id(),
+                        want_aggregate_share_job.batch_interval(),
+                        want_aggregate_share_job.aggregation_parameter(),
                     )
                     .await
                     .unwrap()
                     .unwrap();
 
-                assert_eq!(aggregate_share_job, aggregate_share_job_again);
+                assert_eq!(want_aggregate_share_job, got_aggregate_share_job);
 
                 assert!(tx
                     .get_aggregate_share_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &vdaf,
-                        task.id(),
-                        &other_batch_interval,
-                        &aggregation_param,
+                        want_aggregate_share_job.task_id(),
+                        &Interval::new(
+                            Time::from_seconds_since_epoch(500),
+                            Duration::from_seconds(100),
+                        )
+                        .unwrap(),
+                        &want_aggregate_share_job.aggregation_parameter(),
                     )
                     .await
                     .unwrap()
                     .is_none());
 
-                let want_aggregate_share_jobs = Vec::from([aggregate_share_job]);
+                let want_aggregate_share_jobs = Vec::from([want_aggregate_share_job.clone()]);
 
                 let got_aggregate_share_jobs = tx
                     .get_aggregate_share_jobs_including_time::<0, dummy_vdaf::Vdaf>(
                         &vdaf,
-                        task.id(),
-                        &Time::from_seconds_since_epoch(150),
+                        want_aggregate_share_job.task_id(),
+                        &OLDEST_ALLOWED_REPORT_TIMESTAMP
+                            .add(&Duration::from_seconds(5))
+                            .unwrap(),
                     )
                     .await?;
                 assert_eq!(got_aggregate_share_jobs, want_aggregate_share_jobs);
@@ -10446,9 +10501,11 @@ mod tests {
                 let got_aggregate_share_jobs = tx
                     .get_aggregate_share_jobs_intersecting_interval::<0, dummy_vdaf::Vdaf>(
                         &vdaf,
-                        task.id(),
+                        want_aggregate_share_job.task_id(),
                         &Interval::new(
-                            Time::from_seconds_since_epoch(145),
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .add(&Duration::from_seconds(5))
+                                .unwrap(),
                             Duration::from_seconds(10),
                         )
                         .unwrap(),
@@ -10456,13 +10513,199 @@ mod tests {
                     .await?;
                 assert_eq!(got_aggregate_share_jobs, want_aggregate_share_jobs);
 
-                let got_aggregate_share_jobs = tx
-                    .get_aggregate_share_jobs_by_batch_identifier::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        // Advance the clock to expire all written entities.
+        clock.advance(&REPORT_EXPIRY_AGE);
+
+        ds.run_tx(|tx| {
+            let want_aggregate_share_job = aggregate_share_job.clone();
+            Box::pin(async move {
+                let vdaf = dummy_vdaf::Vdaf::new();
+
+                assert_eq!(
+                    tx.get_aggregate_share_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &vdaf,
-                        task.id(),
-                        &batch_interval
-                    ).await?;
+                        want_aggregate_share_job.task_id(),
+                        want_aggregate_share_job.batch_interval(),
+                        want_aggregate_share_job.aggregation_parameter(),
+                    )
+                    .await
+                    .unwrap(),
+                    None
+                );
+
+                assert_eq!(
+                    tx.get_aggregate_share_jobs_including_time::<0, dummy_vdaf::Vdaf>(
+                        &vdaf,
+                        want_aggregate_share_job.task_id(),
+                        &OLDEST_ALLOWED_REPORT_TIMESTAMP
+                            .add(&Duration::from_seconds(5))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap(),
+                    Vec::new()
+                );
+
+                assert!(tx
+                    .get_aggregate_share_jobs_intersecting_interval::<0, dummy_vdaf::Vdaf>(
+                        &vdaf,
+                        want_aggregate_share_job.task_id(),
+                        &Interval::new(
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .add(&Duration::from_seconds(5))
+                                .unwrap(),
+                            Duration::from_seconds(10),
+                        )
+                        .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+                    .is_empty());
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+    }
+
+    #[rstest_reuse::apply(schema_versions_template)]
+    #[tokio::test]
+    async fn roundtrip_aggregate_share_job_fixed_size(ephemeral_datastore: EphemeralDatastore) {
+        install_test_trace_subscriber();
+
+        let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
+
+        let aggregate_share_job = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    let task = TaskBuilder::new(
+                        task::QueryType::FixedSize { max_batch_size: 10 },
+                        VdafInstance::Fake,
+                        Role::Helper,
+                    )
+                    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+                    .build();
+                    tx.put_task(&task).await?;
+
+                    let aggregate_share_job = AggregateShareJob::new(
+                        *task.id(),
+                        random(),
+                        AggregationParam(11),
+                        AggregateShare(42),
+                        10,
+                        ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
+                    );
+
+                    // XXX: helper won't have a batch row :-(
+                    tx.put_batch(&Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        *aggregate_share_job.batch_id(),
+                        *aggregate_share_job.aggregation_parameter(),
+                        BatchState::Closed,
+                        0,
+                        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
+                            .unwrap(),
+                    ))
+                    .await
+                    .unwrap();
+                    tx.put_aggregate_share_job::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        &aggregate_share_job,
+                    )
+                    .await
+                    .unwrap();
+
+                    Ok(aggregate_share_job)
+                })
+            })
+            .await
+            .unwrap();
+
+        // Advance the clock to "enable" report expiry.
+        clock.advance(&REPORT_EXPIRY_AGE);
+
+        ds.run_tx(|tx| {
+            let want_aggregate_share_job = aggregate_share_job.clone();
+            Box::pin(async move {
+                let vdaf = dummy_vdaf::Vdaf::new();
+
+                let got_aggregate_share_job = tx
+                    .get_aggregate_share_job::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        &vdaf,
+                        want_aggregate_share_job.task_id(),
+                        want_aggregate_share_job.batch_id(),
+                        want_aggregate_share_job.aggregation_parameter(),
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(want_aggregate_share_job, got_aggregate_share_job);
+
+                assert!(tx
+                    .get_aggregate_share_job::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        &vdaf,
+                        want_aggregate_share_job.task_id(),
+                        &random(),
+                        want_aggregate_share_job.aggregation_parameter(),
+                    )
+                    .await
+                    .unwrap()
+                    .is_none());
+
+                let want_aggregate_share_jobs = Vec::from([want_aggregate_share_job.clone()]);
+
+                let got_aggregate_share_jobs = tx
+                    .get_aggregate_share_jobs_by_batch_id::<0, dummy_vdaf::Vdaf>(
+                        &vdaf,
+                        want_aggregate_share_job.task_id(),
+                        want_aggregate_share_job.batch_id(),
+                    )
+                    .await?;
                 assert_eq!(got_aggregate_share_jobs, want_aggregate_share_jobs);
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        // Advance the clock to expire all written entities.
+        clock.advance(&REPORT_EXPIRY_AGE);
+
+        ds.run_tx(|tx| {
+            let want_aggregate_share_job = aggregate_share_job.clone();
+            Box::pin(async move {
+                let vdaf = dummy_vdaf::Vdaf::new();
+
+                assert_eq!(
+                    tx.get_aggregate_share_job::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        &vdaf,
+                        want_aggregate_share_job.task_id(),
+                        want_aggregate_share_job.batch_id(),
+                        want_aggregate_share_job.aggregation_parameter(),
+                    )
+                    .await
+                    .unwrap(),
+                    None
+                );
+
+                assert_eq!(
+                    tx.get_aggregate_share_jobs_by_batch_id::<0, dummy_vdaf::Vdaf>(
+                        &vdaf,
+                        want_aggregate_share_job.task_id(),
+                        want_aggregate_share_job.batch_id(),
+                    )
+                    .await
+                    .unwrap(),
+                    Vec::new()
+                );
 
                 Ok(())
             })

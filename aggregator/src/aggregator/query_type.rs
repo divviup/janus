@@ -187,11 +187,7 @@ impl CollectableQueryType for FixedSize {
                 .len(),
 
             Role::Helper => tx
-                .get_aggregate_share_jobs_by_batch_identifier::<SEED_SIZE, FixedSize, A>(
-                    vdaf,
-                    task.id(),
-                    batch_id,
-                )
+                .get_aggregate_share_jobs_by_batch_id::<SEED_SIZE, A>(vdaf, task.id(), batch_id)
                 .await?
                 .len(),
 
