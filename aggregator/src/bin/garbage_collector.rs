@@ -11,9 +11,7 @@ use std::sync::Arc;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     janus_main::<_, Options, Config, _, _>(RealClock::default(), |ctx| async move {
-        GarbageCollector::new(Arc::new(ctx.datastore), ctx.clock)
-            .run()
-            .await
+        GarbageCollector::new(Arc::new(ctx.datastore)).run().await
     })
     .await
 }

@@ -1,19 +1,18 @@
 use anyhow::{Context, Result};
 use futures::future::join_all;
 use janus_aggregator_core::{datastore::Datastore, task::Task};
-use janus_core::time::{Clock, TimeExt};
+use janus_core::time::Clock;
 use std::sync::Arc;
 use tracing::error;
 
 pub struct GarbageCollector<C: Clock> {
     // Dependencies.
     datastore: Arc<Datastore<C>>,
-    clock: C,
 }
 
 impl<C: Clock> GarbageCollector<C> {
-    pub fn new(datastore: Arc<Datastore<C>>, clock: C) -> Self {
-        Self { datastore, clock }
+    pub fn new(datastore: Arc<Datastore<C>>) -> Self {
+        Self { datastore }
     }
 
     #[tracing::instrument(skip(self))]
@@ -39,24 +38,14 @@ impl<C: Clock> GarbageCollector<C> {
     }
 
     async fn gc_task(&self, task: Arc<Task>) -> Result<()> {
-        let oldest_allowed_report_timestamp =
-            if let Some(report_expiry_age) = task.report_expiry_age() {
-                self.clock.now().sub(report_expiry_age)?
-            } else {
-                // No configured report expiry age -- nothing to GC.
-                return Ok(());
-            };
+        // XXX: consider short-circuiting if task's report_expiry_age is None
 
         self.datastore
             .run_tx(|tx| {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
                     // Find and delete old collection jobs.
-                    tx.delete_expired_collection_artifacts(
-                        task.id(),
-                        oldest_allowed_report_timestamp,
-                    )
-                    .await?;
+                    tx.delete_expired_collection_artifacts(task.id()).await?;
 
                     // Find and delete old aggregation jobs/report aggregations/batch aggregations.
                     tx.delete_expired_aggregation_artifacts(task.id()).await?;
@@ -170,7 +159,7 @@ mod tests {
 
         // Run.
         let task = Arc::new(task);
-        GarbageCollector::new(Arc::clone(&ds), clock.clone())
+        GarbageCollector::new(Arc::clone(&ds))
             .gc_task(Arc::clone(&task))
             .await
             .unwrap();
@@ -280,7 +269,7 @@ mod tests {
 
         // Run.
         let task = Arc::new(task);
-        GarbageCollector::new(Arc::clone(&ds), clock.clone())
+        GarbageCollector::new(Arc::clone(&ds))
             .gc_task(Arc::clone(&task))
             .await
             .unwrap();
@@ -382,7 +371,7 @@ mod tests {
 
         // Run.
         let task = Arc::new(task);
-        GarbageCollector::new(Arc::clone(&ds), clock.clone())
+        GarbageCollector::new(Arc::clone(&ds))
             .gc_task(Arc::clone(&task))
             .await
             .unwrap();
@@ -490,7 +479,7 @@ mod tests {
 
         // Run.
         let task = Arc::new(task);
-        GarbageCollector::new(Arc::clone(&ds), clock.clone())
+        GarbageCollector::new(Arc::clone(&ds))
             .gc_task(Arc::clone(&task))
             .await
             .unwrap();
