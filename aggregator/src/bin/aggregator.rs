@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
                 // DAP API handler in the setup_server call below
                 info!(
                     aggregator_bound_address = ?ctx.config.listen_address,
-                    ?path_prefix,
+                    path_prefix,
                     "Serving aggregator API relative to DAP API"
                 );
                 // Append wildcard so that this handler will match anything under the prefix
