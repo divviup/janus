@@ -146,7 +146,7 @@ impl StatusCounter {
     fn new(meter: &Meter) -> Self {
         Self(
             meter
-                .u64_counter("janus_aggregator_responses_total")
+                .u64_counter("janus_aggregator_responses")
                 .with_description(
                     "Count of requests handled by the aggregator, by method, route, and response status.",
                 )
