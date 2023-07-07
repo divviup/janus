@@ -37,7 +37,6 @@ use rand::{random, thread_rng, Rng};
 use std::{
     cmp::{max, min},
     collections::HashMap,
-    convert::Infallible,
     iter,
     num::TryFromIntError,
     ops::RangeInclusive,
@@ -51,6 +50,7 @@ use tokio::{
     try_join,
 };
 use tracing::{debug, error, info};
+use trillium_tokio::Stopper;
 
 // TODO(#680): add metrics to aggregation job creator.
 pub struct AggregationJobCreator<C: Clock> {
@@ -92,7 +92,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         }
     }
 
-    pub async fn run(self: Arc<Self>) -> Infallible {
+    pub async fn run(self: Arc<Self>, stopper: Stopper) {
         // TODO(#224): add support for handling only a subset of tasks in a single job (i.e. sharding).
 
         // Create metric instruments.
@@ -120,7 +120,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         let mut job_creation_task_shutdown_handles: HashMap<TaskId, Sender<()>> = HashMap::new();
 
         loop {
-            tasks_update_ticker.tick().await;
+            if stopper
+                .stop_future(tasks_update_ticker.tick())
+                .await
+                .is_none()
+            {
+                break;
+            }
             let start = Instant::now();
 
             let result = self
@@ -742,6 +748,7 @@ mod tests {
     use prio::vdaf::{self, prio3::Prio3Count};
     use std::{collections::HashSet, iter, sync::Arc, time::Duration};
     use tokio::{task, time, try_join};
+    use trillium_tokio::Stopper;
 
     #[tokio::test]
     async fn aggregation_job_creator() {
@@ -807,12 +814,11 @@ mod tests {
             0,
             100,
         ));
-        let task_handle = task::spawn({
-            let job_creator = job_creator.clone();
-            async move { job_creator.run().await }
-        });
+        let stopper = Stopper::new();
+        let task_handle = task::spawn(Arc::clone(&job_creator).run(stopper.clone()));
         time::sleep(5 * AGGREGATION_JOB_CREATION_INTERVAL).await;
-        task_handle.abort();
+        stopper.stop();
+        task_handle.await.unwrap();
 
         // Inspect database state to verify that the expected aggregation jobs & batches were
         // created.
