@@ -1528,8 +1528,10 @@ mod tests {
 
         let (conflicting_aggregation_job, non_conflicting_aggregation_job) = datastore
             .run_tx(|tx| {
-                let (task, report_share_4, report_share_8) =
-                    (task.clone(), report_share_4.clone(), report_share_8.clone());
+                let task = task.clone();
+                let report_share_4 = report_share_4.clone();
+                let report_share_5 = report_share_5.clone();
+                let report_share_8 = report_share_8.clone();
                 Box::pin(async move {
                     tx.put_task(&task).await?;
 
@@ -1611,9 +1613,9 @@ mod tests {
                             .unwrap(),
                             dummy_vdaf::AggregationParam(0),
                             dummy_vdaf::AggregateShare(0),
-                            0,
-                            Interval::EMPTY,
-                            ReportIdChecksum::default(),
+                            1,
+                            Interval::from_time(report_share_5.metadata().time()).unwrap(),
+                            ReportIdChecksum::for_report_id(report_share_5.metadata().id()),
                         ),
                     )
                     .await?;

@@ -803,7 +803,8 @@ mod tests {
                         ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                     ),
                 )
-                .await?;
+                .await
+                .unwrap();
 
                 tx.update_batch_aggregation(
                     &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
@@ -822,7 +823,8 @@ mod tests {
                         ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                     ),
                 )
-                .await?;
+                .await
+                .unwrap();
 
                 Ok(())
             })
