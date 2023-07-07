@@ -1,16 +1,19 @@
 use backoff::{future::retry, ExponentialBackoffBuilder};
 use itertools::Itertools;
-use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType, Task};
+use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
 use janus_collector::{
     test_util::collect_with_rewritten_url, Collection, Collector, CollectorParameters,
 };
 use janus_core::{
-    hpke::{test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey},
+    hpke::test_util::generate_test_hpke_config_and_private_key,
     retries::test_http_request_exponential_backoff,
     task::VdafInstance,
     time::{Clock, RealClock, TimeExt},
 };
-use janus_integration_tests::client::{ClientBackend, ClientImplementation, InteropClientEncoding};
+use janus_integration_tests::{
+    client::{ClientBackend, ClientImplementation, InteropClientEncoding},
+    EndpointFragments, TaskParameters,
+};
 use janus_messages::{
     problem_type::DapProblemType,
     query_type::{self, FixedSize},
@@ -18,41 +21,45 @@ use janus_messages::{
 };
 use prio::vdaf::{self, prio3::Prio3};
 use rand::{random, thread_rng, Rng};
-use reqwest::Url;
 use std::{iter, time::Duration as StdDuration};
 use tokio::time::{self, sleep};
 
-// Returns (collector_private_key, leader_task, helper_task).
+/// Returns a tuple of [`TaskParameters`], a task builder for the leader, and a task builder for the
+/// helper.
 pub fn test_task_builders(
     vdaf: VdafInstance,
     query_type: QueryType,
-) -> (HpkePrivateKey, TaskBuilder, TaskBuilder) {
+) -> (TaskParameters, TaskBuilder, TaskBuilder) {
     let endpoint_random_value = hex::encode(random::<[u8; 4]>());
+    let endpoint_fragments = EndpointFragments {
+        leader_endpoint_host: format!("leader-{endpoint_random_value}"),
+        leader_endpoint_path: "/".to_string(),
+        helper_endpoint_host: format!("helper-{endpoint_random_value}"),
+        helper_endpoint_path: "/".to_string(),
+    };
     let collector_keypair = generate_test_hpke_config_and_private_key();
-    let leader_task = TaskBuilder::new(query_type, vdaf, Role::Leader)
-        .with_aggregator_endpoints(Vec::from([
-            Url::parse(&format!("http://leader-{endpoint_random_value}:8080/")).unwrap(),
-            Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
-        ]))
+    let leader_task = TaskBuilder::new(query_type, vdaf.clone(), Role::Leader)
+        .with_aggregator_endpoints(endpoint_fragments.container_network_endpoints())
         .with_min_batch_size(46)
         .with_collector_hpke_config(collector_keypair.config().clone());
     let helper_task = leader_task
         .clone()
         .with_role(Role::Helper)
         .with_collector_auth_tokens(Vec::new());
+    let temporary_task = leader_task.clone().build();
+    let task_parameters = TaskParameters {
+        task_id: *temporary_task.id(),
+        endpoint_fragments,
+        query_type,
+        vdaf,
+        min_batch_size: temporary_task.min_batch_size(),
+        time_precision: *temporary_task.time_precision(),
+        collector_hpke_config: collector_keypair.config().clone(),
+        collector_private_key: collector_keypair.private_key().clone(),
+        collector_auth_token: temporary_task.primary_collector_auth_token().clone(),
+    };
 
-    (
-        collector_keypair.private_key().clone(),
-        leader_task,
-        helper_task,
-    )
-}
-
-pub fn translate_url_for_external_access(url: &Url, external_port: u16) -> Url {
-    let mut translated = url.clone();
-    translated.set_host(Some("127.0.0.1")).unwrap();
-    translated.set_port(Some(external_port)).unwrap();
-    translated
+    (task_parameters, leader_task, helper_task)
 }
 
 /// A set of inputs and an expected output for a VDAF's aggregation.
@@ -104,13 +111,12 @@ where
     .await
 }
 
-pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
+pub async fn submit_measurements_and_verify_aggregate_generic<V>(
+    task_parameters: &TaskParameters,
+    leader_port: u16,
     vdaf: V,
-    aggregator_endpoints: Vec<Url>,
-    leader_task: &'a Task,
-    collector_private_key: &'a HpkePrivateKey,
-    test_case: &'a AggregationTestCase<V>,
-    client_implementation: &'a ClientImplementation<'a, V>,
+    test_case: &AggregationTestCase<V>,
+    client_implementation: &ClientImplementation<'_, V>,
 ) where
     V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
     V::AggregateResult: PartialEq,
@@ -122,12 +128,15 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
         client_implementation.upload(measurement).await.unwrap();
     }
 
+    let leader_endpoint = task_parameters
+        .endpoint_fragments
+        .port_forwarded_leader_endpoint(leader_port);
     let collector_params = CollectorParameters::new(
-        *leader_task.id(),
-        aggregator_endpoints[Role::Leader.index().unwrap()].clone(),
-        leader_task.primary_collector_auth_token().clone(),
-        leader_task.collector_hpke_config().clone(),
-        collector_private_key.clone(),
+        task_parameters.task_id,
+        leader_endpoint,
+        task_parameters.collector_auth_token.clone(),
+        task_parameters.collector_hpke_config.clone(),
+        task_parameters.collector_private_key.clone(),
     )
     .with_http_request_backoff(test_http_request_exponential_backoff())
     .with_collect_poll_backoff(
@@ -143,20 +152,16 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
         janus_collector::default_http_client().unwrap(),
     );
 
-    let forwarded_port = aggregator_endpoints[Role::Leader.index().unwrap()]
-        .port()
-        .unwrap();
-
     // Send a collect request and verify that we got the correct result.
-    match leader_task.query_type() {
+    match &task_parameters.query_type {
         QueryType::TimeInterval => {
             let batch_interval = Interval::new(
                 before_timestamp
-                    .to_batch_interval_start(leader_task.time_precision())
+                    .to_batch_interval_start(&task_parameters.time_precision)
                     .unwrap(),
                 // Use two time precisions as the interval duration in order to avoid a race condition if
                 // this test happens to run very close to the end of a batch window.
-                Duration::from_seconds(2 * leader_task.time_precision().as_seconds()),
+                Duration::from_seconds(2 * task_parameters.time_precision.as_seconds()),
             )
             .unwrap();
             let collection = collect_generic(
@@ -164,7 +169,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
                 Query::new_time_interval(batch_interval),
                 &test_case.aggregation_parameter,
                 "127.0.0.1",
-                forwarded_port,
+                leader_port,
             )
             .await
             .unwrap();
@@ -184,7 +189,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
                     Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
                     &test_case.aggregation_parameter,
                     "127.0.0.1",
-                    forwarded_port,
+                    leader_port,
                 )
                 .await;
                 match collection_res {
@@ -212,24 +217,15 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
 }
 
 pub async fn submit_measurements_and_verify_aggregate(
+    task_parameters: &TaskParameters,
     (leader_port, helper_port): (u16, u16),
-    leader_task: &Task,
-    collector_private_key: &HpkePrivateKey,
     client_backend: &ClientBackend<'_>,
 ) {
-    // Translate aggregator endpoints for our perspective outside the container network.
-    let aggregator_endpoints: Vec<_> = leader_task
-        .aggregator_endpoints()
-        .iter()
-        .zip([leader_port, helper_port])
-        .map(|(url, port)| translate_url_for_external_access(url, port))
-        .collect();
-
     // We generate exactly one batch's worth of measurement uploads to work around an issue in
     // Daphne at time of writing.
-    let total_measurements: usize = leader_task.min_batch_size().try_into().unwrap();
+    let total_measurements: usize = task_parameters.min_batch_size.try_into().unwrap();
 
-    match leader_task.vdaf() {
+    match &task_parameters.vdaf {
         VdafInstance::Prio3Count => {
             let vdaf = Prio3::new_count(2).unwrap();
 
@@ -247,15 +243,14 @@ pub async fn submit_measurements_and_verify_aggregate(
             };
 
             let client_implementation = client_backend
-                .build(leader_task, aggregator_endpoints.clone(), vdaf.clone())
+                .build(task_parameters, (leader_port, helper_port), vdaf.clone())
                 .await
                 .unwrap();
 
             submit_measurements_and_verify_aggregate_generic(
+                task_parameters,
+                leader_port,
                 vdaf,
-                aggregator_endpoints,
-                leader_task,
-                collector_private_key,
                 &test_case,
                 &client_implementation,
             )
@@ -275,15 +270,14 @@ pub async fn submit_measurements_and_verify_aggregate(
             };
 
             let client_implementation = client_backend
-                .build(leader_task, aggregator_endpoints.clone(), vdaf.clone())
+                .build(task_parameters, (leader_port, helper_port), vdaf.clone())
                 .await
                 .unwrap();
 
             submit_measurements_and_verify_aggregate_generic(
+                task_parameters,
+                leader_port,
                 vdaf,
-                aggregator_endpoints,
-                leader_task,
-                collector_private_key,
                 &test_case,
                 &client_implementation,
             )
@@ -315,15 +309,14 @@ pub async fn submit_measurements_and_verify_aggregate(
             };
 
             let client_implementation = client_backend
-                .build(leader_task, aggregator_endpoints.clone(), vdaf.clone())
+                .build(task_parameters, (leader_port, helper_port), vdaf.clone())
                 .await
                 .unwrap();
 
             submit_measurements_and_verify_aggregate_generic(
+                task_parameters,
+                leader_port,
                 vdaf,
-                aggregator_endpoints,
-                leader_task,
-                collector_private_key,
                 &test_case,
                 &client_implementation,
             )
@@ -354,15 +347,14 @@ pub async fn submit_measurements_and_verify_aggregate(
             };
 
             let client_implementation = client_backend
-                .build(leader_task, aggregator_endpoints.clone(), vdaf.clone())
+                .build(task_parameters, (leader_port, helper_port), vdaf.clone())
                 .await
                 .unwrap();
 
             submit_measurements_and_verify_aggregate_generic(
+                task_parameters,
+                leader_port,
                 vdaf,
-                aggregator_endpoints,
-                leader_task,
-                collector_private_key,
                 &test_case,
                 &client_implementation,
             )
@@ -394,20 +386,19 @@ pub async fn submit_measurements_and_verify_aggregate(
             };
 
             let client_implementation = client_backend
-                .build(leader_task, aggregator_endpoints.clone(), vdaf.clone())
+                .build(task_parameters, (leader_port, helper_port), vdaf.clone())
                 .await
                 .unwrap();
 
             submit_measurements_and_verify_aggregate_generic(
+                task_parameters,
+                leader_port,
                 vdaf,
-                aggregator_endpoints,
-                leader_task,
-                collector_private_key,
                 &test_case,
                 &client_implementation,
             )
             .await;
         }
-        _ => panic!("Unsupported VdafInstance: {:?}", leader_task.vdaf()),
+        _ => panic!("Unsupported VdafInstance: {:?}", task_parameters.vdaf),
     }
 }
