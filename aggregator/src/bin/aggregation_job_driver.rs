@@ -22,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     janus_main::<_, Options, Config, _, _>(RealClock::default(), |ctx| async move {
-        let meter = opentelemetry::global::meter("aggregation_job_driver");
+        let meter = opentelemetry::global::meter("janus_aggregator");
         let datastore = Arc::new(ctx.datastore);
         let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
             reqwest::Client::builder()

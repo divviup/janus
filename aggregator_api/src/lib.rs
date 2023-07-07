@@ -83,7 +83,7 @@ pub fn aggregator_api_handler<C: Clock>(ds: Arc<Datastore<C>>, cfg: Config) -> i
         State(ds),
         State(Arc::new(cfg)),
         // Metrics.
-        metrics("janus_aggregator_api").with_route(|conn| conn.route().map(ToString::to_string)),
+        metrics("janus_aggregator").with_route(|conn| conn.route().map(ToString::to_string)),
         // Authorization check.
         api(auth_check),
         // Check content type and accept headers

@@ -93,7 +93,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         // TODO(#224): add support for handling only a subset of tasks in a single job (i.e. sharding).
 
         // Create metric instruments.
-        let meter = opentelemetry::global::meter("aggregation_job_creator");
+        let meter = opentelemetry::global::meter("janus_aggregator");
         let task_update_time_histogram = meter
             .f64_histogram("janus_task_update_time")
             .with_description("Time spent updating tasks.")

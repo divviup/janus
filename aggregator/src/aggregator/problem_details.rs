@@ -101,7 +101,7 @@ mod tests {
 
     #[tokio::test]
     async fn problem_details_round_trip() {
-        let meter = opentelemetry::global::meter("");
+        let meter = opentelemetry::global::meter("tests");
         let request_histogram = meter
             .f64_histogram("janus_http_request_duration_seconds")
             .init();
