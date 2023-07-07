@@ -66,6 +66,7 @@ mod tests {
     use assert_matches::assert_matches;
     use futures::future::join_all;
     use http::Method;
+    use janus_aggregator_core::test_util::noop_meter;
     use janus_core::time::{Clock, RealClock};
     use janus_messages::{
         problem_type::{DapProblemType, DapProblemTypeParseError},
@@ -101,8 +102,7 @@ mod tests {
 
     #[tokio::test]
     async fn problem_details_round_trip() {
-        let meter = opentelemetry::global::meter("tests");
-        let request_histogram = meter
+        let request_histogram = noop_meter()
             .f64_histogram("janus_http_request_duration_seconds")
             .init();
 

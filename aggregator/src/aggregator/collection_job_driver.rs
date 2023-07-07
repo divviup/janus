@@ -537,6 +537,7 @@ mod tests {
             Datastore,
         },
         task::{test_util::TaskBuilder, QueryType, Task},
+        test_util::noop_meter,
     };
     use janus_core::{
         task::VdafInstance,
@@ -552,7 +553,6 @@ mod tests {
         query_type::TimeInterval, AggregateShare, AggregateShareReq, AggregationJobRound,
         BatchSelector, Duration, HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum, Role,
     };
-    use opentelemetry::global::meter;
     use prio::codec::{Decode, Encode};
     use rand::random;
     use std::{str, sync::Arc, time::Duration as StdDuration};
@@ -689,7 +689,8 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let meter = noop_meter();
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
 
         let time_precision = Duration::from_seconds(500);
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
@@ -770,11 +771,8 @@ mod tests {
             .await
             .unwrap();
 
-        let collection_job_driver = CollectionJobDriver::new(
-            reqwest::Client::builder().build().unwrap(),
-            &meter("collection_job_driver"),
-            1,
-        );
+        let collection_job_driver =
+            CollectionJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter, 1);
 
         // No batch aggregations inserted yet.
         let error = collection_job_driver
@@ -954,16 +952,14 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let meter = noop_meter();
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
 
         let (_, lease, collection_job) =
             setup_collection_job_test_case(&mut server, clock, Arc::clone(&ds), true).await;
 
-        let collection_job_driver = CollectionJobDriver::new(
-            reqwest::Client::builder().build().unwrap(),
-            &meter("collection_job_driver"),
-            1,
-        );
+        let collection_job_driver =
+            CollectionJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter, 1);
 
         // Run: abandon the collection job.
         collection_job_driver
@@ -1007,7 +1003,8 @@ mod tests {
         let clock = MockClock::default();
         let mut runtime_manager = TestRuntimeManager::new();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let meter = noop_meter();
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
         let stopper = Stopper::new();
 
         let (task, _, collection_job) =
@@ -1015,7 +1012,6 @@ mod tests {
                 .await;
 
         // Set up the collection job driver
-        let meter = meter("collection_job_driver");
         let collection_job_driver =
             Arc::new(CollectionJobDriver::new(reqwest::Client::new(), &meter, 1));
         let job_driver = Arc::new(
@@ -1104,7 +1100,8 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let meter = noop_meter();
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
 
         let (task, lease, collection_job) =
             setup_collection_job_test_case(&mut server, clock, Arc::clone(&ds), true).await;
@@ -1137,11 +1134,7 @@ mod tests {
             .create_async()
             .await;
 
-        let collection_job_driver = CollectionJobDriver::new(
-            reqwest::Client::builder().build().unwrap(),
-            &meter("collection_job_driver"),
-            1,
-        );
+        let collection_job_driver = CollectionJobDriver::new(reqwest::Client::new(), &meter, 1);
 
         // Step the collection job. The driver should successfully run the job, but then discard the
         // results when it notices the job has been deleted.

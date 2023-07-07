@@ -21,7 +21,7 @@ use janus_messages::{
     AggregationJobRound, Duration as DurationMsg, Interval, Role, TaskId,
 };
 use opentelemetry::{
-    metrics::{Histogram, Unit},
+    metrics::{Histogram, Meter, Unit},
     Context, KeyValue,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -56,6 +56,7 @@ use tracing::{debug, error, info};
 pub struct AggregationJobCreator<C: Clock> {
     // Dependencies.
     datastore: Datastore<C>,
+    meter: Meter,
 
     // Configuration values.
     /// How frequently we look for new tasks to start creating aggregation jobs for.
@@ -75,6 +76,7 @@ pub struct AggregationJobCreator<C: Clock> {
 impl<C: Clock + 'static> AggregationJobCreator<C> {
     pub fn new(
         datastore: Datastore<C>,
+        meter: Meter,
         tasks_update_frequency: Duration,
         aggregation_job_creation_interval: Duration,
         min_aggregation_job_size: usize,
@@ -82,6 +84,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     ) -> AggregationJobCreator<C> {
         AggregationJobCreator {
             datastore,
+            meter,
             tasks_update_frequency,
             aggregation_job_creation_interval,
             min_aggregation_job_size,
@@ -93,13 +96,14 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         // TODO(#224): add support for handling only a subset of tasks in a single job (i.e. sharding).
 
         // Create metric instruments.
-        let meter = opentelemetry::global::meter("janus_aggregator");
-        let task_update_time_histogram = meter
+        let task_update_time_histogram = self
+            .meter
             .f64_histogram("janus_task_update_time")
             .with_description("Time spent updating tasks.")
             .with_unit(Unit::new("seconds"))
             .init();
-        let job_creation_time_histogram = meter
+        let job_creation_time_histogram = self
+            .meter
             .f64_histogram("janus_job_creation_time")
             .with_description("Time spent creating aggregation jobs.")
             .with_unit(Unit::new("seconds"))
@@ -721,6 +725,7 @@ mod tests {
         },
         query_type::AccumulableQueryType,
         task::{test_util::TaskBuilder, QueryType as TaskQueryType},
+        test_util::noop_meter,
     };
     use janus_core::{
         task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
@@ -748,7 +753,8 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(clock.clone()).await;
+        let meter = noop_meter();
+        let ds = ephemeral_datastore.datastore(clock.clone(), &meter).await;
 
         // TODO(#234): consider using tokio::time::pause() to make time deterministic, and allow
         // this test to run without the need for a (racy, wallclock-consuming) real sleep.
@@ -793,13 +799,14 @@ mod tests {
         // Create & run the aggregation job creator, give it long enough to create tasks, and then
         // kill it.
         const AGGREGATION_JOB_CREATION_INTERVAL: Duration = Duration::from_secs(1);
-        let job_creator = Arc::new(AggregationJobCreator {
-            datastore: ds,
-            tasks_update_frequency: Duration::from_secs(3600),
-            aggregation_job_creation_interval: AGGREGATION_JOB_CREATION_INTERVAL,
-            min_aggregation_job_size: 0,
-            max_aggregation_job_size: 100,
-        });
+        let job_creator = Arc::new(AggregationJobCreator::new(
+            ds,
+            meter,
+            Duration::from_secs(3600),
+            AGGREGATION_JOB_CREATION_INTERVAL,
+            0,
+            100,
+        ));
         let task_handle = task::spawn({
             let job_creator = job_creator.clone();
             async move { job_creator.run().await }
@@ -873,7 +880,8 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(clock.clone()).await;
+        let meter = noop_meter();
+        let ds = ephemeral_datastore.datastore(clock.clone(), &meter).await;
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
 
@@ -914,13 +922,14 @@ mod tests {
         .unwrap();
 
         // Run.
-        let job_creator = Arc::new(AggregationJobCreator {
-            datastore: ds,
-            tasks_update_frequency: Duration::from_secs(3600),
-            aggregation_job_creation_interval: Duration::from_secs(1),
-            min_aggregation_job_size: MIN_AGGREGATION_JOB_SIZE,
-            max_aggregation_job_size: MAX_AGGREGATION_JOB_SIZE,
-        });
+        let job_creator = Arc::new(AggregationJobCreator::new(
+            ds,
+            meter,
+            Duration::from_secs(3600),
+            Duration::from_secs(1),
+            MIN_AGGREGATION_JOB_SIZE,
+            MAX_AGGREGATION_JOB_SIZE,
+        ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
             .await
@@ -984,7 +993,8 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(clock.clone()).await;
+        let meter = noop_meter();
+        let ds = ephemeral_datastore.datastore(clock.clone(), &meter).await;
         let task = Arc::new(
             TaskBuilder::new(
                 TaskQueryType::TimeInterval,
@@ -1010,13 +1020,14 @@ mod tests {
         .unwrap();
 
         // Run.
-        let job_creator = Arc::new(AggregationJobCreator {
-            datastore: ds,
-            tasks_update_frequency: Duration::from_secs(3600),
-            aggregation_job_creation_interval: Duration::from_secs(1),
-            min_aggregation_job_size: 2,
-            max_aggregation_job_size: 100,
-        });
+        let job_creator = Arc::new(AggregationJobCreator::new(
+            ds,
+            meter,
+            Duration::from_secs(3600),
+            Duration::from_secs(1),
+            2,
+            100,
+        ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
             .await
@@ -1107,7 +1118,8 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(clock.clone()).await;
+        let meter = noop_meter();
+        let ds = ephemeral_datastore.datastore(clock.clone(), &meter).await;
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
 
@@ -1158,13 +1170,14 @@ mod tests {
         .unwrap();
 
         // Run.
-        let job_creator = Arc::new(AggregationJobCreator {
-            datastore: ds,
-            tasks_update_frequency: Duration::from_secs(3600),
-            aggregation_job_creation_interval: Duration::from_secs(1),
-            min_aggregation_job_size: MIN_AGGREGATION_JOB_SIZE,
-            max_aggregation_job_size: MAX_AGGREGATION_JOB_SIZE,
-        });
+        let job_creator = Arc::new(AggregationJobCreator::new(
+            ds,
+            meter,
+            Duration::from_secs(3600),
+            Duration::from_secs(1),
+            MIN_AGGREGATION_JOB_SIZE,
+            MAX_AGGREGATION_JOB_SIZE,
+        ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
             .await
@@ -1231,8 +1244,8 @@ mod tests {
         install_test_trace_subscriber();
         let clock: MockClock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds: janus_aggregator_core::datastore::Datastore<MockClock> =
-            ephemeral_datastore.datastore(clock.clone()).await;
+        let meter = noop_meter();
+        let ds = ephemeral_datastore.datastore(clock.clone(), &meter).await;
 
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
@@ -1279,13 +1292,14 @@ mod tests {
         .unwrap();
 
         // Run.
-        let job_creator = Arc::new(AggregationJobCreator {
-            datastore: ds,
-            tasks_update_frequency: Duration::from_secs(3600),
-            aggregation_job_creation_interval: Duration::from_secs(1),
-            min_aggregation_job_size: MIN_AGGREGATION_JOB_SIZE,
-            max_aggregation_job_size: MAX_AGGREGATION_JOB_SIZE,
-        });
+        let job_creator = Arc::new(AggregationJobCreator::new(
+            ds,
+            meter,
+            Duration::from_secs(3600),
+            Duration::from_secs(1),
+            MIN_AGGREGATION_JOB_SIZE,
+            MAX_AGGREGATION_JOB_SIZE,
+        ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
             .await
