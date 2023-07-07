@@ -293,7 +293,7 @@ mod tests {
             "  url: \"postgres://postgres@localhost/postgres\"\n",
         );
         let config: CommonConfig = serde_yaml::from_str(disabled).unwrap();
-        assert_eq!(config.taskprov_config.enabled, false);
+        assert!(!config.taskprov_config.enabled);
 
         let enabled = concat!(
             "database:\n",
@@ -302,6 +302,6 @@ mod tests {
             "  enabled: true\n",
         );
         let config: CommonConfig = serde_yaml::from_str(enabled).unwrap();
-        assert_eq!(config.taskprov_config.enabled, true);
+        assert!(config.taskprov_config.enabled);
     }
 }
