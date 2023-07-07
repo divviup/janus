@@ -135,7 +135,7 @@ mod tests {
     use clap::CommandFactory;
     use janus_aggregator::config::{
         test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-        CommonConfig, JobDriverConfig,
+        CommonConfig, JobDriverConfig, TaskprovConfig,
     };
     use janus_core::test_util::roundtrip_encoding;
     use std::net::{Ipv4Addr, SocketAddr};
@@ -153,6 +153,7 @@ mod tests {
                 logging_config: generate_trace_config(),
                 metrics_config: generate_metrics_config(),
                 health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
+                taskprov_config: TaskprovConfig::default(),
             },
             job_driver_config: JobDriverConfig {
                 min_job_discovery_delay_secs: 10,
