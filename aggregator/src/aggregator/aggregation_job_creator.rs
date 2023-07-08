@@ -44,8 +44,6 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    select,
-    sync::oneshot::{self, Receiver, Sender},
     time::{self, sleep_until, Instant, MissedTickBehavior},
     try_join,
 };
@@ -115,9 +113,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         let mut tasks_update_ticker = time::interval(self.tasks_update_frequency);
         tasks_update_ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
-        // This tracks the "shutdown handle" (i.e. oneshot sender) used to shut down the per-task
-        // worker by task ID.
-        let mut job_creation_task_shutdown_handles: HashMap<TaskId, Sender<()>> = HashMap::new();
+        // This tracks the stoppers used to shut down the per-task worker by task ID.
+        let mut job_creation_task_shutdown_handles: HashMap<TaskId, Stopper> = HashMap::new();
 
         loop {
             if stopper
@@ -150,12 +147,16 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 &[KeyValue::new("status", status)],
             );
         }
+
+        for task_stopper in job_creation_task_shutdown_handles.values() {
+            task_stopper.stop();
+        }
     }
 
     #[tracing::instrument(skip_all, err)]
     async fn update_tasks(
         self: &Arc<Self>,
-        job_creation_task_shutdown_handles: &mut HashMap<TaskId, Sender<()>>,
+        job_creation_task_shutdown_handles: &mut HashMap<TaskId, Stopper>,
         job_creation_time_histogram: &Histogram<f64>,
     ) -> Result<(), datastore::Error> {
         debug!("Updating tasks");
@@ -174,13 +175,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .collect::<HashMap<_, _>>();
 
         // Stop job creation tasks for no-longer-existing tasks.
-        job_creation_task_shutdown_handles.retain(|task_id, _| {
+        job_creation_task_shutdown_handles.retain(|task_id, task_stopper| {
             if tasks.contains_key(task_id) {
                 return true;
             }
-            // We don't need to send on the channel: dropping the sender is enough to cause the
-            // receiver future to resolve with a RecvError, which will trigger shutdown.
+
             info!(%task_id, "Stopping job creation worker");
+            task_stopper.stop();
             false
         });
 
@@ -190,13 +191,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 continue;
             }
             info!(%task_id, "Starting job creation worker");
-            let (tx, rx) = oneshot::channel();
-            job_creation_task_shutdown_handles.insert(task_id, tx);
+            let task_stopper = Stopper::new();
+            job_creation_task_shutdown_handles.insert(task_id, task_stopper.clone());
             tokio::task::spawn({
                 let (this, job_creation_time_histogram) =
                     (Arc::clone(self), job_creation_time_histogram.clone());
                 async move {
-                    this.run_for_task(rx, job_creation_time_histogram, Arc::new(task))
+                    this.run_for_task(task_stopper, job_creation_time_histogram, Arc::new(task))
                         .await
                 }
             });
@@ -205,10 +206,10 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         Ok(())
     }
 
-    #[tracing::instrument(skip(self, shutdown, job_creation_time_histogram))]
+    #[tracing::instrument(skip(self, stopper, job_creation_time_histogram))]
     async fn run_for_task(
         self: Arc<Self>,
-        mut shutdown: Receiver<()>,
+        stopper: Stopper,
         job_creation_time_histogram: Histogram<f64>,
         task: Arc<Task>,
     ) {
@@ -220,30 +221,38 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         }
 
         loop {
-            select! {
-                _ = sleep_until(next_run_instant) => {
-                    debug!(task_id = %task.id(), "Creating aggregation jobs for task");
-                    let (start, mut status) = (Instant::now(), "success");
-                    match Arc::clone(&self).create_aggregation_jobs_for_task(Arc::clone(&task)).await {
-                        Ok(true) => next_run_instant = Instant::now(),
+            if stopper
+                .stop_future(sleep_until(next_run_instant))
+                .await
+                .is_none()
+            {
+                debug!(task_id = %task.id(), "Job creation worker stopped");
+                break;
+            }
 
-                        Ok(false) =>
-                            next_run_instant = Instant::now() + self.aggregation_job_creation_interval,
+            debug!(task_id = %task.id(), "Creating aggregation jobs for task");
+            let (start, mut status) = (Instant::now(), "success");
+            match Arc::clone(&self)
+                .create_aggregation_jobs_for_task(Arc::clone(&task))
+                .await
+            {
+                Ok(true) => next_run_instant = Instant::now(),
 
-                        Err(err) => {
-                            error!(task_id = %task.id(), %err, "Couldn't create aggregation jobs for task");
-                            status = "error";
-                            next_run_instant = Instant::now() + self.aggregation_job_creation_interval;
-                        }
-                    }
-                    job_creation_time_histogram.record(&Context::current(), start.elapsed().as_secs_f64(), &[KeyValue::new("status", status)]);
+                Ok(false) => {
+                    next_run_instant = Instant::now() + self.aggregation_job_creation_interval
                 }
 
-                _ = &mut shutdown => {
-                    debug!(task_id = %task.id(), "Job creation worker stopped");
-                    return;
+                Err(err) => {
+                    error!(task_id = %task.id(), %err, "Couldn't create aggregation jobs for task");
+                    status = "error";
+                    next_run_instant = Instant::now() + self.aggregation_job_creation_interval;
                 }
             }
+            job_creation_time_histogram.record(
+                &Context::current(),
+                start.elapsed().as_secs_f64(),
+                &[KeyValue::new("status", status)],
+            );
         }
     }
 
