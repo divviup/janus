@@ -27,7 +27,7 @@ async fn main() -> anyhow::Result<()> {
             ctx.config.min_aggregation_job_size,
             ctx.config.max_aggregation_job_size,
         ));
-        stopper.stop_future(aggregation_job_creator.run()).await;
+        aggregation_job_creator.run(stopper).await;
 
         Ok(())
     })
