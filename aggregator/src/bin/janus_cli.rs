@@ -463,7 +463,7 @@ mod tests {
     use janus_aggregator::{
         binary_utils::CommonBinaryOptions,
         config::test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-        config::{CommonConfig},
+        config::CommonConfig,
     };
     use janus_aggregator_core::{
         datastore::{test_util::ephemeral_datastore, Datastore},
