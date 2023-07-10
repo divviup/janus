@@ -48,7 +48,7 @@ use tokio::{
     try_join,
 };
 use tracing::{debug, error, info};
-use trillium_tokio::Stopper;
+use trillium_tokio::{CloneCounterObserver, Stopper};
 
 // TODO(#680): add metrics to aggregation job creator.
 pub struct AggregationJobCreator<C: Clock> {
@@ -116,6 +116,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         // This tracks the stoppers used to shut down the per-task worker by task ID.
         let mut job_creation_task_shutdown_handles: HashMap<TaskId, Stopper> = HashMap::new();
 
+        let observer = CloneCounterObserver::new();
+
         loop {
             if stopper
                 .stop_future(tasks_update_ticker.tick())
@@ -130,6 +132,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 .update_tasks(
                     &mut job_creation_task_shutdown_handles,
                     &job_creation_time_histogram,
+                    &observer,
                 )
                 .await;
 
@@ -151,6 +154,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         for task_stopper in job_creation_task_shutdown_handles.values() {
             task_stopper.stop();
         }
+        observer.await;
     }
 
     #[tracing::instrument(skip_all, err)]
@@ -158,6 +162,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         self: &Arc<Self>,
         job_creation_task_shutdown_handles: &mut HashMap<TaskId, Stopper>,
         job_creation_time_histogram: &Histogram<f64>,
+        observer: &CloneCounterObserver,
     ) -> Result<(), datastore::Error> {
         debug!("Updating tasks");
         let tasks = self
@@ -196,7 +201,9 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             tokio::task::spawn({
                 let (this, job_creation_time_histogram) =
                     (Arc::clone(self), job_creation_time_histogram.clone());
+                let counter = observer.counter();
                 async move {
+                    let _counter = counter;
                     this.run_for_task(task_stopper, job_creation_time_histogram, Arc::new(task))
                         .await
                 }
