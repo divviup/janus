@@ -3613,9 +3613,9 @@ impl<C: Clock> Transaction<'_, C> {
                     JOIN batch_aggregations
                       ON batch_aggregations.batch_identifier = outstanding_batches.batch_id
                     WHERE outstanding_batches.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                    GROUP BY outstanding_batches.batch_id, batch_aggregations.aggregation_param
+                    GROUP BY outstanding_batches.batch_id
                 )
-                SELECT DISTINCT batch_id FROM batches WHERE count >= $2::bigint LIMIT 1",
+                SELECT batch_id FROM batches WHERE count >= $2::bigint LIMIT 1",
             )
             .await?;
         self.query_opt(
