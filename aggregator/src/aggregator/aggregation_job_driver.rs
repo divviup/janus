@@ -912,6 +912,7 @@ mod tests {
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
         task::{test_util::TaskBuilder, QueryType, VerifyKey},
+        test_util::noop_meter,
     };
     use janus_core::{
         hpke::{
@@ -930,7 +931,6 @@ mod tests {
         Interval, PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult,
         ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
     };
-    use opentelemetry::global::meter;
     use prio::{
         codec::Encode,
         vdaf::{
@@ -958,7 +958,8 @@ mod tests {
         let clock = MockClock::default();
         let mut runtime_manager = TestRuntimeManager::new();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let meter = noop_meter();
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -1112,7 +1113,6 @@ mod tests {
             },
         ))
         .await;
-        let meter = meter("aggregation_job_driver");
         let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
             reqwest::Client::new(),
             &meter,
@@ -1239,7 +1239,8 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let meter = noop_meter();
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
         let task = TaskBuilder::new(
@@ -1439,7 +1440,6 @@ mod tests {
             .await;
 
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
-        let meter = meter("aggregation_job_driver");
         let aggregation_job_driver =
             AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter, 32);
         let error = aggregation_job_driver
@@ -1601,7 +1601,8 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let meter = noop_meter();
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
         let task = TaskBuilder::new(
@@ -1758,7 +1759,6 @@ mod tests {
             .await;
 
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
-        let meter = meter("aggregation_job_driver");
         let aggregation_job_driver =
             AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter, 32);
         let error = aggregation_job_driver
@@ -1855,7 +1855,8 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let meter = noop_meter();
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
         let task = TaskBuilder::new(
@@ -2053,7 +2054,6 @@ mod tests {
             .await;
 
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
-        let meter = meter("aggregation_job_driver");
         let aggregation_job_driver =
             AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter, 32);
         let error = aggregation_job_driver
@@ -2244,7 +2244,8 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let meter = noop_meter();
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
         let task = TaskBuilder::new(
@@ -2417,7 +2418,6 @@ mod tests {
             .await;
 
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
-        let meter = meter("aggregation_job_driver");
         let aggregation_job_driver =
             AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter, 32);
         let error = aggregation_job_driver
@@ -2569,7 +2569,8 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let meter = noop_meter();
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
         let task = TaskBuilder::new(
@@ -2666,7 +2667,6 @@ mod tests {
         assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
 
         // Run: create an aggregation job driver & cancel the aggregation job.
-        let meter = meter("aggregation_job_driver");
         let aggregation_job_driver =
             AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter, 32);
         aggregation_job_driver
@@ -2781,7 +2781,8 @@ mod tests {
         let clock = MockClock::default();
         let mut runtime_manager = TestRuntimeManager::new();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let meter = noop_meter();
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
         let stopper = Stopper::new();
 
         let task = TaskBuilder::new(
@@ -2878,7 +2879,6 @@ mod tests {
         .unwrap();
 
         // Set up the aggregation job driver.
-        let meter = meter("aggregation_job_driver");
         let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
             reqwest::Client::new(),
             &meter,

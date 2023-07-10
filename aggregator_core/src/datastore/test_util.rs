@@ -2,6 +2,7 @@ use crate::datastore::{Crypter, Datastore};
 use deadpool_postgres::{Manager, Pool};
 use janus_core::time::Clock;
 use lazy_static::lazy_static;
+use opentelemetry::metrics::Meter;
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use sqlx::{
@@ -108,8 +109,8 @@ pub struct EphemeralDatastore {
 impl EphemeralDatastore {
     /// Creates a Datastore instance based on this EphemeralDatastore. All returned Datastore
     /// instances will refer to the same underlying durable state.
-    pub async fn datastore<C: Clock>(&self, clock: C) -> Datastore<C> {
-        Datastore::new(self.pool(), self.crypter(), clock)
+    pub async fn datastore<C: Clock>(&self, clock: C, meter: &Meter) -> Datastore<C> {
+        Datastore::new(self.pool(), self.crypter(), clock, meter)
             .await
             .unwrap()
     }

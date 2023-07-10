@@ -22,14 +22,13 @@ async fn main() -> anyhow::Result<()> {
     );
 
     janus_main::<_, Options, Config, _, _>(RealClock::default(), |ctx| async move {
-        let meter = opentelemetry::global::meter("collection_job_driver");
         let datastore = Arc::new(ctx.datastore);
         let collection_job_driver = Arc::new(CollectionJobDriver::new(
             reqwest::Client::builder()
                 .user_agent(CLIENT_USER_AGENT)
                 .build()
                 .context("couldn't create HTTP client")?,
-            &meter,
+            &ctx.meter,
             ctx.config.batch_aggregation_shard_count,
         ));
         let lease_duration =
@@ -42,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
         let job_driver = Arc::new(JobDriver::new(
             ctx.clock,
             TokioRuntime,
-            meter,
+            ctx.meter,
             stopper,
             Duration::from_secs(ctx.config.job_driver_config.min_job_discovery_delay_secs),
             Duration::from_secs(ctx.config.job_driver_config.max_job_discovery_delay_secs),

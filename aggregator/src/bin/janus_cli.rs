@@ -17,6 +17,7 @@ use janus_core::time::{Clock, RealClock};
 use k8s_openapi::api::core::v1::Secret;
 use kube::api::{ObjectMeta, PostParams};
 use once_cell::sync::OnceCell;
+use opentelemetry::global::meter;
 use rand::{distributions::Standard, thread_rng, Rng};
 use ring::aead::AES_128_GCM;
 use serde::{Deserialize, Serialize};
@@ -36,7 +37,7 @@ async fn main() -> Result<()> {
 
     let _guards = install_tracing_and_metrics_handlers(config_file.common_config()).await?;
 
-    record_build_info_gauge();
+    record_build_info_gauge(&meter("janus_aggregator"));
 
     info!(
         common_options = ?&command_line_options.common_options,
@@ -314,6 +315,7 @@ async fn datastore_from_opts(
     datastore(
         pool,
         RealClock::default(),
+        &meter("janus_aggregator"),
         &kubernetes_secret_options
             .datastore_keys(&command_line_options.common_options, kube_client)
             .await?,
@@ -468,6 +470,7 @@ mod tests {
     use janus_aggregator_core::{
         datastore::{test_util::ephemeral_datastore, Datastore},
         task::{test_util::TaskBuilder, QueryType, Task},
+        test_util::noop_meter,
     };
     use janus_core::{
         task::VdafInstance,
@@ -583,7 +586,9 @@ mod tests {
     #[tokio::test]
     async fn provision_tasks() {
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(RealClock::default()).await;
+        let ds = ephemeral_datastore
+            .datastore(RealClock::default(), &noop_meter())
+            .await;
 
         let tasks = Vec::from([
             TaskBuilder::new(
@@ -617,7 +622,9 @@ mod tests {
     #[tokio::test]
     async fn provision_task_dry_run() {
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(RealClock::default()).await;
+        let ds = ephemeral_datastore
+            .datastore(RealClock::default(), &noop_meter())
+            .await;
 
         let tasks = Vec::from([TaskBuilder::new(
             QueryType::TimeInterval,
@@ -657,7 +664,9 @@ mod tests {
         ]);
 
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(RealClock::default()).await;
+        let ds = ephemeral_datastore
+            .datastore(RealClock::default(), &noop_meter())
+            .await;
 
         let mut tasks_file = NamedTempFile::new().unwrap();
         tasks_file
@@ -763,7 +772,9 @@ mod tests {
 "#;
 
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(RealClock::default()).await;
+        let ds = ephemeral_datastore
+            .datastore(RealClock::default(), &noop_meter())
+            .await;
 
         let mut tasks_file = NamedTempFile::new().unwrap();
         tasks_file

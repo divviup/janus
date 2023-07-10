@@ -7,6 +7,7 @@ use janus_aggregator_core::{
         Datastore,
     },
     task::{test_util::TaskBuilder, QueryType, Task},
+    test_util::noop_meter,
 };
 use janus_core::{
     task::{AuthenticationToken, VdafInstance, DAP_AUTH_HEADER},
@@ -117,12 +118,18 @@ async fn setup_aggregate_init_test_without_sending_request() -> AggregationJobIn
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
-    let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+    let meter = noop_meter();
+    let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
 
     datastore.put_task(&task).await.unwrap();
 
-    let handler =
-        aggregator_handler(Arc::clone(&datastore), clock.clone(), Config::default()).unwrap();
+    let handler = aggregator_handler(
+        Arc::clone(&datastore),
+        clock.clone(),
+        &meter,
+        Config::default(),
+    )
+    .unwrap();
 
     let aggregation_param = dummy_vdaf::AggregationParam(0);
 

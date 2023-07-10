@@ -298,7 +298,10 @@ where
 mod tests {
     use super::JobDriver;
     use chrono::NaiveDateTime;
-    use janus_aggregator_core::datastore::{self, models::Lease};
+    use janus_aggregator_core::{
+        datastore::{self, models::Lease},
+        test_util::noop_meter,
+    };
     use janus_core::{
         task::VdafInstance,
         test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},
@@ -306,7 +309,6 @@ mod tests {
         Runtime,
     };
     use janus_messages::{AggregationJobId, TaskId};
-    use opentelemetry::global::meter;
     use rand::random;
     use std::{sync::Arc, time::Duration};
     use tokio::sync::Mutex;
@@ -392,7 +394,7 @@ mod tests {
             JobDriver::new(
                 clock,
                 runtime_manager.with_label("stepper"),
-                meter("job_driver_test"),
+                noop_meter(),
                 stopper.clone(),
                 Duration::from_secs(1),
                 Duration::from_secs(1),

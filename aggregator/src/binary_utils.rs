@@ -17,7 +17,7 @@ use futures::StreamExt;
 use git_version::git_version;
 use janus_aggregator_core::datastore::{Crypter, Datastore};
 use janus_core::time::Clock;
-use opentelemetry::{Context, KeyValue};
+use opentelemetry::{metrics::Meter, Context, KeyValue};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::{
     fmt::{self, Debug, Formatter},
@@ -133,6 +133,7 @@ pub async fn database_pool(db_config: &DbConfig, db_password: Option<&str>) -> R
 pub async fn datastore<C: Clock>(
     pool: Pool,
     clock: C,
+    meter: &Meter,
     datastore_keys: &[String],
     check_schema_version: bool,
 ) -> Result<Datastore<C>> {
@@ -161,9 +162,10 @@ pub async fn datastore<C: Clock>(
     }
 
     let datastore = if check_schema_version {
-        Datastore::new(pool, Crypter::new(datastore_keys), clock).await?
+        Datastore::new(pool, Crypter::new(datastore_keys), clock, meter).await?
     } else {
-        Datastore::new_without_supported_versions(pool, Crypter::new(datastore_keys), clock).await
+        Datastore::new_without_supported_versions(pool, Crypter::new(datastore_keys), clock, meter)
+            .await
     };
 
     Ok(datastore)
@@ -261,6 +263,7 @@ pub struct BinaryContext<C: Clock, Options: BinaryOptions, Config: BinaryConfig>
     pub options: Options,
     pub config: Config,
     pub datastore: Datastore<C>,
+    pub meter: Meter,
 }
 
 pub async fn janus_main<C, Options, Config, F, Fut>(clock: C, f: F) -> anyhow::Result<()>
@@ -281,9 +284,10 @@ where
     let _metrics_exporter = install_metrics_exporter(&config.common_config().metrics_config)
         .await
         .context("failed to install metrics exporter")?;
+    let meter = opentelemetry::global::meter("janus_aggregator");
 
     // Create build info metrics gauge.
-    record_build_info_gauge();
+    record_build_info_gauge(&meter);
 
     info!(common_options = ?options.common_options(), ?config, "Starting up");
 
@@ -297,6 +301,7 @@ where
     let datastore = datastore(
         pool,
         clock.clone(),
+        &meter,
         &options.common_options().datastore_keys,
         config.common_config().database.check_schema_version,
     )
@@ -314,6 +319,7 @@ where
         options,
         config,
         datastore,
+        meter,
     })
     .await;
 
@@ -397,8 +403,7 @@ pub async fn setup_server(
     Ok((address, future))
 }
 
-pub fn record_build_info_gauge() {
-    let meter = opentelemetry::global::meter("janus_aggregator");
+pub fn record_build_info_gauge(meter: &Meter) {
     let gauge = meter
         .u64_observable_gauge("janus_build_info")
         .with_description(

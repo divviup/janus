@@ -36,6 +36,7 @@ async fn main() -> Result<()> {
             aggregator_handler(
                 Arc::clone(&datastore),
                 ctx.clock,
+                &ctx.meter,
                 ctx.config.aggregator_config(),
             )?,
             None,

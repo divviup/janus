@@ -81,3 +81,12 @@ impl<H: Handler> InstrumentedHandler<H> {
         conn
     }
 }
+
+#[cfg(feature = "test-util")]
+pub mod test_util {
+    use opentelemetry::metrics::{noop::NoopMeterProvider, Meter, MeterProvider};
+
+    pub fn noop_meter() -> Meter {
+        NoopMeterProvider::new().meter("janus_aggregator")
+    }
+}
