@@ -6,7 +6,7 @@ use janus_aggregator::{
     binary_utils::{
         janus_main, setup_server, setup_signal_handler, BinaryOptions, CommonBinaryOptions,
     },
-    config::{BinaryConfig, CommonConfig},
+    config::{BinaryConfig, CommonConfig, TaskprovConfig},
 };
 use janus_aggregator_api::{self, aggregator_api_handler};
 use janus_aggregator_core::SecretBytes;
@@ -210,6 +210,8 @@ pub enum AggregatorApi {
 /// max_upload_batch_size: 100
 /// max_upload_batch_write_delay_ms: 250
 /// batch_aggregation_shard_count: 32
+/// taskprov_config:
+///   enabled: false
 /// "#;
 ///
 /// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
@@ -218,6 +220,8 @@ pub enum AggregatorApi {
 struct Config {
     #[serde(flatten)]
     common_config: CommonConfig,
+    #[serde(default)]
+    taskprov_config: TaskprovConfig,
 
     /// Address on which this server should listen for connections to the DAP aggregator API and
     /// serve its API endpoints.
@@ -321,7 +325,6 @@ mod tests {
                 logging_config: generate_trace_config(),
                 metrics_config: generate_metrics_config(),
                 health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
-                taskprov_config: TaskprovConfig::default(),
             },
             response_headers: Vec::from([HeaderEntry {
                 name: "name".to_owned(),
@@ -330,6 +333,7 @@ mod tests {
             max_upload_batch_size: 100,
             max_upload_batch_write_delay_ms: 250,
             batch_aggregation_shard_count: 32,
+            taskprov_config: TaskprovConfig::default(),
         })
     }
 
@@ -350,6 +354,28 @@ mod tests {
             .unwrap()
             .aggregator_api,
             None
+        );
+    }
+
+    #[test]
+    fn config_taskprov() {
+        assert_eq!(
+            serde_yaml::from_str::<Config>(
+                r#"---
+    listen_address: "0.0.0.0:8080"
+    database:
+        url: "postgres://postgres:postgres@localhost:5432/postgres"
+        connection_pool_timeouts_secs: 60
+    max_upload_batch_size: 100
+    max_upload_batch_write_delay_ms: 250
+    batch_aggregation_shard_count: 32
+    taskprov_config:
+        enabled: true
+    "#
+            )
+            .unwrap()
+            .taskprov_config,
+            TaskprovConfig { enabled: true },
         );
     }
 

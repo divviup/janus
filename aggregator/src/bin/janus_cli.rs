@@ -463,7 +463,7 @@ mod tests {
     use janus_aggregator::{
         binary_utils::CommonBinaryOptions,
         config::test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-        config::{CommonConfig, TaskprovConfig},
+        config::{CommonConfig},
     };
     use janus_aggregator_core::{
         datastore::{test_util::ephemeral_datastore, Datastore},
@@ -879,7 +879,6 @@ mod tests {
                 logging_config: generate_trace_config(),
                 metrics_config: generate_metrics_config(),
                 health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
-                taskprov_config: TaskprovConfig::default(),
             },
         })
     }

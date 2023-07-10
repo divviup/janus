@@ -40,14 +40,6 @@ pub struct CommonConfig {
     /// Address to serve HTTP health check requests on.
     #[serde(default = "default_health_check_listen_address")]
     pub health_check_listen_address: SocketAddr,
-
-    /// Configuration options for the Taskprov extension. This extension is
-    /// described in [draft-wang-ppm-dap-taskprov][spec], although its configuration
-    /// options are implementation-specific.
-    ///
-    /// [spec]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
-    #[serde(default)]
-    pub taskprov_config: TaskprovConfig,
 }
 
 fn default_health_check_listen_address() -> SocketAddr {
@@ -92,7 +84,11 @@ impl DbConfig {
     }
 }
 
-/// Configuration options for the Taskprov extension.
+/// Configuration options for the Taskprov extension. This extension is
+/// described in [draft-wang-ppm-dap-taskprov][spec], although its configuration
+/// options are implementation-specific.
+///
+/// [spec]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct TaskprovConfig {
     /// Whether to enable the extension or not. Enabling this changes the behavior
@@ -204,7 +200,7 @@ mod tests {
     use crate::{
         config::{
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-            CommonConfig, DbConfig, JobDriverConfig, TaskprovConfig,
+            CommonConfig, DbConfig, JobDriverConfig,
         },
         metrics::MetricsExporterConfiguration,
         trace::OpenTelemetryTraceConfiguration,
@@ -233,7 +229,6 @@ mod tests {
             logging_config: generate_trace_config(),
             metrics_config: generate_metrics_config(),
             health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
-            taskprov_config: TaskprovConfig::default(),
         })
     }
 
@@ -284,24 +279,5 @@ mod tests {
                 assert_eq!(otlp_config.metadata.get("key").unwrap(), "value");
             }
         )
-    }
-
-    #[test]
-    fn taskprov_config() {
-        let disabled = concat!(
-            "database:\n",
-            "  url: \"postgres://postgres@localhost/postgres\"\n",
-        );
-        let config: CommonConfig = serde_yaml::from_str(disabled).unwrap();
-        assert!(!config.taskprov_config.enabled);
-
-        let enabled = concat!(
-            "database:\n",
-            "  url: \"postgres://postgres@localhost/postgres\"\n",
-            "taskprov_config:\n",
-            "  enabled: true\n",
-        );
-        let config: CommonConfig = serde_yaml::from_str(enabled).unwrap();
-        assert!(config.taskprov_config.enabled);
     }
 }
