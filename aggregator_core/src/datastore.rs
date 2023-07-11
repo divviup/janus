@@ -3608,17 +3608,14 @@ impl<C: Clock> Transaction<'_, C> {
                 "WITH batches AS (
                     SELECT
                         outstanding_batches.batch_id AS batch_id,
-                        COUNT(DISTINCT report_aggregations.client_report_id) AS count
+                        SUM(batch_aggregations.report_count) AS count
                     FROM outstanding_batches
-                    JOIN aggregation_jobs
-                      ON aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                     AND aggregation_jobs.batch_id = outstanding_batches.batch_id
-                    JOIN report_aggregations
-                      ON report_aggregations.aggregation_job_id = aggregation_jobs.id
-                     AND report_aggregations.state = 'FINISHED'
+                    JOIN batch_aggregations
+                      ON batch_aggregations.batch_identifier = outstanding_batches.batch_id
+                    WHERE outstanding_batches.task_id = (SELECT id FROM tasks WHERE task_id = $1)
                     GROUP BY outstanding_batches.batch_id
                 )
-                SELECT batch_id FROM batches WHERE count >= $2 LIMIT 1",
+                SELECT batch_id FROM batches WHERE count >= $2::bigint LIMIT 1",
             )
             .await?;
         self.query_opt(
@@ -10251,6 +10248,33 @@ mod tests {
                         .await?;
                         tx.put_report_aggregation(report_aggregation).await?;
                     }
+
+                    tx.put_batch_aggregation(
+                        &BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            batch_id,
+                            AggregationParam(0),
+                            0,
+                            BatchAggregationState::Aggregating,
+                            Some(AggregateShare(0)),
+                            1,
+                            ReportIdChecksum::default(),
+                        ),
+                    )
+                    .await?;
+                    tx.put_batch_aggregation(
+                        &BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            batch_id,
+                            AggregationParam(0),
+                            1,
+                            BatchAggregationState::Aggregating,
+                            Some(AggregateShare(0)),
+                            1,
+                            ReportIdChecksum::default(),
+                        ),
+                    )
+                    .await?;
 
                     Ok((*task.id(), batch_id))
                 })
