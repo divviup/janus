@@ -21,7 +21,7 @@ rand = { version = "0.8", features = ["min_const_gen"] }
 ring = "0.16.20"
 serde.workspace = true
 serde_json = "1.0.100"
-serde_test = "1.0.166"
+serde_test = "1.0.171"
 tracing = "0.1.37"
 trillium.workspace = true
 trillium-api.workspace = true
