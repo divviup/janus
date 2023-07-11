@@ -43,9 +43,14 @@ pub enum Error {
     UnsupportedAlgorithmIdentifier(&'static str, u16),
 }
 
-/// ASCII-encoded URL with minimum length 1 and maximum length 2^16.
+/// Wire-representation of an ASCII-encoded URL with minimum length 1 and maximum
+/// length 2^16 - 1.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Url(Vec<u8>);
+
+impl Url {
+    const MAX_LEN: usize = 2usize.pow(16) - 1;
+}
 
 impl Encode for Url {
     fn encode(&self, bytes: &mut Vec<u8>) {
@@ -90,6 +95,10 @@ impl TryFrom<&[u8]> for Url {
         if value.is_empty() {
             Err(CodecError::Other(
                 anyhow!("Url must be at least 1 byte long").into(),
+            ))
+        } else if value.len() > Url::MAX_LEN {
+            Err(CodecError::Other(
+                anyhow!("Url must be less than {} bytes long", Url::MAX_LEN).into(),
             ))
         } else if !value.iter().all(|i: &u8| i.is_ascii()) {
             Err(CodecError::Other(

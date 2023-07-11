@@ -12,6 +12,7 @@ use prio::codec::{
 use std::{
     fmt::{self, Debug, Formatter},
     io::Cursor,
+    str,
 };
 
 /// Defines all parameters necessary to configure an aggregator with a new task.
@@ -20,11 +21,12 @@ use std::{
 pub struct TaskConfig {
     /// Opaque info specific for a task.
     task_info: Vec<u8>,
-    /// List of URLs where the aggregator's API endpoints can be found.
-    aggregator_endpoints: Vec<Url>,
+    /// List of URLs where the aggregator's API endpoints can be found. The
+    /// in-memory representation is the richer url::Url.
+    aggregator_endpoints: Vec<url::Url>,
     /// Determines the properties that all batches for this task must have.
     query_config: QueryConfig,
-    /// Time until Clients can upload to this task.
+    /// Time up to which Clients are expected to upload to this task.
     task_expiration: Time,
     /// Determines VDAF type and all properties.
     vdaf_config: VdafConfig,
@@ -33,42 +35,47 @@ pub struct TaskConfig {
 impl TaskConfig {
     pub fn new(
         task_info: Vec<u8>,
-        aggregator_endpoints: Vec<Url>,
+        aggregator_endpoints: Vec<url::Url>,
         query_config: QueryConfig,
         task_expiration: Time,
         vdaf_config: VdafConfig,
     ) -> Result<Self, Error> {
         if task_info.is_empty() {
-            return Err(Error::InvalidParameter("task_info must not be empty"));
-        }
-        if aggregator_endpoints.is_empty() {
-            return Err(Error::InvalidParameter(
+            Err(Error::InvalidParameter("task_info must not be empty"))
+        } else if aggregator_endpoints.is_empty() {
+            Err(Error::InvalidParameter(
                 "aggregator_endpoints must not be empty",
-            ));
+            ))
+        } else if !aggregator_endpoints
+            .iter()
+            .all(|u| u.as_str().len() <= Url::MAX_LEN)
+        {
+            Err(Error::InvalidParameter("url too long"))
+        } else {
+            Ok(Self {
+                task_info,
+                aggregator_endpoints,
+                query_config,
+                task_expiration,
+                vdaf_config,
+            })
         }
-        Ok(Self {
-            task_info,
-            aggregator_endpoints,
-            query_config,
-            task_expiration,
-            vdaf_config,
-        })
     }
 
     pub fn task_info(&self) -> &[u8] {
         self.task_info.as_ref()
     }
 
-    pub fn aggregator_endpoints(&self) -> &[Url] {
+    pub fn aggregator_endpoints(&self) -> &[url::Url] {
         self.aggregator_endpoints.as_ref()
     }
 
-    pub fn query_config(&self) -> QueryConfig {
-        self.query_config
+    pub fn query_config(&self) -> &QueryConfig {
+        &self.query_config
     }
 
-    pub fn task_expiration(&self) -> Time {
-        self.task_expiration
+    pub fn task_expiration(&self) -> &Time {
+        &self.task_expiration
     }
 
     pub fn vdaf_config(&self) -> &VdafConfig {
@@ -79,7 +86,21 @@ impl TaskConfig {
 impl Encode for TaskConfig {
     fn encode(&self, bytes: &mut Vec<u8>) {
         encode_u8_items(bytes, &(), &self.task_info);
-        encode_u16_items(bytes, &(), &self.aggregator_endpoints);
+
+        encode_u16_items(
+            bytes,
+            &(),
+            // Convert URLs to their wire encoding.
+            &self
+                .aggregator_endpoints
+                .iter()
+                .map(|u| {
+                    Url::try_from(u.as_str().as_bytes())
+                        .expect("the Url should have been validated during creation or decoding")
+                })
+                .collect::<Vec<Url>>(),
+        );
+
         self.query_config.encode(bytes);
         self.task_expiration.encode(bytes);
         self.vdaf_config.encode(bytes);
@@ -91,8 +112,7 @@ impl Encode for TaskConfig {
                 + (2 + self
                     .aggregator_endpoints
                     .iter()
-                    // Unwrap safety: url.encoded_len() always returns Some.
-                    .fold(0, |acc, url| acc + url.encoded_len().unwrap()))
+                    .fold(0, |acc, url| acc + (2 + url.as_str().len())))
                 + self.query_config.encoded_len()?
                 + self.task_expiration.encoded_len()?
                 + self.vdaf_config.encoded_len()?,
@@ -109,7 +129,17 @@ impl Decode for TaskConfig {
             ));
         }
 
-        let aggregator_endpoints = decode_u16_items(&(), bytes)?;
+        let mut aggregator_endpoints = vec![];
+        for u in decode_u16_items::<_, Url>(&(), bytes)? {
+            // Convert the URL from its wire encoding.
+            aggregator_endpoints.push(
+                url::Url::parse(
+                    str::from_utf8(&u.0)
+                        .expect("the Url should have been verified as ASCII during decoding"),
+                )
+                .map_err(|err| CodecError::Other(err.into()))?,
+            );
+        }
         if aggregator_endpoints.is_empty() {
             return Err(CodecError::Other(
                 anyhow!("aggregator_endpoints must not be empty").into(),
@@ -158,8 +188,8 @@ impl QueryConfig {
         }
     }
 
-    pub fn time_precision(&self) -> Duration {
-        self.time_precision
+    pub fn time_precision(&self) -> &Duration {
+        &self.time_precision
     }
 
     pub fn max_batch_query_count(&self) -> u16 {
@@ -170,8 +200,8 @@ impl QueryConfig {
         self.min_batch_size
     }
 
-    pub fn query(&self) -> Query {
-        self.query
+    pub fn query(&self) -> &Query {
+        &self.query
     }
 }
 
@@ -180,13 +210,13 @@ impl Encode for QueryConfig {
         match self.query {
             Query::Reserved => Query::RESERVED.encode(bytes),
             Query::TimeInterval => Query::TIME_INTERVAL.encode(bytes),
-            Query::FixedSize(_) => Query::FIXED_SIZE.encode(bytes),
+            Query::FixedSize { .. } => Query::FIXED_SIZE.encode(bytes),
         };
         self.time_precision.encode(bytes);
         self.max_batch_query_count.encode(bytes);
         self.min_batch_size.encode(bytes);
-        if let Query::FixedSize(arg) = self.query {
-            arg.encode(bytes)
+        if let Query::FixedSize { max_batch_size } = self.query {
+            max_batch_size.encode(bytes)
         }
     }
 
@@ -196,7 +226,7 @@ impl Encode for QueryConfig {
                 + self.max_batch_query_count.encoded_len()?
                 + self.min_batch_size.encoded_len()?
                 + match self.query {
-                    Query::FixedSize(arg) => arg.encoded_len()?,
+                    Query::FixedSize { max_batch_size } => max_batch_size.encoded_len()?,
                     _ => 0,
                 },
         )
@@ -213,7 +243,9 @@ impl Decode for QueryConfig {
             query: match query_type {
                 Query::RESERVED => Query::Reserved,
                 Query::TIME_INTERVAL => Query::TimeInterval,
-                Query::FIXED_SIZE => Query::FixedSize(u32::decode(bytes)?),
+                Query::FIXED_SIZE => Query::FixedSize {
+                    max_batch_size: u32::decode(bytes)?,
+                },
                 val => {
                     return Err(CodecError::Other(
                         anyhow!("unexpected QueryType value {}", val).into(),
@@ -237,7 +269,7 @@ impl Decode for QueryConfig {
 pub enum Query {
     Reserved,
     TimeInterval,
-    FixedSize(u32),
+    FixedSize { max_batch_size: u32 },
 }
 
 impl Query {
@@ -255,7 +287,7 @@ pub struct VdafConfig {
 
 impl VdafConfig {
     pub fn new(dp_config: DpConfig, vdaf_type: VdafType) -> Result<Self, Error> {
-        if let VdafType::Prio3Histogram(buckets) = &vdaf_type {
+        if let VdafType::Prio3Histogram { buckets } = &vdaf_type {
             if buckets.is_empty() {
                 return Err(Error::InvalidParameter(
                     "buckets must not be empty for Prio3Histogram",
@@ -294,7 +326,7 @@ impl Decode for VdafConfig {
             dp_config: DpConfig::decode(bytes)?,
             vdaf_type: VdafType::decode(bytes)?,
         };
-        if let VdafType::Prio3Histogram(buckets) = &ret.vdaf_type {
+        if let VdafType::Prio3Histogram { buckets } = &ret.vdaf_type {
             if buckets.is_empty() {
                 return Err(CodecError::Other(
                     anyhow!("buckets must not be empty for Prio3Histogram").into(),
@@ -306,13 +338,24 @@ impl Decode for VdafConfig {
 }
 
 #[derive(Clone, PartialEq, Eq, Derivative)]
+#[derivative(Debug)]
 #[repr(u32)]
 #[non_exhaustive]
 pub enum VdafType {
     Prio3Count,
-    Prio3Sum(u8),
-    Prio3Histogram(Vec<u64>),
-    Poplar1(u16),
+    Prio3Sum {
+        /// Bit length of the summand.
+        bits: u8,
+    },
+    Prio3Histogram {
+        /// List of buckets.
+        #[derivative(Debug(format_with = "fmt_histogram"))]
+        buckets: Vec<u64>,
+    },
+    Poplar1 {
+        /// Bit length of the input string.
+        bits: u16,
+    },
 }
 
 impl VdafType {
@@ -322,40 +365,25 @@ impl VdafType {
     const POPLAR1: u32 = 0x00001000;
 }
 
-impl Debug for VdafType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mut output = f.debug_struct("VdafType");
-        match self {
-            VdafType::Prio3Count => output.field("type", &"Prio3Count"),
-            VdafType::Prio3Sum(arg) => output
-                .field("type", &"Prio3Sum")
-                .field("bits", &format_args!("{}", arg)),
-            VdafType::Prio3Histogram(arg) => output
-                .field("type", &"Prio3Histogram")
-                .field("num_buckets", &format_args!("{}", arg.len())),
-            VdafType::Poplar1(arg) => output
-                .field("type", &"Poplar1")
-                .field("bits", &format_args!("{}", arg)),
-        }
-        .finish()
-    }
+fn fmt_histogram(buckets: &Vec<u64>, f: &mut Formatter) -> Result<(), fmt::Error> {
+    write!(f, "num_buckets: {}", buckets.len())
 }
 
 impl Encode for VdafType {
     fn encode(&self, bytes: &mut Vec<u8>) {
         match self {
             VdafType::Prio3Count => VdafType::PRIO3COUNT.encode(bytes),
-            VdafType::Prio3Sum(arg) => {
+            VdafType::Prio3Sum { bits } => {
                 VdafType::PRIO3SUM.encode(bytes);
-                arg.encode(bytes);
+                bits.encode(bytes);
             }
-            VdafType::Prio3Histogram(arg) => {
+            VdafType::Prio3Histogram { buckets } => {
                 VdafType::PRIO3HISTOGRAM.encode(bytes);
-                encode_u24_items(bytes, &(), arg);
+                encode_u24_items(bytes, &(), buckets);
             }
-            VdafType::Poplar1(arg) => {
+            VdafType::Poplar1 { bits } => {
                 VdafType::POPLAR1.encode(bytes);
-                arg.encode(bytes);
+                bits.encode(bytes);
             }
         }
     }
@@ -364,9 +392,9 @@ impl Encode for VdafType {
         Some(
             4 + match self {
                 VdafType::Prio3Count => 0,
-                VdafType::Prio3Sum(arg) => arg.encoded_len()?,
-                VdafType::Prio3Histogram(arg) => 3 + arg.len() * 0u64.encoded_len()?,
-                VdafType::Poplar1(arg) => arg.encoded_len()?,
+                VdafType::Prio3Sum { bits } => bits.encoded_len()?,
+                VdafType::Prio3Histogram { buckets } => 3 + buckets.len() * 0u64.encoded_len()?,
+                VdafType::Poplar1 { bits } => bits.encoded_len()?,
             },
         )
     }
@@ -376,9 +404,15 @@ impl Decode for VdafType {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         match u32::decode(bytes)? {
             VdafType::PRIO3COUNT => Ok(VdafType::Prio3Count),
-            VdafType::PRIO3SUM => Ok(VdafType::Prio3Sum(u8::decode(bytes)?)),
-            VdafType::PRIO3HISTOGRAM => Ok(VdafType::Prio3Histogram(decode_u24_items(&(), bytes)?)),
-            VdafType::POPLAR1 => Ok(VdafType::Poplar1(u16::decode(bytes)?)),
+            VdafType::PRIO3SUM => Ok(VdafType::Prio3Sum {
+                bits: u8::decode(bytes)?,
+            }),
+            VdafType::PRIO3HISTOGRAM => Ok(VdafType::Prio3Histogram {
+                buckets: decode_u24_items(&(), bytes)?,
+            }),
+            VdafType::POPLAR1 => Ok(VdafType::Poplar1 {
+                bits: u16::decode(bytes)?,
+            }),
             val => Err(CodecError::Other(
                 anyhow!("unexpected VdafType value {}", val).into(),
             )),
@@ -400,8 +434,8 @@ impl DpConfig {
         Self { dp_mechanism }
     }
 
-    pub fn dp_mechanism(&self) -> DpMechanism {
-        self.dp_mechanism
+    pub fn dp_mechanism(&self) -> &DpMechanism {
+        &self.dp_mechanism
     }
 }
 
@@ -481,11 +515,19 @@ mod tests {
     fn roundtrip_vdaf_type() {
         roundtrip_encoding(&[
             (VdafType::Prio3Count, "00000000"),
-            (VdafType::Prio3Sum(u8::MIN), concat!("00000001", "00")),
-            (VdafType::Prio3Sum(0x80), concat!("00000001", "80")),
-            (VdafType::Prio3Sum(u8::MAX), concat!("00000001", "FF")),
             (
-                VdafType::Prio3Histogram(vec![0x00ABCDEF, 0x40404040, 0xDEADBEEF]),
+                VdafType::Prio3Sum { bits: u8::MIN },
+                concat!("00000001", "00"),
+            ),
+            (VdafType::Prio3Sum { bits: 0x80 }, concat!("00000001", "80")),
+            (
+                VdafType::Prio3Sum { bits: u8::MAX },
+                concat!("00000001", "FF"),
+            ),
+            (
+                VdafType::Prio3Histogram {
+                    buckets: vec![0x00ABCDEF, 0x40404040, 0xDEADBEEF],
+                },
                 concat!(
                     "00000002",
                     "000018", // length
@@ -495,7 +537,9 @@ mod tests {
                 ),
             ),
             (
-                VdafType::Prio3Histogram(vec![u64::MIN, u64::MAX]),
+                VdafType::Prio3Histogram {
+                    buckets: vec![u64::MIN, u64::MAX],
+                },
                 concat!(
                     "00000002",
                     "000010", // length
@@ -503,9 +547,18 @@ mod tests {
                     "FFFFFFFFFFFFFFFF",
                 ),
             ),
-            (VdafType::Poplar1(u16::MIN), concat!("00001000", "0000")),
-            (VdafType::Poplar1(0xABAB), concat!("00001000", "ABAB")),
-            (VdafType::Poplar1(u16::MAX), concat!("00001000", "FFFF")),
+            (
+                VdafType::Poplar1 { bits: u16::MIN },
+                concat!("00001000", "0000"),
+            ),
+            (
+                VdafType::Poplar1 { bits: 0xABAB },
+                concat!("00001000", "ABAB"),
+            ),
+            (
+                VdafType::Poplar1 { bits: u16::MAX },
+                concat!("00001000", "FFFF"),
+            ),
         ])
     }
 
@@ -517,14 +570,19 @@ mod tests {
                 concat!("01", "00000000"),
             ),
             (
-                VdafConfig::new(DpConfig::new(DpMechanism::None), VdafType::Prio3Sum(0x42))
-                    .unwrap(),
+                VdafConfig::new(
+                    DpConfig::new(DpMechanism::None),
+                    VdafType::Prio3Sum { bits: 0x42 },
+                )
+                .unwrap(),
                 concat!("01", concat!("00000001", "42")),
             ),
             (
                 VdafConfig::new(
                     DpConfig::new(DpMechanism::None),
-                    VdafType::Prio3Histogram(vec![0xAAAAAAAA]),
+                    VdafType::Prio3Histogram {
+                        buckets: vec![0xAAAAAAAA],
+                    },
                 )
                 .unwrap(),
                 concat!("01", concat!("00000002", "000008", "00000000AAAAAAAA")),
@@ -562,7 +620,9 @@ mod tests {
                     Duration::from_seconds(u64::MIN),
                     u16::MIN,
                     u32::MIN,
-                    Query::FixedSize(u32::MIN),
+                    Query::FixedSize {
+                        max_batch_size: u32::MIN,
+                    },
                 ),
                 concat!(
                     "02",               // query type
@@ -577,7 +637,9 @@ mod tests {
                     Duration::from_seconds(0x3C),
                     0x40,
                     0x24,
-                    Query::FixedSize(0xFAFA),
+                    Query::FixedSize {
+                        max_batch_size: 0xFAFA,
+                    },
                 ),
                 concat!(
                     "02",               // query type
@@ -592,7 +654,9 @@ mod tests {
                     Duration::from_seconds(u64::MAX),
                     u16::MAX,
                     u32::MAX,
-                    Query::FixedSize(u32::MAX),
+                    Query::FixedSize {
+                        max_batch_size: u32::MAX,
+                    },
                 ),
                 concat!(
                     "02",               // query type
@@ -612,14 +676,16 @@ mod tests {
                 TaskConfig::new(
                     "foobar".as_bytes().to_vec(),
                     vec![
-                        Url::try_from("https://example.com/".as_ref()).unwrap(),
-                        Url::try_from("https://another.example.com/".as_ref()).unwrap(),
+                        url::Url::parse("https://example.com/").unwrap(),
+                        url::Url::parse("https://another.example.com/").unwrap(),
                     ],
                     QueryConfig::new(
                         Duration::from_seconds(0xAAAA),
                         0xBBBB,
                         0xCCCC,
-                        Query::FixedSize(0xDDDD),
+                        Query::FixedSize {
+                            max_batch_size: 0xDDDD,
+                        },
                     ),
                     Time::from_seconds_since_epoch(0xEEEE),
                     VdafConfig::new(DpConfig::new(DpMechanism::None), VdafType::Prio3Count)
@@ -663,7 +729,7 @@ mod tests {
             (
                 TaskConfig::new(
                     "f".as_bytes().to_vec(),
-                    vec![Url::try_from("h".as_ref()).unwrap()],
+                    vec![url::Url::parse("https://example.com").unwrap()],
                     QueryConfig::new(
                         Duration::from_seconds(0xAAAA),
                         0xBBBB,
@@ -673,7 +739,9 @@ mod tests {
                     Time::from_seconds_since_epoch(0xEEEE),
                     VdafConfig::new(
                         DpConfig::new(DpMechanism::None),
-                        VdafType::Prio3Histogram(vec![0xFFFF]),
+                        VdafType::Prio3Histogram {
+                            buckets: vec![0xFFFF],
+                        },
                     )
                     .unwrap(),
                 )
@@ -686,10 +754,10 @@ mod tests {
                     ),
                     concat!(
                         // aggregator_endpoints
-                        "0003", // length of all vector contents
+                        "0016", // length of all vector contents
                         concat!(
-                            "0001", // length
-                            "68"    // contents
+                            "0014",                                     // length
+                            "68747470733A2F2F6578616D706C652E636F6D2F"  // contents
                         ),
                     ),
                     concat!(
@@ -789,6 +857,17 @@ mod tests {
                 .unwrap(),
             ),
             Err(CodecError::Other(_))
+        );
+
+        println!(
+            "{:?}",
+            VdafConfig::new(
+                DpConfig::new(DpMechanism::None),
+                VdafType::Prio3Histogram {
+                    buckets: vec![0xAAAAAAAA],
+                },
+            )
+            .unwrap()
         );
     }
 }
