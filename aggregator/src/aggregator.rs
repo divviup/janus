@@ -2471,17 +2471,13 @@ impl VdafOps {
                                 &batch_aggregations,
                             );
 
-                            let (
-                                helper_aggregate_share,
-                                report_count,
-                                client_timestamp_interval,
-                                checksum,
-                            ) = compute_aggregate_share::<SEED_SIZE, Q, A>(
-                                &task,
-                                &batch_aggregations,
-                            )
-                            .await
-                            .map_err(|e| datastore::Error::User(e.into()))?;
+                            let (helper_aggregate_share, report_count, checksum) =
+                                compute_aggregate_share::<SEED_SIZE, Q, A>(
+                                    &task,
+                                    &batch_aggregations,
+                                )
+                                .await
+                                .map_err(|e| datastore::Error::User(e.into()))?;
 
                             // Now that we are satisfied that the request is serviceable, we consume
                             // a query by recording the aggregate share request parameters and the
@@ -2495,7 +2491,6 @@ impl VdafOps {
                                 aggregation_param,
                                 helper_aggregate_share,
                                 report_count,
-                                client_timestamp_interval,
                                 checksum,
                             );
                             try_join!(

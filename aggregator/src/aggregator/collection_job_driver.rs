@@ -209,7 +209,7 @@ impl CollectionJobDriver {
             return Ok(());
         }
 
-        let (leader_aggregate_share, report_count, _, checksum) =
+        let (leader_aggregate_share, report_count, checksum) =
             compute_aggregate_share::<SEED_SIZE, Q, A>(&task, &batch_aggregations)
                 .await
                 .map_err(|e| datastore::Error::User(e.into()))?;

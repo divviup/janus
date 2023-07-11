@@ -1614,7 +1614,6 @@ mod tests {
                             dummy_vdaf::AggregationParam(0),
                             dummy_vdaf::AggregateShare(0),
                             1,
-                            Interval::from_time(report_share_5.metadata().time()).unwrap(),
                             ReportIdChecksum::for_report_id(report_share_5.metadata().id()),
                         ),
                     )
@@ -2230,7 +2229,6 @@ mod tests {
                             (),
                             AggregateShare::from(OutputShare::from(Vec::from([Field64::from(7)]))),
                             0,
-                            Interval::EMPTY,
                             ReportIdChecksum::default(),
                         ),
                     )

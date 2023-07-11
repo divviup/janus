@@ -2,8 +2,8 @@
 
 use super::Error;
 use janus_aggregator_core::{datastore::models::BatchAggregation, task::Task};
-use janus_core::{report_id::ReportIdChecksumExt, time::IntervalExt};
-use janus_messages::{query_type::QueryType, Interval, ReportIdChecksum};
+use janus_core::report_id::ReportIdChecksumExt;
+use janus_messages::{query_type::QueryType, ReportIdChecksum};
 use prio::vdaf::{self, Aggregatable};
 
 /// Computes the aggregate share over the provided batch aggregations.
@@ -18,7 +18,7 @@ pub(crate) async fn compute_aggregate_share<
 >(
     task: &Task,
     batch_aggregations: &[BatchAggregation<SEED_SIZE, Q, A>],
-) -> Result<(A::AggregateShare, u64, Interval, ReportIdChecksum), Error> {
+) -> Result<(A::AggregateShare, u64, ReportIdChecksum), Error> {
     // At the moment we construct an aggregate share (either handling AggregateShareReq in the
     // helper or driving a collection job in the leader), there could be some incomplete aggregation
     // jobs whose results not been accumulated into the batch aggregations we just queried from the
@@ -41,14 +41,10 @@ pub(crate) async fn compute_aggregate_share<
     // In either case, we go ahead and service the aggregate share request with whatever batch
     // aggregations are available now.
     let mut total_report_count = 0;
-    let mut client_timestamp_interval = Interval::EMPTY;
     let mut total_checksum = ReportIdChecksum::default();
     let mut total_aggregate_share: Option<A::AggregateShare> = None;
 
     for batch_aggregation in batch_aggregations {
-        client_timestamp_interval =
-            client_timestamp_interval.merge(batch_aggregation.client_timestamp_interval())?;
-
         // XOR this batch interval's checksum into the overall checksum
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.2
         total_checksum = total_checksum.combined_with(batch_aggregation.checksum());
@@ -79,10 +75,5 @@ pub(crate) async fn compute_aggregate_share<
         return Err(Error::InvalidBatchSize(*task.id(), total_report_count));
     }
 
-    Ok((
-        total_aggregate_share,
-        total_report_count,
-        client_timestamp_interval,
-        total_checksum,
-    ))
+    Ok((total_aggregate_share, total_report_count, total_checksum))
 }
