@@ -15,7 +15,7 @@ test-util = []
 [dependencies]
 backoff = { version = "0.4.0", features = ["tokio"] }
 derivative = "2.2.0"
-http-api-problem = "0.56.0"
+http-api-problem = "0.57.0"
 janus_core = { version = "0.2", path = "../core" }
 janus_messages = { version = "0.2", path = "../messages" }
 prio = "0.10.0"
