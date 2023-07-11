@@ -3542,14 +3542,14 @@ dependencies = [
 
 [[package]]
 name = "rstest_reuse"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45f80dcc84beab3a327bbe161f77db25f336a1452428176787c8c79ac79d7073"
+checksum = "88530b681abe67924d42cca181d070e3ac20e0740569441a9e35a7cedd2b34a4"
 dependencies = [
  "quote",
  "rand",
  "rustc_version",
- "syn 1.0.109",
+ "syn 2.0.23",
 ]
 
 [[package]]
