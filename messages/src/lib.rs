@@ -44,21 +44,27 @@ pub enum Error {
 }
 
 /// Wire-representation of an ASCII-encoded URL with minimum length 1 and maximum
-/// length 2^16 - 1.
-#[derive(Clone, PartialEq, Eq)]
-pub struct Url(Vec<u8>);
+/// length 2^16 - 1. This is a newtype for [`url::Url`] for adding encoding and
+/// decoding traits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Url(url::Url);
 
 impl Url {
     const MAX_LEN: usize = 2usize.pow(16) - 1;
+
+    // Access the underlying [`url::Url`].
+    pub fn url(&self) -> &url::Url {
+        &self.0
+    }
 }
 
 impl Encode for Url {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        encode_u16_items(bytes, &(), &self.0)
+        encode_u16_items(bytes, &(), self.0.as_str().as_bytes())
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        Some(2 + self.0.len())
+        Some(2 + self.0.as_str().len())
     }
 }
 
@@ -68,23 +74,9 @@ impl Decode for Url {
     }
 }
 
-impl Debug for Url {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Url")
-            .field(&String::from_utf8_lossy(&self.0))
-            .finish()
-    }
-}
-
 impl Display for Url {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&String::from_utf8_lossy(&self.0))
-    }
-}
-
-impl AsRef<[u8]> for Url {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
+        (&self.0 as &dyn Display).fmt(f)
     }
 }
 
@@ -105,7 +97,12 @@ impl TryFrom<&[u8]> for Url {
                 anyhow!("Url must be ASCII encoded").into(),
             ))
         } else {
-            Ok(Self(Vec::from(value)))
+            Ok(Self(
+                // Unwrap safety: we just verified that the Url contains ASCII
+                // characters only. UTF8 is backwards compatible with ASCII.
+                url::Url::parse(str::from_utf8(value).unwrap())
+                    .map_err(|err| CodecError::Other(err.into()))?,
+            ))
         }
     }
 }

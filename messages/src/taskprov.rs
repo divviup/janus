@@ -12,7 +12,6 @@ use prio::codec::{
 use std::{
     fmt::{self, Debug, Formatter},
     io::Cursor,
-    str,
 };
 
 /// Defines all parameters necessary to configure an aggregator with a new task.
@@ -21,9 +20,8 @@ use std::{
 pub struct TaskConfig {
     /// Opaque info specific for a task.
     task_info: Vec<u8>,
-    /// List of URLs where the aggregator's API endpoints can be found. The
-    /// in-memory representation is the richer url::Url.
-    aggregator_endpoints: Vec<url::Url>,
+    /// List of URLs where the aggregator's API endpoints can be found.
+    aggregator_endpoints: Vec<Url>,
     /// Determines the properties that all batches for this task must have.
     query_config: QueryConfig,
     /// Time up to which Clients are expected to upload to this task.
@@ -35,7 +33,7 @@ pub struct TaskConfig {
 impl TaskConfig {
     pub fn new(
         task_info: Vec<u8>,
-        aggregator_endpoints: Vec<url::Url>,
+        aggregator_endpoints: Vec<Url>,
         query_config: QueryConfig,
         task_expiration: Time,
         vdaf_config: VdafConfig,
@@ -46,11 +44,6 @@ impl TaskConfig {
             Err(Error::InvalidParameter(
                 "aggregator_endpoints must not be empty",
             ))
-        } else if !aggregator_endpoints
-            .iter()
-            .all(|u| u.as_str().len() <= Url::MAX_LEN)
-        {
-            Err(Error::InvalidParameter("url too long"))
         } else {
             Ok(Self {
                 task_info,
@@ -66,7 +59,7 @@ impl TaskConfig {
         self.task_info.as_ref()
     }
 
-    pub fn aggregator_endpoints(&self) -> &[url::Url] {
+    pub fn aggregator_endpoints(&self) -> &[Url] {
         self.aggregator_endpoints.as_ref()
     }
 
@@ -86,21 +79,7 @@ impl TaskConfig {
 impl Encode for TaskConfig {
     fn encode(&self, bytes: &mut Vec<u8>) {
         encode_u8_items(bytes, &(), &self.task_info);
-
-        encode_u16_items(
-            bytes,
-            &(),
-            // Convert URLs to their wire encoding.
-            &self
-                .aggregator_endpoints
-                .iter()
-                .map(|u| {
-                    Url::try_from(u.as_str().as_bytes())
-                        .expect("the Url should have been validated during creation or decoding")
-                })
-                .collect::<Vec<Url>>(),
-        );
-
+        encode_u16_items(bytes, &(), &self.aggregator_endpoints);
         self.query_config.encode(bytes);
         self.task_expiration.encode(bytes);
         self.vdaf_config.encode(bytes);
@@ -112,7 +91,8 @@ impl Encode for TaskConfig {
                 + (2 + self
                     .aggregator_endpoints
                     .iter()
-                    .fold(0, |acc, url| acc + (2 + url.as_str().len())))
+                    // Unwrap safety: url.encoded_len() always returns Some.
+                    .fold(0, |acc, url| acc + url.encoded_len().unwrap()))
                 + self.query_config.encoded_len()?
                 + self.task_expiration.encoded_len()?
                 + self.vdaf_config.encoded_len()?,
@@ -129,17 +109,7 @@ impl Decode for TaskConfig {
             ));
         }
 
-        let mut aggregator_endpoints = vec![];
-        for u in decode_u16_items::<_, Url>(&(), bytes)? {
-            // Convert the URL from its wire encoding.
-            aggregator_endpoints.push(
-                url::Url::parse(
-                    str::from_utf8(&u.0)
-                        .expect("the Url should have been verified as ASCII during decoding"),
-                )
-                .map_err(|err| CodecError::Other(err.into()))?,
-            );
-        }
+        let aggregator_endpoints = decode_u16_items(&(), bytes)?;
         if aggregator_endpoints.is_empty() {
             return Err(CodecError::Other(
                 anyhow!("aggregator_endpoints must not be empty").into(),
@@ -676,8 +646,8 @@ mod tests {
                 TaskConfig::new(
                     "foobar".as_bytes().to_vec(),
                     vec![
-                        url::Url::parse("https://example.com/").unwrap(),
-                        url::Url::parse("https://another.example.com/").unwrap(),
+                        Url::try_from("https://example.com/".as_ref()).unwrap(),
+                        Url::try_from("https://another.example.com/".as_ref()).unwrap(),
                     ],
                     QueryConfig::new(
                         Duration::from_seconds(0xAAAA),
@@ -729,7 +699,7 @@ mod tests {
             (
                 TaskConfig::new(
                     "f".as_bytes().to_vec(),
-                    vec![url::Url::parse("https://example.com").unwrap()],
+                    vec![Url::try_from("https://example.com".as_ref()).unwrap()],
                     QueryConfig::new(
                         Duration::from_seconds(0xAAAA),
                         0xBBBB,
