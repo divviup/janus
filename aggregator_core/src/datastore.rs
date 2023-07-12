@@ -2586,7 +2586,7 @@ impl<C: Clock> Transaction<'_, C> {
         .map(|row| {
             let collection_job_id =
                 row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-            Self::collection_job_from_row(vdaf, *task_id, batch_id.clone(), collection_job_id, &row)
+            Self::collection_job_from_row(vdaf, *task_id, *batch_id, collection_job_id, &row)
         })
         .collect()
     }
@@ -3480,13 +3480,7 @@ impl<C: Clock> Transaction<'_, C> {
         .into_iter()
         .map(|row| {
             let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
-            Self::aggregate_share_job_from_row(
-                vdaf,
-                task_id,
-                batch_id.clone(),
-                aggregation_param,
-                &row,
-            )
+            Self::aggregate_share_job_from_row(vdaf, task_id, *batch_id, aggregation_param, &row)
         })
         .collect()
     }
@@ -10538,7 +10532,7 @@ mod tests {
                             Duration::from_seconds(100),
                         )
                         .unwrap(),
-                        &want_aggregate_share_job.aggregation_parameter(),
+                        want_aggregate_share_job.aggregation_parameter(),
                     )
                     .await
                     .unwrap()

@@ -301,7 +301,6 @@ impl CollectionJobDriver {
                 })
             })
             .await?;
-
         Ok(())
     }
 
@@ -529,9 +528,10 @@ mod tests {
     use janus_aggregator_core::{
         datastore::{
             models::{
-                AcquiredCollectionJob, AggregationJob, AggregationJobState, BatchAggregation,
-                BatchAggregationState, CollectionJob, CollectionJobState, LeaderStoredReport,
-                Lease, ReportAggregation, ReportAggregationState,
+                AcquiredCollectionJob, AggregationJob, AggregationJobState, Batch,
+                BatchAggregation, BatchAggregationState, BatchState, CollectionJob,
+                CollectionJobState, LeaderStoredReport, Lease, ReportAggregation,
+                ReportAggregationState,
             },
             test_util::ephemeral_datastore,
             Datastore,
@@ -615,6 +615,23 @@ mod tests {
                         ),
                     )
                     .await?;
+
+                    for offset in [0, 500, 1000, 1500] {
+                        tx.put_batch(&Batch::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            Interval::new(
+                                clock.now().add(&Duration::from_seconds(offset)).unwrap(),
+                                time_precision,
+                            )
+                            .unwrap(),
+                            aggregation_param,
+                            BatchState::Closed,
+                            0,
+                            Interval::from_time(&report_timestamp).unwrap(),
+                        ))
+                        .await
+                        .unwrap();
+                    }
 
                     let report = LeaderStoredReport::new_dummy(*task.id(), report_timestamp);
 
@@ -712,8 +729,26 @@ mod tests {
         let (collection_job_id, lease) = ds
             .run_tx(|tx| {
                 let task = task.clone();
+                let clock = clock.clone();
                 Box::pin(async move {
                     tx.put_task(&task).await?;
+
+                    for offset in [0, 500, 1000, 1500] {
+                        tx.put_batch(&Batch::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            Interval::new(
+                                clock.now().add(&Duration::from_seconds(offset)).unwrap(),
+                                time_precision,
+                            )
+                            .unwrap(),
+                            aggregation_param,
+                            BatchState::Closed,
+                            0,
+                            Interval::from_time(&report_timestamp).unwrap(),
+                        ))
+                        .await
+                        .unwrap();
+                    }
 
                     let collection_job_id = random();
                     tx.put_collection_job(

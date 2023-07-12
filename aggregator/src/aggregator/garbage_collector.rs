@@ -38,8 +38,6 @@ impl<C: Clock> GarbageCollector<C> {
     }
 
     async fn gc_task(&self, task: Arc<Task>) -> Result<()> {
-        // XXX: consider short-circuiting if task's report_expiry_age is None
-
         self.datastore
             .run_tx(|tx| {
                 let task = Arc::clone(&task);

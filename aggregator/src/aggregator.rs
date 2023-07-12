@@ -2705,7 +2705,7 @@ mod tests {
     use janus_core::{
         hpke::{self, HpkeApplicationInfo, Label},
         task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
-        test_util::{dummy_vdaf, install_test_trace_subscriber},
+        test_util::install_test_trace_subscriber,
         time::{Clock, MockClock, TimeExt},
     };
     use janus_messages::{
@@ -2720,8 +2720,6 @@ mod tests {
     };
     use rand::random;
     use std::{collections::HashSet, iter, sync::Arc, time::Duration as StdDuration};
-
-    pub(super) const DUMMY_VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
 
     pub(crate) const BATCH_AGGREGATION_SHARD_COUNT: u64 = 32;
 
