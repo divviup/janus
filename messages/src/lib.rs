@@ -46,6 +46,16 @@ pub enum Error {
 /// Wire-representation of an ASCII-encoded URL with minimum length 1 and maximum
 /// length 2^16 - 1. This is a newtype for [`url::Url`] for adding encoding and
 /// decoding traits.
+///
+/// Note that because [`url::Url::parse`] is used while decoding, this type has more
+/// restrictions on it than specified in DAP. See [`url::ParseError`] for the additional
+/// ways decoding can fail.
+///
+/// Also note that the encoding of a URL may not precisely match what it was decoded
+/// from. In particular, the in-memory representation of [`url::Url`] adds a trailing
+/// slash if it is appropriate to do so, e.g. `https://example.com -> https://example.com/`.
+/// This does not affect the parseability of the resulting encoded Url, but may result
+/// in an increase in size of the encoding.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Url(url::Url);
 
@@ -2745,8 +2755,12 @@ mod tests {
     fn roundtrip_url() {
         for (test, len) in [
             ("https://example.com/", [0u8, 20]),
-            ("h", [0u8, 1]),
-            (&"h".repeat(u16::MAX.into()), [u8::MAX, u8::MAX]),
+            (
+                &("http://".to_string()
+                    + &"h".repeat(Into::<usize>::into(u16::MAX) - "http://".len() - 1)
+                    + &"/"),
+                [u8::MAX, u8::MAX],
+            ),
         ] {
             roundtrip_encoding(&[(
                 Url::try_from(test.as_ref()).unwrap(),
