@@ -2758,7 +2758,7 @@ mod tests {
             (
                 &("http://".to_string()
                     + &"h".repeat(Into::<usize>::into(u16::MAX) - "http://".len() - 1)
-                    + &"/"),
+                    + "/"),
                 [u8::MAX, u8::MAX],
             ),
         ] {
