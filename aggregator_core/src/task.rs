@@ -331,7 +331,7 @@ impl Task {
     /// to the aggregators.
     pub fn primary_collector_auth_token(&self) -> &AuthenticationToken {
         // Unwrap safety: self.collector_auth_tokens is never empty
-        self.collector_auth_tokens.iter().rev().next_back().unwrap()
+        self.collector_auth_tokens.iter().next_back().unwrap()
     }
 
     /// Checks if the given collector authentication token is valid (i.e. matches with an
