@@ -20,7 +20,7 @@ homepage = "https://divviup.org"
 license = "MPL-2.0"
 repository = "https://github.com/divviup/janus"
 rust-version = "1.65.0"
-version = "0.5.7"
+version = "0.5.9"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -43,7 +43,7 @@ k8s-openapi = { version = "0.18.0", features = ["v1_24"] }  # keep this version 
 kube = { version = "0.82.2", default-features = false, features = ["client", "rustls-tls"] }
 opentelemetry = { version = "0.19", features = ["metrics"] }
 prio = { version = "0.12.2", features = ["multithreaded"] }
-serde = { version = "1.0.164", features = ["derive"] }
+serde = { version = "1.0.171", features = ["derive"] }
 rstest = "0.17.0"
 trillium = "0.2.9"
 trillium-api = { version = "0.2.0-rc.3", default-features = false }

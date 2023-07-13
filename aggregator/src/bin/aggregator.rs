@@ -6,7 +6,7 @@ use janus_aggregator::{
     binary_utils::{
         janus_main, setup_server, setup_signal_handler, BinaryOptions, CommonBinaryOptions,
     },
-    config::{BinaryConfig, CommonConfig},
+    config::{BinaryConfig, CommonConfig, TaskprovConfig},
 };
 use janus_aggregator_api::{self, aggregator_api_handler};
 use janus_aggregator_core::SecretBytes;
@@ -36,6 +36,7 @@ async fn main() -> Result<()> {
             aggregator_handler(
                 Arc::clone(&datastore),
                 ctx.clock,
+                &ctx.meter,
                 ctx.config.aggregator_config(),
             )?,
             None,
@@ -88,7 +89,7 @@ async fn main() -> Result<()> {
                 // DAP API handler in the setup_server call below
                 info!(
                     aggregator_bound_address = ?ctx.config.listen_address,
-                    ?path_prefix,
+                    path_prefix,
                     "Serving aggregator API relative to DAP API"
                 );
                 // Append wildcard so that this handler will match anything under the prefix
@@ -210,6 +211,8 @@ pub enum AggregatorApi {
 /// max_upload_batch_size: 100
 /// max_upload_batch_write_delay_ms: 250
 /// batch_aggregation_shard_count: 32
+/// taskprov_config:
+///   enabled: false
 /// "#;
 ///
 /// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
@@ -218,6 +221,8 @@ pub enum AggregatorApi {
 struct Config {
     #[serde(flatten)]
     common_config: CommonConfig,
+    #[serde(default)]
+    taskprov_config: TaskprovConfig,
 
     /// Address on which this server should listen for connections to the DAP aggregator API and
     /// serve its API endpoints.
@@ -287,7 +292,7 @@ mod tests {
         aggregator,
         config::{
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-            BinaryConfig, CommonConfig,
+            BinaryConfig, CommonConfig, TaskprovConfig,
         },
         metrics::{MetricsExporterConfiguration, OtlpExporterConfiguration},
         trace::{
@@ -329,6 +334,7 @@ mod tests {
             max_upload_batch_size: 100,
             max_upload_batch_write_delay_ms: 250,
             batch_aggregation_shard_count: 32,
+            taskprov_config: TaskprovConfig::default(),
         })
     }
 
@@ -349,6 +355,28 @@ mod tests {
             .unwrap()
             .aggregator_api,
             None
+        );
+    }
+
+    #[test]
+    fn config_taskprov() {
+        assert_eq!(
+            serde_yaml::from_str::<Config>(
+                r#"---
+    listen_address: "0.0.0.0:8080"
+    database:
+        url: "postgres://postgres:postgres@localhost:5432/postgres"
+        connection_pool_timeouts_secs: 60
+    max_upload_batch_size: 100
+    max_upload_batch_write_delay_ms: 250
+    batch_aggregation_shard_count: 32
+    taskprov_config:
+        enabled: true
+    "#
+            )
+            .unwrap()
+            .taskprov_config,
+            TaskprovConfig { enabled: true },
         );
     }
 

@@ -20,6 +20,7 @@ use janus_interop_binaries::{
     AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole, HpkeConfigRegistry, Keyring,
 };
 use janus_messages::{Duration, HpkeConfig, Time};
+use opentelemetry::metrics::Meter;
 use prio::codec::Decode;
 use serde::{Deserialize, Serialize};
 use sqlx::{migrate::Migrator, Connection, PgConnection};
@@ -121,12 +122,14 @@ async fn handle_add_task(
 
 fn make_handler(
     datastore: Arc<Datastore<RealClock>>,
+    meter: &Meter,
     dap_serving_prefix: String,
 ) -> anyhow::Result<impl Handler> {
     let keyring = Keyring::new();
     let dap_handler = aggregator_handler(
         Arc::clone(&datastore),
         RealClock::default(),
+        meter,
         aggregator::Config {
             max_upload_batch_size: 100,
             max_upload_batch_write_delay: std::time::Duration::from_millis(100),
@@ -231,7 +234,11 @@ async fn main() -> anyhow::Result<()> {
 
         // Run an HTTP server with both the DAP aggregator endpoints and the interoperation test
         // endpoints.
-        let handler = make_handler(Arc::clone(&datastore), ctx.config.dap_serving_prefix)?;
+        let handler = make_handler(
+            Arc::clone(&datastore),
+            &ctx.meter,
+            ctx.config.dap_serving_prefix,
+        )?;
         trillium_tokio::config()
             .with_host(&ctx.config.listen_address.ip().to_string())
             .with_port(ctx.config.listen_address.port())

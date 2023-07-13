@@ -21,12 +21,13 @@ async fn main() -> anyhow::Result<()> {
         // Start creating aggregation jobs.
         let aggregation_job_creator = Arc::new(AggregationJobCreator::new(
             ctx.datastore,
+            ctx.meter,
             Duration::from_secs(ctx.config.tasks_update_frequency_secs),
             Duration::from_secs(ctx.config.aggregation_job_creation_interval_secs),
             ctx.config.min_aggregation_job_size,
             ctx.config.max_aggregation_job_size,
         ));
-        stopper.stop_future(aggregation_job_creator.run()).await;
+        aggregation_job_creator.run(stopper).await;
 
         Ok(())
     })

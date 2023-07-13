@@ -83,7 +83,7 @@ pub fn aggregator_api_handler<C: Clock>(ds: Arc<Datastore<C>>, cfg: Config) -> i
         State(ds),
         State(Arc::new(cfg)),
         // Metrics.
-        metrics("janus_aggregator_api").with_route(|conn| conn.route().map(ToString::to_string)),
+        metrics("janus_aggregator").with_route(|conn| conn.route().map(ToString::to_string)),
         // Authorization check.
         api(auth_check),
         // Check content type and accept headers
@@ -606,8 +606,10 @@ mod tests {
                 ReportAggregationState,
             },
             test_util::{ephemeral_datastore, EphemeralDatastore},
+            Datastore,
         },
         task::{test_util::TaskBuilder, QueryType, Task},
+        test_util::noop_meter,
         SecretBytes,
     };
     use janus_core::{
@@ -634,24 +636,28 @@ mod tests {
 
     const AUTH_TOKEN: &str = "auth_token";
 
-    async fn setup_api_test() -> (impl Handler, EphemeralDatastore) {
+    async fn setup_api_test() -> (impl Handler, EphemeralDatastore, Arc<Datastore<MockClock>>) {
         install_test_trace_subscriber();
         let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(
+            ephemeral_datastore
+                .datastore(MockClock::default(), &noop_meter())
+                .await,
+        );
         let handler = aggregator_api_handler(
-            Arc::new(ephemeral_datastore.datastore(MockClock::default()).await),
+            Arc::clone(&datastore),
             Config {
                 auth_tokens: Vec::from([SecretBytes::new(AUTH_TOKEN.as_bytes().to_vec())]),
             },
         );
 
-        (handler, ephemeral_datastore)
+        (handler, ephemeral_datastore, datastore)
     }
 
     #[tokio::test]
     async fn get_task_ids() {
         // Setup: write a few tasks to the datastore.
-        let (handler, ephemeral_datastore) = setup_api_test().await;
-        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+        let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
         let mut task_ids: Vec<_> = ds
             .run_tx(|tx| {
@@ -756,7 +762,7 @@ mod tests {
     #[tokio::test]
     async fn post_task_bad_role() {
         // Setup: create a datastore & handler.
-        let (handler, _ephemeral_datastore) = setup_api_test().await;
+        let (handler, _ephemeral_datastore, _) = setup_api_test().await;
 
         let vdaf_verify_key =
             SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
@@ -800,7 +806,7 @@ mod tests {
     #[tokio::test]
     async fn post_task_unauthorized() {
         // Setup: create a datastore & handler.
-        let (handler, _ephemeral_datastore) = setup_api_test().await;
+        let (handler, _ephemeral_datastore, _) = setup_api_test().await;
 
         let vdaf_verify_key =
             SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
@@ -842,8 +848,7 @@ mod tests {
     #[tokio::test]
     async fn post_task_helper_no_optional_fields() {
         // Setup: create a datastore & handler.
-        let (handler, ephemeral_datastore) = setup_api_test().await;
-        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+        let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
         let vdaf_verify_key =
             SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
@@ -922,7 +927,7 @@ mod tests {
     #[tokio::test]
     async fn post_task_helper_with_aggregator_auth_token() {
         // Setup: create a datastore & handler.
-        let (handler, _ephemeral_datastore) = setup_api_test().await;
+        let (handler, _ephemeral_datastore, _) = setup_api_test().await;
 
         let vdaf_verify_key =
             SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
@@ -968,8 +973,7 @@ mod tests {
     #[tokio::test]
     async fn post_task_leader_all_optional_fields() {
         // Setup: create a datastore & handler.
-        let (handler, ephemeral_datastore) = setup_api_test().await;
-        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+        let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
         let vdaf_verify_key =
             SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
@@ -1060,7 +1064,7 @@ mod tests {
     #[tokio::test]
     async fn post_task_leader_no_aggregator_auth_token() {
         // Setup: create a datastore & handler.
-        let (handler, _ephemeral_datastore) = setup_api_test().await;
+        let (handler, _ephemeral_datastore, _) = setup_api_test().await;
 
         let vdaf_verify_key =
             SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
@@ -1105,8 +1109,7 @@ mod tests {
     #[tokio::test]
     async fn get_task() {
         // Setup: write a task to the datastore.
-        let (handler, ephemeral_datastore) = setup_api_test().await;
-        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+        let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
             .with_aggregator_auth_tokens(Vec::from([random()]))
@@ -1173,8 +1176,7 @@ mod tests {
     #[tokio::test]
     async fn delete_task() {
         // Setup: write a task to the datastore.
-        let (handler, ephemeral_datastore) = setup_api_test().await;
-        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+        let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
         let task_id = ds
             .run_tx(|tx| {
@@ -1259,8 +1261,7 @@ mod tests {
         const REPORT_COUNT: usize = 10;
         const REPORT_AGGREGATION_COUNT: usize = 4;
 
-        let (handler, ephemeral_datastore) = setup_api_test().await;
-        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+        let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
         let task_id = ds
             .run_tx(|tx| {
                 Box::pin(async move {

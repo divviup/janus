@@ -21,10 +21,12 @@ use std::{
     fmt::{self, Debug, Display, Formatter},
     io::{Cursor, Read},
     num::TryFromIntError,
+    str,
     str::FromStr,
 };
 
 pub mod problem_type;
+pub mod taskprov;
 pub use prio::codec;
 
 /// Errors returned by functions and methods in this module
@@ -39,6 +41,80 @@ pub enum Error {
     /// An unsupported algorithm identifier was encountered.
     #[error("Unsupported {0} algorithm identifier {1}")]
     UnsupportedAlgorithmIdentifier(&'static str, u16),
+}
+
+/// Wire-representation of an ASCII-encoded URL with minimum length 1 and maximum
+/// length 2^16 - 1. This is a newtype for [`url::Url`] for adding encoding and
+/// decoding traits.
+///
+/// Note that because [`url::Url::parse`] is used while decoding, this type has more
+/// restrictions on it than specified in DAP. See [`url::ParseError`] for the additional
+/// ways decoding can fail.
+///
+/// Also note that the encoding of a URL may not precisely match what it was decoded
+/// from. In particular, the in-memory representation of [`url::Url`] adds a trailing
+/// slash if it is appropriate to do so, e.g. `https://example.com -> https://example.com/`.
+/// This does not affect the parseability of the resulting encoded Url, but may result
+/// in an increase in size of the encoding.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Url(url::Url);
+
+impl Url {
+    const MAX_LEN: usize = 2usize.pow(16) - 1;
+
+    // Access the underlying [`url::Url`].
+    pub fn url(&self) -> &url::Url {
+        &self.0
+    }
+}
+
+impl Encode for Url {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        encode_u16_items(bytes, &(), self.0.as_str().as_bytes())
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(2 + self.0.as_str().len())
+    }
+}
+
+impl Decode for Url {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        Url::try_from(decode_u16_items(&(), bytes)?.as_ref())
+    }
+}
+
+impl Display for Url {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        (&self.0 as &dyn Display).fmt(f)
+    }
+}
+
+impl TryFrom<&[u8]> for Url {
+    type Error = CodecError;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        if value.is_empty() {
+            Err(CodecError::Other(
+                anyhow!("Url must be at least 1 byte long").into(),
+            ))
+        } else if value.len() > Url::MAX_LEN {
+            Err(CodecError::Other(
+                anyhow!("Url must be less than {} bytes long", Url::MAX_LEN).into(),
+            ))
+        } else if !value.iter().all(|i: &u8| i.is_ascii()) {
+            Err(CodecError::Other(
+                anyhow!("Url must be ASCII encoded").into(),
+            ))
+        } else {
+            Ok(Self(
+                // Unwrap safety: we just verified that the Url contains ASCII
+                // characters only. UTF8 is backwards compatible with ASCII.
+                url::Url::parse(str::from_utf8(value).unwrap())
+                    .map_err(|err| CodecError::Other(err.into()))?,
+            ))
+        }
+    }
 }
 
 /// DAP protocol message representing a duration with a resolution of seconds.
@@ -2634,45 +2710,75 @@ impl Decode for AggregateShare {
 }
 
 #[cfg(test)]
+pub(crate) fn roundtrip_encoding<T>(vals_and_encodings: &[(T, &str)])
+where
+    T: Encode + Decode + Debug + Eq,
+{
+    for (val, hex_encoding) in vals_and_encodings {
+        let mut encoded_val = Vec::new();
+        val.encode(&mut encoded_val);
+        let encoding = hex::decode(hex_encoding).unwrap();
+        assert_eq!(
+            encoded_val, encoding,
+            "Couldn't roundtrip (encoded value differs): {val:?}"
+        );
+        let decoded_val = T::decode(&mut Cursor::new(&encoded_val)).unwrap();
+        assert_eq!(
+            &decoded_val, val,
+            "Couldn't roundtrip (decoded value differs): {val:?}"
+        );
+        assert_eq!(
+            encoded_val.len(),
+            val.encoded_len().expect("No encoded length hint"),
+            "Encoded length hint is incorrect: {val:?}"
+        )
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use crate::{
-        query_type, AggregateShare, AggregateShareAad, AggregateShareReq,
+        query_type, roundtrip_encoding, AggregateShare, AggregateShareAad, AggregateShareReq,
         AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
         AggregationJobRound, BatchId, BatchSelector, Collection, CollectionReq, Duration,
         Extension, ExtensionType, FixedSize, FixedSizeQuery, HpkeAeadId, HpkeCiphertext,
         HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, InputShareAad, Interval,
         PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult, Query, Report,
         ReportId, ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId,
-        Time, TimeInterval,
+        Time, TimeInterval, Url,
     };
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode, Encode};
     use serde_test::{assert_de_tokens_error, assert_tokens, Token};
-    use std::{fmt::Debug, io::Cursor};
 
-    fn roundtrip_encoding<T>(vals_and_encodings: &[(T, &str)])
-    where
-        T: Encode + Decode + Debug + Eq,
-    {
-        for (val, hex_encoding) in vals_and_encodings {
-            let mut encoded_val = Vec::new();
-            val.encode(&mut encoded_val);
-            let encoding = hex::decode(hex_encoding).unwrap();
-            assert_eq!(
-                encoding, encoded_val,
-                "Couldn't roundtrip (encoded value differs): {val:?}"
-            );
-            let decoded_val = T::decode(&mut Cursor::new(&encoded_val)).unwrap();
-            assert_eq!(
-                val, &decoded_val,
-                "Couldn't roundtrip (decoded value differs): {val:?}"
-            );
-            assert_eq!(
-                encoded_val.len(),
-                val.encoded_len().expect("No encoded length hint"),
-                "Encoded length hint is incorrect: {val:?}"
-            )
+    #[test]
+    fn roundtrip_url() {
+        for (test, len) in [
+            ("https://example.com/", [0u8, 20]),
+            (
+                &("http://".to_string()
+                    + &"h".repeat(Into::<usize>::into(u16::MAX) - "http://".len() - 1)
+                    + "/"),
+                [u8::MAX, u8::MAX],
+            ),
+        ] {
+            roundtrip_encoding(&[(
+                Url::try_from(test.as_ref()).unwrap(),
+                &(hex::encode(len) + &hex::encode(test)),
+            )])
         }
+
+        // Zero length string
+        assert_matches!(
+            Url::get_decoded(&hex::decode(concat!("0000")).unwrap()),
+            Err(CodecError::Other(_))
+        );
+
+        // Non-ascii string
+        assert_matches!(
+            Url::get_decoded(&hex::decode(concat!("0001FF")).unwrap()),
+            Err(CodecError::Other(_))
+        );
     }
 
     #[test]

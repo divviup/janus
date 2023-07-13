@@ -2701,6 +2701,7 @@ mod tests {
             Datastore,
         },
         task::{test_util::TaskBuilder, QueryType, Task},
+        test_util::noop_meter,
     };
     use janus_core::{
         hpke::{self, HpkeApplicationInfo, Label},
@@ -2713,7 +2714,6 @@ mod tests {
         InputShareAad, Interval, PlaintextInputShare, Report, ReportId, ReportMetadata,
         ReportShare, Role, TaskId, Time,
     };
-    use opentelemetry::global::meter;
     use prio::{
         codec::Encode,
         vdaf::{self, prio3::Prio3Count, Client as _},
@@ -2798,16 +2798,12 @@ mod tests {
         .build();
 
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let meter = noop_meter();
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
 
         datastore.put_task(&task).await.unwrap();
 
-        let aggregator = Aggregator::new(
-            Arc::clone(&datastore),
-            clock.clone(),
-            &meter("janus_aggregator"),
-            cfg,
-        );
+        let aggregator = Aggregator::new(Arc::clone(&datastore), clock.clone(), &meter, cfg);
 
         (
             vdaf,

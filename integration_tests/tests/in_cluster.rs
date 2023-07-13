@@ -5,10 +5,9 @@ use base64::engine::{
     Engine,
 };
 use common::{submit_measurements_and_verify_aggregate, test_task_builders};
-use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType, Task};
+use janus_aggregator_core::task::QueryType;
 use janus_collector::AuthenticationToken;
 use janus_core::{
-    hpke::HpkePrivateKey,
     task::{DapAuthToken, VdafInstance},
     test_util::{
         install_test_trace_subscriber,
@@ -18,6 +17,7 @@ use janus_core::{
 use janus_integration_tests::{
     client::ClientBackend,
     divviup_api_client::{DivviupApiClient, NewAggregatorRequest, NewTaskRequest},
+    TaskParameters,
 };
 use janus_messages::TaskId;
 use prio::codec::Encode;
@@ -27,11 +27,9 @@ use url::Url;
 mod common;
 
 struct InClusterJanusPair {
-    /// The leader's view of the task configured in both Janus aggregators.
-    leader_task: Task,
-    /// The private key corresponding to the collector HPKE configuration in the task configured in
-    /// both Janus aggregators.
-    collector_private_key: HpkePrivateKey,
+    /// Task parameters needed by the client and collector, for the task configured in both Janus
+    /// aggregators.
+    task_parameters: TaskParameters,
 
     /// Handle to the leader's resources, which are released on drop.
     leader: InClusterJanus,
@@ -95,8 +93,9 @@ impl InClusterJanusPair {
 
         let cluster = Cluster::new(&kubeconfig_path, &kubectl_context_name);
 
-        let (collector_private_key, task_builder, _) = test_task_builders(vdaf, query_type);
+        let (mut task_parameters, task_builder, _) = test_task_builders(vdaf, query_type);
         let task = task_builder.with_min_batch_size(100).build();
+        task_parameters.min_batch_size = 100;
 
         // From outside the cluster, the aggregators are reached at a dynamically allocated port on
         // localhost. When the aggregators talk to each other, they do so in the cluster's network,
@@ -169,22 +168,19 @@ impl InClusterJanusPair {
             .list_collector_auth_tokens(&provisioned_task)
             .await;
 
-        // Update the task with the ID and collector auth token from divviup-api.
-        let task = TaskBuilder::from(task)
-            .with_id(TaskId::from_str(provisioned_task.id.as_ref()).unwrap())
-            .with_collector_auth_tokens(Vec::from([AuthenticationToken::DapAuth(
-                DapAuthToken::try_from(
-                    URL_SAFE_NO_PAD
-                        .decode(collector_auth_tokens[0].clone())
-                        .unwrap(),
-                )
-                .unwrap(),
-            )]))
-            .build();
+        // Update the task parameters with the ID and collector auth token from divviup-api.
+        task_parameters.task_id = TaskId::from_str(provisioned_task.id.as_ref()).unwrap();
+        task_parameters.collector_auth_token = AuthenticationToken::DapAuth(
+            DapAuthToken::try_from(
+                URL_SAFE_NO_PAD
+                    .decode(collector_auth_tokens[0].clone())
+                    .unwrap(),
+            )
+            .unwrap(),
+        );
 
         Self {
-            leader_task: task,
-            collector_private_key,
+            task_parameters,
             leader: InClusterJanus::new(&cluster, &leader_namespace).await,
             helper: InClusterJanus::new(&cluster, &helper_namespace).await,
         }
@@ -199,7 +195,7 @@ impl InClusterJanusPair {
 
     fn in_cluster_aggregator_api_url(namespace: &str) -> Url {
         Url::parse(&format!(
-            "http://aggregator-api.{namespace}.svc.cluster.local:8081"
+            "http://aggregator.{namespace}.svc.cluster.local:80/aggregator-api/"
         ))
         .unwrap()
     }
@@ -236,9 +232,8 @@ async fn in_cluster_count() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
-        &janus_pair.leader_task,
-        &janus_pair.collector_private_key,
         &ClientBackend::InProcess,
     )
     .await;
@@ -254,9 +249,8 @@ async fn in_cluster_sum() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
-        &janus_pair.leader_task,
-        &janus_pair.collector_private_key,
         &ClientBackend::InProcess,
     )
     .await;
@@ -276,9 +270,8 @@ async fn in_cluster_histogram() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
-        &janus_pair.leader_task,
-        &janus_pair.collector_private_key,
         &ClientBackend::InProcess,
     )
     .await;
@@ -299,9 +292,8 @@ async fn in_cluster_fixed_size() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
-        &janus_pair.leader_task,
-        &janus_pair.collector_private_key,
         &ClientBackend::InProcess,
     )
     .await;

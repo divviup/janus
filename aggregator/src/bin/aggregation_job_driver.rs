@@ -5,7 +5,7 @@ use janus_aggregator::{
     binary_utils::{
         janus_main, job_driver::JobDriver, setup_signal_handler, BinaryOptions, CommonBinaryOptions,
     },
-    config::{BinaryConfig, CommonConfig, JobDriverConfig},
+    config::{BinaryConfig, CommonConfig, JobDriverConfig, TaskprovConfig},
 };
 use janus_core::{time::RealClock, TokioRuntime};
 use serde::{Deserialize, Serialize};
@@ -22,14 +22,13 @@ async fn main() -> anyhow::Result<()> {
     );
 
     janus_main::<_, Options, Config, _, _>(RealClock::default(), |ctx| async move {
-        let meter = opentelemetry::global::meter("aggregation_job_driver");
         let datastore = Arc::new(ctx.datastore);
         let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
             reqwest::Client::builder()
                 .user_agent(CLIENT_USER_AGENT)
                 .build()
                 .context("couldn't create HTTP client")?,
-            &meter,
+            &ctx.meter,
             ctx.config.batch_aggregation_shard_count,
         ));
         let lease_duration =
@@ -42,7 +41,8 @@ async fn main() -> anyhow::Result<()> {
         let job_driver = Arc::new(JobDriver::new(
             ctx.clock,
             TokioRuntime,
-            meter,
+            ctx.meter,
+            stopper,
             Duration::from_secs(ctx.config.job_driver_config.min_job_discovery_delay_secs),
             Duration::from_secs(ctx.config.job_driver_config.max_job_discovery_delay_secs),
             ctx.config.job_driver_config.max_concurrent_job_workers,
@@ -57,8 +57,8 @@ async fn main() -> anyhow::Result<()> {
                 Arc::clone(&datastore),
                 ctx.config.job_driver_config.maximum_attempts_before_failure,
             ),
-        ));
-        stopper.stop_future(job_driver.run()).await;
+        )?);
+        job_driver.run().await;
 
         Ok(())
     })
@@ -101,6 +101,8 @@ impl BinaryOptions for Options {
 /// worker_lease_clock_skew_allowance_secs: 60
 /// maximum_attempts_before_failure: 5
 /// batch_aggregation_shard_count: 32
+/// taskprov_config:
+///   enabled: false
 /// "#;
 ///
 /// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
@@ -111,6 +113,8 @@ struct Config {
     common_config: CommonConfig,
     #[serde(flatten)]
     job_driver_config: JobDriverConfig,
+    #[serde(default)]
+    taskprov_config: TaskprovConfig,
 
     /// Defines the number of shards to break each batch aggregation into. Increasing this value
     /// will reduce the amount of database contention during leader aggregation, while increasing
@@ -134,7 +138,7 @@ mod tests {
     use clap::CommandFactory;
     use janus_aggregator::config::{
         test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-        CommonConfig, JobDriverConfig,
+        CommonConfig, JobDriverConfig, TaskprovConfig,
     };
     use janus_core::test_util::roundtrip_encoding;
     use std::net::{Ipv4Addr, SocketAddr};
@@ -162,6 +166,7 @@ mod tests {
                 maximum_attempts_before_failure: 5,
             },
             batch_aggregation_shard_count: 32,
+            taskprov_config: TaskprovConfig::default(),
         })
     }
 

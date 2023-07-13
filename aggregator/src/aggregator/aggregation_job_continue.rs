@@ -399,6 +399,7 @@ mod tests {
             Datastore,
         },
         task::{test_util::TaskBuilder, QueryType, Task},
+        test_util::noop_meter,
     };
     use janus_core::{
         task::VdafInstance,
@@ -436,7 +437,8 @@ mod tests {
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let meter = noop_meter();
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
 
         let report_generator = ReportShareGenerator::new(
             clock.clone(),
@@ -496,8 +498,13 @@ mod tests {
         );
 
         // Create aggregator handler.
-        let handler =
-            aggregator_handler(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::clone(&datastore),
+            clock,
+            &meter,
+            default_aggregator_config(),
+        )
+        .unwrap();
 
         AggregationJobContinueTestCase {
             task,

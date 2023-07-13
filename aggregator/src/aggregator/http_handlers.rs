@@ -146,7 +146,7 @@ impl StatusCounter {
     fn new(meter: &Meter) -> Self {
         Self(
             meter
-                .u64_counter("janus_aggregator_responses_total")
+                .u64_counter("janus_aggregator_responses")
                 .with_description(
                     "Count of requests handled by the aggregator, by method, route, and response status.",
                 )
@@ -204,10 +204,10 @@ pub(crate) static AGGREGATE_SHARES_ROUTE: &str = "tasks/:task_id/aggregate_share
 pub fn aggregator_handler<C: Clock>(
     datastore: Arc<Datastore<C>>,
     clock: C,
+    meter: &Meter,
     cfg: Config,
 ) -> Result<impl Handler, Error> {
-    let meter = opentelemetry::global::meter("janus_aggregator");
-    let aggregator = Arc::new(Aggregator::new(datastore, clock, &meter, cfg));
+    let aggregator = Arc::new(Aggregator::new(datastore, clock, meter, cfg));
 
     Ok((
         State(aggregator),
@@ -250,7 +250,7 @@ pub fn aggregator_handler<C: Clock>(
                 AGGREGATE_SHARES_ROUTE,
                 instrumented(api(aggregate_shares::<C>)),
             ),
-        StatusCounter::new(&meter),
+        StatusCounter::new(meter),
     ))
 }
 
@@ -574,6 +574,7 @@ mod tests {
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
         task::{test_util::TaskBuilder, QueryType, VerifyKey},
+        test_util::noop_meter,
     };
     use janus_core::{
         hpke::{
@@ -624,14 +625,20 @@ mod tests {
         let unknown_task_id: TaskId = random();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+        let meter = noop_meter();
+        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
 
         datastore.put_task(&task).await.unwrap();
 
         let want_hpke_key = task.current_hpke_key().clone();
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &meter,
+            default_aggregator_config(),
+        )
+        .unwrap();
 
         // No task ID provided
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
@@ -739,12 +746,18 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+        let meter = noop_meter();
+        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
 
         datastore.put_task(&task).await.unwrap();
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &meter,
+            default_aggregator_config(),
+        )
+        .unwrap();
 
         // Check for appropriate CORS headers in response to a preflight request.
         let test_conn = TestConn::build(
@@ -818,13 +831,15 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let meter = noop_meter();
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
 
         datastore.put_task(&task).await.unwrap();
         let report = create_report(&task, clock.now());
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock.clone(),
+            &meter,
             default_aggregator_config(),
         )
         .unwrap();
@@ -1047,7 +1062,8 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+        let meter = noop_meter();
+        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -1058,8 +1074,13 @@ mod tests {
         datastore.put_task(&task).await.unwrap();
         let report = create_report(&task, clock.now());
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &meter,
+            default_aggregator_config(),
+        )
+        .unwrap();
 
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
@@ -1108,7 +1129,8 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+        let meter = noop_meter();
+        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
 
         datastore.put_task(&task).await.unwrap();
 
@@ -1118,8 +1140,13 @@ mod tests {
             Vec::new(),
         );
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &meter,
+            default_aggregator_config(),
+        )
+        .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         let mut test_conn =
@@ -1196,7 +1223,8 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+        let meter = noop_meter();
+        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
 
         datastore.put_task(&task).await.unwrap();
 
@@ -1206,8 +1234,13 @@ mod tests {
             Vec::new(),
         );
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &meter,
+            default_aggregator_config(),
+        )
+        .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         let wrong_token_value = random();
@@ -1274,7 +1307,8 @@ mod tests {
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let meter = noop_meter();
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
 
         let vdaf = dummy_vdaf::Vdaf::new();
         let verify_key: VerifyKey<0> = task.primary_vdaf_verify_key().unwrap();
@@ -1643,8 +1677,13 @@ mod tests {
 
         // Create aggregator handler, send request, and parse response. Do this twice to prove that
         // the request is idempotent.
-        let handler =
-            aggregator_handler(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::clone(&datastore),
+            clock,
+            &meter,
+            default_aggregator_config(),
+        )
+        .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         for _ in 0..2 {
@@ -1847,7 +1886,8 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+        let meter = noop_meter();
+        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
         let hpke_key = task.current_hpke_key();
 
         datastore.put_task(&task).await.unwrap();
@@ -1873,8 +1913,13 @@ mod tests {
         );
 
         // Create aggregator handler, send request, and parse response.
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &meter,
+            default_aggregator_config(),
+        )
+        .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         let mut test_conn =
@@ -1916,7 +1961,8 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+        let meter = noop_meter();
+        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
         let hpke_key = task.current_hpke_key();
 
         datastore.put_task(&task).await.unwrap();
@@ -1942,8 +1988,13 @@ mod tests {
         );
 
         // Create aggregator filter, send request, and parse response.
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &meter,
+            default_aggregator_config(),
+        )
+        .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         let mut test_conn =
@@ -1984,7 +2035,8 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+        let meter = noop_meter();
+        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
 
         datastore.put_task(&task).await.unwrap();
 
@@ -2008,8 +2060,13 @@ mod tests {
             Vec::from([report_share.clone(), report_share]),
         );
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &meter,
+            default_aggregator_config(),
+        )
+        .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         let mut test_conn =
@@ -2051,7 +2108,8 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let meter = noop_meter();
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
 
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
@@ -2253,8 +2311,13 @@ mod tests {
         );
 
         // Create aggregator handler, send request, and parse response.
-        let handler =
-            aggregator_handler(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::clone(&datastore),
+            clock,
+            &meter,
+            default_aggregator_config(),
+        )
+        .unwrap();
 
         let aggregate_resp =
             post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
@@ -2365,7 +2428,12 @@ mod tests {
         let aggregation_job_id_0 = random();
         let aggregation_job_id_1 = random();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(MockClock::default()).await);
+        let meter = noop_meter();
+        let datastore = Arc::new(
+            ephemeral_datastore
+                .datastore(MockClock::default(), &meter)
+                .await,
+        );
         let first_batch_interval_clock = MockClock::default();
         let second_batch_interval_clock = MockClock::new(
             first_batch_interval_clock
@@ -2621,6 +2689,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             first_batch_interval_clock.clone(),
+            &meter,
             default_aggregator_config(),
         )
         .unwrap();
@@ -2925,6 +2994,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             first_batch_interval_clock,
+            &meter,
             default_aggregator_config(),
         )
         .unwrap();
@@ -3061,7 +3131,8 @@ mod tests {
         );
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let meter = noop_meter();
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
 
         // Setup datastore.
         datastore
@@ -3123,8 +3194,13 @@ mod tests {
             )]),
         );
 
-        let handler =
-            aggregator_handler(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::clone(&datastore),
+            clock,
+            &meter,
+            default_aggregator_config(),
+        )
+        .unwrap();
 
         post_aggregation_job_expecting_error(
             &task,
@@ -3157,7 +3233,8 @@ mod tests {
         );
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let meter = noop_meter();
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
 
         // Setup datastore.
         datastore
@@ -3219,8 +3296,13 @@ mod tests {
             )]),
         );
 
-        let handler =
-            aggregator_handler(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::clone(&datastore),
+            clock,
+            &meter,
+            default_aggregator_config(),
+        )
+        .unwrap();
 
         let aggregate_resp =
             post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
@@ -3308,7 +3390,8 @@ mod tests {
         );
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+        let meter = noop_meter();
+        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
 
         // Setup datastore.
         datastore
@@ -3372,8 +3455,13 @@ mod tests {
             )]),
         );
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &meter,
+            default_aggregator_config(),
+        )
+        .unwrap();
 
         post_aggregation_job_expecting_error(
             &task,
@@ -3407,7 +3495,8 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+        let meter = noop_meter();
+        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
 
         // Setup datastore.
         datastore
@@ -3506,8 +3595,13 @@ mod tests {
             ]),
         );
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &meter,
+            default_aggregator_config(),
+        )
+        .unwrap();
 
         post_aggregation_job_expecting_error(
             &task,
@@ -3537,7 +3631,8 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+        let meter = noop_meter();
+        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
 
         // Setup datastore.
         datastore
@@ -3598,8 +3693,13 @@ mod tests {
             )]),
         );
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &meter,
+            default_aggregator_config(),
+        )
+        .unwrap();
 
         post_aggregation_job_expecting_error(
             &task,
@@ -3749,12 +3849,18 @@ mod tests {
             .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+        let meter = noop_meter();
+        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
 
         datastore.put_task(&task).await.unwrap();
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &meter,
+            default_aggregator_config(),
+        )
+        .unwrap();
 
         let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
@@ -4453,12 +4559,18 @@ mod tests {
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+        let meter = noop_meter();
+        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
 
         datastore.put_task(&task).await.unwrap();
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &meter,
+            default_aggregator_config(),
+        )
+        .unwrap();
 
         let request = AggregateShareReq::new(
             BatchSelector::new_time_interval(
@@ -4514,13 +4626,15 @@ mod tests {
             .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+        let meter = noop_meter();
+        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
 
         datastore.put_task(&task).await.unwrap();
 
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock.clone(),
+            &meter,
             default_aggregator_config(),
         )
         .unwrap();
@@ -4616,12 +4730,18 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let meter = noop_meter();
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
 
         datastore.put_task(&task).await.unwrap();
 
-        let handler =
-            aggregator_handler(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::clone(&datastore),
+            clock,
+            &meter,
+            default_aggregator_config(),
+        )
+        .unwrap();
 
         // There are no batch aggregations in the datastore yet
         let request = AggregateShareReq::new(
