@@ -96,7 +96,7 @@ macro_rules! supported_schema_versions {
 // version is seen, [`Datastore::new`] fails.
 //
 // Note that the latest supported version must be first in the list.
-supported_schema_versions!(11);
+supported_schema_versions!(12);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
