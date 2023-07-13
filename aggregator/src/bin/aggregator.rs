@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use clap::Parser;
 use janus_aggregator::{
-    aggregator::{self, http_handlers::aggregator_handler},
+    aggregator::{self, http_handlers::aggregator_handler, Error},
     binary_utils::{
         janus_main, setup_server, setup_signal_handler, BinaryOptions, CommonBinaryOptions,
     },
@@ -32,13 +32,28 @@ async fn main() -> Result<()> {
             .response_headers()
             .context("failed to parse response headers")?;
 
+        let mut cfg = ctx.config.aggregator_config();
+
+        if cfg.taskprov_config.enabled && cfg.taskprov_config.global_hpke_keypair.is_none() {
+            match datastore
+                .run_tx_with_name("get_global_hpke_config", |tx| {
+                    Box::pin(async move { tx.get_global_hpke_keypair().await })
+                })
+                .await?
+            {
+                Some(key) => cfg.taskprov_config.global_hpke_keypair = Some(key),
+                None => {
+                    return Err(Error::InvalidConfiguration(concat!(
+                        "No global hpke keypair found in config file or database. ",
+                        "When taskprov is enabled, a global keypair must be provided.",
+                    ))
+                    .into())
+                }
+            }
+        }
+
         let mut handlers = (
-            aggregator_handler(
-                Arc::clone(&datastore),
-                ctx.clock,
-                &ctx.meter,
-                ctx.config.aggregator_config(),
-            )?,
+            aggregator_handler(Arc::clone(&datastore), ctx.clock, &ctx.meter, cfg)?,
             None,
         );
 
@@ -270,6 +285,7 @@ impl Config {
                 self.max_upload_batch_write_delay_ms,
             ),
             batch_aggregation_shard_count: self.batch_aggregation_shard_count,
+            taskprov_config: self.taskprov_config.clone(),
         }
     }
 }
@@ -376,7 +392,10 @@ mod tests {
             )
             .unwrap()
             .taskprov_config,
-            TaskprovConfig { enabled: true },
+            TaskprovConfig {
+                enabled: true,
+                global_hpke_keypair: None
+            },
         );
     }
 
@@ -485,6 +504,7 @@ mod tests {
                 max_upload_batch_size: 100,
                 max_upload_batch_write_delay: Duration::from_millis(250),
                 batch_aggregation_shard_count: 32,
+                taskprov_config: TaskprovConfig::default(),
             }
         );
 

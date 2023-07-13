@@ -8,6 +8,7 @@ use crate::{
         query_type::{CollectableQueryType, UploadableQueryType},
         report_writer::{ReportWriteBatcher, WritableReport},
     },
+    config::TaskprovConfig,
     Operation,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -177,6 +178,9 @@ pub struct Config {
     /// will reduce the amount of database contention during helper aggregation, while increasing
     /// the cost of collection.
     pub batch_aggregation_shard_count: u64,
+
+    /// The global HPKE config to advertise when no task ID is provided in the HPKE config request.
+    pub taskprov_config: TaskprovConfig,
 }
 
 impl Default for Config {
@@ -185,6 +189,7 @@ impl Default for Config {
             max_upload_batch_size: 1,
             max_upload_batch_write_delay: StdDuration::ZERO,
             batch_aggregation_shard_count: 1,
+            taskprov_config: TaskprovConfig::default(),
         }
     }
 }
@@ -228,17 +233,33 @@ impl<C: Clock> Aggregator<C> {
         &self,
         task_id_base64: Option<&[u8]>,
     ) -> Result<HpkeConfigList, Error> {
-        // Task ID is optional in an HPKE config request, but Janus requires it.
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.1
-        let task_id_base64 = task_id_base64.ok_or(Error::MissingTaskId)?;
-
-        let task_id_bytes = URL_SAFE_NO_PAD
-            .decode(task_id_base64)
-            .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
-        let task_id = TaskId::get_decoded(&task_id_bytes)
-            .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
-        let task_aggregator = self.task_aggregator_for(&task_id).await?;
-        Ok(task_aggregator.handle_hpke_config())
+        match task_id_base64 {
+            Some(task_id_base64) => {
+                let task_id_bytes = URL_SAFE_NO_PAD
+                    .decode(task_id_base64)
+                    .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
+                let task_id = TaskId::get_decoded(&task_id_bytes)
+                    .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
+                let task_aggregator = self.task_aggregator_for(&task_id).await?;
+                Ok(task_aggregator.handle_hpke_config())
+            }
+            None => {
+                if self.cfg.taskprov_config.enabled {
+                    match self.cfg.taskprov_config.global_hpke_keypair.clone() {
+                        Some(global_hpke_keypair) => {
+                            Ok(HpkeConfigList::new(Vec::from([global_hpke_keypair
+                                .config()
+                                .clone()])))
+                        }
+                        None => Err(Error::Internal(
+                            "this server is missing its global HPKE config".into(),
+                        )),
+                    }
+                } else {
+                    Err(Error::MissingTaskId)
+                }
+            }
+        }
     }
 
     async fn handle_upload(&self, task_id: &TaskId, report_bytes: &[u8]) -> Result<(), Arc<Error>> {
@@ -2691,7 +2712,10 @@ async fn send_request_to_helper<T: Encode>(
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::{Aggregator, Config, Error};
+    use crate::{
+        aggregator::{Aggregator, Config, Error},
+        config::TaskprovConfig,
+    };
     use assert_matches::assert_matches;
     use futures::future::try_join_all;
     use janus_aggregator_core::{
@@ -2730,6 +2754,7 @@ mod tests {
             max_upload_batch_size: 5,
             max_upload_batch_write_delay: StdDuration::from_millis(100),
             batch_aggregation_shard_count: BATCH_AGGREGATION_SHARD_COUNT,
+            taskprov_config: TaskprovConfig::default(),
         }
     }
 

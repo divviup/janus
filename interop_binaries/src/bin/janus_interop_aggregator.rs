@@ -4,7 +4,7 @@ use clap::Parser;
 use janus_aggregator::{
     aggregator::{self, http_handlers::aggregator_handler},
     binary_utils::{janus_main, BinaryOptions, CommonBinaryOptions},
-    config::{BinaryConfig, CommonConfig},
+    config::{BinaryConfig, CommonConfig, TaskprovConfig},
 };
 use janus_aggregator_core::{
     datastore::Datastore,
@@ -134,6 +134,7 @@ fn make_handler(
             max_upload_batch_size: 100,
             max_upload_batch_write_delay: std::time::Duration::from_millis(100),
             batch_aggregation_shard_count: 32,
+            taskprov_config: TaskprovConfig::default(),
         },
     )?;
 

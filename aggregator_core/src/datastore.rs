@@ -4193,6 +4193,71 @@ impl<C: Clock> Transaction<'_, C> {
         .await?;
         Ok(())
     }
+
+    #[tracing::instrument(skip(self), err)]
+    pub async fn get_global_hpke_keypair(&self) -> Result<Option<HpkeKeypair>, Error> {
+        let stmt = self
+            .prepare_cached(
+                "SELECT config_id, config, private_key FROM task_hpke_keys WHERE task_id IS NULL;",
+            )
+            .await?;
+
+        let hpke_key_rows = self.query(&stmt, &[]).await?;
+        if hpke_key_rows.is_empty() {
+            Ok(None)
+        } else {
+            let config = HpkeConfig::get_decoded(hpke_key_rows[0].get("config"))?;
+
+            let config_id = u8::try_from(hpke_key_rows[0].get::<_, i16>("config_id"))?;
+            let encrypted_private_key: Vec<u8> = hpke_key_rows[0].get("private_key");
+            let private_key = HpkePrivateKey::new(self.crypter.decrypt(
+                "task_hpke_keys",
+                &config_id.to_be_bytes(),
+                "private_key",
+                &encrypted_private_key,
+            )?);
+
+            Ok(Some(HpkeKeypair::new(config, private_key)))
+        }
+    }
+
+    #[tracing::instrument(skip(self), err)]
+    pub async fn delete_global_hpke_keypair(&self) -> Result<(), Error> {
+        let stmt = self
+            .prepare_cached("DELETE FROM task_hpke_keys WHERE task_id IS NULL;")
+            .await?;
+        check_single_row_mutation(self.execute(&stmt, &[]).await?)
+    }
+
+    #[tracing::instrument(skip(self), err)]
+    pub async fn set_global_hpke_keypair(&self, hpke_keypair: &HpkeKeypair) -> Result<(), Error> {
+        let hpke_config_id = u8::from(*hpke_keypair.config().id()) as i16;
+        let hpke_config = hpke_keypair.config().get_encoded();
+        let encrypted_hpke_private_key = self.crypter.encrypt(
+            "task_hpke_keys",
+            &u8::from(*hpke_keypair.config().id()).to_be_bytes(),
+            "private_key",
+            hpke_keypair.private_key().as_ref(),
+        )?;
+
+        let stmt = self
+            .prepare_cached(
+                "INSERT INTO task_hpke_keys (task_id, config_id, config, private_key)
+                    VALUES (NULL, $1, $2, $3);",
+            )
+            .await?;
+        check_insert(
+            self.execute(
+                &stmt,
+                &[
+                    /* config_id */ &hpke_config_id,
+                    /* config */ &hpke_config,
+                    /* private_key */ &encrypted_hpke_private_key,
+                ],
+            )
+            .await?,
+        )
+    }
 }
 
 fn check_insert(row_count: u64) -> Result<(), Error> {
@@ -6194,7 +6259,9 @@ mod tests {
     use chrono::NaiveDate;
     use futures::future::try_join_all;
     use janus_core::{
-        hpke::{self, HpkeApplicationInfo, Label},
+        hpke::{
+            self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
+        },
         task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
         test_util::{
             dummy_vdaf::{self, AggregateShare, AggregationParam},
@@ -12677,5 +12744,62 @@ mod tests {
             })
             .await
             .unwrap();
+    }
+
+    #[rstest_reuse::apply(schema_versions_template)]
+    #[tokio::test]
+    async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) {
+        let datastore = ephemeral_datastore
+            .datastore(MockClock::default(), &noop_meter())
+            .await;
+
+        let keypair = generate_test_hpke_config_and_private_key();
+        datastore
+            .run_tx(|tx| {
+                let keypair = keypair.clone();
+                Box::pin(async move {
+                    assert_matches!(tx.get_global_hpke_keypair().await?, None);
+                    tx.set_global_hpke_keypair(&keypair).await?;
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        // Should not be able to set another global keypair.
+        assert_matches!(
+            datastore
+                .run_tx(|tx| {
+                    Box::pin(async move {
+                        let another_keypair = generate_test_hpke_config_and_private_key();
+                        tx.set_global_hpke_keypair(&another_keypair).await?;
+                        Ok(())
+                    })
+                })
+                .await,
+            Err(Error::Db(_))
+        );
+
+        assert_eq!(
+            datastore
+                .run_tx(|tx| Box::pin(async move { tx.get_global_hpke_keypair().await }))
+                .await
+                .unwrap()
+                .unwrap(),
+            keypair
+        );
+
+        datastore
+            .run_tx(|tx| Box::pin(async move { tx.delete_global_hpke_keypair().await }))
+            .await
+            .unwrap();
+
+        assert_matches!(
+            datastore
+                .run_tx(|tx| Box::pin(async move { tx.get_global_hpke_keypair().await }))
+                .await
+                .unwrap(),
+            None
+        );
     }
 }

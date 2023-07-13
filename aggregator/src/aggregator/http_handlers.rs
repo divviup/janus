@@ -578,7 +578,8 @@ mod tests {
     };
     use janus_core::{
         hpke::{
-            self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
+            self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo,
+            HpkeKeypair, Label,
         },
         report_id::ReportIdChecksumExt,
         task::{AuthenticationToken, VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
@@ -686,7 +687,49 @@ mod tests {
             hpke_config_list.hpke_configs(),
             &[want_hpke_key.config().clone()]
         );
+        check_hpke_config_is_usable(&hpke_config_list, &want_hpke_key);
+    }
 
+    #[tokio::test]
+    async fn hpke_config_with_global_hpke_keypair() {
+        install_test_trace_subscriber();
+
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let meter = noop_meter();
+        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+
+        let mut cfg = default_aggregator_config();
+        let global_hpke_keypair = generate_test_hpke_config_and_private_key();
+        cfg.taskprov_config.enabled = true;
+        cfg.taskprov_config.global_hpke_keypair = Some(global_hpke_keypair.clone());
+
+        let handler = aggregator_handler(Arc::new(datastore), clock, &meter, cfg).unwrap();
+
+        // No task ID provided
+        let mut test_conn = get("/hpke_config").run_async(&handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert_headers!(
+            &test_conn,
+            "cache-control" => "max-age=86400",
+            "content-type" => (HpkeConfigList::MEDIA_TYPE),
+        );
+
+        let bytes = test_conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap();
+        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
+        assert_eq!(
+            hpke_config_list.hpke_configs(),
+            &[global_hpke_keypair.config().clone()]
+        );
+        check_hpke_config_is_usable(&hpke_config_list, &global_hpke_keypair);
+    }
+
+    fn check_hpke_config_is_usable(hpke_config_list: &HpkeConfigList, hpke_keypair: &HpkeKeypair) {
         let application_info =
             HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
         let message = b"this is a message";
@@ -700,8 +743,8 @@ mod tests {
         )
         .unwrap();
         let plaintext = hpke::open(
-            want_hpke_key.config(),
-            want_hpke_key.private_key(),
+            hpke_keypair.config(),
+            hpke_keypair.private_key(),
             &application_info,
             &ciphertext,
             associated_data,
