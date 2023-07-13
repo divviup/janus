@@ -10307,10 +10307,22 @@ mod tests {
                     );
 
                     // Wrong batch ID.
+                    let other_batch_id = random();
+                    tx.put_batch(&Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        other_batch_id,
+                        aggregation_param,
+                        BatchState::Closed,
+                        0,
+                        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
+                            .unwrap(),
+                    ))
+                    .await
+                    .unwrap();
                     tx.put_batch_aggregation(
                         &BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                             *task.id(),
-                            random(),
+                            other_batch_id,
                             aggregation_param,
                             1,
                             BatchAggregationState::Collected,
@@ -10327,6 +10339,17 @@ mod tests {
                     .await?;
 
                     // Task ID differs from that queried below.
+                    tx.put_batch(&Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                        *other_task.id(),
+                        batch_id,
+                        aggregation_param,
+                        BatchState::Closed,
+                        0,
+                        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
+                            .unwrap(),
+                    ))
+                    .await
+                    .unwrap();
                     tx.put_batch_aggregation(
                         &BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                             *other_task.id(),
@@ -11773,6 +11796,17 @@ mod tests {
                     left.merged_with(right).unwrap()
                 });
 
+            tx.put_batch(&Batch::<0, Q, dummy_vdaf::Vdaf>::new(
+                *task.id(),
+                batch_identifier.clone(),
+                AggregationParam(0),
+                BatchState::Closed,
+                0,
+                client_timestamp_interval,
+            ))
+            .await
+            .unwrap();
+
             let batch_aggregation = BatchAggregation::<0, Q, dummy_vdaf::Vdaf>::new(
                 *task.id(),
                 batch_identifier.clone(),
@@ -11785,17 +11819,6 @@ mod tests {
                 ReportIdChecksum::default(),
             );
             tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
-
-            tx.put_batch(&Batch::<0, Q, dummy_vdaf::Vdaf>::new(
-                *task.id(),
-                batch_identifier.clone(),
-                AggregationParam(0),
-                BatchState::Closed,
-                0,
-                client_timestamp_interval,
-            ))
-            .await
-            .unwrap();
 
             if task.role() == &Role::Leader {
                 let collection_job = CollectionJob::<0, Q, dummy_vdaf::Vdaf>::new(
