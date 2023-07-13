@@ -315,7 +315,7 @@ impl Task {
     /// Returns the [`AuthenticationToken`] currently used by this aggregator to authenticate itself
     /// to other aggregators.
     pub fn primary_aggregator_auth_token(&self) -> &AuthenticationToken {
-        self.aggregator_auth_tokens.iter().rev().next().unwrap()
+        self.aggregator_auth_tokens.iter().next_back().unwrap()
     }
 
     /// Checks if the given aggregator authentication token is valid (i.e. matches with an
@@ -331,7 +331,7 @@ impl Task {
     /// to the aggregators.
     pub fn primary_collector_auth_token(&self) -> &AuthenticationToken {
         // Unwrap safety: self.collector_auth_tokens is never empty
-        self.collector_auth_tokens.iter().rev().next().unwrap()
+        self.collector_auth_tokens.iter().rev().next_back().unwrap()
     }
 
     /// Checks if the given collector authentication token is valid (i.e. matches with an

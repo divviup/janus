@@ -1483,7 +1483,7 @@ impl VdafOps {
                 let interval_per_batch_identifier = Arc::clone(&interval_per_batch_identifier);
 
                 Box::pin(async move {
-                    for mut report_share_data in &mut report_share_data {
+                    for report_share_data in &mut report_share_data {
                         // Verify that we haven't seen this report ID and aggregation parameter
                         // before in another aggregation job, and that the report isn't for a batch
                         // interval that has already started collection.
