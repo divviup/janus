@@ -609,7 +609,6 @@ mod tests {
             Datastore,
         },
         task::{test_util::TaskBuilder, QueryType, Task},
-        test_util::noop_meter,
         SecretBytes,
     };
     use janus_core::{
@@ -639,11 +638,7 @@ mod tests {
     async fn setup_api_test() -> (impl Handler, EphemeralDatastore, Arc<Datastore<MockClock>>) {
         install_test_trace_subscriber();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(
-            ephemeral_datastore
-                .datastore(MockClock::default(), &noop_meter())
-                .await,
-        );
+        let datastore = Arc::new(ephemeral_datastore.datastore(MockClock::default()).await);
         let handler = aggregator_api_handler(
             Arc::clone(&datastore),
             Config {

@@ -437,7 +437,7 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let meter = noop_meter();
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         let report_generator = ReportShareGenerator::new(
             clock.clone(),

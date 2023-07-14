@@ -118,15 +118,14 @@ async fn setup_aggregate_init_test_without_sending_request() -> AggregationJobIn
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
-    let meter = noop_meter();
-    let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
+    let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
     datastore.put_task(&task).await.unwrap();
 
     let handler = aggregator_handler(
         Arc::clone(&datastore),
         clock.clone(),
-        &meter,
+        &noop_meter(),
         Config::default(),
     )
     .unwrap();

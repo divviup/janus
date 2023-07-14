@@ -84,7 +84,6 @@ mod tests {
             test_util::ephemeral_datastore,
         },
         task::{self, test_util::TaskBuilder},
-        test_util::noop_meter,
     };
     use janus_core::{
         task::VdafInstance,
@@ -110,11 +109,7 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(
-            ephemeral_datastore
-                .datastore(clock.clone(), &noop_meter())
-                .await,
-        );
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // Setup.
@@ -216,11 +211,7 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(
-            ephemeral_datastore
-                .datastore(clock.clone(), &noop_meter())
-                .await,
-        );
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // Setup.
@@ -331,11 +322,7 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(
-            ephemeral_datastore
-                .datastore(clock.clone(), &noop_meter())
-                .await,
-        );
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // Setup.
@@ -435,11 +422,7 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(
-            ephemeral_datastore
-                .datastore(clock.clone(), &noop_meter())
-                .await,
-        );
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // Setup.
