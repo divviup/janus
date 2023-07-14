@@ -625,8 +625,7 @@ mod tests {
         let unknown_task_id: TaskId = random();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         datastore.put_task(&task).await.unwrap();
 
@@ -635,7 +634,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -746,15 +745,14 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         datastore.put_task(&task).await.unwrap();
 
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -831,15 +829,14 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         datastore.put_task(&task).await.unwrap();
         let report = create_report(&task, clock.now());
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock.clone(),
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -1062,8 +1059,7 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -1077,7 +1073,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -1129,8 +1125,7 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         datastore.put_task(&task).await.unwrap();
 
@@ -1143,7 +1138,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -1223,8 +1218,7 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         datastore.put_task(&task).await.unwrap();
 
@@ -1237,7 +1231,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -1307,8 +1301,7 @@ mod tests {
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         let vdaf = dummy_vdaf::Vdaf::new();
         let verify_key: VerifyKey<0> = task.primary_vdaf_verify_key().unwrap();
@@ -1678,7 +1671,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -1884,8 +1877,7 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
         let hpke_key = task.current_hpke_key();
 
         datastore.put_task(&task).await.unwrap();
@@ -1914,7 +1906,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -1959,8 +1951,7 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
         let hpke_key = task.current_hpke_key();
 
         datastore.put_task(&task).await.unwrap();
@@ -1989,7 +1980,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -2033,8 +2024,7 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         datastore.put_task(&task).await.unwrap();
 
@@ -2061,7 +2051,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -2106,8 +2096,7 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
@@ -2312,7 +2301,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -2426,12 +2415,7 @@ mod tests {
         let aggregation_job_id_0 = random();
         let aggregation_job_id_1 = random();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = Arc::new(
-            ephemeral_datastore
-                .datastore(MockClock::default(), &meter)
-                .await,
-        );
+        let datastore = Arc::new(ephemeral_datastore.datastore(MockClock::default()).await);
         let first_batch_interval_clock = MockClock::default();
         let second_batch_interval_clock = MockClock::new(
             first_batch_interval_clock
@@ -2662,7 +2646,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             first_batch_interval_clock.clone(),
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -2965,7 +2949,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             first_batch_interval_clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -3100,8 +3084,7 @@ mod tests {
         );
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         // Setup datastore.
         datastore
@@ -3168,7 +3151,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -3204,8 +3187,7 @@ mod tests {
         );
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         // Setup datastore.
         datastore
@@ -3272,7 +3254,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -3359,8 +3341,7 @@ mod tests {
         );
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         // Setup datastore.
         datastore
@@ -3429,7 +3410,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -3466,8 +3447,7 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         // Setup datastore.
         datastore
@@ -3574,7 +3554,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -3607,8 +3587,7 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         // Setup datastore.
         datastore
@@ -3674,7 +3653,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -3827,15 +3806,14 @@ mod tests {
             .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         datastore.put_task(&task).await.unwrap();
 
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -4536,15 +4514,14 @@ mod tests {
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         datastore.put_task(&task).await.unwrap();
 
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -4603,15 +4580,14 @@ mod tests {
             .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         datastore.put_task(&task).await.unwrap();
 
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock.clone(),
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -4707,15 +4683,14 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         datastore.put_task(&task).await.unwrap();
 
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
