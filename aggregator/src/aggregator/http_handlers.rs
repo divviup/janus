@@ -578,8 +578,12 @@ mod tests {
     };
     use janus_core::{
         hpke::{
-            self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo,
-            HpkeKeypair, Label,
+            self,
+            test_util::{
+                generate_test_hpke_config_and_private_key,
+                generate_test_hpke_config_and_private_key_with_id,
+            },
+            HpkeApplicationInfo, HpkeKeypair, Label,
         },
         report_id::ReportIdChecksumExt,
         task::{AuthenticationToken, VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
@@ -605,7 +609,7 @@ mod tests {
     };
     use rand::random;
     use serde_json::json;
-    use std::{borrow::Cow, io::Cursor, sync::Arc};
+    use std::{borrow::Cow, collections::HashMap, io::Cursor, sync::Arc};
     use trillium::{KnownHeaderName, Status};
     use trillium_testing::{
         assert_headers,
@@ -640,7 +644,7 @@ mod tests {
         )
         .unwrap();
 
-        // No task ID provided
+        // No task ID provided and no global keys are configured.
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
         assert_eq!(
@@ -691,20 +695,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hpke_config_with_global_hpke_keypair() {
+    async fn global_hpke_config() {
         install_test_trace_subscriber();
-
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
-        let mut cfg = default_aggregator_config();
-        let global_hpke_keypair = generate_test_hpke_config_and_private_key();
-        cfg.taskprov_config.enabled = true;
-        cfg.taskprov_config.global_hpke_keypair = Some(global_hpke_keypair.clone());
+        // Insert an HPKE config, i.e. start the application with a keypair already
+        // in the database.
+        let first_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(1);
+        datastore
+            .run_tx(|tx| {
+                let keypair = first_hpke_keypair.clone();
+                Box::pin(async move { tx.put_global_hpke_keypair(&keypair).await })
+            })
+            .await
+            .unwrap();
 
-        let handler = aggregator_handler(Arc::new(datastore), clock, &meter, cfg).unwrap();
+        let handler = aggregator_handler(
+            datastore.clone(),
+            clock.clone(),
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .unwrap();
 
         // No task ID provided
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
@@ -714,19 +728,93 @@ mod tests {
             "cache-control" => "max-age=86400",
             "content-type" => (HpkeConfigList::MEDIA_TYPE),
         );
-
-        let bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
+        let bytes = take_response_body(&mut test_conn).await;
         let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
         assert_eq!(
             hpke_config_list.hpke_configs(),
-            &[global_hpke_keypair.config().clone()]
+            &[first_hpke_keypair.config().clone()]
         );
-        check_hpke_config_is_usable(&hpke_config_list, &global_hpke_keypair);
+        check_hpke_config_is_usable(&hpke_config_list, &first_hpke_keypair);
+
+        // Insert another HPKE config.
+        let second_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(2);
+        datastore
+            .run_tx(|tx| {
+                let keypair = second_hpke_keypair.clone();
+                Box::pin(async move { tx.put_global_hpke_keypair(&keypair).await })
+            })
+            .await
+            .unwrap();
+
+        // Cache not refreshed yet.
+        let mut test_conn = get("/hpke_config").run_async(&handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let bytes = take_response_body(&mut test_conn).await;
+        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
+        assert_eq!(
+            hpke_config_list.hpke_configs(),
+            &[first_hpke_keypair.config().clone()]
+        );
+
+        // Advance the clock, cache should be refreshed.
+        clock.advance(&Duration::from_seconds(60 * 61));
+        let mut test_conn = get("/hpke_config").run_async(&handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let bytes = take_response_body(&mut test_conn).await;
+        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
+        // Unordered comparison.
+        assert_eq!(
+            HashMap::from_iter(
+                hpke_config_list
+                    .hpke_configs()
+                    .iter()
+                    .map(|config| (config.id(), config))
+            ),
+            HashMap::from([
+                (
+                    first_hpke_keypair.config().id(),
+                    &first_hpke_keypair.config().clone()
+                ),
+                (
+                    second_hpke_keypair.config().id(),
+                    &second_hpke_keypair.config().clone()
+                ),
+            ]),
+        );
+
+        // Expire a key.
+        datastore
+            .run_tx(|tx| {
+                let keypair = second_hpke_keypair.clone();
+                let clock = clock.clone();
+                Box::pin(async move {
+                    tx.expire_global_hpke_keypair(keypair.config().id(), &clock.now())
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+        clock.advance(&Duration::from_seconds(60 * 61));
+        let mut test_conn = get("/hpke_config").run_async(&handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let bytes = take_response_body(&mut test_conn).await;
+        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
+        assert_eq!(
+            hpke_config_list.hpke_configs(),
+            &[first_hpke_keypair.config().clone()]
+        );
+
+        // Delete a key, no keys left.
+        datastore
+            .run_tx(|tx| {
+                let keypair = first_hpke_keypair.clone();
+                Box::pin(async move { tx.delete_global_hpke_keypair(keypair.config().id()).await })
+            })
+            .await
+            .unwrap();
+        clock.advance(&Duration::from_seconds(60 * 61));
+        let test_conn = get("/hpke_config").run_async(&handler).await;
+        assert_eq!(test_conn.status(), Some(Status::BadRequest));
     }
 
     fn check_hpke_config_is_usable(hpke_config_list: &HpkeConfigList, hpke_keypair: &HpkeKeypair) {

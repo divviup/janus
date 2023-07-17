@@ -3,9 +3,9 @@
 use self::models::{
     AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
     AggregatorRole, AuthenticationTokenType, Batch, BatchAggregation, CollectionJob,
-    CollectionJobState, CollectionJobStateCode, LeaderStoredReport, Lease, LeaseToken,
-    OutstandingBatch, ReportAggregation, ReportAggregationState, ReportAggregationStateCode,
-    SqlInterval,
+    CollectionJobState, CollectionJobStateCode, ExpiredHpkeKeypair, LeaderStoredReport, Lease,
+    LeaseToken, OutstandingBatch, ReportAggregation, ReportAggregationState,
+    ReportAggregationStateCode, SqlInterval,
 };
 use crate::{
     query_type::{AccumulableQueryType, CollectableQueryType},
@@ -23,8 +23,8 @@ use janus_core::{
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     AggregationJobId, BatchId, CollectionJobId, Duration, Extension, HpkeCiphertext, HpkeConfig,
-    Interval, PrepareStep, ReportId, ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId,
-    Time,
+    HpkeConfigId, Interval, PrepareStep, ReportId, ReportIdChecksum, ReportMetadata, ReportShare,
+    Role, TaskId, Time,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter},
@@ -4194,47 +4194,130 @@ impl<C: Clock> Transaction<'_, C> {
         Ok(())
     }
 
+    /// Return non-expired keypairs.
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_global_hpke_keypair(&self) -> Result<Option<HpkeKeypair>, Error> {
+    pub async fn get_global_hpke_keypairs(&self) -> Result<Vec<HpkeKeypair>, Error> {
         let stmt = self
             .prepare_cached(
-                "SELECT config_id, config, private_key FROM task_hpke_keys WHERE task_id IS NULL;",
+                "SELECT config_id, config, private_key FROM global_hpke_keys 
+                    WHERE expired_at IS NULL OR expired_at > $1;",
             )
             .await?;
+        let hpke_key_rows = self
+            .query(&stmt, &[&Time::as_naive_date_time(&self.clock.now())?])
+            .await?;
 
-        let hpke_key_rows = self.query(&stmt, &[]).await?;
+        let mut global_hpke_keypairs = Vec::new();
+        for row in hpke_key_rows {
+            global_hpke_keypairs.push(self.global_hpke_keypair_from_row(&row)?)
+        }
+        Ok(global_hpke_keypairs)
+    }
+
+    /// Return expired keypairs.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn get_expired_global_hpke_keypairs(&self) -> Result<Vec<ExpiredHpkeKeypair>, Error> {
+        let stmt = self
+            .prepare_cached(
+                "SELECT config_id, config, private_key, expired_at FROM global_hpke_keys
+                    WHERE expired_at <= $1;",
+            )
+            .await?;
+        let hpke_key_rows = self
+            .query(&stmt, &[&Time::as_naive_date_time(&self.clock.now())?])
+            .await?;
+
+        let mut global_hpke_keypairs = Vec::new();
+        for row in hpke_key_rows {
+            global_hpke_keypairs.push(ExpiredHpkeKeypair::new(
+                self.global_hpke_keypair_from_row(&row)?,
+                Time::from_naive_date_time(&row.get("expired_at")),
+            ));
+        }
+        Ok(global_hpke_keypairs)
+    }
+
+    /// Retrieve a global HPKE keypair by config ID for the purposes of report decryption.
+    ///
+    /// This will return keypairs that have been marked for deletion, so that reports that
+    /// have used a cached HPKE key can still be decrypted. Keys that should not be returned
+    /// by this function should be dropped from the database.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn get_global_hpke_keypair(
+        &self,
+        config_id: &HpkeConfigId,
+    ) -> Result<Option<HpkeKeypair>, Error> {
+        let stmt = self
+            .prepare_cached(
+                "SELECT config_id, config, private_key FROM global_hpke_keys WHERE config_id = $1;",
+            )
+            .await?;
+        let hpke_key_rows = self
+            .query(&stmt, &[&(Into::<u8>::into(*config_id) as i16)])
+            .await?;
+
         if hpke_key_rows.is_empty() {
             Ok(None)
         } else {
-            let config = HpkeConfig::get_decoded(hpke_key_rows[0].get("config"))?;
-
-            let config_id = u8::try_from(hpke_key_rows[0].get::<_, i16>("config_id"))?;
-            let encrypted_private_key: Vec<u8> = hpke_key_rows[0].get("private_key");
-            let private_key = HpkePrivateKey::new(self.crypter.decrypt(
-                "task_hpke_keys",
-                &config_id.to_be_bytes(),
-                "private_key",
-                &encrypted_private_key,
-            )?);
-
-            Ok(Some(HpkeKeypair::new(config, private_key)))
+            Ok(Some(self.global_hpke_keypair_from_row(&hpke_key_rows[0])?))
         }
     }
 
+    fn global_hpke_keypair_from_row(&self, row: &Row) -> Result<HpkeKeypair, Error> {
+        let config = HpkeConfig::get_decoded(row.get("config"))?;
+        let config_id = u8::try_from(row.get::<_, i16>("config_id"))?;
+
+        let encrypted_private_key: Vec<u8> = row.get("private_key");
+        let private_key = HpkePrivateKey::new(self.crypter.decrypt(
+            "global_hpke_keys",
+            &config_id.to_be_bytes(),
+            "private_key",
+            &encrypted_private_key,
+        )?);
+        Ok(HpkeKeypair::new(config, private_key))
+    }
+
+    /// Unconditionally and fully drop a keypair. This is a dangerous operation,
+    /// since report shares encrypted with this key will no longer be decryptable.
     #[tracing::instrument(skip(self), err)]
-    pub async fn delete_global_hpke_keypair(&self) -> Result<(), Error> {
+    pub async fn delete_global_hpke_keypair(&self, config_id: &HpkeConfigId) -> Result<(), Error> {
         let stmt = self
-            .prepare_cached("DELETE FROM task_hpke_keys WHERE task_id IS NULL;")
+            .prepare_cached("DELETE FROM global_hpke_keys WHERE config_id = $1;")
             .await?;
-        check_single_row_mutation(self.execute(&stmt, &[]).await?)
+        check_single_row_mutation(
+            self.execute(&stmt, &[&(Into::<u8>::into(*config_id) as i16)])
+                .await?,
+        )
+    }
+
+    /// Mark a keypair for deletion.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn expire_global_hpke_keypair(
+        &self,
+        config_id: &HpkeConfigId,
+        time: &Time,
+    ) -> Result<(), Error> {
+        let stmt = self
+            .prepare_cached("UPDATE global_hpke_keys SET expired_at = $1 WHERE config_id = $2;")
+            .await?;
+        check_single_row_mutation(
+            self.execute(
+                &stmt,
+                &[
+                    &time.as_naive_date_time()?,
+                    &(Into::<u8>::into(*config_id) as i16),
+                ],
+            )
+            .await?,
+        )
     }
 
     #[tracing::instrument(skip(self), err)]
-    pub async fn set_global_hpke_keypair(&self, hpke_keypair: &HpkeKeypair) -> Result<(), Error> {
+    pub async fn put_global_hpke_keypair(&self, hpke_keypair: &HpkeKeypair) -> Result<(), Error> {
         let hpke_config_id = u8::from(*hpke_keypair.config().id()) as i16;
         let hpke_config = hpke_keypair.config().get_encoded();
         let encrypted_hpke_private_key = self.crypter.encrypt(
-            "task_hpke_keys",
+            "global_hpke_keys",
             &u8::from(*hpke_keypair.config().id()).to_be_bytes(),
             "private_key",
             hpke_keypair.private_key().as_ref(),
@@ -4242,8 +4325,8 @@ impl<C: Clock> Transaction<'_, C> {
 
         let stmt = self
             .prepare_cached(
-                "INSERT INTO task_hpke_keys (task_id, config_id, config, private_key)
-                    VALUES (NULL, $1, $2, $3);",
+                "INSERT INTO global_hpke_keys (config_id, config, private_key)
+                    VALUES ($1, $2, $3);",
             )
             .await?;
         check_insert(
@@ -4546,6 +4629,7 @@ pub mod models {
     use chrono::NaiveDateTime;
     use derivative::Derivative;
     use janus_core::{
+        hpke::HpkeKeypair,
         report_id::ReportIdChecksumExt,
         task::{AuthenticationToken, DapAuthToken, VdafInstance},
         time::{DurationExt, IntervalExt, TimeExt},
@@ -6226,6 +6310,30 @@ pub mod models {
         accepts!(TS_RANGE);
 
         to_sql_checked!();
+    }
+
+    /// An expired HPKE keypair, which is marked for future deletion.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct ExpiredHpkeKeypair {
+        hpke_keypair: HpkeKeypair,
+        expired_at: Time,
+    }
+
+    impl ExpiredHpkeKeypair {
+        pub fn new(hpke_keypair: HpkeKeypair, expired_at: Time) -> Self {
+            Self {
+                hpke_keypair,
+                expired_at,
+            }
+        }
+
+        pub fn hpke_keypair(&self) -> &HpkeKeypair {
+            &self.hpke_keypair
+        }
+
+        pub fn expired_at(&self) -> &Time {
+            &self.expired_at
+        }
     }
 }
 
@@ -12749,30 +12857,38 @@ mod tests {
     #[rstest_reuse::apply(schema_versions_template)]
     #[tokio::test]
     async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) {
-        let datastore = ephemeral_datastore
-            .datastore(MockClock::default(), &noop_meter())
-            .await;
+        let datastore = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let keypair = generate_test_hpke_config_and_private_key();
+
         datastore
             .run_tx(|tx| {
                 let keypair = keypair.clone();
                 Box::pin(async move {
-                    assert_matches!(tx.get_global_hpke_keypair().await?, None);
-                    tx.set_global_hpke_keypair(&keypair).await?;
+                    assert_eq!(tx.get_global_hpke_keypairs().await?, vec![]);
+                    tx.put_global_hpke_keypair(&keypair).await?;
+
+                    assert_eq!(tx.get_global_hpke_keypairs().await?, vec![keypair.clone()]);
+                    assert_eq!(
+                        tx.get_global_hpke_keypair(keypair.config().id())
+                            .await?
+                            .unwrap(),
+                        keypair
+                    );
                     Ok(())
                 })
             })
             .await
             .unwrap();
 
-        // Should not be able to set another global keypair.
+        // Should not be able to set keypair with the same id.
         assert_matches!(
             datastore
                 .run_tx(|tx| {
+                    let keypair = keypair.clone();
                     Box::pin(async move {
-                        let another_keypair = generate_test_hpke_config_and_private_key();
-                        tx.set_global_hpke_keypair(&another_keypair).await?;
+                        let keypair = keypair.clone();
+                        tx.put_global_hpke_keypair(&keypair).await?;
                         Ok(())
                     })
                 })
@@ -12780,26 +12896,62 @@ mod tests {
             Err(Error::Db(_))
         );
 
-        assert_eq!(
-            datastore
-                .run_tx(|tx| Box::pin(async move { tx.get_global_hpke_keypair().await }))
-                .await
-                .unwrap()
-                .unwrap(),
-            keypair
-        );
-
         datastore
-            .run_tx(|tx| Box::pin(async move { tx.delete_global_hpke_keypair().await }))
+            .run_tx(|tx| {
+                let keypair = keypair.clone();
+                Box::pin(async move {
+                    tx.delete_global_hpke_keypair(keypair.config().id()).await?;
+                    assert_eq!(tx.get_global_hpke_keypairs().await?, vec![]);
+                    assert_matches!(
+                        tx.get_global_hpke_keypair(keypair.config().id()).await?,
+                        None
+                    );
+                    Ok(())
+                })
+            })
             .await
             .unwrap();
+    }
 
-        assert_matches!(
-            datastore
-                .run_tx(|tx| Box::pin(async move { tx.get_global_hpke_keypair().await }))
-                .await
-                .unwrap(),
-            None
-        );
+    #[rstest_reuse::apply(schema_versions_template)]
+    #[tokio::test]
+    async fn global_hpke_keypair_expiry(ephemeral_datastore: EphemeralDatastore) {
+        let clock = MockClock::default();
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+
+        let keypair = generate_test_hpke_config_and_private_key();
+        datastore
+            .run_tx(|tx| {
+                let keypair = keypair.clone();
+                let clock = clock.clone();
+                Box::pin(async move {
+                    assert_eq!(tx.get_global_hpke_keypairs().await?, vec![]);
+                    tx.put_global_hpke_keypair(&keypair).await?;
+
+                    tx.expire_global_hpke_keypair(keypair.config().id(), &clock.now())
+                        .await?;
+                    clock.advance(&Duration::from_seconds(1));
+
+                    assert_eq!(tx.get_global_hpke_keypairs().await?, vec![]);
+                    assert_eq!(
+                        tx.get_global_hpke_keypair(keypair.config().id())
+                            .await?
+                            .unwrap(),
+                        keypair
+                    );
+                    assert_eq!(
+                        tx.get_expired_global_hpke_keypairs()
+                            .await?
+                            .into_iter()
+                            .map(|exp| exp.hpke_keypair().clone())
+                            .collect::<Vec<_>>(),
+                        vec![keypair.clone()]
+                    );
+
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
     }
 }

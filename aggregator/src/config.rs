@@ -2,7 +2,6 @@
 
 use crate::{metrics::MetricsConfiguration, trace::TraceConfiguration};
 use derivative::Derivative;
-use janus_core::hpke::HpkeKeypair;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     fmt::Debug,
@@ -97,12 +96,6 @@ pub struct TaskprovConfig {
     ///
     /// [spec]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
     pub enabled: bool,
-
-    /// The global HPKE config to advertise when no task ID is provided in the HPKE config request.
-    /// It's suggested to keep this configuration in the database instead of providing it in the
-    /// plaintext config.
-    #[serde(default)]
-    pub global_hpke_keypair: Option<HpkeKeypair>,
 }
 
 /// Non-secret configuration options for Janus Job Driver jobs.

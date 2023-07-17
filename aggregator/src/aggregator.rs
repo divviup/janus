@@ -48,9 +48,9 @@ use janus_messages::{
     AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobRound,
     BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, HpkeCiphertext,
-    HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
+    HpkeConfig, HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
     PrepareStep, PrepareStepResult, Report, ReportIdChecksum, ReportShare, ReportShareError, Role,
-    TaskId,
+    TaskId, Time,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter},
@@ -160,6 +160,9 @@ pub struct Aggregator<C: Clock> {
     /// Counters tracking the number of failures to step client reports through the aggregation
     /// process.
     aggregate_step_failure_counter: Counter<u64>,
+
+    /// Cache of global HPKE configs.
+    global_hpke_configs: Mutex<GlobalHpkeConfigCache>,
 }
 
 /// Config represents a configuration for an Aggregator.
@@ -179,7 +182,6 @@ pub struct Config {
     /// the cost of collection.
     pub batch_aggregation_shard_count: u64,
 
-    /// The global HPKE config to advertise when no task ID is provided in the HPKE config request.
     pub taskprov_config: TaskprovConfig,
 }
 
@@ -190,6 +192,23 @@ impl Default for Config {
             max_upload_batch_write_delay: StdDuration::ZERO,
             batch_aggregation_shard_count: 1,
             taskprov_config: TaskprovConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct GlobalHpkeConfigCache {
+    configs: Vec<HpkeConfig>,
+    last_updated: Time,
+}
+
+impl GlobalHpkeConfigCache {
+    const REFRESH_INTERVAL: Duration = Duration::from_seconds(60 * 60 /* hourly */);
+
+    fn new() -> Self {
+        Self {
+            configs: Vec::new(),
+            last_updated: Time::from_seconds_since_epoch(0),
         }
     }
 }
@@ -226,6 +245,7 @@ impl<C: Clock> Aggregator<C> {
             upload_decrypt_failure_counter,
             upload_decode_failure_counter,
             aggregate_step_failure_counter,
+            global_hpke_configs: Mutex::new(GlobalHpkeConfigCache::new()),
         }
     }
 
@@ -244,21 +264,54 @@ impl<C: Clock> Aggregator<C> {
                 Ok(task_aggregator.handle_hpke_config())
             }
             None => {
-                if self.cfg.taskprov_config.enabled {
-                    match self.cfg.taskprov_config.global_hpke_keypair.clone() {
-                        Some(global_hpke_keypair) => {
-                            Ok(HpkeConfigList::new(Vec::from([global_hpke_keypair
-                                .config()
-                                .clone()])))
-                        }
-                        None => Err(Error::Internal(
+                let configs = self.get_global_hpke_configs().await?;
+                if configs.is_empty() {
+                    if self.cfg.taskprov_config.enabled {
+                        // A global HPKE configuration is only _required_ when taskprov
+                        // is enabled.
+                        Err(Error::Internal(
                             "this server is missing its global HPKE config".into(),
-                        )),
+                        ))
+                    } else {
+                        Err(Error::MissingTaskId)
                     }
                 } else {
-                    Err(Error::MissingTaskId)
+                    Ok(HpkeConfigList::new(configs))
                 }
             }
+        }
+    }
+
+    async fn get_global_hpke_configs(&self) -> Result<Vec<HpkeConfig>, Error> {
+        let mut global_hpke_configs = self.global_hpke_configs.lock().await;
+
+        // Slow path: the cache has expired and needs to be refreshed.
+        if self.clock.now()
+            > global_hpke_configs
+                .last_updated
+                .add(&GlobalHpkeConfigCache::REFRESH_INTERVAL)?
+        {
+            let configs = self
+                .datastore
+                .run_tx_with_name("refresh_global_hpke_configs", |tx| {
+                    Box::pin(async move {
+                        Ok(tx
+                            .get_global_hpke_keypairs()
+                            .await?
+                            .iter()
+                            .map(|keypair| keypair.config().clone())
+                            .collect::<Vec<_>>())
+                    })
+                })
+                .await?;
+
+            global_hpke_configs.configs = configs.to_owned();
+            global_hpke_configs.last_updated = self.clock.now();
+            Ok(configs)
+        }
+        // Fast path: cache is still fresh.
+        else {
+            Ok(global_hpke_configs.configs.to_owned())
         }
     }
 
