@@ -3,16 +3,32 @@ use futures::future::join_all;
 use janus_aggregator_core::{datastore::Datastore, task::Task};
 use janus_core::time::Clock;
 use std::sync::Arc;
+use tokio::try_join;
 use tracing::error;
 
 pub struct GarbageCollector<C: Clock> {
     // Dependencies.
     datastore: Arc<Datastore<C>>,
+
+    // Configuration.
+    report_limit: u64,
+    aggregation_limit: u64,
+    collection_limit: u64,
 }
 
 impl<C: Clock> GarbageCollector<C> {
-    pub fn new(datastore: Arc<Datastore<C>>) -> Self {
-        Self { datastore }
+    pub fn new(
+        datastore: Arc<Datastore<C>>,
+        report_limit: u64,
+        aggregation_limit: u64,
+        collection_limit: u64,
+    ) -> Self {
+        Self {
+            datastore,
+            report_limit,
+            aggregation_limit,
+            collection_limit,
+        }
     }
 
     #[tracing::instrument(skip(self))]
@@ -41,16 +57,16 @@ impl<C: Clock> GarbageCollector<C> {
         self.datastore
             .run_tx(|tx| {
                 let task = Arc::clone(&task);
+                let report_limit = self.report_limit;
+                let aggregation_limit = self.aggregation_limit;
+                let collection_limit = self.collection_limit;
+
                 Box::pin(async move {
-                    // Find and delete old collection jobs.
-                    tx.delete_expired_collection_artifacts(task.id()).await?;
-
-                    // Find and delete old aggregation jobs/report aggregations/batch aggregations.
-                    tx.delete_expired_aggregation_artifacts(task.id()).await?;
-
-                    // Find and delete old client reports.
-                    tx.delete_expired_client_reports(task.id()).await?;
-
+                    try_join!(
+                        tx.delete_expired_client_reports(task.id(), report_limit),
+                        tx.delete_expired_aggregation_artifacts(task.id(), aggregation_limit),
+                        tx.delete_expired_collection_artifacts(task.id(), collection_limit),
+                    )?;
                     Ok(())
                 })
             })
@@ -116,7 +132,6 @@ mod tests {
                         VdafInstance::Fake,
                         Role::Leader,
                     )
-                    // .with_time_precision(Duration::from_seconds(1)) // XXX
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                     .build();
                     tx.put_task(&task).await?;
@@ -212,10 +227,15 @@ mod tests {
 
         // Run.
         let task = Arc::new(task);
-        GarbageCollector::new(Arc::clone(&ds))
-            .gc_task(Arc::clone(&task))
-            .await
-            .unwrap();
+        GarbageCollector::new(
+            Arc::clone(&ds),
+            u64::try_from(i64::MAX).unwrap(),
+            u64::try_from(i64::MAX).unwrap(),
+            u64::try_from(i64::MAX).unwrap(),
+        )
+        .gc_task(Arc::clone(&task))
+        .await
+        .unwrap();
 
         // Reset the clock to "undo" read-based expiry.
         clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
@@ -294,7 +314,6 @@ mod tests {
                         VdafInstance::Fake,
                         Role::Helper,
                     )
-                    // .with_time_precision(Duration::from_seconds(1)) // XXX
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                     .build();
                     tx.put_task(&task).await?;
@@ -401,10 +420,15 @@ mod tests {
 
         // Run.
         let task = Arc::new(task);
-        GarbageCollector::new(Arc::clone(&ds))
-            .gc_task(Arc::clone(&task))
-            .await
-            .unwrap();
+        GarbageCollector::new(
+            Arc::clone(&ds),
+            u64::try_from(i64::MAX).unwrap(),
+            u64::try_from(i64::MAX).unwrap(),
+            u64::try_from(i64::MAX).unwrap(),
+        )
+        .gc_task(Arc::clone(&task))
+        .await
+        .unwrap();
 
         // Reset the clock to "undo" read-based expiry.
         clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
@@ -576,10 +600,15 @@ mod tests {
 
         // Run.
         let task = Arc::new(task);
-        GarbageCollector::new(Arc::clone(&ds))
-            .gc_task(Arc::clone(&task))
-            .await
-            .unwrap();
+        GarbageCollector::new(
+            Arc::clone(&ds),
+            u64::try_from(i64::MAX).unwrap(),
+            u64::try_from(i64::MAX).unwrap(),
+            u64::try_from(i64::MAX).unwrap(),
+        )
+        .gc_task(Arc::clone(&task))
+        .await
+        .unwrap();
 
         // Reset the clock to "undo" read-based expiry.
         clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
@@ -642,7 +671,6 @@ mod tests {
 
     #[tokio::test]
     async fn gc_task_helper_fixed_size() {
-        // XXX
         install_test_trace_subscriber();
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
@@ -768,10 +796,15 @@ mod tests {
 
         // Run.
         let task = Arc::new(task);
-        GarbageCollector::new(Arc::clone(&ds))
-            .gc_task(Arc::clone(&task))
-            .await
-            .unwrap();
+        GarbageCollector::new(
+            Arc::clone(&ds),
+            u64::try_from(i64::MAX).unwrap(),
+            u64::try_from(i64::MAX).unwrap(),
+            u64::try_from(i64::MAX).unwrap(),
+        )
+        .gc_task(Arc::clone(&task))
+        .await
+        .unwrap();
 
         // Reset the clock to "undo" read-based expiry.
         clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
