@@ -4062,8 +4062,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Deletes old client reports for a given task, that is, client reports whose timestamp is
-    /// older than a given timestamp which are not included in any report aggregations.
-    // XXX: rewrite this doccomment
+    /// older than the task's report expiry age.
     #[tracing::instrument(skip(self), err)]
     pub async fn delete_expired_client_reports(&self, task_id: &TaskId) -> Result<(), Error> {
         let stmt = self
@@ -4086,14 +4085,9 @@ impl<C: Clock> Transaction<'_, C> {
         Ok(())
     }
 
-    /// Deletes old aggregation artifacts (aggregation jobs/report aggregations/batch aggregations)
-    /// for a given task, that is, aggregation artifacts for which all associated client reports
-    /// have timestamps older than a given timestamp, and which are not included in any collection
-    /// artifacts.
-    ///
-    /// After calling this function, delete_expired_client_reports must be called in the same
-    /// transaction to avoid re-aggregating client reports.
-    // XXX: rewrite this doccomment
+    /// Deletes old aggregation artifacts (aggregation jobs/report aggregations) for a given task,
+    /// that is, aggregation artifacts for which the aggregation job's maximum client timestamp is
+    /// older than the task's report expiry age.
     #[tracing::instrument(skip(self), err)]
     pub async fn delete_expired_aggregation_artifacts(
         &self,
@@ -4126,13 +4120,22 @@ impl<C: Clock> Transaction<'_, C> {
         Ok(())
     }
 
-    /// Deletes old collection artifacts (collection jobs/aggregate share jobs/outstanding batches) for
-    /// a given task, that is, collection artifacts for which all associated client reports have
-    /// timestamps older than a given timestamp.
+    /// Deletes old collection artifacts (batches/outstanding batches/batch aggregations/collection
+    /// jobs/aggregate share jobs) for a given task per the following policy:
     ///
-    /// After calling this function, delete_expired_aggregation_artifacts must be called in the same
-    /// transaction to avoid re-collecting old aggregations.
-    // XXX: rewrite this doccomment
+    /// * batches, batch_aggregations, and outstanding_batches will be considered part of the same
+    ///   entity for purposes of GC, and will be considered eligible for GC once the maximum of the
+    ///   batch interval (for time-interval) or client_timestamp_interval (for fixed-size) of the
+    ///   batches row is older than report_expiry_age.
+    /// * collection_jobs and aggregate_share_jobs use the same rule to determine GC-eligiblity, but
+    ///   this rule is query type-specific.
+    ///   * For time-interval tasks, collection_jobs and aggregate_share_jobs are considered
+    ///     eligible for GC if the minimum of the collection interval is older than
+    ///     report_expiry_age. (The minimum is used instead of the maximum to ensure that collection
+    ///     jobs are not GC'ed after their underlying aggregation information from
+    ///     batch_aggregations.)
+    ///   * For fixed-size tasks, collection_jobs and aggregate_share_jobs are considered eligible
+    ///     for GC if the related batch is eligible for GC.
     #[tracing::instrument(skip(self), err)]
     pub async fn delete_expired_collection_artifacts(&self, task_id: &TaskId) -> Result<(), Error> {
         let stmt = self

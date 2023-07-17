@@ -116,7 +116,6 @@ mod tests {
                         VdafInstance::Fake,
                         Role::Leader,
                     )
-                    // .with_time_precision(Duration::from_seconds(1)) // XXX
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                     .build();
                     tx.put_task(&task).await?;
@@ -294,7 +293,6 @@ mod tests {
                         VdafInstance::Fake,
                         Role::Helper,
                     )
-                    // .with_time_precision(Duration::from_seconds(1)) // XXX
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                     .build();
                     tx.put_task(&task).await?;
@@ -642,7 +640,6 @@ mod tests {
 
     #[tokio::test]
     async fn gc_task_helper_fixed_size() {
-        // XXX
         install_test_trace_subscriber();
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
