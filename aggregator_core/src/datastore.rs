@@ -4063,6 +4063,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Deletes old client reports for a given task, that is, client reports whose timestamp is
     /// older than a given timestamp which are not included in any report aggregations.
+    // XXX: rewrite this doccomment
     #[tracing::instrument(skip(self), err)]
     pub async fn delete_expired_client_reports(&self, task_id: &TaskId) -> Result<(), Error> {
         let stmt = self
@@ -4092,6 +4093,7 @@ impl<C: Clock> Transaction<'_, C> {
     ///
     /// After calling this function, delete_expired_client_reports must be called in the same
     /// transaction to avoid re-aggregating client reports.
+    // XXX: rewrite this doccomment
     #[tracing::instrument(skip(self), err)]
     pub async fn delete_expired_aggregation_artifacts(
         &self,
@@ -4130,6 +4132,7 @@ impl<C: Clock> Transaction<'_, C> {
     ///
     /// After calling this function, delete_expired_aggregation_artifacts must be called in the same
     /// transaction to avoid re-collecting old aggregations.
+    // XXX: rewrite this doccomment
     #[tracing::instrument(skip(self), err)]
     pub async fn delete_expired_collection_artifacts(&self, task_id: &TaskId) -> Result<(), Error> {
         let stmt = self
