@@ -604,7 +604,7 @@ mod tests {
     };
     use rand::random;
     use serde_json::json;
-    use std::{io::Cursor, sync::Arc};
+    use std::{borrow::Cow, io::Cursor, sync::Arc};
     use trillium::{KnownHeaderName, Status};
     use trillium_testing::{
         assert_headers,
@@ -642,17 +642,8 @@ mod tests {
         // No task ID provided
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": 400u16,
                 "type": "urn:ietf:params:ppm:dap:error:missingTaskID",
@@ -667,17 +658,8 @@ mod tests {
         // Expected status and problem type should be per the protocol
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.1
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": 400u16,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
@@ -698,12 +680,7 @@ mod tests {
             "content-type" => (HpkeConfigList::MEDIA_TYPE),
         );
 
-        let bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
+        let bytes = take_response_body(&mut test_conn).await;
         let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
         assert_eq!(
             hpke_config_list.hpke_configs(),
@@ -797,17 +774,8 @@ mod tests {
             desired_task_id: &TaskId,
         ) {
             assert_eq!(test_conn.status(), Some(desired_status));
-            let problem_details: serde_json::Value = serde_json::from_slice(
-                &test_conn
-                    .take_response_body()
-                    .unwrap()
-                    .into_bytes()
-                    .await
-                    .unwrap(),
-            )
-            .unwrap();
             assert_eq!(
-                problem_details,
+                take_problem_details(test_conn).await,
                 json!({
                     "status": desired_status as u16,
                     "type": format!("urn:ietf:params:ppm:dap:error:{desired_type}"),
@@ -1085,13 +1053,7 @@ mod tests {
             .await;
 
         assert!(!test_conn.status().unwrap().is_success());
-        let bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
-        let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let problem_details = take_problem_details(&mut test_conn).await;
         assert_eq!(
             problem_details,
             json!({
@@ -1146,15 +1108,9 @@ mod tests {
 
         let mut test_conn =
             put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
-
         assert!(!test_conn.status().unwrap().is_success());
-        let bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
-        let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        let problem_details = take_problem_details(&mut test_conn).await;
         assert_eq!(
             problem_details,
             json!({
@@ -1267,17 +1223,8 @@ mod tests {
             let mut test_conn = test_conn.run_async(&handler).await;
 
             let want_status = 400;
-            let problem_details: serde_json::Value = serde_json::from_slice(
-                &test_conn
-                    .take_response_body()
-                    .unwrap()
-                    .into_bytes()
-                    .await
-                    .unwrap(),
-            )
-            .unwrap();
             assert_eq!(
-                problem_details,
+                take_problem_details(&mut test_conn).await,
                 json!({
                     "status": want_status,
                     "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -1685,12 +1632,7 @@ mod tests {
                 &test_conn,
                 "content-type" => (AggregationJobResp::MEDIA_TYPE)
             );
-            let body_bytes = test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap();
+            let body_bytes = take_response_body(&mut test_conn).await;
             let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
             // Validate response.
@@ -1825,12 +1767,7 @@ mod tests {
         let mut test_conn =
             put_aggregation_job(&test_case.task, &random(), &request, &test_case.handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
-        let body_bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
+        let body_bytes = take_response_body(&mut test_conn).await;
         let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
         assert_eq!(aggregate_resp.prepare_steps().len(), 1);
@@ -1919,12 +1856,7 @@ mod tests {
             &test_conn,
             "content-type" => (AggregationJobResp::MEDIA_TYPE)
         );
-        let body_bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
+        let body_bytes = take_response_body(&mut test_conn).await;
         let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
@@ -1993,12 +1925,7 @@ mod tests {
             &test_conn,
             "content-type" => (AggregationJobResp::MEDIA_TYPE)
         );
-        let body_bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
+        let body_bytes = take_response_body(&mut test_conn).await;
         let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
@@ -2061,17 +1988,8 @@ mod tests {
             put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
 
         let want_status = 400;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
@@ -3691,17 +3609,8 @@ mod tests {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
@@ -3733,17 +3642,8 @@ mod tests {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
@@ -3777,17 +3677,8 @@ mod tests {
 
         // Collect request will be rejected because the aggregation parameter can't be decoded
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
@@ -3845,17 +3736,8 @@ mod tests {
 
         // Collect request will be rejected because there are no reports in the batch interval
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
@@ -3886,17 +3768,8 @@ mod tests {
             .await;
 
         let want_status = Status::BadRequest;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -3916,17 +3789,8 @@ mod tests {
             .await;
 
         let want_status = Status::BadRequest;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -3942,17 +3806,8 @@ mod tests {
             .await;
 
         let want_status = Status::BadRequest;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -3991,17 +3846,8 @@ mod tests {
             .await;
 
         let want_status = Status::BadRequest;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -4020,17 +3866,8 @@ mod tests {
             .await;
 
         let want_status = Status::BadRequest;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -4046,17 +3883,8 @@ mod tests {
             .await;
 
         let want_status = Status::BadRequest;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -4208,12 +4036,7 @@ mod tests {
             &test_conn,
             "content-type" => (Collection::<TimeInterval>::MEDIA_TYPE)
         );
-        let body_bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
+        let body_bytes = take_response_body(&mut test_conn).await;
         let collect_resp = Collection::<TimeInterval>::get_decoded(body_bytes.as_ref()).unwrap();
 
         assert_eq!(collect_resp.report_count(), 12);
@@ -4335,17 +4158,8 @@ mod tests {
             .put_collection_job(&random(), &invalid_request)
             .await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes",
@@ -4417,17 +4231,8 @@ mod tests {
             .put_collection_job(&random(), &invalid_request)
             .await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
@@ -4549,17 +4354,8 @@ mod tests {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
@@ -4622,17 +4418,8 @@ mod tests {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
@@ -4719,17 +4506,8 @@ mod tests {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
@@ -4865,17 +4643,8 @@ mod tests {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
@@ -4927,17 +4696,8 @@ mod tests {
                 .await;
 
             assert_eq!(test_conn.status(), Some(Status::BadRequest));
-            let problem_details: serde_json::Value = serde_json::from_slice(
-                &test_conn
-                    .take_response_body()
-                    .unwrap()
-                    .into_bytes()
-                    .await
-                    .unwrap(),
-            )
-            .unwrap();
             assert_eq!(
-                problem_details,
+                take_problem_details(&mut test_conn).await,
                 json!({
                     "status": Status::BadRequest as u16,
                     "type": "urn:ietf:params:ppm:dap:error:batchMismatch",
@@ -5009,12 +4769,7 @@ mod tests {
                     &test_conn,
                     "content-type" => (AggregateShareMessage::MEDIA_TYPE)
                 );
-                let body_bytes = test_conn
-                    .take_response_body()
-                    .unwrap()
-                    .into_bytes()
-                    .await
-                    .unwrap();
+                let body_bytes = take_response_body(&mut test_conn).await;
                 let aggregate_share_resp = AggregateShareMessage::get_decoded(&body_bytes).unwrap();
 
                 let aggregate_share = hpke::open(
@@ -5068,17 +4823,8 @@ mod tests {
             .run_async(&handler)
             .await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
@@ -5128,17 +4874,8 @@ mod tests {
                 .run_async(&handler)
                 .await;
             assert_eq!(test_conn.status(), Some(Status::BadRequest));
-            let problem_details: serde_json::Value = serde_json::from_slice(
-                &test_conn
-                    .take_response_body()
-                    .unwrap()
-                    .into_bytes()
-                    .await
-                    .unwrap(),
-            )
-            .unwrap();
             assert_eq!(
-                problem_details,
+                take_problem_details(&mut test_conn).await,
                 json!({
                     "status": Status::BadRequest as u16,
                     "type": "urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes",
@@ -5147,5 +4884,18 @@ mod tests {
                 })
             );
         }
+    }
+
+    async fn take_response_body(test_conn: &mut TestConn) -> Cow<'_, [u8]> {
+        test_conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap()
+    }
+
+    async fn take_problem_details(test_conn: &mut TestConn) -> serde_json::Value {
+        serde_json::from_slice(&take_response_body(test_conn).await).unwrap()
     }
 }
