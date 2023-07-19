@@ -2,10 +2,7 @@ use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use clap::Parser;
 use janus_aggregator::{
-    aggregator::{
-        self, garbage_collector::GarbageCollector, http_handlers::aggregator_handler,
-        GlobalHpkeConfigCache,
-    },
+    aggregator::{self, http_handlers::aggregator_handler, GlobalHpkeKeypairCache},
     binary_utils::{
         janus_main, setup_server, setup_signal_handler, BinaryOptions, CommonBinaryOptions,
     },
@@ -331,7 +328,7 @@ impl Config {
             taskprov_config: self.taskprov_config.clone(),
             global_hpke_configs_refresh_interval: match self.global_hpke_configs_refresh_interval {
                 Some(duration) => Duration::from_millis(duration),
-                None => GlobalHpkeConfigCache::DEFAULT_REFRESH_INTERVAL,
+                None => GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
             },
         }
     }

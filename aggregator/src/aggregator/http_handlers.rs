@@ -976,7 +976,12 @@ mod tests {
         let accepted_report_id = report.metadata().id();
 
         // Verify that new reports using an existing report ID are rejected with reportRejected
-        let duplicate_id_report = create_report_with_id(&task, clock.now(), *accepted_report_id);
+        let duplicate_id_report = create_report_with_id(
+            &task,
+            clock.now(),
+            *accepted_report_id,
+            task.current_hpke_key(),
+        );
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
             .with_request_body(duplicate_id_report.get_encoded())
@@ -1890,6 +1895,250 @@ mod tests {
             assert!(saw_non_conflicting_aggregation_job);
             assert!(saw_new_aggregation_job);
         }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unit_arg)]
+    async fn aggregate_init_with_reports_encrypted_by_global_key() {
+        install_test_trace_subscriber();
+
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+
+        // Insert some global HPKE keys.
+        // Same ID as the task to test having both keys to choose from.
+        let global_hpke_keypair_same_id = generate_test_hpke_config_and_private_key_with_id(
+            (*task.current_hpke_key().config().id()).into(),
+        );
+        // Different ID to test misses on the task key.
+        let global_hpke_keypair_different_id = generate_test_hpke_config_and_private_key_with_id(
+            (0..)
+                .map(HpkeConfigId::from)
+                .find(|id| !task.hpke_keys().contains_key(id))
+                .unwrap()
+                .into(),
+        );
+        datastore
+            .run_tx(|tx| {
+                let global_hpke_keypair_same_id = global_hpke_keypair_same_id.clone();
+                let global_hpke_keypair_different_id = global_hpke_keypair_different_id.clone();
+                Box::pin(async move {
+                    // Leave these in the PENDING state--they should still be decryptable.
+                    tx.put_global_hpke_keypair(&global_hpke_keypair_same_id)
+                        .await?;
+                    tx.put_global_hpke_keypair(&global_hpke_keypair_different_id)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        datastore.put_task(&task).await.unwrap();
+
+        let vdaf = dummy_vdaf::Vdaf::new();
+        let verify_key: VerifyKey<0> = task.primary_vdaf_verify_key().unwrap();
+
+        // This report was encrypted with a global HPKE config that has the same config
+        // ID as the task's HPKE config.
+        let report_metadata_same_id = ReportMetadata::new(
+            random(),
+            clock
+                .now()
+                .to_batch_interval_start(task.time_precision())
+                .unwrap(),
+        );
+        let transcript = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &dummy_vdaf::AggregationParam(0),
+            report_metadata_same_id.id(),
+            &(),
+        );
+        let report_share_same_id = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+            *task.id(),
+            report_metadata_same_id,
+            global_hpke_keypair_same_id.config(),
+            &transcript.public_share,
+            Vec::new(),
+            &transcript.input_shares[1],
+        );
+
+        // This report was encrypted with a global HPKE config that has the same config
+        // ID as the task's HPKE config, but will fail to decrypt.
+        let report_metadata_same_id_corrupted = ReportMetadata::new(
+            random(),
+            clock
+                .now()
+                .to_batch_interval_start(task.time_precision())
+                .unwrap(),
+        );
+        let transcript = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &dummy_vdaf::AggregationParam(0),
+            report_metadata_same_id_corrupted.id(),
+            &(),
+        );
+        let report_share_same_id_corrupted = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+            *task.id(),
+            report_metadata_same_id_corrupted.clone(),
+            global_hpke_keypair_same_id.config(),
+            &transcript.public_share,
+            Vec::new(),
+            &transcript.input_shares[1],
+        );
+        let encrypted_input_share = report_share_same_id_corrupted.encrypted_input_share();
+        let mut corrupted_payload = encrypted_input_share.payload().to_vec();
+        corrupted_payload[0] ^= 0xFF;
+        let corrupted_input_share = HpkeCiphertext::new(
+            *encrypted_input_share.config_id(),
+            encrypted_input_share.encapsulated_key().to_vec(),
+            corrupted_payload,
+        );
+        let encoded_public_share = transcript.public_share.get_encoded();
+        let report_share_same_id_corrupted = ReportShare::new(
+            report_metadata_same_id_corrupted,
+            encoded_public_share.clone(),
+            corrupted_input_share,
+        );
+
+        // This report was encrypted with a global HPKE config that doesn't collide
+        // with the task HPKE config's ID.
+        let report_metadata_different_id = ReportMetadata::new(
+            random(),
+            clock
+                .now()
+                .to_batch_interval_start(task.time_precision())
+                .unwrap(),
+        );
+        let transcript = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &dummy_vdaf::AggregationParam(0),
+            report_metadata_different_id.id(),
+            &(),
+        );
+        let report_share_different_id = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+            *task.id(),
+            report_metadata_different_id,
+            global_hpke_keypair_different_id.config(),
+            &transcript.public_share,
+            Vec::new(),
+            &transcript.input_shares[1],
+        );
+
+        // This report was encrypted with a global HPKE config that doesn't collide
+        // with the task HPKE config's ID, but will fail decryption.
+        let report_metadata_different_id_corrupted = ReportMetadata::new(
+            random(),
+            clock
+                .now()
+                .to_batch_interval_start(task.time_precision())
+                .unwrap(),
+        );
+        let transcript = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &dummy_vdaf::AggregationParam(0),
+            report_metadata_different_id_corrupted.id(),
+            &(),
+        );
+        let report_share_different_id_corrupted = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+            *task.id(),
+            report_metadata_different_id_corrupted.clone(),
+            global_hpke_keypair_different_id.config(),
+            &transcript.public_share,
+            Vec::new(),
+            &transcript.input_shares[1],
+        );
+        let encrypted_input_share = report_share_different_id_corrupted.encrypted_input_share();
+        let mut corrupted_payload = encrypted_input_share.payload().to_vec();
+        corrupted_payload[0] ^= 0xFF;
+        let corrupted_input_share = HpkeCiphertext::new(
+            *encrypted_input_share.config_id(),
+            encrypted_input_share.encapsulated_key().to_vec(),
+            corrupted_payload,
+        );
+        let encoded_public_share = transcript.public_share.get_encoded();
+        let report_share_different_id_corrupted = ReportShare::new(
+            report_metadata_different_id_corrupted,
+            encoded_public_share.clone(),
+            corrupted_input_share,
+        );
+
+        let handler = aggregator_handler(
+            Arc::clone(&datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
+        let aggregation_job_id: AggregationJobId = random();
+
+        let request = AggregationJobInitializeReq::new(
+            dummy_vdaf::AggregationParam(0).get_encoded(),
+            PartialBatchSelector::new_time_interval(),
+            Vec::from([
+                report_share_same_id.clone(),
+                report_share_different_id.clone(),
+                report_share_same_id_corrupted.clone(),
+                report_share_different_id_corrupted.clone(),
+            ]),
+        );
+
+        let mut test_conn =
+            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let body_bytes = take_response_body(&mut test_conn).await;
+        let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
+
+        // Validate response.
+        assert_eq!(aggregate_resp.prepare_steps().len(), 4);
+
+        let prepare_step_same_id = aggregate_resp.prepare_steps().get(0).unwrap();
+        assert_eq!(
+            prepare_step_same_id.report_id(),
+            report_share_same_id.metadata().id()
+        );
+        assert_matches!(
+            prepare_step_same_id.result(),
+            &PrepareStepResult::Continued(..)
+        );
+
+        let prepare_step_different_id = aggregate_resp.prepare_steps().get(1).unwrap();
+        assert_eq!(
+            prepare_step_different_id.report_id(),
+            report_share_different_id.metadata().id()
+        );
+        assert_matches!(
+            prepare_step_different_id.result(),
+            &PrepareStepResult::Continued(..)
+        );
+
+        let prepare_step_same_id_corrupted = aggregate_resp.prepare_steps().get(2).unwrap();
+        assert_eq!(
+            prepare_step_same_id_corrupted.report_id(),
+            report_share_same_id_corrupted.metadata().id()
+        );
+        assert_matches!(
+            prepare_step_same_id_corrupted.result(),
+            &PrepareStepResult::Failed(ReportShareError::HpkeDecryptError)
+        );
+
+        let prepare_step_different_id_corrupted = aggregate_resp.prepare_steps().get(3).unwrap();
+        assert_eq!(
+            prepare_step_different_id_corrupted.report_id(),
+            report_share_different_id_corrupted.metadata().id()
+        );
+        assert_matches!(
+            prepare_step_different_id_corrupted.result(),
+            &PrepareStepResult::Failed(ReportShareError::HpkeDecryptError)
+        );
     }
 
     #[allow(clippy::unit_arg)]
