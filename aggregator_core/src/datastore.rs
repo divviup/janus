@@ -4252,15 +4252,10 @@ impl<C: Clock> Transaction<'_, C> {
                 "SELECT config_id, config, private_key FROM global_hpke_keys WHERE config_id = $1;",
             )
             .await?;
-        let hpke_key_rows = self
-            .query(&stmt, &[&(Into::<u8>::into(*config_id) as i16)])
-            .await?;
-
-        if hpke_key_rows.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(self.global_hpke_keypair_from_row(&hpke_key_rows[0])?))
-        }
+        self.query_opt(&stmt, &[&(u8::from(*config_id) as i16)])
+            .await?
+            .map(|row| self.global_hpke_keypair_from_row(&row))
+            .transpose()
     }
 
     fn global_hpke_keypair_from_row(&self, row: &Row) -> Result<HpkeKeypair, Error> {
@@ -4285,7 +4280,7 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached("DELETE FROM global_hpke_keys WHERE config_id = $1;")
             .await?;
         check_single_row_mutation(
-            self.execute(&stmt, &[&(Into::<u8>::into(*config_id) as i16)])
+            self.execute(&stmt, &[&(u8::from(*config_id) as i16)])
                 .await?,
         )
     }
@@ -4303,10 +4298,7 @@ impl<C: Clock> Transaction<'_, C> {
         check_single_row_mutation(
             self.execute(
                 &stmt,
-                &[
-                    &time.as_naive_date_time()?,
-                    &(Into::<u8>::into(*config_id) as i16),
-                ],
+                &[&time.as_naive_date_time()?, &(u8::from(*config_id) as i16)],
             )
             .await?,
         )
