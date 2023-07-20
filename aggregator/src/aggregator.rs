@@ -302,9 +302,7 @@ impl<C: Clock> Aggregator<C> {
                             .await?
                             .iter()
                             .filter(|global_keypair| {
-                                global_keypair.is_active()
-                                    && (global_keypair.expired_at().is_none()
-                                        || global_keypair.expired_at().is_some_and(|t| t >= now))
+                                global_keypair.is_active() && !global_keypair.is_expired(&now)
                             })
                             .map(|global_keypair| global_keypair.hpke_keypair().config().clone())
                             .collect::<Vec<_>>())
@@ -313,7 +311,7 @@ impl<C: Clock> Aggregator<C> {
                 .await?;
 
             global_hpke_configs.configs = configs.to_owned();
-            global_hpke_configs.last_updated = self.clock.now();
+            global_hpke_configs.last_updated = now;
             Ok(configs)
         }
         // Fast path: cache is still fresh.

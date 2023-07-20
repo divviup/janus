@@ -6326,6 +6326,13 @@ pub mod models {
         pub fn expired_at(&self) -> &Option<Time> {
             &self.expired_at
         }
+
+        pub fn is_expired(&self, now: &Time) -> bool {
+            match self.expired_at {
+                Some(t) => t < *now,
+                None => false,
+            }
+        }
     }
 }
 
