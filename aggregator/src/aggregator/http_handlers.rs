@@ -707,7 +707,12 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let keypair = first_hpke_keypair.clone();
-                Box::pin(async move { tx.put_global_hpke_keypair(&keypair).await })
+                Box::pin(async move {
+                    tx.put_global_hpke_keypair(&keypair).await?;
+                    tx.set_global_hpke_keypair_active(keypair.config().id(), true)
+                        .await?;
+                    Ok(())
+                })
             })
             .await
             .unwrap();
@@ -736,7 +741,7 @@ mod tests {
         );
         check_hpke_config_is_usable(&hpke_config_list, &first_hpke_keypair);
 
-        // Insert another HPKE config.
+        // Insert an inactive HPKE config.
         let second_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(2);
         datastore
             .run_tx(|tx| {
@@ -745,8 +750,7 @@ mod tests {
             })
             .await
             .unwrap();
-
-        // Cache not refreshed yet.
+        clock.advance(&Duration::from_seconds(60 * 61));
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         let bytes = take_response_body(&mut test_conn).await;
@@ -756,7 +760,17 @@ mod tests {
             &[first_hpke_keypair.config().clone()]
         );
 
-        // Advance the clock, cache should be refreshed.
+        // Set key active.
+        datastore
+            .run_tx(|tx| {
+                let keypair = second_hpke_keypair.clone();
+                Box::pin(async move {
+                    tx.set_global_hpke_keypair_active(keypair.config().id(), true)
+                        .await
+                })
+            })
+            .await
+            .unwrap();
         clock.advance(&Duration::from_seconds(60 * 61));
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
@@ -788,8 +802,38 @@ mod tests {
                 let keypair = second_hpke_keypair.clone();
                 let clock = clock.clone();
                 Box::pin(async move {
-                    tx.expire_global_hpke_keypair(keypair.config().id(), &clock.now())
+                    tx.set_global_hpke_keypair_expiry(keypair.config().id(), &Some(clock.now()))
                         .await
+                })
+            })
+            .await
+            .unwrap();
+        clock.advance(&Duration::from_seconds(60 * 61));
+        let mut test_conn = get("/hpke_config").run_async(&handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let bytes = take_response_body(&mut test_conn).await;
+        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
+        assert_eq!(
+            hpke_config_list.hpke_configs(),
+            &[first_hpke_keypair.config().clone()]
+        );
+
+        // Set key to expire in the future.
+        datastore
+            .run_tx(|tx| {
+                let keypair = first_hpke_keypair.clone();
+                let clock = clock.clone();
+                Box::pin(async move {
+                    tx.set_global_hpke_keypair_expiry(
+                        keypair.config().id(),
+                        &Some(
+                            clock
+                                .now()
+                                .add(&Duration::from_seconds(60 * 60 * 24))
+                                .unwrap(),
+                        ),
+                    )
+                    .await
                 })
             })
             .await

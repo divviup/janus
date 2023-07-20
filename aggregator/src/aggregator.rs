@@ -282,11 +282,13 @@ impl<C: Clock> Aggregator<C> {
         }
     }
 
+    /// Get active and non-expired keys from the database.
     async fn get_global_hpke_configs(&self) -> Result<Vec<HpkeConfig>, Error> {
         let mut global_hpke_configs = self.global_hpke_configs.lock().await;
 
         // Slow path: the cache has expired and needs to be refreshed.
-        if self.clock.now()
+        let now = self.clock.now();
+        if now
             > global_hpke_configs
                 .last_updated
                 .add(&GlobalHpkeConfigCache::REFRESH_INTERVAL)?
@@ -299,7 +301,12 @@ impl<C: Clock> Aggregator<C> {
                             .get_global_hpke_keypairs()
                             .await?
                             .iter()
-                            .map(|keypair| keypair.config().clone())
+                            .filter(|global_keypair| {
+                                global_keypair.is_active()
+                                    && (global_keypair.expired_at().is_none()
+                                        || global_keypair.expired_at().is_some_and(|t| t >= now))
+                            })
+                            .map(|global_keypair| global_keypair.hpke_keypair().config().clone())
                             .collect::<Vec<_>>())
                     })
                 })
