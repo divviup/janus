@@ -6265,9 +6265,7 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ds = ephemeral_datastore
-            .datastore(MockClock::default(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         // Insert tasks, check that they can be retrieved by ID.
         let mut want_tasks = HashMap::new();
@@ -6385,9 +6383,7 @@ mod tests {
         const REPORT_AGGREGATION_COUNT: usize = 2;
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task_id = ds
             .run_tx(|tx| {
@@ -6587,9 +6583,7 @@ mod tests {
     #[tokio::test]
     async fn get_task_ids(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ds = ephemeral_datastore
-            .datastore(MockClock::default(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         ds.run_tx(|tx| {
             Box::pin(async move {
@@ -6630,9 +6624,7 @@ mod tests {
     async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
         let report_expiry_age = clock
             .now()
             .difference(&OLDEST_ALLOWED_REPORT_TIMESTAMP)
@@ -6755,9 +6747,7 @@ mod tests {
     #[tokio::test]
     async fn report_not_found(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ds = ephemeral_datastore
-            .datastore(MockClock::default(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let rslt = ds
             .run_tx(|tx| {
@@ -6778,9 +6768,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
         let report_interval = Interval::new(
             OLDEST_ALLOWED_REPORT_TIMESTAMP
                 .sub(&Duration::from_seconds(1))
@@ -6958,9 +6946,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
@@ -7086,9 +7072,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task = TaskBuilder::new(
             task::QueryType::FixedSize { max_batch_size: 10 },
@@ -7268,9 +7252,7 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_report_share(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ds = ephemeral_datastore
-            .datastore(MockClock::default(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
@@ -7368,9 +7350,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         // We use a dummy VDAF & fixed-size task for this test, to better exercise the
         // serialization/deserialization roundtrip of the batch_identifier & aggregation_param.
@@ -7586,11 +7566,7 @@ mod tests {
 
         const LEASE_DURATION: StdDuration = StdDuration::from_secs(300);
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-        let ds = Arc::new(
-            ephemeral_datastore
-                .datastore(clock.clone(), &noop_meter())
-                .await,
-        );
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         const AGGREGATION_JOB_COUNT: usize = 10;
         let task = TaskBuilder::new(
@@ -7931,9 +7907,7 @@ mod tests {
     #[tokio::test]
     async fn aggregation_job_not_found(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ds = ephemeral_datastore
-            .datastore(MockClock::default(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let rslt = ds
             .run_tx(|tx| {
@@ -7979,9 +7953,7 @@ mod tests {
     async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) {
         // Setup.
         install_test_trace_subscriber();
-        let ds = ephemeral_datastore
-            .datastore(MockClock::default(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         // We use a dummy VDAF & fixed-size task for this test, to better exercise the
         // serialization/deserialization roundtrip of the batch_identifier & aggregation_param.
@@ -8081,7 +8053,6 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let meter = noop_meter();
 
         let report_id = random();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
@@ -8103,7 +8074,7 @@ mod tests {
         .enumerate()
         {
             let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-            let ds = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+            let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
             let task = TaskBuilder::new(
                 task::QueryType::TimeInterval,
@@ -8263,9 +8234,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
@@ -8417,9 +8386,7 @@ mod tests {
     #[tokio::test]
     async fn report_aggregation_not_found(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let ds = ephemeral_datastore
-            .datastore(MockClock::default(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let vdaf = Arc::new(dummy_vdaf::Vdaf::default());
 
@@ -8466,9 +8433,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let report_id = random();
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
@@ -8639,9 +8604,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
@@ -8808,9 +8771,7 @@ mod tests {
         // Setup: write collection jobs to the datastore.
         install_test_trace_subscriber();
 
-        let ds = ephemeral_datastore
-            .datastore(MockClock::default(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
@@ -9081,9 +9042,7 @@ mod tests {
     ) {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -9214,9 +9173,7 @@ mod tests {
     ) {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -9343,9 +9300,7 @@ mod tests {
     ) {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task_id = random();
         let other_task_id = random();
@@ -9399,9 +9354,7 @@ mod tests {
     ) {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -9458,9 +9411,7 @@ mod tests {
     ) {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -9525,9 +9476,7 @@ mod tests {
     async fn collection_job_acquire_release_job_finished(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -9594,9 +9543,7 @@ mod tests {
     ) {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task_id = random();
         let reports = Vec::from([
@@ -9684,9 +9631,7 @@ mod tests {
     async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -9833,9 +9778,7 @@ mod tests {
     async fn collection_job_acquire_state_filtering(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -9974,9 +9917,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let time_precision = Duration::from_seconds(100);
         let task = TaskBuilder::new(
@@ -10313,9 +10254,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task = TaskBuilder::new(
             task::QueryType::FixedSize { max_batch_size: 10 },
@@ -10545,9 +10484,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let aggregate_share_job = ds
             .run_tx(|tx| {
@@ -10728,9 +10665,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let aggregate_share_job = ds
             .run_tx(|tx| {
@@ -10870,9 +10805,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let (task_id, batch_id) = ds
             .run_tx(|tx| {
@@ -11127,9 +11060,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         let want_batch = Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
             random(),
@@ -11341,9 +11272,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // Setup.
@@ -11437,9 +11366,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // Setup.
@@ -11893,9 +11820,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-        let ds = ephemeral_datastore
-            .datastore(clock.clone(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
         // Setup.
         async fn write_collect_artifacts<Q: ExpirationQueryTypeExt>(
@@ -12648,9 +12573,7 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_interval_sql(ephemeral_datastore: EphemeralDatastore) {
         install_test_trace_subscriber();
-        let datastore = ephemeral_datastore
-            .datastore(MockClock::default(), &noop_meter())
-            .await;
+        let datastore = ephemeral_datastore.datastore(MockClock::default()).await;
 
         datastore
             .run_tx(|tx| {

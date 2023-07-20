@@ -2798,12 +2798,11 @@ mod tests {
         .build();
 
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         datastore.put_task(&task).await.unwrap();
 
-        let aggregator = Aggregator::new(Arc::clone(&datastore), clock.clone(), &meter, cfg);
+        let aggregator = Aggregator::new(Arc::clone(&datastore), clock.clone(), &noop_meter(), cfg);
 
         (
             vdaf,

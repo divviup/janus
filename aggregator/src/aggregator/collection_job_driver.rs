@@ -708,8 +708,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         let time_precision = Duration::from_seconds(500);
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
@@ -808,8 +807,11 @@ mod tests {
             .await
             .unwrap();
 
-        let collection_job_driver =
-            CollectionJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter, 1);
+        let collection_job_driver = CollectionJobDriver::new(
+            reqwest::Client::builder().build().unwrap(),
+            &noop_meter(),
+            1,
+        );
 
         // No batch aggregations inserted yet.
         let error = collection_job_driver
@@ -993,14 +995,16 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         let (_, lease, collection_job) =
             setup_collection_job_test_case(&mut server, clock, Arc::clone(&ds), true).await;
 
-        let collection_job_driver =
-            CollectionJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter, 1);
+        let collection_job_driver = CollectionJobDriver::new(
+            reqwest::Client::builder().build().unwrap(),
+            &noop_meter(),
+            1,
+        );
 
         // Run: abandon the collection job.
         collection_job_driver
@@ -1044,8 +1048,7 @@ mod tests {
         let clock = MockClock::default();
         let mut runtime_manager = TestRuntimeManager::new();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let stopper = Stopper::new();
 
         let (task, _, collection_job) =
@@ -1053,13 +1056,16 @@ mod tests {
                 .await;
 
         // Set up the collection job driver
-        let collection_job_driver =
-            Arc::new(CollectionJobDriver::new(reqwest::Client::new(), &meter, 1));
+        let collection_job_driver = Arc::new(CollectionJobDriver::new(
+            reqwest::Client::new(),
+            &noop_meter(),
+            1,
+        ));
         let job_driver = Arc::new(
             JobDriver::new(
                 clock.clone(),
                 runtime_manager.with_label("stepper"),
-                meter,
+                noop_meter(),
                 stopper.clone(),
                 StdDuration::from_secs(1),
                 StdDuration::from_secs(1),
@@ -1141,8 +1147,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         let (task, lease, collection_job) =
             setup_collection_job_test_case(&mut server, clock, Arc::clone(&ds), true).await;
@@ -1175,7 +1180,8 @@ mod tests {
             .create_async()
             .await;
 
-        let collection_job_driver = CollectionJobDriver::new(reqwest::Client::new(), &meter, 1);
+        let collection_job_driver =
+            CollectionJobDriver::new(reqwest::Client::new(), &noop_meter(), 1);
 
         // Step the collection job. The driver should successfully run the job, but then discard the
         // results when it notices the job has been deleted.

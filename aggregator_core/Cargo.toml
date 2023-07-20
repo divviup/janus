@@ -48,8 +48,8 @@ regex = "1"
 reqwest = { version = "0.11.18", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.16.20"
 serde.workspace = true
-serde_json = "1.0.100"
-serde_yaml = "0.9.22"
+serde_json = "1.0.103"
+serde_yaml = "0.9.23"
 sqlx = { version = "0.6.3", optional = true, features = ["runtime-tokio-rustls", "migrate", "postgres"] }
 testcontainers = { version = "0.14.0", optional = true }
 thiserror = "1.0"
@@ -61,7 +61,7 @@ trillium.workspace = true
 trillium-macros = "0.0.4"
 trillium-router.workspace = true
 url = { version = "2.4.0", features = ["serde"] }
-uuid = { version = "1.4.0", features = ["v4"] }
+uuid = { version = "1.4.1", features = ["v4"] }
 
 [dev-dependencies]
 assert_matches = "1"

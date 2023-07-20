@@ -470,7 +470,6 @@ mod tests {
     use janus_aggregator_core::{
         datastore::{test_util::ephemeral_datastore, Datastore},
         task::{test_util::TaskBuilder, QueryType, Task},
-        test_util::noop_meter,
     };
     use janus_core::{
         task::VdafInstance,
@@ -586,9 +585,7 @@ mod tests {
     #[tokio::test]
     async fn provision_tasks() {
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore
-            .datastore(RealClock::default(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(RealClock::default()).await;
 
         let tasks = Vec::from([
             TaskBuilder::new(
@@ -622,9 +619,7 @@ mod tests {
     #[tokio::test]
     async fn provision_task_dry_run() {
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore
-            .datastore(RealClock::default(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(RealClock::default()).await;
 
         let tasks = Vec::from([TaskBuilder::new(
             QueryType::TimeInterval,
@@ -664,9 +659,7 @@ mod tests {
         ]);
 
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore
-            .datastore(RealClock::default(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(RealClock::default()).await;
 
         let mut tasks_file = NamedTempFile::new().unwrap();
         tasks_file
@@ -772,9 +765,7 @@ mod tests {
 "#;
 
         let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore
-            .datastore(RealClock::default(), &noop_meter())
-            .await;
+        let ds = ephemeral_datastore.datastore(RealClock::default()).await;
 
         let mut tasks_file = NamedTempFile::new().unwrap();
         tasks_file
