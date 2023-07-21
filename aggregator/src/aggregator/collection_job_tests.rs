@@ -144,6 +144,7 @@ pub(crate) async fn setup_collection_job_test_case(
             ..Default::default()
         },
     )
+    .await
     .unwrap();
 
     CollectionJobTestCase {

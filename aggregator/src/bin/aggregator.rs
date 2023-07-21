@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use clap::Parser;
 use janus_aggregator::{
-    aggregator::{self, http_handlers::aggregator_handler},
+    aggregator::{self, http_handlers::aggregator_handler, GlobalHpkeConfigCache},
     binary_utils::{
         janus_main, setup_server, setup_signal_handler, BinaryOptions, CommonBinaryOptions,
     },
@@ -38,7 +38,8 @@ async fn main() -> Result<()> {
                 ctx.clock,
                 &ctx.meter,
                 ctx.config.aggregator_config(),
-            )?,
+            )
+            .await?,
             None,
         );
 
@@ -248,6 +249,13 @@ struct Config {
     /// will reduce the amount of database contention during helper aggregation, while increasing
     /// the cost of collection.
     batch_aggregation_shard_count: u64,
+
+    /// Defines how often to refresh the global HPKE configs cache in milliseconds. This affects
+    /// how often an aggregator becomes aware of key state changes. If unspecified, default is
+    /// defined by [`GlobalHpkeConfigCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally
+    /// have to specify this.
+    #[serde(default)]
+    global_hpke_configs_refresh_interval: Option<u64>,
 }
 
 impl Config {
@@ -271,6 +279,10 @@ impl Config {
             ),
             batch_aggregation_shard_count: self.batch_aggregation_shard_count,
             taskprov_config: self.taskprov_config.clone(),
+            global_hpke_configs_refresh_interval: match self.global_hpke_configs_refresh_interval {
+                Some(duration) => Duration::from_millis(duration),
+                None => GlobalHpkeConfigCache::DEFAULT_REFRESH_INTERVAL,
+            },
         }
     }
 }
@@ -336,6 +348,7 @@ mod tests {
             max_upload_batch_write_delay_ms: 250,
             batch_aggregation_shard_count: 32,
             taskprov_config: TaskprovConfig::default(),
+            global_hpke_configs_refresh_interval: None,
         })
     }
 
@@ -487,6 +500,7 @@ mod tests {
                 max_upload_batch_write_delay: Duration::from_millis(250),
                 batch_aggregation_shard_count: 32,
                 taskprov_config: TaskprovConfig::default(),
+                ..Default::default()
             }
         );
 

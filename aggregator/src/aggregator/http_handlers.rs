@@ -201,13 +201,13 @@ pub(crate) static COLLECTION_JOB_ROUTE: &str = "tasks/:task_id/collection_jobs/:
 pub(crate) static AGGREGATE_SHARES_ROUTE: &str = "tasks/:task_id/aggregate_shares";
 
 /// Constructs a Trillium handler for the aggregator.
-pub fn aggregator_handler<C: Clock>(
+pub async fn aggregator_handler<C: Clock>(
     datastore: Arc<Datastore<C>>,
     clock: C,
     meter: &Meter,
     cfg: Config,
 ) -> Result<impl Handler, Error> {
-    let aggregator = Arc::new(Aggregator::new(datastore, clock, meter, cfg));
+    let aggregator = Arc::new(Aggregator::new(datastore, clock, meter, cfg).await?);
 
     Ok((
         State(aggregator),
@@ -560,6 +560,7 @@ mod tests {
             generate_helper_report_share, generate_helper_report_share_for_plaintext,
             BATCH_AGGREGATION_SHARD_COUNT,
         },
+        Config,
     };
     use assert_matches::assert_matches;
     use futures::future::try_join_all;
@@ -609,7 +610,10 @@ mod tests {
     };
     use rand::random;
     use serde_json::json;
-    use std::{borrow::Cow, collections::HashMap, io::Cursor, sync::Arc};
+    use std::{
+        borrow::Cow, collections::HashMap, io::Cursor, sync::Arc, time::Duration as StdDuration,
+    };
+    use tokio::time::sleep;
     use trillium::{KnownHeaderName, Status};
     use trillium_testing::{
         assert_headers,
@@ -642,6 +646,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         // No task ID provided and no global keys are configured.
@@ -717,13 +722,14 @@ mod tests {
             .await
             .unwrap();
 
-        let handler = aggregator_handler(
-            datastore.clone(),
-            clock.clone(),
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .unwrap();
+        let cfg = Config {
+            global_hpke_configs_refresh_interval: StdDuration::from_millis(500),
+            ..Default::default()
+        };
+
+        let handler = aggregator_handler(datastore.clone(), clock.clone(), &noop_meter(), cfg)
+            .await
+            .unwrap();
 
         // No task ID provided
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
@@ -750,7 +756,7 @@ mod tests {
             })
             .await
             .unwrap();
-        clock.advance(&Duration::from_seconds(60 * 61));
+        sleep(StdDuration::from_millis(750)).await;
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         let bytes = take_response_body(&mut test_conn).await;
@@ -771,7 +777,7 @@ mod tests {
             })
             .await
             .unwrap();
-        clock.advance(&Duration::from_seconds(60 * 61));
+        sleep(StdDuration::from_millis(750)).await;
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         let bytes = take_response_body(&mut test_conn).await;
@@ -807,7 +813,7 @@ mod tests {
             })
             .await
             .unwrap();
-        clock.advance(&Duration::from_seconds(60 * 61));
+        sleep(StdDuration::from_millis(750)).await;
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         let bytes = take_response_body(&mut test_conn).await;
@@ -825,7 +831,7 @@ mod tests {
             })
             .await
             .unwrap();
-        clock.advance(&Duration::from_seconds(60 * 61));
+        sleep(StdDuration::from_millis(750)).await;
         let test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
     }
@@ -876,6 +882,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         // Check for appropriate CORS headers in response to a preflight request.
@@ -951,6 +958,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         // Upload a report. Do this twice to prove that PUT is idempotent.
@@ -1188,6 +1196,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
@@ -1247,6 +1256,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
@@ -1334,6 +1344,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
@@ -1767,6 +1778,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
@@ -1992,6 +2004,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
@@ -2061,6 +2074,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
@@ -2127,6 +2141,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
@@ -2368,6 +2383,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         let aggregate_resp =
@@ -2738,6 +2754,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         let _ =
@@ -3043,6 +3060,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         let _ =
@@ -3245,6 +3263,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         post_aggregation_job_expecting_error(
@@ -3346,6 +3365,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         let aggregate_resp =
@@ -3504,6 +3524,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         post_aggregation_job_expecting_error(
@@ -3643,6 +3664,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         post_aggregation_job_expecting_error(
@@ -3740,6 +3762,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         post_aggregation_job_expecting_error(
@@ -3873,6 +3896,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         let collection_job_id: CollectionJobId = random();
@@ -4496,6 +4520,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         let request = AggregateShareReq::new(
@@ -4553,6 +4578,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         let request = AggregateShareReq::new(
@@ -4647,6 +4673,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         // There are no batch aggregations in the datastore yet
