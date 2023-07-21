@@ -567,7 +567,7 @@ mod tests {
         datastore::{
             models::{
                 AggregateShareJob, AggregationJob, AggregationJobState, Batch, BatchAggregation,
-                BatchAggregationState, BatchState, CollectionJob, CollectionJobState,
+                BatchAggregationState, BatchState, CollectionJob, CollectionJobState, HpkeKeyState,
                 ReportAggregation, ReportAggregationState,
             },
             test_util::ephemeral_datastore,
@@ -709,7 +709,7 @@ mod tests {
                 let keypair = first_hpke_keypair.clone();
                 Box::pin(async move {
                     tx.put_global_hpke_keypair(&keypair).await?;
-                    tx.set_global_hpke_keypair_active(keypair.config().id(), true)
+                    tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
                         .await?;
                     Ok(())
                 })
@@ -765,7 +765,7 @@ mod tests {
             .run_tx(|tx| {
                 let keypair = second_hpke_keypair.clone();
                 Box::pin(async move {
-                    tx.set_global_hpke_keypair_active(keypair.config().id(), true)
+                    tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
                         .await
                 })
             })
@@ -800,40 +800,9 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let keypair = second_hpke_keypair.clone();
-                let clock = clock.clone();
                 Box::pin(async move {
-                    tx.set_global_hpke_keypair_expiry(keypair.config().id(), &Some(clock.now()))
+                    tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Expired)
                         .await
-                })
-            })
-            .await
-            .unwrap();
-        clock.advance(&Duration::from_seconds(60 * 61));
-        let mut test_conn = get("/hpke_config").run_async(&handler).await;
-        assert_eq!(test_conn.status(), Some(Status::Ok));
-        let bytes = take_response_body(&mut test_conn).await;
-        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
-        assert_eq!(
-            hpke_config_list.hpke_configs(),
-            &[first_hpke_keypair.config().clone()]
-        );
-
-        // Set key to expire in the future.
-        datastore
-            .run_tx(|tx| {
-                let keypair = first_hpke_keypair.clone();
-                let clock = clock.clone();
-                Box::pin(async move {
-                    tx.set_global_hpke_keypair_expiry(
-                        keypair.config().id(),
-                        &Some(
-                            clock
-                                .now()
-                                .add(&Duration::from_seconds(60 * 60 * 24))
-                                .unwrap(),
-                        ),
-                    )
-                    .await
                 })
             })
             .await

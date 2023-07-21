@@ -3,9 +3,9 @@
 use self::models::{
     AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
     AggregatorRole, AuthenticationTokenType, Batch, BatchAggregation, CollectionJob,
-    CollectionJobState, CollectionJobStateCode, GlobalHpkeKeypair, LeaderStoredReport, Lease,
-    LeaseToken, OutstandingBatch, ReportAggregation, ReportAggregationState,
-    ReportAggregationStateCode, SqlInterval,
+    CollectionJobState, CollectionJobStateCode, GlobalHpkeKeypair, HpkeKeyState,
+    LeaderStoredReport, Lease, LeaseToken, OutstandingBatch, ReportAggregation,
+    ReportAggregationState, ReportAggregationStateCode, SqlInterval,
 };
 use crate::{
     query_type::{AccumulableQueryType, CollectableQueryType},
@@ -4199,7 +4199,7 @@ impl<C: Clock> Transaction<'_, C> {
     pub async fn get_global_hpke_keypairs(&self) -> Result<Vec<GlobalHpkeKeypair>, Error> {
         let stmt = self
             .prepare_cached(
-                "SELECT config_id, config, private_key, is_active, expired_at FROM global_hpke_keys;",
+                "SELECT config_id, config, private_key, state, updated_at FROM global_hpke_keys;",
             )
             .await?;
         let hpke_key_rows = self.query(&stmt, &[]).await?;
@@ -4219,7 +4219,7 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<Option<GlobalHpkeKeypair>, Error> {
         let stmt = self
             .prepare_cached(
-                "SELECT config_id, config, private_key, is_active, expired_at FROM global_hpke_keys
+                "SELECT config_id, config, private_key, state, updated_at FROM global_hpke_keys
                     WHERE config_id = $1;",
             )
             .await?;
@@ -4242,10 +4242,8 @@ impl<C: Clock> Transaction<'_, C> {
         )?);
         Ok(GlobalHpkeKeypair::new(
             HpkeKeypair::new(config, private_key),
-            row.get("is_active"),
-            row.get::<_, Option<NaiveDateTime>>("expired_at")
-                .as_ref()
-                .map(Time::from_naive_date_time),
+            row.get("state"),
+            Time::from_naive_date_time(&row.get("updated_at")),
         ))
     }
 
@@ -4262,43 +4260,31 @@ impl<C: Clock> Transaction<'_, C> {
         )
     }
 
-    /// Mark a keypair for deletion.
     #[tracing::instrument(skip(self), err)]
-    pub async fn set_global_hpke_keypair_expiry(
+    pub async fn set_global_hpke_keypair_state(
         &self,
         config_id: &HpkeConfigId,
-        time: &Option<Time>,
+        state: &HpkeKeyState,
     ) -> Result<(), Error> {
         let stmt = self
-            .prepare_cached("UPDATE global_hpke_keys SET expired_at = $1 WHERE config_id = $2;")
+            .prepare_cached(
+                "UPDATE global_hpke_keys SET state = $1, updated_at = $2 WHERE config_id = $3;",
+            )
             .await?;
         check_single_row_mutation(
             self.execute(
                 &stmt,
                 &[
-                    &time.map(|t| t.as_naive_date_time()).transpose()?,
-                    &(u8::from(*config_id) as i16),
+                    /* state */ state,
+                    /* updated_at */ &self.clock.now().as_naive_date_time()?,
+                    /* config_id */ &(u8::from(*config_id) as i16),
                 ],
             )
             .await?,
         )
     }
 
-    #[tracing::instrument(skip(self), err)]
-    pub async fn set_global_hpke_keypair_active(
-        &self,
-        config_id: &HpkeConfigId,
-        active: bool,
-    ) -> Result<(), Error> {
-        let stmt = self
-            .prepare_cached("UPDATE global_hpke_keys SET is_active = $1 WHERE config_id = $2;")
-            .await?;
-        check_single_row_mutation(
-            self.execute(&stmt, &[&active, &(u8::from(*config_id) as i16)])
-                .await?,
-        )
-    }
-
+    // Inserts a new global HPKE keypair and places it in the [`HpkeKeyState::Pending`] state.
     #[tracing::instrument(skip(self), err)]
     pub async fn put_global_hpke_keypair(&self, hpke_keypair: &HpkeKeypair) -> Result<(), Error> {
         let hpke_config_id = u8::from(*hpke_keypair.config().id()) as i16;
@@ -4312,8 +4298,8 @@ impl<C: Clock> Transaction<'_, C> {
 
         let stmt = self
             .prepare_cached(
-                "INSERT INTO global_hpke_keys (config_id, config, private_key, is_active)
-                    VALUES ($1, $2, $3, FALSE);",
+                "INSERT INTO global_hpke_keys (config_id, config, private_key, updated_at)
+                    VALUES ($1, $2, $3, $4);",
             )
             .await?;
         check_insert(
@@ -4323,6 +4309,7 @@ impl<C: Clock> Transaction<'_, C> {
                     /* config_id */ &hpke_config_id,
                     /* config */ &hpke_config,
                     /* private_key */ &encrypted_hpke_private_key,
+                    /* updated_at */ &self.clock.now().as_naive_date_time()?,
                 ],
             )
             .await?,
@@ -6299,19 +6286,43 @@ pub mod models {
         to_sql_checked!();
     }
 
+    /// The state of an HPKE key pair, corresponding to the HPKE_KEY_STATE enum in the schema.
+    #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, ToSql, FromSql)]
+    #[postgres(name = "hpke_key_state")]
+    pub enum HpkeKeyState {
+        /// The key should be advertised to DAP clients, and is the preferred key
+        /// for new reports to be encrypted with.
+        #[postgres(name = "ACTIVE")]
+        Active,
+        /// The key should not be advertised to DAP clients, but could be used for
+        /// decrypting client reports depending on when aggregators pick up the new key.
+        /// New keys should be created in this state.
+        #[postgres(name = "PENDING")]
+        Pending,
+        /// The key is pending deletion. It should not be advertised, but could be used
+        /// for decrypting client reports depending on the age of those reports or when
+        /// clients have refreshed their key caches.
+        #[postgres(name = "EXPIRED")]
+        Expired,
+    }
+
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct GlobalHpkeKeypair {
         hpke_keypair: HpkeKeypair,
-        is_active: bool,
-        expired_at: Option<Time>,
+        state: HpkeKeyState,
+        updated_at: Time,
     }
 
     impl GlobalHpkeKeypair {
-        pub fn new(hpke_keypair: HpkeKeypair, is_active: bool, expired_at: Option<Time>) -> Self {
+        pub(super) fn new(
+            hpke_keypair: HpkeKeypair,
+            state: HpkeKeyState,
+            updated_at: Time,
+        ) -> Self {
             Self {
                 hpke_keypair,
-                is_active,
-                expired_at,
+                state,
+                updated_at,
             }
         }
 
@@ -6319,19 +6330,12 @@ pub mod models {
             &self.hpke_keypair
         }
 
-        pub fn is_active(&self) -> bool {
-            self.is_active
+        pub fn state(&self) -> &HpkeKeyState {
+            &self.state
         }
 
-        pub fn expired_at(&self) -> &Option<Time> {
-            &self.expired_at
-        }
-
-        pub fn is_expired(&self, now: &Time) -> bool {
-            match self.expired_at {
-                Some(t) => t < *now,
-                None => false,
-            }
+        pub fn updated_at(&self) -> &Time {
+            &self.updated_at
         }
     }
 }
@@ -6347,8 +6351,9 @@ mod tests {
             models::{
                 AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
                 AggregationJobState, Batch, BatchAggregation, BatchAggregationState, BatchState,
-                CollectionJob, CollectionJobState, GlobalHpkeKeypair, LeaderStoredReport, Lease,
-                OutstandingBatch, ReportAggregation, ReportAggregationState, SqlInterval,
+                CollectionJob, CollectionJobState, GlobalHpkeKeypair, HpkeKeyState,
+                LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
+                ReportAggregationState, SqlInterval,
             },
             schema_versions_template,
             test_util::{
@@ -12857,27 +12862,51 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) {
         let datastore = ephemeral_datastore.datastore(MockClock::default()).await;
-        let global_keypair =
-            GlobalHpkeKeypair::new(generate_test_hpke_config_and_private_key(), false, None);
+        let clock = datastore.clock.clone();
+        let keypair = generate_test_hpke_config_and_private_key();
 
         datastore
             .run_tx(|tx| {
-                let global_keypair = global_keypair.clone();
+                let keypair = keypair.clone();
+                let clock = clock.clone();
                 Box::pin(async move {
                     assert_eq!(tx.get_global_hpke_keypairs().await?, vec![]);
-                    tx.put_global_hpke_keypair(global_keypair.hpke_keypair())
-                        .await?;
+                    tx.put_global_hpke_keypair(&keypair).await?;
 
+                    let expected_keypair =
+                        GlobalHpkeKeypair::new(keypair.clone(), HpkeKeyState::Pending, clock.now());
                     assert_eq!(
                         tx.get_global_hpke_keypairs().await?,
-                        vec![global_keypair.clone()]
+                        vec![expected_keypair.clone()]
                     );
                     assert_eq!(
-                        tx.get_global_hpke_keypair(global_keypair.hpke_keypair().config().id())
+                        tx.get_global_hpke_keypair(keypair.config().id())
                             .await?
                             .unwrap(),
-                        global_keypair
+                        expected_keypair
                     );
+
+                    // Try modifying state.
+                    clock.advance(&Duration::from_seconds(100));
+                    tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                        .await?;
+                    assert_eq!(
+                        tx.get_global_hpke_keypair(keypair.config().id())
+                            .await?
+                            .unwrap(),
+                        GlobalHpkeKeypair::new(keypair.clone(), HpkeKeyState::Active, clock.now(),)
+                    );
+
+                    clock.advance(&Duration::from_seconds(100));
+                    tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Expired)
+                        .await?;
+                    assert_eq!(
+                        tx.get_global_hpke_keypair(keypair.config().id())
+                            .await?
+                            .unwrap(),
+                        GlobalHpkeKeypair::new(keypair.clone(), HpkeKeyState::Expired, clock.now(),)
+                    );
+
                     Ok(())
                 })
             })
@@ -12888,12 +12917,8 @@ mod tests {
         assert_matches!(
             datastore
                 .run_tx(|tx| {
-                    let global_keypair = global_keypair.clone();
-                    Box::pin(async move {
-                        tx.put_global_hpke_keypair(global_keypair.hpke_keypair())
-                            .await?;
-                        Ok(())
-                    })
+                    let keypair = keypair.clone();
+                    Box::pin(async move { tx.put_global_hpke_keypair(&keypair).await })
                 })
                 .await,
             Err(Error::Db(_))
@@ -12901,115 +12926,14 @@ mod tests {
 
         datastore
             .run_tx(|tx| {
-                let global_keypair = global_keypair.clone();
+                let keypair = keypair.clone();
                 Box::pin(async move {
-                    tx.delete_global_hpke_keypair(global_keypair.hpke_keypair().config().id())
-                        .await?;
+                    tx.delete_global_hpke_keypair(keypair.config().id()).await?;
                     assert_eq!(tx.get_global_hpke_keypairs().await?, vec![]);
                     assert_matches!(
-                        tx.get_global_hpke_keypair(global_keypair.hpke_keypair().config().id())
-                            .await?,
+                        tx.get_global_hpke_keypair(keypair.config().id()).await?,
                         None
                     );
-                    Ok(())
-                })
-            })
-            .await
-            .unwrap();
-    }
-
-    #[rstest_reuse::apply(schema_versions_template)]
-    #[tokio::test]
-    async fn global_hpke_keypair_expiry(ephemeral_datastore: EphemeralDatastore) {
-        let clock = MockClock::default();
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
-        let global_keypair =
-            GlobalHpkeKeypair::new(generate_test_hpke_config_and_private_key(), false, None);
-
-        datastore
-            .run_tx(|tx| {
-                let global_keypair = global_keypair.clone();
-                let time = clock.now();
-                Box::pin(async move {
-                    assert_eq!(tx.get_global_hpke_keypairs().await?, vec![]);
-                    tx.put_global_hpke_keypair(global_keypair.hpke_keypair())
-                        .await?;
-
-                    tx.set_global_hpke_keypair_expiry(
-                        global_keypair.hpke_keypair().config().id(),
-                        &Some(time),
-                    )
-                    .await?;
-                    assert_eq!(
-                        tx.get_global_hpke_keypair(global_keypair.hpke_keypair().config().id())
-                            .await?
-                            .unwrap(),
-                        GlobalHpkeKeypair::new(
-                            global_keypair.hpke_keypair().clone(),
-                            false,
-                            Some(time)
-                        ),
-                    );
-
-                    tx.set_global_hpke_keypair_expiry(
-                        global_keypair.hpke_keypair().config().id(),
-                        &None,
-                    )
-                    .await?;
-                    assert_eq!(
-                        tx.get_global_hpke_keypair(global_keypair.hpke_keypair().config().id())
-                            .await?
-                            .unwrap(),
-                        global_keypair,
-                    );
-
-                    Ok(())
-                })
-            })
-            .await
-            .unwrap();
-    }
-
-    #[rstest_reuse::apply(schema_versions_template)]
-    #[tokio::test]
-    async fn global_hpke_keypair_active(ephemeral_datastore: EphemeralDatastore) {
-        let clock = MockClock::default();
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
-        let global_keypair =
-            GlobalHpkeKeypair::new(generate_test_hpke_config_and_private_key(), false, None);
-
-        datastore
-            .run_tx(|tx| {
-                let global_keypair = global_keypair.clone();
-                Box::pin(async move {
-                    assert_eq!(tx.get_global_hpke_keypairs().await?, vec![]);
-                    tx.put_global_hpke_keypair(global_keypair.hpke_keypair())
-                        .await?;
-
-                    tx.set_global_hpke_keypair_active(
-                        global_keypair.hpke_keypair().config().id(),
-                        true,
-                    )
-                    .await?;
-                    assert_eq!(
-                        tx.get_global_hpke_keypair(global_keypair.hpke_keypair().config().id())
-                            .await?
-                            .unwrap(),
-                        GlobalHpkeKeypair::new(global_keypair.hpke_keypair().clone(), true, None,),
-                    );
-
-                    tx.set_global_hpke_keypair_active(
-                        global_keypair.hpke_keypair().config().id(),
-                        false,
-                    )
-                    .await?;
-                    assert_eq!(
-                        tx.get_global_hpke_keypair(global_keypair.hpke_keypair().config().id())
-                            .await?
-                            .unwrap(),
-                        global_keypair,
-                    );
-
                     Ok(())
                 })
             })

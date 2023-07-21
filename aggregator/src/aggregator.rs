@@ -26,7 +26,7 @@ use janus_aggregator_core::{
         self,
         models::{
             AggregateShareJob, AggregationJob, AggregationJobState, Batch, BatchAggregation,
-            BatchAggregationState, BatchState, CollectionJob, CollectionJobState,
+            BatchAggregationState, BatchState, CollectionJob, CollectionJobState, HpkeKeyState,
             LeaderStoredReport, ReportAggregation, ReportAggregationState,
         },
         Datastore, Transaction,
@@ -301,10 +301,8 @@ impl<C: Clock> Aggregator<C> {
                             .get_global_hpke_keypairs()
                             .await?
                             .iter()
-                            .filter(|global_keypair| {
-                                global_keypair.is_active() && !global_keypair.is_expired(&now)
-                            })
-                            .map(|global_keypair| global_keypair.hpke_keypair().config().clone())
+                            .filter(|keypair| matches!(keypair.state(), HpkeKeyState::Active))
+                            .map(|keypair| keypair.hpke_keypair().config().clone())
                             .collect::<Vec<_>>())
                     })
                 })
