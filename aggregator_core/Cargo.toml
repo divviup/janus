@@ -71,7 +71,7 @@ janus_aggregator_core = { path = ".", features = ["test-util"] }
 janus_core = { workspace = true, features = ["test-util"] }
 rstest.workspace = true
 rstest_reuse = "0.6.0"
-serde_test = "1.0.171"
+serde_test = "1.0.175"
 tempfile = "3.6.0"
 tokio = { version = "1", features = ["test-util"] }  # ensure this remains compatible with the non-dev dependency
 
