@@ -8,6 +8,7 @@ use crate::{
         query_type::{CollectableQueryType, UploadableQueryType},
         report_writer::{ReportWriteBatcher, WritableReport},
     },
+    config::TaskprovConfig,
     Operation,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -25,7 +26,7 @@ use janus_aggregator_core::{
         self,
         models::{
             AggregateShareJob, AggregationJob, AggregationJobState, Batch, BatchAggregation,
-            BatchAggregationState, BatchState, CollectionJob, CollectionJobState,
+            BatchAggregationState, BatchState, CollectionJob, CollectionJobState, HpkeKeyState,
             LeaderStoredReport, ReportAggregation, ReportAggregationState,
         },
         Datastore, Transaction,
@@ -47,7 +48,7 @@ use janus_messages::{
     AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobRound,
     BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, HpkeCiphertext,
-    HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
+    HpkeConfig, HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
     PrepareStep, PrepareStepResult, Report, ReportIdChecksum, ReportShare, ReportShareError, Role,
     TaskId,
 };
@@ -73,11 +74,11 @@ use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     fmt::Debug,
     panic,
-    sync::Arc,
+    sync::{Arc, Mutex as StdMutex},
     time::{Duration as StdDuration, Instant},
 };
-use tokio::{sync::Mutex, try_join};
-use tracing::{debug, info, trace_span, warn};
+use tokio::{spawn, sync::Mutex, task::JoinHandle, time::sleep, try_join};
+use tracing::{debug, error, info, trace_span, warn};
 use url::Url;
 
 pub mod accumulator;
@@ -159,6 +160,9 @@ pub struct Aggregator<C: Clock> {
     /// Counters tracking the number of failures to step client reports through the aggregation
     /// process.
     aggregate_step_failure_counter: Counter<u64>,
+
+    /// Cache of global HPKE configs.
+    global_hpke_configs: GlobalHpkeConfigCache,
 }
 
 /// Config represents a configuration for an Aggregator.
@@ -177,6 +181,12 @@ pub struct Config {
     /// will reduce the amount of database contention during helper aggregation, while increasing
     /// the cost of collection.
     pub batch_aggregation_shard_count: u64,
+
+    /// Defines how often to refresh the global HPKE configs cache. This affects how often an aggregator
+    /// becomes aware of key state changes.
+    pub global_hpke_configs_refresh_interval: StdDuration,
+
+    pub taskprov_config: TaskprovConfig,
 }
 
 impl Default for Config {
@@ -185,12 +195,96 @@ impl Default for Config {
             max_upload_batch_size: 1,
             max_upload_batch_write_delay: StdDuration::ZERO,
             batch_aggregation_shard_count: 1,
+            global_hpke_configs_refresh_interval: GlobalHpkeConfigCache::DEFAULT_REFRESH_INTERVAL,
+            taskprov_config: TaskprovConfig::default(),
         }
     }
 }
 
+#[derive(Debug)]
+pub struct GlobalHpkeConfigCache {
+    /// Cache of HPKE configs. We use a [`std::sync::Mutex`] since we won't hold
+    /// locks across `.await`s and it is lighter weight than [`tokio::sync::Mutex`].
+    configs: Arc<StdMutex<Arc<Vec<HpkeConfig>>>>,
+
+    /// Handle for task responsible for periodically refreshing the cache.
+    refresh_handle: JoinHandle<()>,
+}
+
+impl GlobalHpkeConfigCache {
+    pub const DEFAULT_REFRESH_INTERVAL: StdDuration =
+        StdDuration::from_secs(60 * 60 /* hourly */);
+
+    async fn new<C: Clock>(
+        datastore: Arc<Datastore<C>>,
+        refresh_interval: StdDuration,
+    ) -> Result<Self, Error> {
+        // Initial cache load.
+        let configs = Arc::new(StdMutex::new(Arc::new(
+            Self::get_configs_from_datastore(&datastore).await?,
+        )));
+
+        let refresh_configs = configs.clone();
+        let refresh_handle = spawn(async move {
+            loop {
+                sleep(refresh_interval).await;
+
+                match Self::get_configs_from_datastore(&datastore).await {
+                    Ok(new_configs) => {
+                        let mut values = refresh_configs.lock().unwrap();
+                        *values = Arc::new(new_configs);
+                    }
+                    Err(err) => {
+                        error!(?err, "failed to refresh HPKE config cache");
+                    }
+                }
+            }
+        });
+
+        Ok(Self {
+            configs,
+            refresh_handle,
+        })
+    }
+
+    async fn get_configs_from_datastore<C: Clock>(
+        datastore: &Datastore<C>,
+    ) -> Result<Vec<HpkeConfig>, Error> {
+        Ok(datastore
+            .run_tx_with_name("refresh_global_hpke_configs_cache", |tx| {
+                Box::pin(async move {
+                    Ok(tx
+                        .get_global_hpke_keypairs()
+                        .await?
+                        .iter()
+                        .filter(|keypair| matches!(keypair.state(), HpkeKeyState::Active))
+                        .map(|keypair| keypair.hpke_keypair().config().clone())
+                        .collect::<Vec<_>>())
+                })
+            })
+            .await?)
+    }
+
+    // Retrieve currently cached configs.
+    fn configs(&self) -> Arc<Vec<HpkeConfig>> {
+        let configs = self.configs.lock().unwrap();
+        configs.clone()
+    }
+}
+
+impl Drop for GlobalHpkeConfigCache {
+    fn drop(&mut self) {
+        self.refresh_handle.abort()
+    }
+}
+
 impl<C: Clock> Aggregator<C> {
-    fn new(datastore: Arc<Datastore<C>>, clock: C, meter: &Meter, cfg: Config) -> Self {
+    async fn new(
+        datastore: Arc<Datastore<C>>,
+        clock: C,
+        meter: &Meter,
+        cfg: Config,
+    ) -> Result<Self, Error> {
         let report_writer = Arc::new(ReportWriteBatcher::new(
             Arc::clone(&datastore),
             cfg.max_upload_batch_size,
@@ -212,7 +306,11 @@ impl<C: Clock> Aggregator<C> {
         let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
         aggregate_step_failure_counter.add(&Context::current(), 0, &[]);
 
-        Self {
+        let global_hpke_configs =
+            GlobalHpkeConfigCache::new(datastore.clone(), cfg.global_hpke_configs_refresh_interval)
+                .await?;
+
+        Ok(Self {
             datastore,
             clock,
             cfg,
@@ -221,24 +319,41 @@ impl<C: Clock> Aggregator<C> {
             upload_decrypt_failure_counter,
             upload_decode_failure_counter,
             aggregate_step_failure_counter,
-        }
+            global_hpke_configs,
+        })
     }
 
     async fn handle_hpke_config(
         &self,
         task_id_base64: Option<&[u8]>,
     ) -> Result<HpkeConfigList, Error> {
-        // Task ID is optional in an HPKE config request, but Janus requires it.
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.1
-        let task_id_base64 = task_id_base64.ok_or(Error::MissingTaskId)?;
-
-        let task_id_bytes = URL_SAFE_NO_PAD
-            .decode(task_id_base64)
-            .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
-        let task_id = TaskId::get_decoded(&task_id_bytes)
-            .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
-        let task_aggregator = self.task_aggregator_for(&task_id).await?;
-        Ok(task_aggregator.handle_hpke_config())
+        match task_id_base64 {
+            Some(task_id_base64) => {
+                let task_id_bytes = URL_SAFE_NO_PAD
+                    .decode(task_id_base64)
+                    .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
+                let task_id = TaskId::get_decoded(&task_id_bytes)
+                    .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
+                let task_aggregator = self.task_aggregator_for(&task_id).await?;
+                Ok(task_aggregator.handle_hpke_config())
+            }
+            None => {
+                let configs = self.global_hpke_configs.configs();
+                if configs.is_empty() {
+                    if self.cfg.taskprov_config.enabled {
+                        // A global HPKE configuration is only _required_ when taskprov
+                        // is enabled.
+                        Err(Error::Internal(
+                            "this server is missing its global HPKE config".into(),
+                        ))
+                    } else {
+                        Err(Error::MissingTaskId)
+                    }
+                } else {
+                    Ok(HpkeConfigList::new(configs.to_vec()))
+                }
+            }
+        }
     }
 
     async fn handle_upload(&self, task_id: &TaskId, report_bytes: &[u8]) -> Result<(), Arc<Error>> {
@@ -2730,6 +2845,7 @@ mod tests {
             max_upload_batch_size: 5,
             max_upload_batch_write_delay: StdDuration::from_millis(100),
             batch_aggregation_shard_count: BATCH_AGGREGATION_SHARD_COUNT,
+            ..Default::default()
         }
     }
 
@@ -2802,7 +2918,9 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let aggregator = Aggregator::new(Arc::clone(&datastore), clock.clone(), &noop_meter(), cfg);
+        let aggregator = Aggregator::new(Arc::clone(&datastore), clock.clone(), &noop_meter(), cfg)
+            .await
+            .unwrap();
 
         (
             vdaf,
