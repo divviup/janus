@@ -4,7 +4,7 @@ use clap::Parser;
 use janus_aggregator::{
     aggregator::{self, http_handlers::aggregator_handler},
     binary_utils::{janus_main, BinaryOptions, CommonBinaryOptions},
-    config::{BinaryConfig, CommonConfig, TaskprovConfig},
+    config::{BinaryConfig, CommonConfig},
 };
 use janus_aggregator_core::{
     datastore::Datastore,
@@ -120,7 +120,7 @@ async fn handle_add_task(
         .context("error adding task to database")
 }
 
-fn make_handler(
+async fn make_handler(
     datastore: Arc<Datastore<RealClock>>,
     meter: &Meter,
     dap_serving_prefix: String,
@@ -240,7 +240,8 @@ async fn main() -> anyhow::Result<()> {
             Arc::clone(&datastore),
             &ctx.meter,
             ctx.config.dap_serving_prefix,
-        )?;
+        )
+        .await?;
         trillium_tokio::config()
             .with_host(&ctx.config.listen_address.ip().to_string())
             .with_port(ctx.config.listen_address.port())

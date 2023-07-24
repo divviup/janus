@@ -4204,11 +4204,10 @@ impl<C: Clock> Transaction<'_, C> {
             .await?;
         let hpke_key_rows = self.query(&stmt, &[]).await?;
 
-        let mut global_hpke_keypairs = Vec::new();
-        for row in hpke_key_rows {
-            global_hpke_keypairs.push(self.global_hpke_keypair_from_row(&row)?)
-        }
-        Ok(global_hpke_keypairs)
+        hpke_key_rows
+            .iter()
+            .map(|row| self.global_hpke_keypair_from_row(row))
+            .collect()
     }
 
     /// Retrieve a global HPKE keypair by config ID.
