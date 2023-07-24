@@ -268,6 +268,15 @@ pub mod test_util {
             HpkeAeadId::Aes128Gcm,
         )
     }
+
+    pub fn generate_test_hpke_config_and_private_key_with_id(id: u8) -> HpkeKeypair {
+        generate_hpke_config_and_private_key(
+            HpkeConfigId::from(id),
+            HpkeKemId::X25519HkdfSha256,
+            HpkeKdfId::HkdfSha256,
+            HpkeAeadId::Aes128Gcm,
+        )
+    }
 }
 
 #[cfg(test)]

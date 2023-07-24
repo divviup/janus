@@ -504,6 +504,7 @@ mod tests {
             &meter,
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         AggregationJobContinueTestCase {

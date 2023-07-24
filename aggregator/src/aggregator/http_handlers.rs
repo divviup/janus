@@ -201,13 +201,13 @@ pub(crate) static COLLECTION_JOB_ROUTE: &str = "tasks/:task_id/collection_jobs/:
 pub(crate) static AGGREGATE_SHARES_ROUTE: &str = "tasks/:task_id/aggregate_shares";
 
 /// Constructs a Trillium handler for the aggregator.
-pub fn aggregator_handler<C: Clock>(
+pub async fn aggregator_handler<C: Clock>(
     datastore: Arc<Datastore<C>>,
     clock: C,
     meter: &Meter,
     cfg: Config,
 ) -> Result<impl Handler, Error> {
-    let aggregator = Arc::new(Aggregator::new(datastore, clock, meter, cfg));
+    let aggregator = Arc::new(Aggregator::new(datastore, clock, meter, cfg).await?);
 
     Ok((
         State(aggregator),
@@ -560,6 +560,7 @@ mod tests {
             generate_helper_report_share, generate_helper_report_share_for_plaintext,
             BATCH_AGGREGATION_SHARD_COUNT,
         },
+        Config,
     };
     use assert_matches::assert_matches;
     use futures::future::try_join_all;
@@ -567,7 +568,7 @@ mod tests {
         datastore::{
             models::{
                 AggregateShareJob, AggregationJob, AggregationJobState, Batch, BatchAggregation,
-                BatchAggregationState, BatchState, CollectionJob, CollectionJobState,
+                BatchAggregationState, BatchState, CollectionJob, CollectionJobState, HpkeKeyState,
                 ReportAggregation, ReportAggregationState,
             },
             test_util::ephemeral_datastore,
@@ -578,7 +579,12 @@ mod tests {
     };
     use janus_core::{
         hpke::{
-            self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
+            self,
+            test_util::{
+                generate_test_hpke_config_and_private_key,
+                generate_test_hpke_config_and_private_key_with_id,
+            },
+            HpkeApplicationInfo, HpkeKeypair, Label,
         },
         report_id::ReportIdChecksumExt,
         task::{AuthenticationToken, VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
@@ -604,7 +610,10 @@ mod tests {
     };
     use rand::random;
     use serde_json::json;
-    use std::{borrow::Cow, io::Cursor, sync::Arc};
+    use std::{
+        borrow::Cow, collections::HashMap, io::Cursor, sync::Arc, time::Duration as StdDuration,
+    };
+    use tokio::time::sleep;
     use trillium::{KnownHeaderName, Status};
     use trillium_testing::{
         assert_headers,
@@ -637,9 +646,10 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
-        // No task ID provided
+        // No task ID provided and no global keys are configured.
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
         assert_eq!(
@@ -686,7 +696,147 @@ mod tests {
             hpke_config_list.hpke_configs(),
             &[want_hpke_key.config().clone()]
         );
+        check_hpke_config_is_usable(&hpke_config_list, &want_hpke_key);
+    }
 
+    #[tokio::test]
+    async fn global_hpke_config() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+
+        // Insert an HPKE config, i.e. start the application with a keypair already
+        // in the database.
+        let first_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(1);
+        datastore
+            .run_tx(|tx| {
+                let keypair = first_hpke_keypair.clone();
+                Box::pin(async move {
+                    tx.put_global_hpke_keypair(&keypair).await?;
+                    tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        let cfg = Config {
+            global_hpke_configs_refresh_interval: StdDuration::from_millis(500),
+            ..Default::default()
+        };
+
+        let handler = aggregator_handler(datastore.clone(), clock.clone(), &noop_meter(), cfg)
+            .await
+            .unwrap();
+
+        // No task ID provided
+        let mut test_conn = get("/hpke_config").run_async(&handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert_headers!(
+            &test_conn,
+            "cache-control" => "max-age=86400",
+            "content-type" => (HpkeConfigList::MEDIA_TYPE),
+        );
+        let bytes = take_response_body(&mut test_conn).await;
+        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
+        assert_eq!(
+            hpke_config_list.hpke_configs(),
+            &[first_hpke_keypair.config().clone()]
+        );
+        check_hpke_config_is_usable(&hpke_config_list, &first_hpke_keypair);
+
+        // Insert an inactive HPKE config.
+        let second_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(2);
+        datastore
+            .run_tx(|tx| {
+                let keypair = second_hpke_keypair.clone();
+                Box::pin(async move { tx.put_global_hpke_keypair(&keypair).await })
+            })
+            .await
+            .unwrap();
+        sleep(StdDuration::from_millis(750)).await;
+        let mut test_conn = get("/hpke_config").run_async(&handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let bytes = take_response_body(&mut test_conn).await;
+        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
+        assert_eq!(
+            hpke_config_list.hpke_configs(),
+            &[first_hpke_keypair.config().clone()]
+        );
+
+        // Set key active.
+        datastore
+            .run_tx(|tx| {
+                let keypair = second_hpke_keypair.clone();
+                Box::pin(async move {
+                    tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+        sleep(StdDuration::from_millis(750)).await;
+        let mut test_conn = get("/hpke_config").run_async(&handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let bytes = take_response_body(&mut test_conn).await;
+        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
+        // Unordered comparison.
+        assert_eq!(
+            HashMap::from_iter(
+                hpke_config_list
+                    .hpke_configs()
+                    .iter()
+                    .map(|config| (config.id(), config))
+            ),
+            HashMap::from([
+                (
+                    first_hpke_keypair.config().id(),
+                    &first_hpke_keypair.config().clone()
+                ),
+                (
+                    second_hpke_keypair.config().id(),
+                    &second_hpke_keypair.config().clone()
+                ),
+            ]),
+        );
+
+        // Expire a key.
+        datastore
+            .run_tx(|tx| {
+                let keypair = second_hpke_keypair.clone();
+                Box::pin(async move {
+                    tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Expired)
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+        sleep(StdDuration::from_millis(750)).await;
+        let mut test_conn = get("/hpke_config").run_async(&handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let bytes = take_response_body(&mut test_conn).await;
+        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
+        assert_eq!(
+            hpke_config_list.hpke_configs(),
+            &[first_hpke_keypair.config().clone()]
+        );
+
+        // Delete a key, no keys left.
+        datastore
+            .run_tx(|tx| {
+                let keypair = first_hpke_keypair.clone();
+                Box::pin(async move { tx.delete_global_hpke_keypair(keypair.config().id()).await })
+            })
+            .await
+            .unwrap();
+        sleep(StdDuration::from_millis(750)).await;
+        let test_conn = get("/hpke_config").run_async(&handler).await;
+        assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    }
+
+    fn check_hpke_config_is_usable(hpke_config_list: &HpkeConfigList, hpke_keypair: &HpkeKeypair) {
         let application_info =
             HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
         let message = b"this is a message";
@@ -700,8 +850,8 @@ mod tests {
         )
         .unwrap();
         let plaintext = hpke::open(
-            want_hpke_key.config(),
-            want_hpke_key.private_key(),
+            hpke_keypair.config(),
+            hpke_keypair.private_key(),
             &application_info,
             &ciphertext,
             associated_data,
@@ -732,6 +882,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         // Check for appropriate CORS headers in response to a preflight request.
@@ -807,6 +958,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         // Upload a report. Do this twice to prove that PUT is idempotent.
@@ -1044,6 +1196,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
@@ -1103,6 +1256,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
@@ -1190,6 +1344,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
@@ -1623,6 +1778,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
@@ -1848,6 +2004,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
@@ -1917,6 +2074,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
@@ -1983,6 +2141,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
@@ -2224,6 +2383,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         let aggregate_resp =
@@ -2594,6 +2754,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         let _ =
@@ -2899,6 +3060,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         let _ =
@@ -3101,6 +3263,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         post_aggregation_job_expecting_error(
@@ -3202,6 +3365,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         let aggregate_resp =
@@ -3360,6 +3524,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         post_aggregation_job_expecting_error(
@@ -3499,6 +3664,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         post_aggregation_job_expecting_error(
@@ -3596,6 +3762,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         post_aggregation_job_expecting_error(
@@ -3729,6 +3896,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         let collection_job_id: CollectionJobId = random();
@@ -4352,6 +4520,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         let request = AggregateShareReq::new(
@@ -4409,6 +4578,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         let request = AggregateShareReq::new(
@@ -4503,6 +4673,7 @@ mod tests {
             &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         // There are no batch aggregations in the datastore yet

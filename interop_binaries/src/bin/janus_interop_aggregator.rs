@@ -120,7 +120,7 @@ async fn handle_add_task(
         .context("error adding task to database")
 }
 
-fn make_handler(
+async fn make_handler(
     datastore: Arc<Datastore<RealClock>>,
     meter: &Meter,
     dap_serving_prefix: String,
@@ -134,8 +134,10 @@ fn make_handler(
             max_upload_batch_size: 100,
             max_upload_batch_write_delay: std::time::Duration::from_millis(100),
             batch_aggregation_shard_count: 32,
+            ..Default::default()
         },
-    )?;
+    )
+    .await?;
 
     let handler = Router::new()
         .all(format!("{dap_serving_prefix}/*"), dap_handler)
@@ -238,7 +240,8 @@ async fn main() -> anyhow::Result<()> {
             Arc::clone(&datastore),
             &ctx.meter,
             ctx.config.dap_serving_prefix,
-        )?;
+        )
+        .await?;
         trillium_tokio::config()
             .with_host(&ctx.config.listen_address.ip().to_string())
             .with_port(ctx.config.listen_address.port())

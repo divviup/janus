@@ -128,6 +128,7 @@ async fn setup_aggregate_init_test_without_sending_request() -> AggregationJobIn
         &noop_meter(),
         Config::default(),
     )
+    .await
     .unwrap();
 
     let aggregation_param = dummy_vdaf::AggregationParam(0);
