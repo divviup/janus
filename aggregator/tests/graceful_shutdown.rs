@@ -7,7 +7,6 @@ use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 use janus_aggregator_core::{
     datastore::test_util::ephemeral_datastore,
     task::{test_util::TaskBuilder, QueryType},
-    test_util::noop_meter,
 };
 use janus_core::{task::VdafInstance, test_util::install_test_trace_subscriber, time::RealClock};
 use janus_messages::Role;
@@ -111,9 +110,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
     // This datastore will be used indirectly by the child process, which
     // will connect to its backing database separately.
     let ephemeral_datastore = ephemeral_datastore().await;
-    let datastore = ephemeral_datastore
-        .datastore(RealClock::default(), &noop_meter())
-        .await;
+    let datastore = ephemeral_datastore.datastore(RealClock::default()).await;
 
     let health_check_port = select_open_port().await.unwrap();
     let health_check_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, health_check_port));

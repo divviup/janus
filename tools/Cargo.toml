@@ -14,7 +14,7 @@ fpvec_bounded_l2 = ["dep:fixed", "janus_collector/fpvec_bounded_l2", "prio/exper
 [dependencies]
 anyhow = "1"
 base64 = "0.21.2"
-clap = { version = "4.3.11", features = ["cargo", "derive", "env"] }
+clap = { version = "4.3.14", features = ["cargo", "derive", "env"] }
 derivative = "2.2.0"
 fixed = { version = "1.23", optional = true }
 janus_collector.workspace = true
@@ -22,7 +22,7 @@ janus_core.workspace = true
 janus_messages.workspace = true
 prio.workspace = true
 reqwest = { version = "0.11.18", default-features = false, features = ["rustls-tls", "json"] }
-serde_yaml = "0.9.22"
+serde_yaml = "0.9.23"
 tokio = { version = "1.29", features = ["full"] }
 tracing = "0.1.37"
 tracing-log = "0.1.3"

@@ -604,7 +604,7 @@ mod tests {
     };
     use rand::random;
     use serde_json::json;
-    use std::{io::Cursor, sync::Arc};
+    use std::{borrow::Cow, io::Cursor, sync::Arc};
     use trillium::{KnownHeaderName, Status};
     use trillium_testing::{
         assert_headers,
@@ -625,8 +625,7 @@ mod tests {
         let unknown_task_id: TaskId = random();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         datastore.put_task(&task).await.unwrap();
 
@@ -635,7 +634,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -643,17 +642,8 @@ mod tests {
         // No task ID provided
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": 400u16,
                 "type": "urn:ietf:params:ppm:dap:error:missingTaskID",
@@ -668,17 +658,8 @@ mod tests {
         // Expected status and problem type should be per the protocol
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.1
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": 400u16,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
@@ -699,12 +680,7 @@ mod tests {
             "content-type" => (HpkeConfigList::MEDIA_TYPE),
         );
 
-        let bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
+        let bytes = take_response_body(&mut test_conn).await;
         let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
         assert_eq!(
             hpke_config_list.hpke_configs(),
@@ -746,15 +722,14 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         datastore.put_task(&task).await.unwrap();
 
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -799,17 +774,8 @@ mod tests {
             desired_task_id: &TaskId,
         ) {
             assert_eq!(test_conn.status(), Some(desired_status));
-            let problem_details: serde_json::Value = serde_json::from_slice(
-                &test_conn
-                    .take_response_body()
-                    .unwrap()
-                    .into_bytes()
-                    .await
-                    .unwrap(),
-            )
-            .unwrap();
             assert_eq!(
-                problem_details,
+                take_problem_details(test_conn).await,
                 json!({
                     "status": desired_status as u16,
                     "type": format!("urn:ietf:params:ppm:dap:error:{desired_type}"),
@@ -831,15 +797,14 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         datastore.put_task(&task).await.unwrap();
         let report = create_report(&task, clock.now());
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock.clone(),
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -1062,8 +1027,7 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -1077,7 +1041,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -1089,13 +1053,7 @@ mod tests {
             .await;
 
         assert!(!test_conn.status().unwrap().is_success());
-        let bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
-        let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let problem_details = take_problem_details(&mut test_conn).await;
         assert_eq!(
             problem_details,
             json!({
@@ -1129,8 +1087,7 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         datastore.put_task(&task).await.unwrap();
 
@@ -1143,7 +1100,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -1151,15 +1108,9 @@ mod tests {
 
         let mut test_conn =
             put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
-
         assert!(!test_conn.status().unwrap().is_success());
-        let bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
-        let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        let problem_details = take_problem_details(&mut test_conn).await;
         assert_eq!(
             problem_details,
             json!({
@@ -1223,8 +1174,7 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         datastore.put_task(&task).await.unwrap();
 
@@ -1237,7 +1187,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -1273,17 +1223,8 @@ mod tests {
             let mut test_conn = test_conn.run_async(&handler).await;
 
             let want_status = 400;
-            let problem_details: serde_json::Value = serde_json::from_slice(
-                &test_conn
-                    .take_response_body()
-                    .unwrap()
-                    .into_bytes()
-                    .await
-                    .unwrap(),
-            )
-            .unwrap();
             assert_eq!(
-                problem_details,
+                take_problem_details(&mut test_conn).await,
                 json!({
                     "status": want_status,
                     "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -1307,8 +1248,7 @@ mod tests {
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         let vdaf = dummy_vdaf::Vdaf::new();
         let verify_key: VerifyKey<0> = task.primary_vdaf_verify_key().unwrap();
@@ -1680,7 +1620,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -1694,12 +1634,7 @@ mod tests {
                 &test_conn,
                 "content-type" => (AggregationJobResp::MEDIA_TYPE)
             );
-            let body_bytes = test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap();
+            let body_bytes = take_response_body(&mut test_conn).await;
             let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
             // Validate response.
@@ -1834,12 +1769,7 @@ mod tests {
         let mut test_conn =
             put_aggregation_job(&test_case.task, &random(), &request, &test_case.handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
-        let body_bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
+        let body_bytes = take_response_body(&mut test_conn).await;
         let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
         assert_eq!(aggregate_resp.prepare_steps().len(), 1);
@@ -1886,8 +1816,7 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
         let hpke_key = task.current_hpke_key();
 
         datastore.put_task(&task).await.unwrap();
@@ -1916,7 +1845,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -1929,12 +1858,7 @@ mod tests {
             &test_conn,
             "content-type" => (AggregationJobResp::MEDIA_TYPE)
         );
-        let body_bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
+        let body_bytes = take_response_body(&mut test_conn).await;
         let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
@@ -1961,8 +1885,7 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
         let hpke_key = task.current_hpke_key();
 
         datastore.put_task(&task).await.unwrap();
@@ -1991,7 +1914,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -2004,12 +1927,7 @@ mod tests {
             &test_conn,
             "content-type" => (AggregationJobResp::MEDIA_TYPE)
         );
-        let body_bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
+        let body_bytes = take_response_body(&mut test_conn).await;
         let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
@@ -2035,8 +1953,7 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         datastore.put_task(&task).await.unwrap();
 
@@ -2063,7 +1980,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -2073,17 +1990,8 @@ mod tests {
             put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
 
         let want_status = 400;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
@@ -2108,8 +2016,7 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
@@ -2314,7 +2221,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -2428,12 +2335,7 @@ mod tests {
         let aggregation_job_id_0 = random();
         let aggregation_job_id_1 = random();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = Arc::new(
-            ephemeral_datastore
-                .datastore(MockClock::default(), &meter)
-                .await,
-        );
+        let datastore = Arc::new(ephemeral_datastore.datastore(MockClock::default()).await);
         let first_batch_interval_clock = MockClock::default();
         let second_batch_interval_clock = MockClock::new(
             first_batch_interval_clock
@@ -2689,7 +2591,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             first_batch_interval_clock.clone(),
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -2994,7 +2896,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             first_batch_interval_clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -3131,8 +3033,7 @@ mod tests {
         );
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         // Setup datastore.
         datastore
@@ -3197,7 +3098,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -3233,8 +3134,7 @@ mod tests {
         );
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         // Setup datastore.
         datastore
@@ -3299,7 +3199,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -3390,8 +3290,7 @@ mod tests {
         );
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         // Setup datastore.
         datastore
@@ -3458,7 +3357,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -3495,8 +3394,7 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         // Setup datastore.
         datastore
@@ -3598,7 +3496,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -3631,8 +3529,7 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         // Setup datastore.
         datastore
@@ -3696,7 +3593,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -3734,17 +3631,8 @@ mod tests {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
@@ -3776,17 +3664,8 @@ mod tests {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
@@ -3820,17 +3699,8 @@ mod tests {
 
         // Collect request will be rejected because the aggregation parameter can't be decoded
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
@@ -3849,15 +3719,14 @@ mod tests {
             .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         datastore.put_task(&task).await.unwrap();
 
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -3889,17 +3758,8 @@ mod tests {
 
         // Collect request will be rejected because there are no reports in the batch interval
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
@@ -3930,17 +3790,8 @@ mod tests {
             .await;
 
         let want_status = Status::BadRequest;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -3960,17 +3811,8 @@ mod tests {
             .await;
 
         let want_status = Status::BadRequest;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -3986,17 +3828,8 @@ mod tests {
             .await;
 
         let want_status = Status::BadRequest;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -4035,17 +3868,8 @@ mod tests {
             .await;
 
         let want_status = Status::BadRequest;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -4064,17 +3888,8 @@ mod tests {
             .await;
 
         let want_status = Status::BadRequest;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -4090,17 +3905,8 @@ mod tests {
             .await;
 
         let want_status = Status::BadRequest;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -4252,12 +4058,7 @@ mod tests {
             &test_conn,
             "content-type" => (Collection::<TimeInterval>::MEDIA_TYPE)
         );
-        let body_bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
+        let body_bytes = take_response_body(&mut test_conn).await;
         let collect_resp = Collection::<TimeInterval>::get_decoded(body_bytes.as_ref()).unwrap();
 
         assert_eq!(collect_resp.report_count(), 12);
@@ -4381,17 +4182,8 @@ mod tests {
             .put_collection_job(&random(), &invalid_request)
             .await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes",
@@ -4462,17 +4254,8 @@ mod tests {
             .put_collection_job(&random(), &invalid_request)
             .await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
@@ -4559,15 +4342,14 @@ mod tests {
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         datastore.put_task(&task).await.unwrap();
 
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -4595,17 +4377,8 @@ mod tests {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
@@ -4626,15 +4399,14 @@ mod tests {
             .build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = ephemeral_datastore.datastore(clock.clone(), &meter).await;
+        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         datastore.put_task(&task).await.unwrap();
 
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock.clone(),
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -4669,17 +4441,8 @@ mod tests {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
@@ -4730,15 +4493,14 @@ mod tests {
 
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
-        let meter = noop_meter();
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone(), &meter).await);
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         datastore.put_task(&task).await.unwrap();
 
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock,
-            &meter,
+            &noop_meter(),
             default_aggregator_config(),
         )
         .unwrap();
@@ -4767,17 +4529,8 @@ mod tests {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
@@ -4961,17 +4714,8 @@ mod tests {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
@@ -5023,17 +4767,8 @@ mod tests {
                 .await;
 
             assert_eq!(test_conn.status(), Some(Status::BadRequest));
-            let problem_details: serde_json::Value = serde_json::from_slice(
-                &test_conn
-                    .take_response_body()
-                    .unwrap()
-                    .into_bytes()
-                    .await
-                    .unwrap(),
-            )
-            .unwrap();
             assert_eq!(
-                problem_details,
+                take_problem_details(&mut test_conn).await,
                 json!({
                     "status": Status::BadRequest as u16,
                     "type": "urn:ietf:params:ppm:dap:error:batchMismatch",
@@ -5105,12 +4840,7 @@ mod tests {
                     &test_conn,
                     "content-type" => (AggregateShareMessage::MEDIA_TYPE)
                 );
-                let body_bytes = test_conn
-                    .take_response_body()
-                    .unwrap()
-                    .into_bytes()
-                    .await
-                    .unwrap();
+                let body_bytes = take_response_body(&mut test_conn).await;
                 let aggregate_share_resp = AggregateShareMessage::get_decoded(&body_bytes).unwrap();
 
                 let aggregate_share = hpke::open(
@@ -5164,17 +4894,8 @@ mod tests {
             .run_async(&handler)
             .await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
@@ -5224,17 +4945,8 @@ mod tests {
                 .run_async(&handler)
                 .await;
             assert_eq!(test_conn.status(), Some(Status::BadRequest));
-            let problem_details: serde_json::Value = serde_json::from_slice(
-                &test_conn
-                    .take_response_body()
-                    .unwrap()
-                    .into_bytes()
-                    .await
-                    .unwrap(),
-            )
-            .unwrap();
             assert_eq!(
-                problem_details,
+                take_problem_details(&mut test_conn).await,
                 json!({
                     "status": Status::BadRequest as u16,
                     "type": "urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes",
@@ -5243,5 +4955,18 @@ mod tests {
                 })
             );
         }
+    }
+
+    async fn take_response_body(test_conn: &mut TestConn) -> Cow<'_, [u8]> {
+        test_conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap()
+    }
+
+    async fn take_problem_details(test_conn: &mut TestConn) -> serde_json::Value {
+        serde_json::from_slice(&take_response_body(test_conn).await).unwrap()
     }
 }

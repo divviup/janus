@@ -1,4 +1,4 @@
-FROM rust:1.70.0-alpine AS chef
+FROM rust:1.71.0-alpine AS chef
 RUN apk add --no-cache libc-dev
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 RUN cargo install cargo-chef --version 0.1.60 && \
@@ -22,7 +22,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 COPY --from=planner /src/recipe.json /src/recipe.json
-RUN cargo chef cook --release -p janus_aggregator --features=prometheus
+RUN cargo chef cook --release -p janus_aggregator --features=prometheus,otlp
 COPY Cargo.toml Cargo.lock /src/
 COPY aggregator /src/aggregator
 COPY aggregator_api /src/aggregator_api
@@ -39,7 +39,7 @@ COPY tools /src/tools
 ARG BINARY=aggregator
 ARG GIT_REVISION=unknown
 ENV GIT_REVISION ${GIT_REVISION}
-RUN cargo build --release -p janus_aggregator --bin $BINARY --features=prometheus
+RUN cargo build --release -p janus_aggregator --bin $BINARY --features=prometheus,otlp
 
 FROM alpine:3.18.2 AS final
 ARG BINARY=aggregator
