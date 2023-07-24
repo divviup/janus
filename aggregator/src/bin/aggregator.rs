@@ -281,7 +281,7 @@ struct Config {
 
     /// Defines how often to refresh the global HPKE configs cache in milliseconds. This affects
     /// how often an aggregator becomes aware of key state changes. If unspecified, default is
-    /// defined by [`GlobalHpkeConfigCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally
+    /// defined by [`GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally
     /// have to specify this.
     #[serde(default)]
     global_hpke_configs_refresh_interval: Option<u64>,
