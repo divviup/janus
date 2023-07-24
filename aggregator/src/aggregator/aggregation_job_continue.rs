@@ -90,6 +90,7 @@ impl VdafOps {
                     report_aggregation.time(),
                 )
                 .await?;
+
             if !conflicting_aggregate_share_jobs.is_empty() {
                 *report_aggregation = report_aggregation
                     .clone()

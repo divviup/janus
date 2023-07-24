@@ -542,7 +542,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                                         "impossible: expected batch does not exist in datastore"
                                     )
                                         .into(),
-                                    ))
+                                    ));
                                 }
                             };
                             if batch.state() != &BatchState::Closed {

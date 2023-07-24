@@ -159,7 +159,7 @@ impl AccumulableQueryType for FixedSize {
         batch_id: &Self::PartialBatchIdentifier,
         _: &ReportMetadata,
     ) -> Result<Vec<AggregateShareJob<SEED_SIZE, Self, A>>, datastore::Error> {
-        tx.get_aggregate_share_jobs_by_batch_identifier(vdaf, task_id, batch_id)
+        tx.get_aggregate_share_jobs_by_batch_id(vdaf, task_id, batch_id)
             .await
     }
 
@@ -173,7 +173,7 @@ impl AccumulableQueryType for FixedSize {
         task_id: &TaskId,
         batch_id: &Self::BatchIdentifier,
     ) -> Result<Vec<CollectionJob<SEED_SIZE, Self, A>>, datastore::Error> {
-        tx.get_collection_jobs_by_batch_identifier(vdaf, task_id, batch_id)
+        tx.get_collection_jobs_by_batch_id(vdaf, task_id, batch_id)
             .await
     }
 
