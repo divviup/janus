@@ -89,3 +89,20 @@ batch_aggregation_shard_count: 32
 taskprov_config:
   # Whether to enable the taskprov extension. Defaults to false.
   enabled: false
+
+# Configuration for garbage collection. If omitted, old data is never deleted. (optional)
+garbage_collection:
+  # How frequently to collect garbage, in seconds.
+  gc_frequency_s: 60
+
+  # The maximum number of client reports, per task, to delete in a single run of the garbage
+  # collector.
+  report_limit: 5000
+
+  # The maximum number of aggregation jobs (& related artifacts), per task, to delete in a single
+  # run of the garbage collector.
+  aggregation_limit: 500
+
+  # The maximum number of collection jobs (& related artifacts), per task, to delete in a single run
+  # of the garbage collector.
+  collection_limit: 50
