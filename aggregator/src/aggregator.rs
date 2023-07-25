@@ -1206,22 +1206,6 @@ impl VdafOps {
             }
         }
 
-        // Verify that the report's HPKE config ID is known.
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
-        let global_hpke_keypair =
-            global_hpke_keypairs.keypair(leader_encrypted_input_share.config_id());
-        let task_hpke_keypair = task
-            .hpke_keys()
-            .get(leader_encrypted_input_share.config_id());
-
-        // No task key is present, so see if this report was encrypted with a global key.
-        if task_hpke_keypair.is_none() && global_hpke_keypair.is_none() {
-            return Err(Arc::new(Error::OutdatedHpkeConfig(
-                *task.id(),
-                *leader_encrypted_input_share.config_id(),
-            )));
-        }
-
         // Decode (and in the case of the leader input share, decrypt) the remaining fields of the
         // report before storing them in the datastore. The spec does not require the /upload
         // handler to do this, but it exercises HPKE decryption, saves us the trouble of storing
@@ -1260,35 +1244,45 @@ impl VdafOps {
             }
         };
 
-        let encoded_leader_plaintext_input_share: Result<_, Error> =
-            if let Some(task_hpke_keypair) = task_hpke_keypair {
-                match try_hpke_open(task_hpke_keypair) {
-                    Ok(result) => Ok(result),
-                    Err(error) => match global_hpke_keypair {
-                        Some(global_hpke_keypair) => try_hpke_open(&global_hpke_keypair),
-                        None => Err(error),
-                    },
-                }
-            } else if let Some(global_hpke_keypair) = global_hpke_keypair {
-                try_hpke_open(&global_hpke_keypair)
-            } else {
-                unreachable!("one of the keypairs should have been present");
-            };
+        let global_hpke_keypair =
+            global_hpke_keypairs.keypair(leader_encrypted_input_share.config_id());
 
-        let encoded_leader_plaintext_input_share: Vec<u8> =
-            match encoded_leader_plaintext_input_share {
-                Ok(encoded_leader_plaintext_input_share) => encoded_leader_plaintext_input_share,
-                Err(error) => {
-                    info!(
-                        report.task_id = %task.id(),
-                        report.metadata = ?report.metadata(),
-                        ?error,
-                        "Report decryption failed",
-                    );
-                    upload_decrypt_failure_counter.add(&Context::current(), 1, &[]);
-                    return Ok(());
+        let task_hpke_keypair = task
+            .hpke_keys()
+            .get(leader_encrypted_input_share.config_id());
+
+        let decryption_result = match (task_hpke_keypair, global_hpke_keypair) {
+            // Verify that the report's HPKE config ID is known.
+            // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
+            (None, None) => {
+                return Err(Arc::new(Error::OutdatedHpkeConfig(
+                    *task.id(),
+                    *leader_encrypted_input_share.config_id(),
+                )));
+            }
+            (None, Some(global_hpke_keypair)) => try_hpke_open(&global_hpke_keypair),
+            (Some(task_hpke_keypair), None) => try_hpke_open(task_hpke_keypair),
+            (Some(task_hpke_keypair), Some(global_hpke_keypair)) => {
+                match try_hpke_open(task_hpke_keypair) {
+                    Ok(plaintext) => Ok(plaintext),
+                    Err(_) => try_hpke_open(&global_hpke_keypair),
                 }
-            };
+            }
+        };
+
+        let encoded_leader_plaintext_input_share = match decryption_result {
+            Ok(plaintext) => plaintext,
+            Err(error) => {
+                info!(
+                    report.task_id = %task.id(),
+                    report.metadata = ?report.metadata(),
+                    ?error,
+                    "Report decryption failed",
+                );
+                upload_decrypt_failure_counter.add(&Context::current(), 1, &[]);
+                return Ok(());
+            }
+        };
 
         let leader_plaintext_input_share =
             PlaintextInputShare::get_decoded(&encoded_leader_plaintext_input_share)
@@ -1508,6 +1502,35 @@ impl VdafOps {
                     )
                     .get_encoded(),
                 )
+            };
+
+            let check_keypairs = if task_hpke_keypair.is_none() && global_hpke_keypair.is_none() {
+                info!(
+                    config_id = %report_share.encrypted_input_share().config_id(),
+                    "Helper encrypted input share references unknown HPKE config ID"
+                );
+                aggregate_step_failure_counter.add(
+                    &Context::current(),
+                    1,
+                    &[KeyValue::new("type", "unknown_hpke_config_id")],
+                );
+                Err(ReportShareError::HpkeUnknownConfigId)
+            } else {
+                Ok(())
+            };
+
+            let plaintext = check_keypairs.and_then(|_| {
+                match (task_hpke_keypair, global_hpke_keypair) {
+                    (None, None) => unreachable!("already checked this condition"),
+                    (None, Some(global_hpke_keypair)) => try_hpke_open(&global_hpke_keypair),
+                    (Some(task_hpke_keypair), None) => try_hpke_open(task_hpke_keypair),
+                    (Some(task_hpke_keypair), Some(global_hpke_keypair)) => {
+                        match try_hpke_open(task_hpke_keypair) {
+                            Ok(result) => Ok(result),
+                            Err(_) => try_hpke_open(&global_hpke_keypair),
+                        }
+                    }
+                }
                 .map_err(|error| {
                     info!(
                         task_id = %task.id(),
@@ -1522,32 +1545,7 @@ impl VdafOps {
                     );
                     ReportShareError::HpkeDecryptError
                 })
-            };
-
-            let plaintext = if task_hpke_keypair.is_none() && global_hpke_keypair.is_none() {
-                info!(
-                    config_id = %report_share.encrypted_input_share().config_id(),
-                    "Helper encrypted input share references unknown HPKE config ID"
-                );
-                aggregate_step_failure_counter.add(
-                    &Context::current(),
-                    1,
-                    &[KeyValue::new("type", "unknown_hpke_config_id")],
-                );
-                Err(ReportShareError::HpkeUnknownConfigId)
-            } else if let Some(task_hpke_keypair) = task_hpke_keypair {
-                match try_hpke_open(task_hpke_keypair) {
-                    Ok(result) => Ok(result),
-                    Err(error) => match global_hpke_keypair {
-                        Some(global_hpke_keypair) => try_hpke_open(&global_hpke_keypair),
-                        None => Err(error),
-                    },
-                }
-            } else if let Some(global_hpke_keypair) = global_hpke_keypair {
-                try_hpke_open(&global_hpke_keypair)
-            } else {
-                unreachable!("one of the keypairs should have been Some");
-            };
+            });
 
             let plaintext_input_share = plaintext.and_then(|plaintext| {
                 let plaintext_input_share = PlaintextInputShare::get_decoded(&plaintext).map_err(|error| {
