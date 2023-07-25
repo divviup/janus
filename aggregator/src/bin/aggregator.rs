@@ -2,7 +2,10 @@ use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use clap::Parser;
 use janus_aggregator::{
-    aggregator::{self, http_handlers::aggregator_handler, GlobalHpkeConfigCache},
+    aggregator::{
+        self, garbage_collector::GarbageCollector, http_handlers::aggregator_handler,
+        GlobalHpkeConfigCache,
+    },
     binary_utils::{
         janus_main, setup_server, setup_signal_handler, BinaryOptions, CommonBinaryOptions,
     },
@@ -14,8 +17,8 @@ use janus_core::time::RealClock;
 use serde::{Deserialize, Serialize};
 use std::{future::Future, pin::Pin};
 use std::{iter::Iterator, net::SocketAddr, sync::Arc, time::Duration};
-use tokio::join;
-use tracing::info;
+use tokio::{join, time::interval};
+use tracing::{error, info};
 use trillium::Headers;
 use trillium_router::router;
 use trillium_tokio::Stopper;
@@ -64,6 +67,27 @@ async fn main() -> Result<()> {
             },
         );
 
+        let garbage_collector_future = {
+            let datastore = Arc::clone(&datastore);
+            async move {
+                if let Some(gc_config) = ctx.config.garbage_collection {
+                    let gc = GarbageCollector::new(
+                        datastore,
+                        gc_config.report_limit,
+                        gc_config.aggregation_limit,
+                        gc_config.collection_limit,
+                    );
+                    let mut interval = interval(Duration::from_secs(gc_config.gc_frequency_s));
+                    loop {
+                        interval.tick().await;
+                        if let Err(err) = gc.run().await {
+                            error!(?err, "GC error");
+                        }
+                    }
+                }
+            }
+        };
+
         // No-op closure to unconditionally pass to tokio::join!
         let mut aggregator_api_future = Box::pin(async {}) as Pin<Box<dyn Future<Output = ()>>>;
 
@@ -111,7 +135,11 @@ async fn main() -> Result<()> {
 
         info!(?aggregator_bound_address, "Running aggregator");
 
-        join!(aggregator_server, aggregator_api_future);
+        join!(
+            aggregator_server,
+            garbage_collector_future,
+            aggregator_api_future
+        );
         Ok(())
     })
     .await
@@ -222,8 +250,12 @@ pub enum AggregatorApi {
 struct Config {
     #[serde(flatten)]
     common_config: CommonConfig,
+
     #[serde(default)]
     taskprov_config: TaskprovConfig,
+
+    #[serde(default)]
+    garbage_collection: Option<GarbageCollectorConfig>,
 
     /// Address on which this server should listen for connections to the DAP aggregator API and
     /// serve its API endpoints.
@@ -256,6 +288,24 @@ struct Config {
     /// have to specify this.
     #[serde(default)]
     global_hpke_configs_refresh_interval: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct GarbageCollectorConfig {
+    /// How frequently garbage collection is run, in seconds.
+    gc_frequency_s: u64,
+
+    /// The limit to the number of client report artifacts deleted for a single task by a single run
+    /// of the garbage collector.
+    report_limit: u64,
+
+    /// The limit to the number of aggregation jobs, and related aggregation artifacts, deleted for
+    /// a single task by a single run of the garbage collector.
+    aggregation_limit: u64,
+
+    /// The limit to the number of batches, and related collection artifacts, deleted for a single
+    /// task by a single run of the garbage collector.
+    collection_limit: u64,
 }
 
 impl Config {
@@ -299,7 +349,7 @@ impl BinaryConfig for Config {
 
 #[cfg(test)]
 mod tests {
-    use super::{AggregatorApi, Config, HeaderEntry, Options};
+    use super::{AggregatorApi, Config, GarbageCollectorConfig, HeaderEntry, Options};
     use clap::CommandFactory;
     use janus_aggregator::{
         aggregator,
@@ -333,6 +383,12 @@ mod tests {
     fn roundtrip_config(#[case] aggregator_api: AggregatorApi) {
         roundtrip_encoding(Config {
             listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
+            garbage_collection: Some(GarbageCollectorConfig {
+                gc_frequency_s: 60,
+                report_limit: 25,
+                aggregation_limit: 50,
+                collection_limit: 75,
+            }),
             aggregator_api: Some(aggregator_api),
             common_config: CommonConfig {
                 database: generate_db_config(),
@@ -369,6 +425,36 @@ mod tests {
             .unwrap()
             .aggregator_api,
             None
+        );
+    }
+
+    #[test]
+    fn config_garbage_collection() {
+        assert_eq!(
+            serde_yaml::from_str::<Config>(
+                r#"---
+    listen_address: "0.0.0.0:8080"
+    database:
+        url: "postgres://postgres:postgres@localhost:5432/postgres"
+        connection_pool_timeouts_secs: 60
+    max_upload_batch_size: 100
+    max_upload_batch_write_delay_ms: 250
+    batch_aggregation_shard_count: 32
+    garbage_collection:
+        gc_frequency_s: 60
+        report_limit: 25
+        aggregation_limit: 50
+        collection_limit: 75
+    "#
+            )
+            .unwrap()
+            .garbage_collection,
+            Some(GarbageCollectorConfig {
+                gc_frequency_s: 60,
+                report_limit: 25,
+                aggregation_limit: 50,
+                collection_limit: 75,
+            }),
         );
     }
 

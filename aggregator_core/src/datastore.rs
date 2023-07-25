@@ -4062,16 +4062,25 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Deletes old client reports for a given task, that is, client reports whose timestamp is
-    /// older than the task's report expiry age.
+    /// older than the task's report expiry age. Up to `limit` client reports will be deleted.
     #[tracing::instrument(skip(self), err)]
-    pub async fn delete_expired_client_reports(&self, task_id: &TaskId) -> Result<(), Error> {
+    pub async fn delete_expired_client_reports(
+        &self,
+        task_id: &TaskId,
+        limit: u64,
+    ) -> Result<(), Error> {
         let stmt = self
             .prepare_cached(
-                "DELETE FROM client_reports
-                USING tasks
-                WHERE client_reports.task_id = tasks.id
-                  AND tasks.task_id = $1
-                  AND client_reports.client_timestamp < COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                "WITH client_reports_to_delete AS (
+                    SELECT client_reports.id FROM client_reports
+                    JOIN tasks ON tasks.id = client_reports.task_id
+                    WHERE tasks.task_id = $1
+                      AND client_reports.client_timestamp < COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                    LIMIT $3
+                )
+                DELETE FROM client_reports
+                USING client_reports_to_delete
+                WHERE client_reports.id = client_reports_to_delete.id",
             )
             .await?;
         self.execute(
@@ -4079,6 +4088,7 @@ impl<C: Clock> Transaction<'_, C> {
             &[
                 /* task_id */ &task_id.get_encoded(),
                 /* now */ &self.clock.now().as_naive_date_time()?,
+                /* limit */ &i64::try_from(limit)?,
             ],
         )
         .await?;
@@ -4087,11 +4097,13 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Deletes old aggregation artifacts (aggregation jobs/report aggregations) for a given task,
     /// that is, aggregation artifacts for which the aggregation job's maximum client timestamp is
-    /// older than the task's report expiry age.
+    /// older than the task's report expiry age. Up to `limit` aggregation jobs will be deleted,
+    /// along with all related aggregation artifacts.
     #[tracing::instrument(skip(self), err)]
     pub async fn delete_expired_aggregation_artifacts(
         &self,
         task_id: &TaskId,
+        limit: u64,
     ) -> Result<(), Error> {
         let stmt = self
             .prepare_cached(
@@ -4100,6 +4112,7 @@ impl<C: Clock> Transaction<'_, C> {
                     JOIN tasks ON tasks.id = aggregation_jobs.task_id
                     WHERE tasks.task_id = $1
                       AND UPPER(aggregation_jobs.client_timestamp_interval) < COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                    LIMIT $3
                 ),
                 deleted_report_aggregations AS (
                     DELETE FROM report_aggregations
@@ -4114,6 +4127,7 @@ impl<C: Clock> Transaction<'_, C> {
             &[
                 /* task_id */ &task_id.get_encoded(),
                 /* now */ &self.clock.now().as_naive_date_time()?,
+                /* limit */ &i64::try_from(limit)?,
             ],
         )
         .await?;
@@ -4136,8 +4150,14 @@ impl<C: Clock> Transaction<'_, C> {
     ///     batch_aggregations.)
     ///   * For fixed-size tasks, collection_jobs and aggregate_share_jobs are considered eligible
     ///     for GC if the related batch is eligible for GC.
+    ///
+    /// Up to `limit` batches will be deleted, along with all related collection artifacts.
     #[tracing::instrument(skip(self), err)]
-    pub async fn delete_expired_collection_artifacts(&self, task_id: &TaskId) -> Result<(), Error> {
+    pub async fn delete_expired_collection_artifacts(
+        &self,
+        task_id: &TaskId,
+        limit: u64,
+    ) -> Result<(), Error> {
         let stmt = self
             .prepare_cached(
                 "WITH batches_to_delete AS (
@@ -4146,6 +4166,7 @@ impl<C: Clock> Transaction<'_, C> {
                     JOIN tasks ON tasks.id = batches.task_id
                     WHERE tasks.task_id = $1
                       AND UPPER(COALESCE(batch_interval, client_timestamp_interval)) < COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                    LIMIT $3
                 ),
                 deleted_batch_aggregations AS (
                     DELETE FROM batch_aggregations
@@ -4188,6 +4209,7 @@ impl<C: Clock> Transaction<'_, C> {
             &[
                 /* task_id */ &task_id.get_encoded(),
                 /* now */ &self.clock.now().as_naive_date_time()?,
+                /* limit */ &i64::try_from(limit)?,
             ],
         )
         .await?;
@@ -11510,9 +11532,14 @@ mod tests {
             .unwrap();
 
         // Run.
-        ds.run_tx(|tx| Box::pin(async move { tx.delete_expired_client_reports(&task_id).await }))
-            .await
-            .unwrap();
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                tx.delete_expired_client_reports(&task_id, u64::try_from(i64::MAX)?)
+                    .await
+            })
+        })
+        .await
+        .unwrap();
 
         // Verify.
         let want_report_ids = HashSet::from([new_report_id, other_task_report_id]);
@@ -11886,14 +11913,26 @@ mod tests {
         // Run.
         ds.run_tx(|tx| {
             Box::pin(async move {
-                tx.delete_expired_aggregation_artifacts(&leader_time_interval_task_id)
-                    .await?;
-                tx.delete_expired_aggregation_artifacts(&helper_time_interval_task_id)
-                    .await?;
-                tx.delete_expired_aggregation_artifacts(&leader_fixed_size_task_id)
-                    .await?;
-                tx.delete_expired_aggregation_artifacts(&helper_fixed_size_task_id)
-                    .await?;
+                tx.delete_expired_aggregation_artifacts(
+                    &leader_time_interval_task_id,
+                    u64::try_from(i64::MAX)?,
+                )
+                .await?;
+                tx.delete_expired_aggregation_artifacts(
+                    &helper_time_interval_task_id,
+                    u64::try_from(i64::MAX)?,
+                )
+                .await?;
+                tx.delete_expired_aggregation_artifacts(
+                    &leader_fixed_size_task_id,
+                    u64::try_from(i64::MAX)?,
+                )
+                .await?;
+                tx.delete_expired_aggregation_artifacts(
+                    &helper_fixed_size_task_id,
+                    u64::try_from(i64::MAX)?,
+                )
+                .await?;
                 Ok(())
             })
         })
@@ -12458,18 +12497,30 @@ mod tests {
         // Run.
         ds.run_tx(|tx| {
             Box::pin(async move {
-                tx.delete_expired_collection_artifacts(&leader_time_interval_task_id)
-                    .await
-                    .unwrap();
-                tx.delete_expired_collection_artifacts(&helper_time_interval_task_id)
-                    .await
-                    .unwrap();
-                tx.delete_expired_collection_artifacts(&leader_fixed_size_task_id)
-                    .await
-                    .unwrap();
-                tx.delete_expired_collection_artifacts(&helper_fixed_size_task_id)
-                    .await
-                    .unwrap();
+                tx.delete_expired_collection_artifacts(
+                    &leader_time_interval_task_id,
+                    u64::try_from(i64::MAX)?,
+                )
+                .await
+                .unwrap();
+                tx.delete_expired_collection_artifacts(
+                    &helper_time_interval_task_id,
+                    u64::try_from(i64::MAX)?,
+                )
+                .await
+                .unwrap();
+                tx.delete_expired_collection_artifacts(
+                    &leader_fixed_size_task_id,
+                    u64::try_from(i64::MAX)?,
+                )
+                .await
+                .unwrap();
+                tx.delete_expired_collection_artifacts(
+                    &helper_fixed_size_task_id,
+                    u64::try_from(i64::MAX)?,
+                )
+                .await
+                .unwrap();
                 Ok(())
             })
         })
