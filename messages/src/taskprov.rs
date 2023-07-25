@@ -828,16 +828,5 @@ mod tests {
             ),
             Err(CodecError::Other(_))
         );
-
-        println!(
-            "{:?}",
-            VdafConfig::new(
-                DpConfig::new(DpMechanism::None),
-                VdafType::Prio3Histogram {
-                    buckets: vec![0xAAAAAAAA],
-                },
-            )
-            .unwrap()
-        );
     }
 }
