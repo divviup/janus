@@ -27,7 +27,7 @@ pub struct GlobalHpkeKeypairCache {
     /// Cache of HPKE configs for advertisement.
     configs: Arc<StdMutex<HpkeConfigs>>,
 
-    // Cache of HPKE keypairs for report decryption.
+    /// Cache of HPKE keypairs for report decryption.
     keypairs: Arc<StdMutex<HpkeKeypairs>>,
 
     /// Handle for task responsible for periodically refreshing the cache.

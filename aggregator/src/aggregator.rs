@@ -1109,8 +1109,8 @@ impl VdafOps {
                 }
             };
 
-        let try_hpke_open = |hpke_keypair: &HpkeKeypair| -> Result<Vec<u8>, Error> {
-            match hpke::open(
+        let try_hpke_open = |hpke_keypair: &HpkeKeypair| {
+            hpke::open(
                 hpke_keypair.config(),
                 hpke_keypair.private_key(),
                 &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, task.role()),
@@ -1121,10 +1121,7 @@ impl VdafOps {
                     report.public_share().to_vec(),
                 )
                 .get_encoded(),
-            ) {
-                Ok(results) => Ok(results),
-                Err(error) => Err(error.into()),
-            }
+            )
         };
 
         let global_hpke_keypair =
@@ -1146,10 +1143,12 @@ impl VdafOps {
             (None, Some(global_hpke_keypair)) => try_hpke_open(&global_hpke_keypair),
             (Some(task_hpke_keypair), None) => try_hpke_open(task_hpke_keypair),
             (Some(task_hpke_keypair), Some(global_hpke_keypair)) => {
-                match try_hpke_open(task_hpke_keypair) {
-                    Ok(plaintext) => Ok(plaintext),
-                    Err(_) => try_hpke_open(&global_hpke_keypair),
-                }
+                try_hpke_open(task_hpke_keypair).or_else(|error| match error {
+                    // Only attempt second trial if _decryption_ fails, and not some
+                    // error in server-side HPKE configuration.
+                    hpke::Error::Hpke(_) => try_hpke_open(&global_hpke_keypair),
+                    error => Err(error),
+                })
             }
         };
 
@@ -1408,10 +1407,12 @@ impl VdafOps {
                     (None, Some(global_hpke_keypair)) => try_hpke_open(&global_hpke_keypair),
                     (Some(task_hpke_keypair), None) => try_hpke_open(task_hpke_keypair),
                     (Some(task_hpke_keypair), Some(global_hpke_keypair)) => {
-                        match try_hpke_open(task_hpke_keypair) {
-                            Ok(result) => Ok(result),
-                            Err(_) => try_hpke_open(&global_hpke_keypair),
-                        }
+                        try_hpke_open(task_hpke_keypair).or_else(|error| match error {
+                            // Only attempt second trial if _decryption_ fails, and not some
+                            // error in server-side HPKE configuration.
+                            hpke::Error::Hpke(_) => try_hpke_open(&global_hpke_keypair),
+                            error => Err(error),
+                        })
                     }
                 }
                 .map_err(|error| {
