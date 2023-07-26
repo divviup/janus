@@ -2,13 +2,11 @@ use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use clap::Parser;
 use janus_aggregator::{
-    aggregator::{
-        self, garbage_collector::GarbageCollector, http_handlers::aggregator_handler,
-        GlobalHpkeConfigCache,
-    },
+    aggregator::{self, garbage_collector::GarbageCollector, http_handlers::aggregator_handler},
     binary_utils::{
         janus_main, setup_server, setup_signal_handler, BinaryOptions, CommonBinaryOptions,
     },
+    cache::GlobalHpkeKeypairCache,
     config::{BinaryConfig, CommonConfig, TaskprovConfig},
 };
 use janus_aggregator_api::{self, aggregator_api_handler};
@@ -284,7 +282,7 @@ struct Config {
 
     /// Defines how often to refresh the global HPKE configs cache in milliseconds. This affects
     /// how often an aggregator becomes aware of key state changes. If unspecified, default is
-    /// defined by [`GlobalHpkeConfigCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally
+    /// defined by [`GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally
     /// have to specify this.
     #[serde(default)]
     global_hpke_configs_refresh_interval: Option<u64>,
@@ -331,7 +329,7 @@ impl Config {
             taskprov_config: self.taskprov_config.clone(),
             global_hpke_configs_refresh_interval: match self.global_hpke_configs_refresh_interval {
                 Some(duration) => Duration::from_millis(duration),
-                None => GlobalHpkeConfigCache::DEFAULT_REFRESH_INTERVAL,
+                None => GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
             },
         }
     }

@@ -8,6 +8,7 @@ use crate::{
         query_type::{CollectableQueryType, UploadableQueryType},
         report_writer::{ReportWriteBatcher, WritableReport},
     },
+    cache::GlobalHpkeKeypairCache,
     config::TaskprovConfig,
     Operation,
 };
@@ -26,7 +27,7 @@ use janus_aggregator_core::{
         self,
         models::{
             AggregateShareJob, AggregationJob, AggregationJobState, Batch, BatchAggregation,
-            BatchAggregationState, BatchState, CollectionJob, CollectionJobState, HpkeKeyState,
+            BatchAggregationState, BatchState, CollectionJob, CollectionJobState,
             LeaderStoredReport, ReportAggregation, ReportAggregationState,
         },
         Datastore, Transaction,
@@ -37,7 +38,7 @@ use janus_aggregator_core::{
 #[cfg(feature = "test-util")]
 use janus_core::test_util::dummy_vdaf;
 use janus_core::{
-    hpke::{self, HpkeApplicationInfo, Label},
+    hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     http::response_to_problem_details,
     task::{AuthenticationToken, VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
     time::{Clock, DurationExt, IntervalExt, TimeExt},
@@ -48,7 +49,7 @@ use janus_messages::{
     AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobRound,
     BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, HpkeCiphertext,
-    HpkeConfig, HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
+    HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
     PrepareStep, PrepareStepResult, Report, ReportIdChecksum, ReportShare, ReportShareError, Role,
     TaskId,
 };
@@ -74,11 +75,11 @@ use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     fmt::Debug,
     panic,
-    sync::{Arc, Mutex as StdMutex},
+    sync::Arc,
     time::{Duration as StdDuration, Instant},
 };
-use tokio::{spawn, sync::Mutex, task::JoinHandle, time::sleep, try_join};
-use tracing::{debug, error, info, trace_span, warn};
+use tokio::{sync::Mutex, try_join};
+use tracing::{debug, info, trace_span, warn};
 use url::Url;
 
 pub mod accumulator;
@@ -161,8 +162,8 @@ pub struct Aggregator<C: Clock> {
     /// process.
     aggregate_step_failure_counter: Counter<u64>,
 
-    /// Cache of global HPKE configs.
-    global_hpke_configs: GlobalHpkeConfigCache,
+    /// Cache of global HPKE keypairs and configs.
+    global_hpke_keypairs: GlobalHpkeKeypairCache,
 }
 
 /// Config represents a configuration for an Aggregator.
@@ -195,86 +196,9 @@ impl Default for Config {
             max_upload_batch_size: 1,
             max_upload_batch_write_delay: StdDuration::ZERO,
             batch_aggregation_shard_count: 1,
-            global_hpke_configs_refresh_interval: GlobalHpkeConfigCache::DEFAULT_REFRESH_INTERVAL,
+            global_hpke_configs_refresh_interval: GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
             taskprov_config: TaskprovConfig::default(),
         }
-    }
-}
-
-#[derive(Debug)]
-pub struct GlobalHpkeConfigCache {
-    /// Cache of HPKE configs. We use a [`std::sync::Mutex`] since we won't hold
-    /// locks across `.await`s and it is lighter weight than [`tokio::sync::Mutex`].
-    configs: Arc<StdMutex<Arc<Vec<HpkeConfig>>>>,
-
-    /// Handle for task responsible for periodically refreshing the cache.
-    refresh_handle: JoinHandle<()>,
-}
-
-impl GlobalHpkeConfigCache {
-    pub const DEFAULT_REFRESH_INTERVAL: StdDuration =
-        StdDuration::from_secs(60 * 60 /* hourly */);
-
-    async fn new<C: Clock>(
-        datastore: Arc<Datastore<C>>,
-        refresh_interval: StdDuration,
-    ) -> Result<Self, Error> {
-        // Initial cache load.
-        let configs = Arc::new(StdMutex::new(Arc::new(
-            Self::get_configs_from_datastore(&datastore).await?,
-        )));
-
-        let refresh_configs = configs.clone();
-        let refresh_handle = spawn(async move {
-            loop {
-                sleep(refresh_interval).await;
-
-                match Self::get_configs_from_datastore(&datastore).await {
-                    Ok(new_configs) => {
-                        let mut values = refresh_configs.lock().unwrap();
-                        *values = Arc::new(new_configs);
-                    }
-                    Err(err) => {
-                        error!(?err, "failed to refresh HPKE config cache");
-                    }
-                }
-            }
-        });
-
-        Ok(Self {
-            configs,
-            refresh_handle,
-        })
-    }
-
-    async fn get_configs_from_datastore<C: Clock>(
-        datastore: &Datastore<C>,
-    ) -> Result<Vec<HpkeConfig>, Error> {
-        Ok(datastore
-            .run_tx_with_name("refresh_global_hpke_configs_cache", |tx| {
-                Box::pin(async move {
-                    Ok(tx
-                        .get_global_hpke_keypairs()
-                        .await?
-                        .iter()
-                        .filter(|keypair| matches!(keypair.state(), HpkeKeyState::Active))
-                        .map(|keypair| keypair.hpke_keypair().config().clone())
-                        .collect::<Vec<_>>())
-                })
-            })
-            .await?)
-    }
-
-    // Retrieve currently cached configs.
-    fn configs(&self) -> Arc<Vec<HpkeConfig>> {
-        let configs = self.configs.lock().unwrap();
-        configs.clone()
-    }
-}
-
-impl Drop for GlobalHpkeConfigCache {
-    fn drop(&mut self) {
-        self.refresh_handle.abort()
     }
 }
 
@@ -306,9 +230,11 @@ impl<C: Clock> Aggregator<C> {
         let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
         aggregate_step_failure_counter.add(&Context::current(), 0, &[]);
 
-        let global_hpke_configs =
-            GlobalHpkeConfigCache::new(datastore.clone(), cfg.global_hpke_configs_refresh_interval)
-                .await?;
+        let global_hpke_keypairs = GlobalHpkeKeypairCache::new(
+            datastore.clone(),
+            cfg.global_hpke_configs_refresh_interval,
+        )
+        .await?;
 
         Ok(Self {
             datastore,
@@ -319,7 +245,7 @@ impl<C: Clock> Aggregator<C> {
             upload_decrypt_failure_counter,
             upload_decode_failure_counter,
             aggregate_step_failure_counter,
-            global_hpke_configs,
+            global_hpke_keypairs,
         })
     }
 
@@ -338,7 +264,7 @@ impl<C: Clock> Aggregator<C> {
                 Ok(task_aggregator.handle_hpke_config())
             }
             None => {
-                let configs = self.global_hpke_configs.configs();
+                let configs = self.global_hpke_keypairs.configs();
                 if configs.is_empty() {
                     if self.cfg.taskprov_config.enabled {
                         // A global HPKE configuration is only _required_ when taskprov
@@ -366,6 +292,7 @@ impl<C: Clock> Aggregator<C> {
         task_aggregator
             .handle_upload(
                 &self.clock,
+                &self.global_hpke_keypairs,
                 &self.upload_decrypt_failure_counter,
                 &self.upload_decode_failure_counter,
                 report,
@@ -394,6 +321,7 @@ impl<C: Clock> Aggregator<C> {
         task_aggregator
             .handle_aggregate_init(
                 &self.datastore,
+                &self.global_hpke_keypairs,
                 &self.aggregate_step_failure_counter,
                 aggregation_job_id,
                 req_bytes,
@@ -692,6 +620,7 @@ impl<C: Clock> TaskAggregator<C> {
     async fn handle_upload(
         &self,
         clock: &C,
+        global_hpke_keypairs: &GlobalHpkeKeypairCache,
         upload_decrypt_failure_counter: &Counter<u64>,
         upload_decode_failure_counter: &Counter<u64>,
         report: Report,
@@ -699,6 +628,7 @@ impl<C: Clock> TaskAggregator<C> {
         self.vdaf_ops
             .handle_upload(
                 clock,
+                global_hpke_keypairs,
                 upload_decrypt_failure_counter,
                 upload_decode_failure_counter,
                 &self.task,
@@ -711,6 +641,7 @@ impl<C: Clock> TaskAggregator<C> {
     async fn handle_aggregate_init(
         &self,
         datastore: &Datastore<C>,
+        global_hpke_keypairs: &GlobalHpkeKeypairCache,
         aggregate_step_failure_counter: &Counter<u64>,
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
@@ -718,6 +649,7 @@ impl<C: Clock> TaskAggregator<C> {
         self.vdaf_ops
             .handle_aggregate_init(
                 datastore,
+                global_hpke_keypairs,
                 aggregate_step_failure_counter,
                 Arc::clone(&self.task),
                 aggregation_job_id,
@@ -944,6 +876,7 @@ impl VdafOps {
     async fn handle_upload<C: Clock>(
         &self,
         clock: &C,
+        global_hpke_keypairs: &GlobalHpkeKeypairCache,
         upload_decrypt_failure_counter: &Counter<u64>,
         upload_decode_failure_counter: &Counter<u64>,
         task: &Task,
@@ -956,6 +889,7 @@ impl VdafOps {
                     Self::handle_upload_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
                         Arc::clone(vdaf),
                         clock,
+                        global_hpke_keypairs,
                         upload_decrypt_failure_counter,
                         upload_decode_failure_counter,
                         task,
@@ -970,6 +904,7 @@ impl VdafOps {
                     Self::handle_upload_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
                         Arc::clone(vdaf),
                         clock,
+                        global_hpke_keypairs,
                         upload_decrypt_failure_counter,
                         upload_decode_failure_counter,
                         task,
@@ -992,6 +927,7 @@ impl VdafOps {
     async fn handle_aggregate_init<C: Clock>(
         &self,
         datastore: &Datastore<C>,
+        global_hpke_keypairs: &GlobalHpkeKeypairCache,
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<Task>,
         aggregation_job_id: &AggregationJobId,
@@ -1002,6 +938,7 @@ impl VdafOps {
                 vdaf_ops_dispatch!(self, (vdaf, verify_key, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
                         datastore,
+                        global_hpke_keypairs,
                         vdaf,
                         aggregate_step_failure_counter,
                         task,
@@ -1016,6 +953,7 @@ impl VdafOps {
                 vdaf_ops_dispatch!(self, (vdaf, verify_key, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
                         datastore,
+                        global_hpke_keypairs,
                         vdaf,
                         aggregate_step_failure_counter,
                         task,
@@ -1081,6 +1019,7 @@ impl VdafOps {
     async fn handle_upload_generic<const SEED_SIZE: usize, Q, A, C>(
         vdaf: Arc<A>,
         clock: &C,
+        global_hpke_keypairs: &GlobalHpkeKeypairCache,
         upload_decrypt_failure_counter: &Counter<u64>,
         upload_decode_failure_counter: &Counter<u64>,
         task: &Task,
@@ -1106,15 +1045,6 @@ impl VdafOps {
         }
         let leader_encrypted_input_share =
             &report.encrypted_input_shares()[Role::Leader.index().unwrap()];
-
-        // Verify that the report's HPKE config ID is known.
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
-        let hpke_keypair = task
-            .hpke_keys()
-            .get(leader_encrypted_input_share.config_id())
-            .ok_or_else(|| {
-                Error::OutdatedHpkeConfig(*task.id(), *leader_encrypted_input_share.config_id())
-            })?;
 
         let report_deadline = clock
             .now()
@@ -1179,19 +1109,51 @@ impl VdafOps {
                 }
             };
 
-        let encoded_leader_plaintext_input_share = match hpke::open(
-            hpke_keypair.config(),
-            hpke_keypair.private_key(),
-            &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, task.role()),
-            leader_encrypted_input_share,
-            &InputShareAad::new(
-                *task.id(),
-                report.metadata().clone(),
-                report.public_share().to_vec(),
+        let try_hpke_open = |hpke_keypair: &HpkeKeypair| {
+            hpke::open(
+                hpke_keypair.config(),
+                hpke_keypair.private_key(),
+                &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, task.role()),
+                leader_encrypted_input_share,
+                &InputShareAad::new(
+                    *task.id(),
+                    report.metadata().clone(),
+                    report.public_share().to_vec(),
+                )
+                .get_encoded(),
             )
-            .get_encoded(),
-        ) {
-            Ok(encoded_leader_plaintext_input_share) => encoded_leader_plaintext_input_share,
+        };
+
+        let global_hpke_keypair =
+            global_hpke_keypairs.keypair(leader_encrypted_input_share.config_id());
+
+        let task_hpke_keypair = task
+            .hpke_keys()
+            .get(leader_encrypted_input_share.config_id());
+
+        let decryption_result = match (task_hpke_keypair, global_hpke_keypair) {
+            // Verify that the report's HPKE config ID is known.
+            // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
+            (None, None) => {
+                return Err(Arc::new(Error::OutdatedHpkeConfig(
+                    *task.id(),
+                    *leader_encrypted_input_share.config_id(),
+                )));
+            }
+            (None, Some(global_hpke_keypair)) => try_hpke_open(&global_hpke_keypair),
+            (Some(task_hpke_keypair), None) => try_hpke_open(task_hpke_keypair),
+            (Some(task_hpke_keypair), Some(global_hpke_keypair)) => {
+                try_hpke_open(task_hpke_keypair).or_else(|error| match error {
+                    // Only attempt second trial if _decryption_ fails, and not some
+                    // error in server-side HPKE configuration.
+                    hpke::Error::Hpke(_) => try_hpke_open(&global_hpke_keypair),
+                    error => Err(error),
+                })
+            }
+        };
+
+        let encoded_leader_plaintext_input_share = match decryption_result {
+            Ok(plaintext) => plaintext,
             Err(error) => {
                 info!(
                     report.task_id = %task.id(),
@@ -1345,6 +1307,7 @@ impl VdafOps {
     /// helper, described in §4.4.4.1 of draft-gpew-priv-ppm.
     async fn handle_aggregate_init_generic<const SEED_SIZE: usize, Q, A, C>(
         datastore: &Datastore<C>,
+        global_hpke_keypairs: &GlobalHpkeKeypairCache,
         vdaf: &A,
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<Task>,
@@ -1400,24 +1363,15 @@ impl VdafOps {
                 }
             }
 
-            let hpke_keypair = task
+            let task_hpke_keypair = task
                 .hpke_keys()
-                .get(report_share.encrypted_input_share().config_id())
-                .ok_or_else(|| {
-                    info!(
-                        config_id = %report_share.encrypted_input_share().config_id(),
-                        "Helper encrypted input share references unknown HPKE config ID"
-                    );
-                    aggregate_step_failure_counter.add(
-                        &Context::current(),
-                        1,
-                        &[KeyValue::new("type", "unknown_hpke_config_id")],
-                    );
-                    ReportShareError::HpkeUnknownConfigId
-                });
+                .get(report_share.encrypted_input_share().config_id());
+
+            let global_hpke_keypair =
+                global_hpke_keypairs.keypair(report_share.encrypted_input_share().config_id());
 
             // If decryption fails, then the aggregator MUST fail with error `hpke-decrypt-error`. (§4.4.2.2)
-            let plaintext = hpke_keypair.and_then(|hpke_keypair| {
+            let try_hpke_open = |hpke_keypair: &HpkeKeypair| {
                 hpke::open(
                     hpke_keypair.config(),
                     hpke_keypair.private_key(),
@@ -1430,6 +1384,37 @@ impl VdafOps {
                     )
                     .get_encoded(),
                 )
+            };
+
+            let check_keypairs = if task_hpke_keypair.is_none() && global_hpke_keypair.is_none() {
+                info!(
+                    config_id = %report_share.encrypted_input_share().config_id(),
+                    "Helper encrypted input share references unknown HPKE config ID"
+                );
+                aggregate_step_failure_counter.add(
+                    &Context::current(),
+                    1,
+                    &[KeyValue::new("type", "unknown_hpke_config_id")],
+                );
+                Err(ReportShareError::HpkeUnknownConfigId)
+            } else {
+                Ok(())
+            };
+
+            let plaintext = check_keypairs.and_then(|_| {
+                match (task_hpke_keypair, global_hpke_keypair) {
+                    (None, None) => unreachable!("already checked this condition"),
+                    (None, Some(global_hpke_keypair)) => try_hpke_open(&global_hpke_keypair),
+                    (Some(task_hpke_keypair), None) => try_hpke_open(task_hpke_keypair),
+                    (Some(task_hpke_keypair), Some(global_hpke_keypair)) => {
+                        try_hpke_open(task_hpke_keypair).or_else(|error| match error {
+                            // Only attempt second trial if _decryption_ fails, and not some
+                            // error in server-side HPKE configuration.
+                            hpke::Error::Hpke(_) => try_hpke_open(&global_hpke_keypair),
+                            error => Err(error),
+                        })
+                    }
+                }
                 .map_err(|error| {
                     info!(
                         task_id = %task.id(),
@@ -2819,7 +2804,10 @@ mod tests {
         test_util::noop_meter,
     };
     use janus_core::{
-        hpke::{self, HpkeApplicationInfo, Label},
+        hpke::{
+            self, test_util::generate_test_hpke_config_and_private_key_with_id,
+            HpkeApplicationInfo, HpkeKeypair, Label,
+        },
         task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
         test_util::install_test_trace_subscriber,
         time::{Clock, MockClock, TimeExt},
@@ -2835,6 +2823,7 @@ mod tests {
     };
     use rand::random;
     use std::{collections::HashSet, iter, sync::Arc, time::Duration as StdDuration};
+    use tokio::time::sleep;
 
     pub(crate) const BATCH_AGGREGATION_SHARD_COUNT: u64 = 32;
 
@@ -2853,11 +2842,11 @@ mod tests {
         task: &Task,
         report_timestamp: Time,
         id: ReportId,
+        hpke_key: &HpkeKeypair,
     ) -> Report {
         assert_eq!(task.vdaf(), &VdafInstance::Prio3Count);
 
         let vdaf = Prio3Count::new_count(2).unwrap();
-        let hpke_key = task.current_hpke_key();
         let report_metadata = ReportMetadata::new(id, report_timestamp);
 
         let (public_share, measurements) = vdaf.shard(&1, id.as_ref()).unwrap();
@@ -2891,7 +2880,7 @@ mod tests {
     }
 
     pub(super) fn create_report(task: &Task, report_timestamp: Time) -> Report {
-        create_report_with_id(task, report_timestamp, random())
+        create_report_with_id(task, report_timestamp, random(), task.current_hpke_key())
     }
 
     async fn setup_upload_test(
@@ -2969,7 +2958,12 @@ mod tests {
             .unwrap();
 
         // Reports may not be mutated
-        let mutated_report = create_report_with_id(&task, clock.now(), *report.metadata().id());
+        let mutated_report = create_report_with_id(
+            &task,
+            clock.now(),
+            *report.metadata().id(),
+            task.current_hpke_key(),
+        );
         let error = aggregator
             .handle_upload(task.id(), &mutated_report.get_encoded())
             .await
@@ -3180,6 +3174,80 @@ mod tests {
             assert_eq!(report.metadata().id(), err_report_id);
             assert_eq!(report.metadata().time(), err_time);
         });
+    }
+
+    #[tokio::test]
+    async fn upload_report_encrypted_with_global_key() {
+        install_test_trace_subscriber();
+
+        let (vdaf, aggregator, clock, task, datastore, _ephemeral_datastore) =
+            setup_upload_test(Config {
+                max_upload_batch_size: 1000,
+                max_upload_batch_write_delay: StdDuration::from_millis(500),
+                global_hpke_configs_refresh_interval: StdDuration::from_millis(500),
+                ..Default::default()
+            })
+            .await;
+
+        // Same ID as the task to test having both keys to choose from.
+        let global_hpke_keypair_same_id = generate_test_hpke_config_and_private_key_with_id(
+            (*task.current_hpke_key().config().id()).into(),
+        );
+        // Different ID to test misses on the task key.
+        let global_hpke_keypair_different_id = generate_test_hpke_config_and_private_key_with_id(
+            (0..)
+                .map(HpkeConfigId::from)
+                .find(|id| !task.hpke_keys().contains_key(id))
+                .unwrap()
+                .into(),
+        );
+
+        datastore
+            .run_tx(|tx| {
+                let global_hpke_keypair_same_id = global_hpke_keypair_same_id.clone();
+                let global_hpke_keypair_different_id = global_hpke_keypair_different_id.clone();
+                Box::pin(async move {
+                    // Leave these in the PENDING state--they should still be decryptable.
+                    tx.put_global_hpke_keypair(&global_hpke_keypair_same_id)
+                        .await?;
+                    tx.put_global_hpke_keypair(&global_hpke_keypair_different_id)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        // Let keypair cache refresh.
+        sleep(StdDuration::from_millis(750)).await;
+
+        for report in [
+            create_report(&task, clock.now()),
+            create_report_with_id(&task, clock.now(), random(), &global_hpke_keypair_same_id),
+            create_report_with_id(
+                &task,
+                clock.now(),
+                random(),
+                &global_hpke_keypair_different_id,
+            ),
+        ] {
+            aggregator
+                .handle_upload(task.id(), &report.get_encoded())
+                .await
+                .unwrap();
+
+            let got_report = datastore
+                .run_tx(|tx| {
+                    let (vdaf, task_id, report_id) =
+                        (vdaf.clone(), *task.id(), *report.metadata().id());
+                    Box::pin(async move { tx.get_client_report(&vdaf, &task_id, &report_id).await })
+                })
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(task.id(), got_report.task_id());
+            assert_eq!(report.metadata(), got_report.metadata());
+        }
     }
 
     pub(crate) fn generate_helper_report_share<V: vdaf::Client<16>>(
