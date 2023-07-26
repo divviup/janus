@@ -44,37 +44,21 @@ pub enum Error {
 }
 
 /// Wire-representation of an ASCII-encoded URL with minimum length 1 and maximum
-/// length 2^16 - 1. This is a newtype for [`url::Url`] for adding encoding and
-/// decoding traits.
-///
-/// Note that because [`url::Url::parse`] is used while decoding, this type has more
-/// restrictions on it than specified in DAP. See [`url::ParseError`] for the additional
-/// ways decoding can fail.
-///
-/// Also note that the encoding of a URL may not precisely match what it was decoded
-/// from. In particular, the in-memory representation of [`url::Url`] adds a trailing
-/// slash if it is appropriate to do so, e.g. `https://example.com -> https://example.com/`.
-/// This does not affect the parseability of the resulting encoded Url, but may result
-/// in an increase in size of the encoding.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Url(url::Url);
+/// length 2^16 - 1.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Url(Vec<u8>);
 
 impl Url {
     const MAX_LEN: usize = 2usize.pow(16) - 1;
-
-    // Access the underlying [`url::Url`].
-    pub fn url(&self) -> &url::Url {
-        &self.0
-    }
 }
 
 impl Encode for Url {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        encode_u16_items(bytes, &(), self.0.as_str().as_bytes())
+        encode_u16_items(bytes, &(), &self.0)
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        Some(2 + self.0.as_str().len())
+        Some(2 + self.0.len())
     }
 }
 
@@ -84,9 +68,23 @@ impl Decode for Url {
     }
 }
 
+impl Debug for Url {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            str::from_utf8(&self.0).map_err(|_| std::fmt::Error)?
+        )
+    }
+}
+
 impl Display for Url {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        (&self.0 as &dyn Display).fmt(f)
+        write!(
+            f,
+            "{}",
+            str::from_utf8(&self.0).map_err(|_| std::fmt::Error)?
+        )
     }
 }
 
@@ -107,13 +105,18 @@ impl TryFrom<&[u8]> for Url {
                 anyhow!("Url must be ASCII encoded").into(),
             ))
         } else {
-            Ok(Self(
-                // Unwrap safety: we just verified that the Url contains ASCII
-                // characters only. UTF8 is backwards compatible with ASCII.
-                url::Url::parse(str::from_utf8(value).unwrap())
-                    .map_err(|err| CodecError::Other(err.into()))?,
-            ))
+            Ok(Self(Vec::from(value)))
         }
+    }
+}
+
+impl TryInto<url::Url> for Url {
+    type Error = url::ParseError;
+
+    fn try_into(self) -> Result<url::Url, Self::Error> {
+        // Unwrap safety: this type can't be constructed without being validated
+        // as consisting only of ASCII.
+        url::Url::parse(str::from_utf8(&self.0).unwrap())
     }
 }
 
@@ -2755,6 +2758,7 @@ mod tests {
     fn roundtrip_url() {
         for (test, len) in [
             ("https://example.com/", [0u8, 20]),
+            ("https://example.com", [0u8, 19]),
             (
                 &("http://".to_string()
                     + &"h".repeat(Into::<usize>::into(u16::MAX) - "http://".len() - 1)

@@ -724,10 +724,10 @@ mod tests {
                     ),
                     concat!(
                         // aggregator_endpoints
-                        "0016", // length of all vector contents
+                        "0015", // length of all vector contents
                         concat!(
-                            "0014",                                     // length
-                            "68747470733A2F2F6578616D706C652E636F6D2F"  // contents
+                            "0013",                                   // length
+                            "68747470733A2F2F6578616D706C652E636F6D"  // contents
                         ),
                     ),
                     concat!(
