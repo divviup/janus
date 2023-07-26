@@ -125,6 +125,9 @@ pub enum Error {
     /// A catch-all error representing an issue with a request.
     #[error("request error: {0}")]
     BadRequest(String),
+    /// Corresponds to taskprov invalidType (§2)
+    #[error("aggregator has opted out of the indicated task: {0}")]
+    InvalidTask(TaskId, String),
 }
 
 impl Error {
@@ -162,6 +165,7 @@ impl Error {
             Error::Internal(_) => "internal",
             Error::ForbiddenMutation { .. } => "forbidden_mutation",
             Error::BadRequest(_) => "bad_request",
+            Error::InvalidTask(_, _) => "invalid_task",
         }
     }
 }

@@ -1,0 +1,5 @@
+ALTER TABLE tasks DROP COLUMN;
+ALTER TABLE tasks DROP COLUMN;
+
+DROP TABLE taskprov_peer_aggregator;
+DROP TYPE TASK_CREATED_BY;

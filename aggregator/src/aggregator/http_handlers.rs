@@ -5,6 +5,7 @@ use janus_aggregator_core::{datastore::Datastore, instrumented};
 use janus_core::{
     http::extract_bearer_token,
     task::{AuthenticationToken, DapAuthToken, DAP_AUTH_HEADER},
+    taskprov::TASKPROV_HEADER,
     time::Clock,
 };
 use janus_messages::{
@@ -99,6 +100,9 @@ impl Handler for Error {
             }
             Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
             Error::BadRequest(_) => conn.with_status(Status::BadRequest),
+            Error::InvalidTask(task_id, _) => {
+                conn.with_problem_details(DapProblemType::InvalidTask, Some(task_id))
+            }
         }
     }
 }
@@ -370,8 +374,18 @@ async fn aggregation_jobs_put<C: Clock>(
     let task_id = parse_task_id(&captures)?;
     let aggregation_job_id = parse_aggregation_job_id(&captures)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
+    let taskprov_config = conn
+        .request_headers()
+        .get(TASKPROV_HEADER)
+        .map(|header| header.as_ref());
     let response = aggregator
-        .handle_aggregate_init(&task_id, &aggregation_job_id, &body, auth_token)
+        .handle_aggregate_init(
+            &task_id,
+            &aggregation_job_id,
+            &body,
+            auth_token,
+            taskprov_config,
+        )
         .await?;
 
     Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))

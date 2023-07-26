@@ -46,6 +46,7 @@ use janus_core::{
 use janus_messages::{
     problem_type::DapProblemType,
     query_type::{FixedSize, TimeInterval},
+    taskprov::TaskConfig,
     AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobRound,
     BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, HpkeCiphertext,
@@ -74,6 +75,7 @@ use std::{
     borrow::Borrow,
     collections::{hash_map::Entry, HashMap, HashSet},
     fmt::Debug,
+    io::Cursor,
     panic,
     sync::Arc,
     time::{Duration as StdDuration, Instant},
@@ -260,7 +262,10 @@ impl<C: Clock> Aggregator<C> {
                     .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
                 let task_id = TaskId::get_decoded(&task_id_bytes)
                     .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
-                let task_aggregator = self.task_aggregator_for(&task_id).await?;
+                let task_aggregator = self
+                    .task_aggregator_for(&task_id)
+                    .await?
+                    .ok_or_else(|| Error::UnrecognizedMessage(None, "task_id"))?;
                 Ok(task_aggregator.handle_hpke_config())
             }
             None => {
@@ -285,7 +290,10 @@ impl<C: Clock> Aggregator<C> {
     async fn handle_upload(&self, task_id: &TaskId, report_bytes: &[u8]) -> Result<(), Arc<Error>> {
         let report = Report::get_decoded(report_bytes).map_err(|err| Arc::new(Error::from(err)))?;
 
-        let task_aggregator = self.task_aggregator_for(task_id).await?;
+        let task_aggregator = self
+            .task_aggregator_for(task_id)
+            .await?
+            .ok_or_else(|| Error::UnrecognizedMessage(None, "task_id"))?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Arc::new(Error::UnrecognizedTask(*task_id)));
         }
@@ -306,8 +314,30 @@ impl<C: Clock> Aggregator<C> {
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
+        taskprov_header: Option<&[u8]>,
     ) -> Result<AggregationJobResp, Error> {
-        let task_aggregator = self.task_aggregator_for(task_id).await?;
+        let task_aggregator = match self.task_aggregator_for(task_id).await? {
+            Some(task_aggregator) => task_aggregator,
+            None => {
+                if self.cfg.taskprov_config.enabled && taskprov_header.is_some() {
+                    let task_config = TaskConfig::decode(&mut Cursor::new(
+                        &URL_SAFE_NO_PAD
+                            .decode(&taskprov_header.unwrap())
+                            .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?,
+                    ))?;
+
+                    self.taskprov_opt_in(task_id, &task_config).await?;
+
+                    self.task_aggregator_for(task_id).await?.ok_or_else(|| {
+                        // inahga: more tracing, better error message
+                        Error::Internal("unexpectedly failed to create task".to_string())
+                    })?
+                } else {
+                    return Err(Error::UnrecognizedTask(*task_id));
+                }
+            }
+        };
+
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
         }
@@ -336,7 +366,10 @@ impl<C: Clock> Aggregator<C> {
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
     ) -> Result<AggregationJobResp, Error> {
-        let task_aggregator = self.task_aggregator_for(task_id).await?;
+        let task_aggregator = self
+            .task_aggregator_for(task_id)
+            .await?
+            .ok_or_else(|| Error::UnrecognizedMessage(None, "task_id"))?;
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
         }
@@ -372,7 +405,10 @@ impl<C: Clock> Aggregator<C> {
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
     ) -> Result<(), Error> {
-        let task_aggregator = self.task_aggregator_for(task_id).await?;
+        let task_aggregator = self
+            .task_aggregator_for(task_id)
+            .await?
+            .ok_or_else(|| Error::UnrecognizedMessage(None, "task_id"))?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Error::UnrecognizedTask(*task_id));
         }
@@ -398,7 +434,10 @@ impl<C: Clock> Aggregator<C> {
         collection_job_id: &CollectionJobId,
         auth_token: Option<AuthenticationToken>,
     ) -> Result<Option<Vec<u8>>, Error> {
-        let task_aggregator = self.task_aggregator_for(task_id).await?;
+        let task_aggregator = self
+            .task_aggregator_for(task_id)
+            .await?
+            .ok_or_else(|| Error::UnrecognizedMessage(None, "task_id"))?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Error::UnrecognizedTask(*task_id));
         }
@@ -421,7 +460,10 @@ impl<C: Clock> Aggregator<C> {
         collection_job_id: &CollectionJobId,
         auth_token: Option<AuthenticationToken>,
     ) -> Result<(), Error> {
-        let task_aggregator = self.task_aggregator_for(task_id).await?;
+        let task_aggregator = self
+            .task_aggregator_for(task_id)
+            .await?
+            .ok_or_else(|| Error::UnrecognizedMessage(None, "task_id"))?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Error::UnrecognizedTask(*task_id));
         }
@@ -447,7 +489,10 @@ impl<C: Clock> Aggregator<C> {
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
     ) -> Result<AggregateShare, Error> {
-        let task_aggregator = self.task_aggregator_for(task_id).await?;
+        let task_aggregator = self
+            .task_aggregator_for(task_id)
+            .await?
+            .ok_or_else(|| Error::UnrecognizedMessage(None, "task_id"))?;
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
         }
@@ -468,7 +513,10 @@ impl<C: Clock> Aggregator<C> {
             .await
     }
 
-    async fn task_aggregator_for(&self, task_id: &TaskId) -> Result<Arc<TaskAggregator<C>>, Error> {
+    async fn task_aggregator_for(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Option<Arc<TaskAggregator<C>>>, Error> {
         // TODO(#238): don't cache forever (decide on & implement some cache eviction policy).
         // This is important both to avoid ever-growing resource usage, and to allow aggregators to
         // notice when a task changes (e.g. due to key rotation).
@@ -477,24 +525,71 @@ impl<C: Clock> Aggregator<C> {
         {
             let task_aggs = self.task_aggregators.lock().await;
             if let Some(task_agg) = task_aggs.get(task_id) {
-                return Ok(Arc::clone(task_agg));
+                return Ok(Some(Arc::clone(task_agg)));
             }
         }
 
         // Slow path: retrieve task, create a task aggregator, store it to the cache, then return it.
-        let task = self
+        // inahga: this is a mess
+        match self
             .datastore
             .run_tx_with_name("task_aggregator_get_task", |tx| {
                 let task_id = *task_id;
                 Box::pin(async move { tx.get_task(&task_id).await })
             })
             .await?
-            .ok_or(Error::UnrecognizedTask(*task_id))?;
-        let task_agg = Arc::new(TaskAggregator::new(task, Arc::clone(&self.report_writer))?);
         {
-            let mut task_aggs = self.task_aggregators.lock().await;
-            Ok(Arc::clone(task_aggs.entry(*task_id).or_insert(task_agg)))
+            Some(task) => {
+                let task_agg =
+                    Arc::new(TaskAggregator::new(task, Arc::clone(&self.report_writer))?);
+                {
+                    let mut task_aggs = self.task_aggregators.lock().await;
+                    Ok(Some(Arc::clone(
+                        task_aggs.entry(*task_id).or_insert(task_agg),
+                    )))
+                }
+            }
+            None => Ok(None),
         }
+    }
+
+    // Prior to participating in a task, each protocol participant must determine if the TaskConfig disseminated by the Author can be configured. The participant is said to "opt in" to the task if the derived task ID (see {{construct-task-id}}) corresponds to an already configured task or the task ID is unrecognized and therefore corresponds to a new task.
+
+    // A protocol participant MAY "opt out" of a task if:
+
+    //     The derived task ID corresponds to an already configured task, but the task configuration disseminated by the Author does not match the existing configuration.
+
+    //     The VDAF, DP, or query configuration is deemed insufficient for privacy.
+
+    //     A secure connection to one or both of the Aggregator endpoints could not be established.
+
+    //     The task lifetime is too long.
+
+    // A protocol participant MUST opt out if the task has expired. f
+
+    // The behavior of each protocol participant is determined by whether or not they opt in to a task.
+
+    async fn taskprov_opt_in(
+        &self,
+        task_id: &TaskId,
+        task_config: &TaskConfig,
+    ) -> Result<(), Error> {
+        if self.clock.now() > *task_config.task_expiration() {
+            return Err(Error::InvalidTask(
+                *task_id,
+                "the task has expired".to_string(),
+            ));
+        }
+
+        // get the peer aggregator
+
+        // check all peer aggregator parameters for opt-out
+
+        // insert the new task
+
+        // be wary of concurrency problems
+
+        Ok(())
     }
 
     #[cfg(feature = "test-util")]
