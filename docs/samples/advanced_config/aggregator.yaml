@@ -74,6 +74,10 @@ aggregator_api:
   # Alternately, the aggregator API may be served on `listen_address`, at an arbitrary path prefix.
   # path_prefix: "aggregator-api"
 
+  # Resource location at which the DAP service managed by this
+  # aggregator api can be found on the public internet. Required.
+  public_dap_url: "https://dap.test"
+
 # Maximum number of uploaded reports per batching transaction. (required)
 max_upload_batch_size: 100
 

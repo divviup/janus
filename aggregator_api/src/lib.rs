@@ -15,8 +15,10 @@ use janus_core::{
     task::{AuthenticationToken, DapAuthToken},
     time::Clock,
 };
-use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, Role, TaskId};
-use models::{GetTaskMetricsResp, TaskResp};
+use janus_messages::{
+    query_type::Code as QueryTypeId, Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, Role, TaskId,
+};
+use models::{AggregatorApiConfig, AggregatorRole, GetTaskMetricsResp, TaskResp, VdafId};
 use querystring::querify;
 use rand::random;
 use ring::{
@@ -40,6 +42,7 @@ use url::Url;
 #[derive(Clone)]
 pub struct Config {
     pub auth_tokens: Vec<SecretBytes>,
+    pub public_dap_url: Url,
 }
 
 /// Content type
@@ -90,6 +93,7 @@ pub fn aggregator_api_handler<C: Clock>(ds: Arc<Datastore<C>>, cfg: Config) -> i
         ReplaceMimeTypes,
         // Main functionality router.
         Router::new()
+            .get("/", instrumented(api(get_config)))
             .get("/task_ids", instrumented(api(get_task_ids::<C>)))
             .post("/tasks", instrumented(api(post_task::<C>)))
             .get("/tasks/:task_id", instrumented(api(get_task::<C>)))
@@ -113,11 +117,21 @@ async fn auth_check(conn: &mut Conn, State(cfg): State<Arc<Config>>) -> impl Han
         constant_time::verify_slices_are_equal(bearer_token.as_ref(), key.as_ref()).is_ok()
     }) {
         // Authorization succeeds.
+        conn.set_state(cfg);
         return None;
     }
 
     // Authorization fails.
     Some((Status::Unauthorized, Halt))
+}
+
+async fn get_config(_: &mut Conn, State(config): State<Arc<Config>>) -> Json<AggregatorApiConfig> {
+    Json(AggregatorApiConfig {
+        dap_url: config.public_dap_url.clone(),
+        role: AggregatorRole::Either,
+        vdafs: vec![VdafId::Prio3Count, VdafId::Prio3Sum, VdafId::Prio3Histogram],
+        query_types: vec![QueryTypeId::TimeInterval, QueryTypeId::FixedSize],
+    })
 }
 
 async fn get_task_ids<C: Clock>(
@@ -405,9 +419,38 @@ mod models {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use janus_aggregator_core::task::{QueryType, Task};
     use janus_core::task::VdafInstance;
-    use janus_messages::{Duration, HpkeConfig, Role, TaskId, Time};
+    use janus_messages::{
+        query_type::Code as QueryTypeId, Duration, HpkeConfig, Role, TaskId, Time,
+    };
     use serde::{Deserialize, Serialize};
     use url::Url;
+
+    #[allow(dead_code)]
+    // ^^ allowed in order to fully describe the interface and for later use
+    #[derive(Serialize, PartialEq, Eq, Debug)]
+    pub(crate) enum AggregatorRole {
+        Either,
+        Leader,
+        Helper,
+    }
+
+    #[derive(Serialize, PartialEq, Eq, Debug)]
+    pub(crate) struct AggregatorApiConfig {
+        pub dap_url: Url,
+        pub role: AggregatorRole,
+        pub vdafs: Vec<VdafId>,
+        pub query_types: Vec<QueryTypeId>,
+    }
+
+    #[allow(clippy::enum_variant_names)]
+    // ^^ allowed because it just happens to be the case that all of the supported vdafs are prio3
+    #[derive(Serialize, PartialEq, Eq, Debug)]
+    #[repr(u8)]
+    pub(crate) enum VdafId {
+        Prio3Count = 0,
+        Prio3Sum = 1,
+        Prio3Histogram = 2,
+    }
 
     #[derive(Serialize)]
     pub(crate) struct GetTaskIdsResp {
@@ -643,10 +686,28 @@ mod tests {
             Arc::clone(&datastore),
             Config {
                 auth_tokens: Vec::from([SecretBytes::new(AUTH_TOKEN.as_bytes().to_vec())]),
+                public_dap_url: "https://dap.url".parse().unwrap(),
             },
         );
 
         (handler, ephemeral_datastore, datastore)
+    }
+
+    #[tokio::test]
+    async fn get_config() {
+        let (handler, ..) = setup_api_test().await;
+        assert_response!(
+            get("/")
+                .with_request_header(
+                    "Authorization",
+                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
+                )
+                .with_request_header("Accept", CONTENT_TYPE)
+                .run_async(&handler)
+                .await,
+            Status::Ok,
+            r#"{"dap_url":"https://dap.url/","role":"Either","vdafs":[1,2,3],"query_types":[1,2]}"#
+        );
     }
 
     #[tokio::test]
