@@ -1,11 +1,12 @@
+//! Various in-memory caches that can be used by an aggregator.
+
+use crate::aggregator::Error;
 use janus_aggregator_core::datastore::{
     models::{GlobalHpkeKeypair, HpkeKeyState},
     Datastore,
 };
-
 use janus_core::{hpke::HpkeKeypair, time::Clock};
 use janus_messages::{HpkeConfig, HpkeConfigId};
-
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -14,8 +15,6 @@ use std::{
 };
 use tokio::{spawn, task::JoinHandle, time::sleep};
 use tracing::error;
-
-use crate::aggregator::Error;
 
 type HpkeConfigs = Arc<Vec<HpkeConfig>>;
 type HpkeKeypairs = HashMap<HpkeConfigId, Arc<HpkeKeypair>>;
