@@ -45,7 +45,7 @@ pub enum Error {
 
 /// Wire-representation of an ASCII-encoded URL with minimum length 1 and maximum
 /// length 2^16 - 1.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Url(Vec<u8>);
 
 impl Url {
@@ -68,10 +68,16 @@ impl Decode for Url {
     }
 }
 
-impl Display for Url {
+impl Debug for Url {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         // This isn't actually lossy, since this type cannot be constructed from
         // non-ASCII bytes.
+        write!(f, "Url: {}", String::from_utf8_lossy(&self.0))
+    }
+}
+
+impl Display for Url {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", String::from_utf8_lossy(&self.0))
     }
 }
