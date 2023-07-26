@@ -2,10 +2,11 @@ use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use clap::Parser;
 use janus_aggregator::{
-    aggregator::{self, http_handlers::aggregator_handler, GlobalHpkeKeypairCache},
+    aggregator::{self, garbage_collector::GarbageCollector, http_handlers::aggregator_handler},
     binary_utils::{
         janus_main, setup_server, setup_signal_handler, BinaryOptions, CommonBinaryOptions,
     },
+    cache::GlobalHpkeKeypairCache,
     config::{BinaryConfig, CommonConfig, TaskprovConfig},
 };
 use janus_aggregator_api::{self, aggregator_api_handler};
