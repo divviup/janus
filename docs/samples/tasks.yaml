@@ -109,6 +109,7 @@
   # parameter must be provided.
   query_type: !FixedSize
     max_batch_size: 100
+    batch_time_window_size: null
   vdaf: Prio3Count
   role: Helper
   vdaf_verify_keys:

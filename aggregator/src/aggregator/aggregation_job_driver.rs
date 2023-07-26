@@ -1606,7 +1606,10 @@ mod tests {
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
         let task = TaskBuilder::new(
-            QueryType::FixedSize { max_batch_size: 10 },
+            QueryType::FixedSize {
+                max_batch_size: 10,
+                batch_time_window_size: None,
+            },
             VdafInstance::Prio3Count,
             Role::Leader,
         )
@@ -2255,7 +2258,10 @@ mod tests {
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
         let task = TaskBuilder::new(
-            QueryType::FixedSize { max_batch_size: 10 },
+            QueryType::FixedSize {
+                max_batch_size: 10,
+                batch_time_window_size: None,
+            },
             VdafInstance::Prio3Count,
             Role::Leader,
         )

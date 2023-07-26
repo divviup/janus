@@ -80,6 +80,7 @@ async fn handle_add_task(
             max_batch_size: request
                 .max_batch_size
                 .ok_or_else(|| anyhow::anyhow!("\"max_batch_size\" is missing"))?,
+            batch_time_window_size: None,
         },
         _ => {
             return Err(anyhow::anyhow!(

@@ -1,0 +1,2 @@
+DROP INDEX outstanding_batches_task_and_time_bucket_index;
+ALTER TABLE outstanding_batches DROP COLUMN time_bucket_start;
