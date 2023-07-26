@@ -6,7 +6,7 @@ use janus_aggregator::{
     binary_utils::{
         janus_main, setup_server, setup_signal_handler, BinaryOptions, CommonBinaryOptions,
     },
-    cache::GlobalHpkeKeypairCache,
+    cache::DEFAULT_REFRESH_INTERVAL,
     config::{BinaryConfig, CommonConfig, TaskprovConfig},
 };
 use janus_aggregator_api::{self, aggregator_api_handler};
@@ -329,7 +329,7 @@ impl Config {
             taskprov_config: self.taskprov_config.clone(),
             global_hpke_configs_refresh_interval: match self.global_hpke_configs_refresh_interval {
                 Some(duration) => Duration::from_millis(duration),
-                None => GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
+                None => DEFAULT_REFRESH_INTERVAL,
             },
         }
     }
