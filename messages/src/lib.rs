@@ -70,15 +70,21 @@ impl Decode for Url {
 
 impl Debug for Url {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        // This isn't actually lossy, since this type cannot be constructed from
-        // non-ASCII bytes.
-        write!(f, "Url: {}", String::from_utf8_lossy(&self.0))
+        write!(
+            f,
+            "{}",
+            str::from_utf8(&self.0).map_err(|_| std::fmt::Error)?
+        )
     }
 }
 
 impl Display for Url {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", String::from_utf8_lossy(&self.0))
+        write!(
+            f,
+            "{}",
+            str::from_utf8(&self.0).map_err(|_| std::fmt::Error)?
+        )
     }
 }
 
