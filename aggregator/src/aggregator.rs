@@ -496,6 +496,11 @@ impl<C: Clock> Aggregator<C> {
             Ok(Arc::clone(task_aggs.entry(*task_id).or_insert(task_agg)))
         }
     }
+
+    #[cfg(feature = "test-util")]
+    pub async fn refresh_caches(&self) -> Result<(), Error> {
+        self.global_hpke_keypairs.refresh(&self.datastore).await
+    }
 }
 
 /// TaskAggregator provides aggregation functionality for a single task.
@@ -2823,7 +2828,6 @@ mod tests {
     };
     use rand::random;
     use std::{collections::HashSet, iter, sync::Arc, time::Duration as StdDuration};
-    use tokio::time::sleep;
 
     pub(crate) const BATCH_AGGREGATION_SHARD_COUNT: u64 = 32;
 
@@ -3217,9 +3221,7 @@ mod tests {
             })
             .await
             .unwrap();
-
-        // Let keypair cache refresh.
-        sleep(StdDuration::from_millis(750)).await;
+        aggregator.refresh_caches().await.unwrap();
 
         for report in [
             create_report(&task, clock.now()),

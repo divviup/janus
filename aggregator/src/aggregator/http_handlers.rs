@@ -208,7 +208,13 @@ pub async fn aggregator_handler<C: Clock>(
     cfg: Config,
 ) -> Result<impl Handler, Error> {
     let aggregator = Arc::new(Aggregator::new(datastore, clock, meter, cfg).await?);
+    aggregator_handler_with_aggregator(aggregator, meter).await
+}
 
+async fn aggregator_handler_with_aggregator<C: Clock>(
+    aggregator: Arc<Aggregator<C>>,
+    meter: &Meter,
+) -> Result<impl Handler, Error> {
     Ok((
         State(aggregator),
         metrics("janus_aggregator").with_route(|conn| conn.route().map(ToString::to_string)),
@@ -554,7 +560,7 @@ mod tests {
         },
         collection_job_tests::setup_collection_job_test_case,
         empty_batch_aggregations,
-        http_handlers::aggregator_handler,
+        http_handlers::{aggregator_handler, aggregator_handler_with_aggregator},
         tests::{
             create_report, create_report_custom, default_aggregator_config,
             generate_helper_report_share, generate_helper_report_share_for_plaintext,
@@ -613,7 +619,6 @@ mod tests {
     use std::{
         borrow::Cow, collections::HashMap, io::Cursor, sync::Arc, time::Duration as StdDuration,
     };
-    use tokio::time::sleep;
     use trillium::{KnownHeaderName, Status};
     use trillium_testing::{
         assert_headers,
@@ -727,7 +732,17 @@ mod tests {
             ..Default::default()
         };
 
-        let handler = aggregator_handler(datastore.clone(), clock.clone(), &noop_meter(), cfg)
+        let aggregator = Arc::new(
+            crate::aggregator::Aggregator::new(
+                datastore.clone(),
+                clock.clone(),
+                &noop_meter(),
+                cfg,
+            )
+            .await
+            .unwrap(),
+        );
+        let handler = aggregator_handler_with_aggregator(aggregator.clone(), &noop_meter())
             .await
             .unwrap();
 
@@ -756,7 +771,7 @@ mod tests {
             })
             .await
             .unwrap();
-        sleep(StdDuration::from_millis(750)).await;
+        aggregator.refresh_caches().await.unwrap();
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         let bytes = take_response_body(&mut test_conn).await;
@@ -777,7 +792,7 @@ mod tests {
             })
             .await
             .unwrap();
-        sleep(StdDuration::from_millis(750)).await;
+        aggregator.refresh_caches().await.unwrap();
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         let bytes = take_response_body(&mut test_conn).await;
@@ -813,7 +828,7 @@ mod tests {
             })
             .await
             .unwrap();
-        sleep(StdDuration::from_millis(750)).await;
+        aggregator.refresh_caches().await.unwrap();
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         let bytes = take_response_body(&mut test_conn).await;
@@ -831,7 +846,7 @@ mod tests {
             })
             .await
             .unwrap();
-        sleep(StdDuration::from_millis(750)).await;
+        aggregator.refresh_caches().await.unwrap();
         let test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
     }
