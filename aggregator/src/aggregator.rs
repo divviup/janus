@@ -2838,7 +2838,7 @@ mod tests {
         }
     }
 
-    pub(super) fn create_report_with_id(
+    pub(super) fn create_report_custom(
         task: &Task,
         report_timestamp: Time,
         id: ReportId,
@@ -2880,7 +2880,7 @@ mod tests {
     }
 
     pub(super) fn create_report(task: &Task, report_timestamp: Time) -> Report {
-        create_report_with_id(task, report_timestamp, random(), task.current_hpke_key())
+        create_report_custom(task, report_timestamp, random(), task.current_hpke_key())
     }
 
     async fn setup_upload_test(
@@ -2958,7 +2958,7 @@ mod tests {
             .unwrap();
 
         // Reports may not be mutated
-        let mutated_report = create_report_with_id(
+        let mutated_report = create_report_custom(
             &task,
             clock.now(),
             *report.metadata().id(),
@@ -3223,8 +3223,8 @@ mod tests {
 
         for report in [
             create_report(&task, clock.now()),
-            create_report_with_id(&task, clock.now(), random(), &global_hpke_keypair_same_id),
-            create_report_with_id(
+            create_report_custom(&task, clock.now(), random(), &global_hpke_keypair_same_id),
+            create_report_custom(
                 &task,
                 clock.now(),
                 random(),

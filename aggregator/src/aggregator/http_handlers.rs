@@ -556,7 +556,7 @@ mod tests {
         empty_batch_aggregations,
         http_handlers::aggregator_handler,
         tests::{
-            create_report, create_report_with_id, default_aggregator_config,
+            create_report, create_report_custom, default_aggregator_config,
             generate_helper_report_share, generate_helper_report_share_for_plaintext,
             BATCH_AGGREGATION_SHARD_COUNT,
         },
@@ -976,7 +976,7 @@ mod tests {
         let accepted_report_id = report.metadata().id();
 
         // Verify that new reports using an existing report ID are rejected with reportRejected
-        let duplicate_id_report = create_report_with_id(
+        let duplicate_id_report = create_report_custom(
             &task,
             clock.now(),
             *accepted_report_id,
