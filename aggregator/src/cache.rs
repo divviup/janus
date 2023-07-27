@@ -59,8 +59,8 @@ impl GlobalHpkeKeypairCache {
                 let elapsed = now.elapsed();
 
                 match result {
-                    Ok(_) => debug!(elapsed, "successfully refreshed HPKE keypair cache"),
-                    Err(err) => error!(?err, elapsed, "failed to refresh HPKE keypair cache"),
+                    Ok(_) => debug!(?elapsed, "successfully refreshed HPKE keypair cache"),
+                    Err(err) => error!(?err, ?elapsed, "failed to refresh HPKE keypair cache"),
                 }
             }
         });
