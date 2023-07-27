@@ -10,12 +10,7 @@ use tracing_subscriber::{filter::FromEnvError, layer::SubscriberExt, EnvFilter, 
 
 #[cfg(feature = "otlp")]
 use {
-    opentelemetry::{
-        sdk::{trace, Resource},
-        KeyValue,
-    },
     opentelemetry_otlp::WithExportConfig,
-    opentelemetry_semantic_conventions::resource::SERVICE_NAME,
     std::str::FromStr,
     tonic::metadata::{MetadataKey, MetadataMap, MetadataValue},
 };
@@ -205,9 +200,6 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<TraceGuar
                     .with_endpoint(otlp_config.endpoint.clone())
                     .with_metadata(map),
             )
-            .with_trace_config(trace::config().with_resource(Resource::new(Vec::from([
-                KeyValue::new(SERVICE_NAME, "janus_aggregator"),
-            ]))))
             .install_batch(opentelemetry::runtime::Tokio)?;
 
         let telemetry = tracing_opentelemetry::layer()
