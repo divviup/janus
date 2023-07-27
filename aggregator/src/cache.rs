@@ -56,11 +56,11 @@ impl GlobalHpkeKeypairCache {
                 let result =
                     Self::refresh_inner(&refresh_datastore, &refresh_configs, &refresh_keypairs)
                         .await;
-                let elapsed = now.elapsed().as_millis();
+                let elapsed = now.elapsed();
 
                 match result {
-                    Ok(_) => debug!("successfully refreshed HPKE keypair cache ({elapsed}ms)"),
-                    Err(err) => error!(?err, "failed to refresh HPKE keypair cache ({elapsed}ms)"),
+                    Ok(_) => debug!(elapsed, "successfully refreshed HPKE keypair cache"),
+                    Err(err) => error!(?err, elapsed, "failed to refresh HPKE keypair cache"),
                 }
             }
         });
