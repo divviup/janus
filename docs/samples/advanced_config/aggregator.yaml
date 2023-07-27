@@ -65,7 +65,7 @@ metrics_config:
 # Aggregator-specific parameters:
 
 # Socket address for DAP requests. (required)
-listen_address: "0.0.0.0:80"
+listen_address: "0.0.0.0:8080"
 
 # How to serve the Janus aggregator API. If not set, Janus aggregator API is not served. (optional)
 aggregator_api:
