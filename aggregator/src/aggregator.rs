@@ -8,7 +8,7 @@ use crate::{
         query_type::{CollectableQueryType, UploadableQueryType},
         report_writer::{ReportWriteBatcher, WritableReport},
     },
-    cache::{GlobalHpkeKeypairCache, DEFAULT_REFRESH_INTERVAL},
+    cache::GlobalHpkeKeypairCache,
     config::TaskprovConfig,
     Operation,
 };
@@ -163,7 +163,7 @@ pub struct Aggregator<C: Clock> {
     aggregate_step_failure_counter: Counter<u64>,
 
     /// Cache of global HPKE keypairs and configs.
-    global_hpke_keypairs: GlobalHpkeKeypairCache<C>,
+    global_hpke_keypairs: GlobalHpkeKeypairCache,
 }
 
 /// Config represents a configuration for an Aggregator.
@@ -196,7 +196,7 @@ impl Default for Config {
             max_upload_batch_size: 1,
             max_upload_batch_write_delay: StdDuration::ZERO,
             batch_aggregation_shard_count: 1,
-            global_hpke_configs_refresh_interval: DEFAULT_REFRESH_INTERVAL,
+            global_hpke_configs_refresh_interval: GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
             taskprov_config: TaskprovConfig::default(),
         }
     }
@@ -499,7 +499,7 @@ impl<C: Clock> Aggregator<C> {
 
     #[cfg(feature = "test-util")]
     pub async fn refresh_caches(&self) -> Result<(), Error> {
-        self.global_hpke_keypairs.refresh().await
+        self.global_hpke_keypairs.refresh(&self.datastore).await
     }
 }
 
@@ -625,7 +625,7 @@ impl<C: Clock> TaskAggregator<C> {
     async fn handle_upload(
         &self,
         clock: &C,
-        global_hpke_keypairs: &GlobalHpkeKeypairCache<C>,
+        global_hpke_keypairs: &GlobalHpkeKeypairCache,
         upload_decrypt_failure_counter: &Counter<u64>,
         upload_decode_failure_counter: &Counter<u64>,
         report: Report,
@@ -646,7 +646,7 @@ impl<C: Clock> TaskAggregator<C> {
     async fn handle_aggregate_init(
         &self,
         datastore: &Datastore<C>,
-        global_hpke_keypairs: &GlobalHpkeKeypairCache<C>,
+        global_hpke_keypairs: &GlobalHpkeKeypairCache,
         aggregate_step_failure_counter: &Counter<u64>,
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
@@ -881,7 +881,7 @@ impl VdafOps {
     async fn handle_upload<C: Clock>(
         &self,
         clock: &C,
-        global_hpke_keypairs: &GlobalHpkeKeypairCache<C>,
+        global_hpke_keypairs: &GlobalHpkeKeypairCache,
         upload_decrypt_failure_counter: &Counter<u64>,
         upload_decode_failure_counter: &Counter<u64>,
         task: &Task,
@@ -932,7 +932,7 @@ impl VdafOps {
     async fn handle_aggregate_init<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        global_hpke_keypairs: &GlobalHpkeKeypairCache<C>,
+        global_hpke_keypairs: &GlobalHpkeKeypairCache,
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<Task>,
         aggregation_job_id: &AggregationJobId,
@@ -1024,7 +1024,7 @@ impl VdafOps {
     async fn handle_upload_generic<const SEED_SIZE: usize, Q, A, C>(
         vdaf: Arc<A>,
         clock: &C,
-        global_hpke_keypairs: &GlobalHpkeKeypairCache<C>,
+        global_hpke_keypairs: &GlobalHpkeKeypairCache,
         upload_decrypt_failure_counter: &Counter<u64>,
         upload_decode_failure_counter: &Counter<u64>,
         task: &Task,
@@ -1312,7 +1312,7 @@ impl VdafOps {
     /// helper, described in §4.4.4.1 of draft-gpew-priv-ppm.
     async fn handle_aggregate_init_generic<const SEED_SIZE: usize, Q, A, C>(
         datastore: &Datastore<C>,
-        global_hpke_keypairs: &GlobalHpkeKeypairCache<C>,
+        global_hpke_keypairs: &GlobalHpkeKeypairCache,
         vdaf: &A,
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<Task>,

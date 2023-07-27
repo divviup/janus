@@ -1,30 +1,23 @@
 //! Various in-memory caches that can be used by an aggregator.
 
 use crate::aggregator::Error;
-use janus_aggregator_core::datastore::{
-    models::{GlobalHpkeKeypair, HpkeKeyState},
-    Datastore,
-};
+use janus_aggregator_core::datastore::{models::HpkeKeyState, Datastore};
 use janus_core::{hpke::HpkeKeypair, time::Clock};
 use janus_messages::{HpkeConfig, HpkeConfigId};
 use std::{
     collections::HashMap,
     fmt::Debug,
     sync::{Arc, Mutex as StdMutex},
-    time::Duration as StdDuration,
+    time::{Duration as StdDuration, Instant},
 };
 use tokio::{spawn, task::JoinHandle, time::sleep};
-use tracing::error;
-
-pub const DEFAULT_REFRESH_INTERVAL: StdDuration =
-    StdDuration::from_secs(60 * 30 /* 30 minutes */);
+use tracing::{debug, error};
 
 type HpkeConfigs = Arc<Vec<HpkeConfig>>;
 type HpkeKeypairs = HashMap<HpkeConfigId, Arc<HpkeKeypair>>;
 
 #[derive(Debug)]
-pub struct GlobalHpkeKeypairCache<C: Clock> {
-    datastore: Arc<Datastore<C>>,
+pub struct GlobalHpkeKeypairCache {
     // We use a std::sync::Mutex in this cache because we won't hold locks across
     // `.await` boundaries. StdMutex is lighter weight than `tokio::sync::Mutex`.
     /// Cache of HPKE configs for advertisement.
@@ -37,15 +30,19 @@ pub struct GlobalHpkeKeypairCache<C: Clock> {
     refresh_handle: JoinHandle<()>,
 }
 
-impl<C: Clock> GlobalHpkeKeypairCache<C> {
-    pub async fn new(
+impl GlobalHpkeKeypairCache {
+    pub const DEFAULT_REFRESH_INTERVAL: StdDuration =
+        StdDuration::from_secs(60 * 30 /* 30 minutes */);
+
+    pub async fn new<C: Clock>(
         datastore: Arc<Datastore<C>>,
         refresh_interval: StdDuration,
     ) -> Result<Self, Error> {
+        let keypairs = Arc::new(StdMutex::new(HashMap::new()));
+        let configs = Arc::new(StdMutex::new(Arc::new(Vec::new())));
+
         // Initial cache load.
-        let global_keypairs = Self::get_global_keypairs(&datastore).await?;
-        let configs = Arc::new(StdMutex::new(Self::filter_active_configs(&global_keypairs)));
-        let keypairs = Arc::new(StdMutex::new(Self::map_keypairs(&global_keypairs)));
+        Self::refresh_inner(&datastore, &configs, &keypairs).await?;
 
         // Start refresh task.
         let refresh_configs = configs.clone();
@@ -55,36 +52,38 @@ impl<C: Clock> GlobalHpkeKeypairCache<C> {
             loop {
                 sleep(refresh_interval).await;
 
-                match Self::get_global_keypairs(&refresh_datastore).await {
-                    Ok(global_keypairs) => {
-                        let new_configs = Self::filter_active_configs(&global_keypairs);
-                        let new_keypairs = Self::map_keypairs(&global_keypairs);
-                        {
-                            let mut configs = refresh_configs.lock().unwrap();
-                            *configs = new_configs;
-                        }
-                        {
-                            let mut keypairs = refresh_keypairs.lock().unwrap();
-                            *keypairs = new_keypairs;
-                        }
-                    }
-                    Err(err) => {
-                        error!(?err, "failed to refresh HPKE config cache");
-                    }
+                let now = Instant::now();
+                let result =
+                    Self::refresh_inner(&refresh_datastore, &refresh_configs, &refresh_keypairs)
+                        .await;
+                let elapsed = now.elapsed().as_millis();
+
+                match result {
+                    Ok(_) => debug!("successfully refreshed HPKE keypair cache ({elapsed}ms)"),
+                    Err(err) => error!(?err, "failed to refresh HPKE keypair cache ({elapsed}ms)"),
                 }
             }
         });
 
         Ok(Self {
-            datastore,
             configs,
             keypairs,
             refresh_handle,
         })
     }
 
-    fn filter_active_configs(global_keypairs: &[GlobalHpkeKeypair]) -> HpkeConfigs {
-        Arc::new(
+    async fn refresh_inner<C: Clock>(
+        datastore: &Datastore<C>,
+        configs: &StdMutex<HpkeConfigs>,
+        keypairs: &StdMutex<HpkeKeypairs>,
+    ) -> Result<(), Error> {
+        let global_keypairs = datastore
+            .run_tx_with_name("refresh_global_hpke_keypairs_cache", |tx| {
+                Box::pin(async move { tx.get_global_hpke_keypairs().await })
+            })
+            .await?;
+
+        let new_configs = Arc::new(
             global_keypairs
                 .iter()
                 .filter_map(|keypair| match keypair.state() {
@@ -92,27 +91,30 @@ impl<C: Clock> GlobalHpkeKeypairCache<C> {
                     _ => None,
                 })
                 .collect(),
-        )
-    }
+        );
 
-    fn map_keypairs(global_keypairs: &[GlobalHpkeKeypair]) -> HpkeKeypairs {
-        global_keypairs
+        let new_keypairs = global_keypairs
             .iter()
             .map(|keypair| {
                 let keypair = keypair.hpke_keypair().clone();
                 (*keypair.config().id(), Arc::new(keypair))
             })
-            .collect()
+            .collect();
+
+        {
+            let mut configs = configs.lock().unwrap();
+            *configs = new_configs;
+        }
+        {
+            let mut keypairs = keypairs.lock().unwrap();
+            *keypairs = new_keypairs;
+        }
+        Ok(())
     }
 
-    async fn get_global_keypairs(
-        datastore: &Datastore<C>,
-    ) -> Result<Vec<GlobalHpkeKeypair>, Error> {
-        Ok(datastore
-            .run_tx_with_name("refresh_global_hpke_configs_cache", |tx| {
-                Box::pin(async move { tx.get_global_hpke_keypairs().await })
-            })
-            .await?)
+    #[cfg(feature = "test-util")]
+    pub async fn refresh<C: Clock>(&self, datastore: &Datastore<C>) -> Result<(), Error> {
+        Self::refresh_inner(datastore, &self.configs, &self.keypairs).await
     }
 
     /// Retrieve active configs for config advertisement. This only returns configs
@@ -128,25 +130,9 @@ impl<C: Clock> GlobalHpkeKeypairCache<C> {
         let keypairs = self.keypairs.lock().unwrap();
         keypairs.get(id).cloned()
     }
-
-    #[cfg(feature = "test-util")]
-    pub async fn refresh(&self) -> Result<(), Error> {
-        let global_keypairs = Self::get_global_keypairs(&self.datastore).await?;
-        let new_configs = Self::filter_active_configs(&global_keypairs);
-        let new_keypairs = Self::map_keypairs(&global_keypairs);
-        {
-            let mut configs = self.configs.lock().unwrap();
-            *configs = new_configs;
-        }
-        {
-            let mut keypairs = self.keypairs.lock().unwrap();
-            *keypairs = new_keypairs;
-        }
-        Ok(())
-    }
 }
 
-impl<C: Clock> Drop for GlobalHpkeKeypairCache<C> {
+impl Drop for GlobalHpkeKeypairCache {
     fn drop(&mut self) {
         self.refresh_handle.abort()
     }
