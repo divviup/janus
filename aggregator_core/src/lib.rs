@@ -70,7 +70,7 @@ impl<H: Handler> InstrumentedHandler<H> {
 
     async fn before_send(&self, conn: Conn) -> Conn {
         if let Some(span) = conn.state::<InstrumentedHandlerSpan>() {
-            let conn = self.0.before_send(conn).instrument(span.0).await;
+            let conn = self.0.before_send(conn).instrument(span.0.clone()).await;
             span.0.in_scope(|| {
                 let status = conn
                     .status()
