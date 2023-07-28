@@ -96,7 +96,7 @@ macro_rules! supported_schema_versions {
 // version is seen, [`Datastore::new`] fails.
 //
 // Note that the latest supported version must be first in the list.
-supported_schema_versions!(13);
+supported_schema_versions!(14);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -536,8 +536,8 @@ impl<C: Clock> Transaction<'_, C> {
                 "INSERT INTO tasks (
                     task_id, aggregator_role, aggregator_endpoints, query_type, vdaf,
                     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
-                    time_precision, tolerable_clock_skew, collector_hpke_config)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+                    time_precision, tolerable_clock_skew, collector_hpke_config, created_by)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
             )
             .await?;
         self.execute(
@@ -567,6 +567,7 @@ impl<C: Clock> Transaction<'_, C> {
                 /* tolerable_clock_skew */
                 &i64::try_from(task.tolerable_clock_skew().as_seconds())?,
                 /* collector_hpke_config */ &task.collector_hpke_config().get_encoded(),
+                /* created_by */ task.created_by(),
             ],
         )
         .await?;
@@ -732,7 +733,7 @@ impl<C: Clock> Transaction<'_, C> {
         Ok(())
     }
 
-    /// Fetch the task parameters corresponing to the provided `task_id`.
+    /// Fetch the task parameters corresponding to the provided `task_id`.
     #[tracing::instrument(skip(self), err)]
     pub async fn get_task(&self, task_id: &TaskId) -> Result<Option<Task>, Error> {
         let params: &[&(dyn ToSql + Sync)] = &[&task_id.as_ref()];
@@ -740,7 +741,7 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT aggregator_role, aggregator_endpoints, query_type, vdaf,
                     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
-                    time_precision, tolerable_clock_skew, collector_hpke_config
+                    time_precision, tolerable_clock_skew, collector_hpke_config, created_by
                 FROM tasks WHERE task_id = $1",
             )
             .await?;
@@ -812,7 +813,7 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT task_id, aggregator_role, aggregator_endpoints, query_type, vdaf,
                     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
-                    time_precision, tolerable_clock_skew, collector_hpke_config
+                    time_precision, tolerable_clock_skew, collector_hpke_config, created_by
                 FROM tasks",
             )
             .await?;
@@ -968,6 +969,8 @@ impl<C: Clock> Transaction<'_, C> {
             Duration::from_seconds(row.get_bigint_and_convert("tolerable_clock_skew")?);
         let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
 
+        let created_by = row.get("created_by");
+
         // Aggregator authentication tokens.
         let mut aggregator_auth_tokens = Vec::new();
         for row in aggregator_auth_token_rows {
@@ -1060,6 +1063,7 @@ impl<C: Clock> Transaction<'_, C> {
             aggregator_auth_tokens,
             collector_auth_tokens,
             hpke_keypairs,
+            created_by,
         )?)
     }
 
@@ -6307,7 +6311,7 @@ pub mod models {
         to_sql_checked!();
     }
 
-    /// The state of an HPKE key pair, corresponding to the HPKE_KEY_STATE enum in the schema.
+    /// The state of an HPKE key pair, corresponding to the `HPKE_KEY_STATE` enum in the schema.
     #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, ToSql, FromSql)]
     #[postgres(name = "hpke_key_state")]
     pub enum HpkeKeyState {
@@ -6358,6 +6362,25 @@ pub mod models {
         pub fn updated_at(&self) -> &Time {
             &self.updated_at
         }
+    }
+
+    /// A non-end-user agent or process capable of creating tasks. Corresponds to
+    /// the `TASK_CREATOR` enum in the schema.
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, ToSql, FromSql)]
+    #[postgres(name = "task_creator")]
+    pub enum TaskCreator {
+        /// Catch-all for tasks with unknown provenance, mainly used in tests.
+        #[postgres(name = "UNKNOWN")]
+        Unknown,
+        /// Created by an operator locally using the `janus_cli` utility.
+        #[postgres(name = "JANUS_CLI")]
+        JanusCli,
+        /// Created by something or someone using the aggregator API.
+        #[postgres(name = "AGGREGATOR_API")]
+        AggregatorApi,
+        /// Created by the taskprov extension.
+        #[postgres(name = "TASKPROV")]
+        Taskprov,
     }
 }
 

@@ -7,7 +7,7 @@ use janus_aggregator::{
     config::{BinaryConfig, CommonConfig},
 };
 use janus_aggregator_core::{
-    datastore::Datastore,
+    datastore::{models::TaskCreator, Datastore},
     task::{self, Task},
     SecretBytes,
 };
@@ -108,6 +108,7 @@ async fn handle_add_task(
         Vec::from([leader_authentication_token]),
         collector_authentication_tokens,
         [hpke_keypair],
+        TaskCreator::Unknown,
     )
     .context("error constructing task")?;
 

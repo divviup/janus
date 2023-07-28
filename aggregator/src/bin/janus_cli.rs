@@ -10,7 +10,7 @@ use janus_aggregator::{
     trace::{install_trace_subscriber, TraceGuards},
 };
 use janus_aggregator_core::{
-    datastore::{self, Datastore},
+    datastore::{self, models::TaskCreator, Datastore},
     task::{SerializedTask, Task},
 };
 use janus_core::time::{Clock, RealClock};
@@ -177,9 +177,11 @@ async fn provision_tasks<C: Clock>(
                 task.generate_missing_fields();
             }
 
-            Task::try_from(task)
+            let mut task = Task::try_from(task)?;
+            task.set_created_by(TaskCreator::JanusCli);
+            Ok(task)
         })
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<_, anyhow::Error>>()?;
 
     if dry_run {
         info!(task_count = %tasks.len(), "DRY RUN: Not writing tasks");
@@ -468,7 +470,7 @@ mod tests {
         config::CommonConfig,
     };
     use janus_aggregator_core::{
-        datastore::{test_util::ephemeral_datastore, Datastore},
+        datastore::{models::TaskCreator, test_util::ephemeral_datastore, Datastore},
         task::{test_util::TaskBuilder, QueryType, Task},
     };
     use janus_core::{
@@ -593,12 +595,14 @@ mod tests {
                 VdafInstance::Prio3Count,
                 Role::Leader,
             )
+            .with_created_by(TaskCreator::JanusCli)
             .build(),
             TaskBuilder::new(
                 QueryType::TimeInterval,
                 VdafInstance::Prio3Sum { bits: 64 },
                 Role::Helper,
             )
+            .with_created_by(TaskCreator::JanusCli)
             .build(),
         ]);
 
@@ -626,6 +630,7 @@ mod tests {
             VdafInstance::Prio3Count,
             Role::Leader,
         )
+        .with_created_by(TaskCreator::JanusCli)
         .build()]);
 
         let written_tasks = run_provision_tasks_testcase(&ds, &tasks, true).await;
@@ -649,12 +654,14 @@ mod tests {
                 VdafInstance::Prio3Count,
                 Role::Leader,
             )
+            .with_created_by(TaskCreator::JanusCli)
             .build(),
             TaskBuilder::new(
                 QueryType::TimeInterval,
                 VdafInstance::Prio3Sum { bits: 64 },
                 Role::Helper,
             )
+            .with_created_by(TaskCreator::JanusCli)
             .build(),
         ]);
 
@@ -679,6 +686,7 @@ mod tests {
             Role::Leader,
         )
         .with_id(*tasks[0].id())
+        .with_created_by(TaskCreator::JanusCli)
         .build();
 
         let mut replacement_tasks_file = NamedTempFile::new().unwrap();

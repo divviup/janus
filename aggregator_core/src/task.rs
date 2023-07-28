@@ -1,6 +1,6 @@
 //! Shared parameters for a DAP task.
 
-use crate::SecretBytes;
+use crate::{datastore::models::TaskCreator, SecretBytes};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use janus_core::{
@@ -113,6 +113,8 @@ pub struct Task {
     collector_auth_tokens: Vec<AuthenticationToken>,
     /// HPKE configurations & private keys used by this aggregator to decrypt client reports.
     hpke_keys: HashMap<HpkeConfigId, HpkeKeypair>,
+    /// What process created this task.
+    created_by: TaskCreator,
 }
 
 impl Task {
@@ -135,6 +137,7 @@ impl Task {
         aggregator_auth_tokens: Vec<AuthenticationToken>,
         collector_auth_tokens: Vec<AuthenticationToken>,
         hpke_keys: I,
+        created_by: TaskCreator,
     ) -> Result<Self, Error> {
         // Ensure provided aggregator endpoints end with a slash, as we will be joining additional
         // path segments into these endpoints & the Url::join implementation is persnickety about
@@ -166,6 +169,7 @@ impl Task {
             aggregator_auth_tokens,
             collector_auth_tokens,
             hpke_keys,
+            created_by,
         };
         task.validate()?;
         Ok(task)
@@ -279,6 +283,16 @@ impl Task {
     /// Retrieves the HPKE keys in use associated with this task.
     pub fn hpke_keys(&self) -> &HashMap<HpkeConfigId, HpkeKeypair> {
         &self.hpke_keys
+    }
+
+    /// Retrieves the name of the process that created this task.
+    pub fn created_by(&self) -> &TaskCreator {
+        &self.created_by
+    }
+
+    /// Sets the name of the process that created this task.
+    pub fn set_created_by(&mut self, created_by: TaskCreator) {
+        self.created_by = created_by
     }
 
     /// Retrieve the "current" HPKE in use for this task.
@@ -544,6 +558,9 @@ impl TryFrom<SerializedTask> for Task {
             serialized_task.aggregator_auth_tokens,
             serialized_task.collector_auth_tokens,
             serialized_task.hpke_keys,
+            // We deliberately don't serde the created_by field, as that's to be
+            // determined by the process doing serde.
+            TaskCreator::Unknown,
         )
     }
 }
@@ -561,6 +578,7 @@ impl<'de> Deserialize<'de> for Task {
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use crate::{
+        datastore::models::TaskCreator,
         task::{QueryType, Task},
         SecretBytes,
     };
@@ -644,6 +662,7 @@ pub mod test_util {
                     Vec::from([random(), AuthenticationToken::DapAuth(random())]),
                     collector_auth_tokens,
                     Vec::from([aggregator_keypair_0, aggregator_keypair_1]),
+                    TaskCreator::Unknown,
                 )
                 .unwrap(),
             )
@@ -762,6 +781,14 @@ pub mod test_util {
             })
         }
 
+        /// Sets the created_by field.
+        pub fn with_created_by(self, created_by: TaskCreator) -> Self {
+            Self(Task {
+                created_by,
+                ..self.0
+            })
+        }
+
         /// Consumes this task builder & produces a [`Task`] with the given specifications.
         pub fn build(self) -> Task {
             self.0.validate().unwrap();
@@ -779,6 +806,7 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use crate::{
+        datastore::models::TaskCreator,
         task::{test_util::TaskBuilder, QueryType, Task, VdafInstance},
         SecretBytes,
     };
@@ -836,6 +864,7 @@ mod tests {
             Vec::from([random()]),
             Vec::new(),
             Vec::from([generate_test_hpke_config_and_private_key()]),
+            TaskCreator::Unknown,
         )
         .unwrap_err();
 
@@ -860,6 +889,7 @@ mod tests {
             Vec::from([random()]),
             Vec::from([random()]),
             Vec::from([generate_test_hpke_config_and_private_key()]),
+            TaskCreator::Unknown,
         )
         .unwrap();
 
@@ -884,6 +914,7 @@ mod tests {
             Vec::from([random()]),
             Vec::new(),
             Vec::from([generate_test_hpke_config_and_private_key()]),
+            TaskCreator::Unknown,
         )
         .unwrap();
 
@@ -908,6 +939,7 @@ mod tests {
             Vec::from([random()]),
             Vec::from([random()]),
             Vec::from([generate_test_hpke_config_and_private_key()]),
+            TaskCreator::Unknown,
         )
         .unwrap_err();
     }
@@ -934,6 +966,7 @@ mod tests {
             Vec::from([random()]),
             Vec::from([random()]),
             Vec::from([generate_test_hpke_config_and_private_key()]),
+            TaskCreator::Unknown,
         )
         .unwrap();
 
@@ -1031,6 +1064,7 @@ mod tests {
                     ),
                     HpkePrivateKey::new(b"aggregator hpke private key".to_vec()),
                 )],
+                TaskCreator::Unknown,
             )
             .unwrap(),
             &[
@@ -1209,6 +1243,7 @@ mod tests {
                     ),
                     HpkePrivateKey::new(b"aggregator hpke private key".to_vec()),
                 )],
+                TaskCreator::Unknown,
             )
             .unwrap(),
             &[

@@ -4,7 +4,7 @@ use crate::models::{GetTaskIdsResp, PostTaskReq};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
-    datastore::{self, Datastore},
+    datastore::{self, models::TaskCreator, Datastore},
     instrumented,
     task::Task,
     SecretBytes,
@@ -307,6 +307,7 @@ async fn post_task<C: Clock>(
             aggregator_auth_tokens,
             collector_auth_tokens,
             hpke_keys,
+            TaskCreator::AggregatorApi,
         )
         .map_err(|err| {
             Error::new(
@@ -603,7 +604,7 @@ mod tests {
         datastore::{
             models::{
                 AggregationJob, AggregationJobState, LeaderStoredReport, ReportAggregation,
-                ReportAggregationState,
+                ReportAggregationState, TaskCreator,
             },
             test_util::{ephemeral_datastore, EphemeralDatastore},
             Datastore,
@@ -914,6 +915,7 @@ mod tests {
         assert_eq!(&req.time_precision, got_task.time_precision());
         assert_eq!(1, got_task.aggregator_auth_tokens().len());
         assert_eq!(&req.collector_hpke_config, got_task.collector_hpke_config());
+        assert_eq!(&TaskCreator::AggregatorApi, got_task.created_by());
 
         // ...and the response.
         assert_eq!(got_task_resp, TaskResp::try_from(&got_task).unwrap());
@@ -1050,6 +1052,7 @@ mod tests {
             got_task.aggregator_auth_tokens()[0].as_ref()
         );
         assert_eq!(1, got_task.collector_auth_tokens().len());
+        assert_eq!(&TaskCreator::AggregatorApi, got_task.created_by());
 
         // ...and the response.
         assert_eq!(got_task_resp, TaskResp::try_from(&got_task).unwrap());
@@ -1651,6 +1654,7 @@ mod tests {
                 ),
                 HpkePrivateKey::new(b"unused".to_vec()),
             ))],
+            TaskCreator::AggregatorApi,
         )
         .unwrap();
         assert_tokens(
