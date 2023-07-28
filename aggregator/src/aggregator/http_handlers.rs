@@ -374,7 +374,7 @@ async fn aggregation_jobs_put<C: Clock>(
     let task_id = parse_task_id(&captures)?;
     let aggregation_job_id = parse_aggregation_job_id(&captures)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
-    let taskprov_config = conn
+    let taskprov_header = conn
         .request_headers()
         .get(TASKPROV_HEADER)
         .map(|header| header.as_ref());
@@ -384,7 +384,7 @@ async fn aggregation_jobs_put<C: Clock>(
             &aggregation_job_id,
             &body,
             auth_token,
-            taskprov_config,
+            taskprov_header,
         )
         .await?;
 
@@ -405,8 +405,18 @@ async fn aggregation_jobs_post<C: Clock>(
     let task_id = parse_task_id(&captures)?;
     let aggregation_job_id = parse_aggregation_job_id(&captures)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
+    let taskprov_header = conn
+        .request_headers()
+        .get(TASKPROV_HEADER)
+        .map(|header| header.as_ref());
     let response = aggregator
-        .handle_aggregate_continue(&task_id, &aggregation_job_id, &body, auth_token)
+        .handle_aggregate_continue(
+            &task_id,
+            &aggregation_job_id,
+            &body,
+            auth_token,
+            taskprov_header,
+        )
         .await?;
 
     Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))
@@ -491,8 +501,12 @@ async fn aggregate_shares<C: Clock>(
 
     let task_id = parse_task_id(&captures)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
+    let taskprov_header = conn
+        .request_headers()
+        .get(TASKPROV_HEADER)
+        .map(|header| header.as_ref());
     let share = aggregator
-        .handle_aggregate_share(&task_id, &body, auth_token)
+        .handle_aggregate_share(&task_id, &body, auth_token, taskprov_header)
         .await?;
 
     Ok(EncodedBody::new(share, AggregateShare::MEDIA_TYPE))

@@ -319,19 +319,29 @@ impl<C: Clock> Aggregator<C> {
         let task_aggregator = match self.task_aggregator_for(task_id).await? {
             Some(task_aggregator) => task_aggregator,
             None => {
-                if self.cfg.taskprov_config.enabled && taskprov_header.is_some() {
-                    let task_config = TaskConfig::decode(&mut Cursor::new(
-                        &URL_SAFE_NO_PAD
-                            .decode(&taskprov_header.unwrap())
-                            .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?,
-                    ))?;
+                if self.cfg.taskprov_config.enabled {
+                    match taskprov_header {
+                        Some(taskprov_header) => {
+                            if task_id.as_ref() != digest(&SHA256, &taskprov_header).as_ref() {
+                                return Err(Error::UnrecognizedTask(*task_id));
+                            }
 
-                    self.taskprov_opt_in(task_id, &task_config).await?;
+                            let task_config = TaskConfig::decode(&mut Cursor::new(
+                                &URL_SAFE_NO_PAD
+                                    .decode(&taskprov_header)
+                                    .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?,
+                            ))?;
 
-                    self.task_aggregator_for(task_id).await?.ok_or_else(|| {
-                        // inahga: more tracing, better error message
-                        Error::Internal("unexpectedly failed to create task".to_string())
-                    })?
+                            self.taskprov_opt_in(&Role::Leader, task_id, &task_config)
+                                .await?;
+
+                            self.task_aggregator_for(task_id).await?.ok_or_else(|| {
+                                // inahga: more tracing, better error message
+                                Error::Internal("unexpectedly failed to create task".to_string())
+                            })?
+                        }
+                        None => return Err(Error::UnrecognizedTask(*task_id)),
+                    }
                 } else {
                     return Err(Error::UnrecognizedTask(*task_id));
                 }
@@ -341,11 +351,39 @@ impl<C: Clock> Aggregator<C> {
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
         }
-        if !auth_token
-            .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
-            .unwrap_or(false)
-        {
-            return Err(Error::UnauthorizedRequest(*task_id));
+
+        // If we've gotten this far, we've proved that the header does refer to the given
+        // task ID, and that we're referring to a taskprov task. Therefore, use the
+        // taskprov-specific auth tokens which we've preshared with the taskprov
+        // peer aggregator.
+        if taskprov_header.is_some() {
+            let peer_aggregator = task_aggregator.task.aggregator_url(&Role::Leader).unwrap();
+
+            // inahga: cache this
+            let aggregator_auth_tokens = self
+                .datastore
+                .run_tx_with_name("get_taskprov_aggregator_auth_tokens_for_peer", |tx| {
+                    let peer_aggregator = peer_aggregator.clone();
+                    Box::pin(async move {
+                        tx.get_taskprov_aggregator_auth_tokens_for_peer(&peer_aggregator)
+                            .await
+                    })
+                })
+                .await?;
+
+            if !auth_token
+                .map(|t| aggregator_auth_tokens.iter().any(|token| t == *token))
+                .unwrap_or(false)
+            {
+                return Err(Error::UnauthorizedRequest(*task_id));
+            }
+        } else {
+            if !auth_token
+                .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
+                .unwrap_or(false)
+            {
+                return Err(Error::UnauthorizedRequest(*task_id));
+            }
         }
 
         task_aggregator
@@ -365,11 +403,13 @@ impl<C: Clock> Aggregator<C> {
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
+        taskprov_header: Option<&[u8]>,
     ) -> Result<AggregationJobResp, Error> {
         let task_aggregator = self
             .task_aggregator_for(task_id)
             .await?
             .ok_or_else(|| Error::UnrecognizedMessage(None, "task_id"))?;
+        // inahga taskprov
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
         }
@@ -488,11 +528,13 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
+        taskprov_header: Option<&[u8]>,
     ) -> Result<AggregateShare, Error> {
         let task_aggregator = self
             .task_aggregator_for(task_id)
             .await?
             .ok_or_else(|| Error::UnrecognizedMessage(None, "task_id"))?;
+        // inahga taskprov
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
         }
@@ -569,8 +611,12 @@ impl<C: Clock> Aggregator<C> {
 
     // The behavior of each protocol participant is determined by whether or not they opt in to a task.
 
+    /// Opts in or out of a taskprov task.
+    ///
+    /// * `role` - The role that the peer aggregator takes (i.e. _not this_ aggregator)
     async fn taskprov_opt_in(
         &self,
+        role: &Role,
         task_id: &TaskId,
         task_config: &TaskConfig,
     ) -> Result<(), Error> {
@@ -581,10 +627,25 @@ impl<C: Clock> Aggregator<C> {
             ));
         }
 
+        let aggregator_url: Url = task_config
+            .aggregator_url(role)
+            .unwrap()
+            .try_into()
+            .map_err(|err| Error::InvalidTask(*task_id, format!("{}", err)))?;
+
         // get the peer aggregator
+        // inahga: cache this
+        let peer_aggregator = self
+            .datastore
+            .run_tx_with_name("get_taskprov_peer_aggregator", |tx| {
+                Box::pin(async move { Ok(()) })
+            })
+            .await?;
 
-        // check all peer aggregator parameters for opt-out
+        // TODO(#1647): Check whether task config parameters are acceptable for privacy and
+        // availability of the system.
 
+        // Construct a new task
         // insert the new task
 
         // be wary of concurrency problems

@@ -1,9 +1,12 @@
 //! Common utilities for extension [draft-wang-ppm-dap-taskprov][1].
 //! [1]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
 
-use janus_messages::TaskId;
+use janus_messages::{taskprov::TaskConfig, TaskId};
 use lazy_static::lazy_static;
-use ring::hkdf::{Salt, HKDF_SHA256};
+use ring::{
+    digest,
+    hkdf::{Salt, HKDF_SHA256},
+};
 
 use crate::task::VerifyKey;
 

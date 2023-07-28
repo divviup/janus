@@ -110,7 +110,7 @@ impl TryFrom<&[u8]> for Url {
     }
 }
 
-impl TryInto<url::Url> for Url {
+impl TryInto<url::Url> for &Url {
     type Error = url::ParseError;
 
     fn try_into(self) -> Result<url::Url, Self::Error> {

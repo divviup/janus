@@ -5,7 +5,7 @@ use self::models::{
     AggregatorRole, AuthenticationTokenType, Batch, BatchAggregation, CollectionJob,
     CollectionJobState, CollectionJobStateCode, GlobalHpkeKeypair, HpkeKeyState,
     LeaderStoredReport, Lease, LeaseToken, OutstandingBatch, ReportAggregation,
-    ReportAggregationState, ReportAggregationStateCode, SqlInterval,
+    ReportAggregationState, ReportAggregationStateCode, SqlInterval, TaskprovPeerAggregator,
 };
 use crate::{
     query_type::{AccumulableQueryType, CollectableQueryType},
@@ -17,7 +17,7 @@ use chrono::NaiveDateTime;
 use futures::future::try_join_all;
 use janus_core::{
     hpke::{HpkeKeypair, HpkePrivateKey},
-    task::VdafInstance,
+    task::{url_ensure_trailing_slash, AuthenticationToken, VdafInstance},
     time::{Clock, TimeExt},
 };
 use janus_messages::{
@@ -4336,6 +4336,118 @@ impl<C: Clock> Transaction<'_, C> {
             .await?,
         )
     }
+
+    #[tracing::instrument(skip(self), err)]
+    pub async fn get_taskprov_aggregator_auth_tokens_for_peer(
+        &self,
+        aggregator_url: &Url,
+    ) -> Result<Vec<AuthenticationToken>, Error> {
+        todo!("inahga")
+    }
+
+    #[tracing::instrument(skip(self), err)]
+    pub async fn get_taskprov_peer_aggregator(
+        &self,
+        aggregator_url: &Url,
+    ) -> Result<Option<TaskprovPeerAggregator>, Error> {
+        // inahga: trailing slash?
+        let aggregator_url = aggregator_url.as_str();
+        let params: &[&(dyn ToSql + Sync)] = &[&aggregator_url];
+
+        let stmt = self
+            .prepare_cached(
+                "SELECT endpoint, role, verify_key_init, collector_hpke_config
+                    FROM taskprov_peer_aggregators WHERE endpoint = $1",
+            )
+            .await?;
+        let peer_aggregator_row = self.query_opt(&stmt, params);
+
+        let stmt = self
+            .prepare_cached(
+                "SELECT ord, type, token FROM taskprov_aggregator_auth_tokens
+                    WHERE peer_aggregator_id = (SELECT id FROM taskprov_peer_aggregators WHERE endpoint = $1)
+                    ORDER BY ord ASC",
+            )
+            .await?;
+        let aggregator_auth_token_rows = self.query(&stmt, params);
+
+        let stmt = self
+            .prepare_cached(
+                "SELECT ord, type, token FROM taskprov_collector_auth_tokens
+                    WHERE peer_aggregator_id = (SELECT id FROM taskprov_peer_aggregators WHERE endpoint = $1)
+                    ORDER BY ord ASC",
+            )
+            .await?;
+        let collector_auth_token_rows = self.query(&stmt, params);
+
+        let (peer_aggregator_row, aggregator_auth_token_rows, collector_auth_token_rows) = try_join!(
+            peer_aggregator_row,
+            aggregator_auth_token_rows,
+            collector_auth_token_rows,
+        )?;
+        peer_aggregator_row
+            .map(|peer_aggregator_row| {
+                self.taskprov_peer_aggregator_from_rows(
+                    aggregator_url,
+                    &peer_aggregator_row,
+                    &aggregator_auth_token_rows,
+                    &collector_auth_token_rows,
+                )
+            })
+            .transpose()
+    }
+
+    fn taskprov_peer_aggregator_from_rows(
+        &self,
+        aggregator_url: &str,
+        peer_aggregator_row: &Row,
+        aggregator_auth_token_rows: &[Row],
+        collector_auth_token_rows: &[Row],
+    ) -> Result<TaskprovPeerAggregator, Error> {
+        // Aggregator authentication tokens.
+        let mut aggregator_auth_tokens = Vec::new();
+        for row in aggregator_auth_token_rows {
+            let ord: i64 = row.get("ord");
+            let auth_token_type: AuthenticationTokenType = row.get("type");
+            let encrypted_aggregator_auth_token: Vec<u8> = row.get("token");
+
+            let mut row_id = [0u8; TaskId::LEN + size_of::<i64>()];
+            row_id[..TaskId::LEN].copy_from_slice(task_id.as_ref());
+            row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
+
+            aggregator_auth_tokens.push(auth_token_type.as_authentication(
+                &self.crypter.decrypt(
+                    "task_aggregator_auth_tokens",
+                    &row_id,
+                    "token",
+                    &encrypted_aggregator_auth_token,
+                )?,
+            )?);
+        }
+
+        // Collector authentication tokens.
+        let mut collector_auth_tokens = Vec::new();
+        for row in collector_auth_token_rows {
+            let ord: i64 = row.get("ord");
+            let auth_token_type: AuthenticationTokenType = row.get("type");
+            let encrypted_collector_auth_token: Vec<u8> = row.get("token");
+
+            let mut row_id = [0u8; TaskId::LEN + size_of::<i64>()];
+            row_id[..TaskId::LEN].copy_from_slice(task_id.as_ref());
+            row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
+
+            collector_auth_tokens.push(auth_token_type.as_authentication(
+                &self.crypter.decrypt(
+                    "task_collector_auth_tokens",
+                    &row_id,
+                    "token",
+                    &encrypted_collector_auth_token,
+                )?,
+            )?);
+        }
+
+        todo!()
+    }
 }
 
 fn check_insert(row_count: u64) -> Result<(), Error> {
@@ -4632,8 +4744,8 @@ pub mod models {
     use janus_messages::{
         query_type::{FixedSize, QueryType, TimeInterval},
         AggregationJobId, AggregationJobRound, BatchId, CollectionJobId, Duration, Extension,
-        HpkeCiphertext, Interval, PrepareStep, ReportId, ReportIdChecksum, ReportMetadata,
-        ReportShareError, Role, TaskId, Time,
+        HpkeCiphertext, HpkeConfig, Interval, PrepareStep, ReportId, ReportIdChecksum,
+        ReportMetadata, ReportShareError, Role, TaskId, Time,
     };
     use postgres_protocol::types::{
         range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql, Range, RangeBound,
@@ -4649,6 +4761,7 @@ pub mod models {
         hash::{Hash, Hasher},
         ops::RangeInclusive,
     };
+    use url::Url;
 
     // We have to manually implement [Partial]Eq for a number of types because the derived
     // implementations don't play nice with generic fields, even if those fields are constrained to
@@ -6357,6 +6470,62 @@ pub mod models {
 
         pub fn updated_at(&self) -> &Time {
             &self.updated_at
+        }
+    }
+
+    #[derive(Clone, Derivative, PartialEq, Eq)]
+    #[derivative(Debug)]
+    pub struct TaskprovPeerAggregator {
+        endpoint: Url,
+        role: Role,
+        #[derivative(Debug = "ignore")]
+        verify_key_init: [u8; 32],
+        collector_hpke_config: HpkeConfig,
+        aggregator_auth_tokens: Vec<AuthenticationToken>,
+        collector_auth_tokens: Vec<AuthenticationToken>,
+    }
+
+    impl TaskprovPeerAggregator {
+        pub(crate) fn new(
+            endpoint: Url,
+            role: Role,
+            verify_key_init: [u8; 32],
+            collector_hpke_config: HpkeConfig,
+            aggregator_auth_tokens: Vec<AuthenticationToken>,
+            collector_auth_tokens: Vec<AuthenticationToken>,
+        ) -> Self {
+            Self {
+                endpoint,
+                role,
+                verify_key_init,
+                collector_hpke_config,
+                aggregator_auth_tokens,
+                collector_auth_tokens,
+            }
+        }
+
+        pub fn endpoint(&self) -> &Url {
+            &self.endpoint
+        }
+
+        pub fn role(&self) -> &Role {
+            &self.role
+        }
+
+        pub fn verify_key_init(&self) -> &[u8; 32] {
+            &self.verify_key_init
+        }
+
+        pub fn collector_hpke_config(&self) -> &HpkeConfig {
+            &self.collector_hpke_config
+        }
+
+        pub fn aggregator_auth_tokens(&self) -> &[AuthenticationToken] {
+            &self.aggregator_auth_tokens
+        }
+
+        pub fn collector_auth_tokens(&self) -> &[AuthenticationToken] {
+            &self.collector_auth_tokens
         }
     }
 }

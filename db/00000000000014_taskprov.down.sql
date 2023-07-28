@@ -1,5 +1,3 @@
-ALTER TABLE tasks DROP COLUMN;
-ALTER TABLE tasks DROP COLUMN;
-
 DROP TABLE taskprov_peer_aggregator;
-DROP TYPE TASK_CREATED_BY;
+DROP TABLE taskprov_aggregator_auth_tokens;
+DROP TABLE taskprov_collector_auth_tokens;

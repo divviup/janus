@@ -602,7 +602,7 @@ impl PartialEq for AuthenticationToken {
         };
         // We attempt constant-time comparisons of the token data to mitigate timing attacks. Note
         // that this function still eaks whether the lengths of the tokens are equal -- this is
-        // acceptable because we expec the content of the tokens to provide enough randomness that
+        // acceptable because we expect the content of the tokens to provide enough randomness that
         // needs to be guessed even if the length is known.
         constant_time::verify_slices_are_equal(own, other).is_ok()
     }
