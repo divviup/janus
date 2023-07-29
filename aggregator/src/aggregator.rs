@@ -5,6 +5,7 @@ use crate::{
     aggregator::{
         aggregate_share::compute_aggregate_share,
         error::BatchMismatch,
+        error::TaskprovError,
         query_type::{CollectableQueryType, UploadableQueryType},
         report_writer::{ReportWriteBatcher, WritableReport},
     },
@@ -611,41 +612,71 @@ impl<C: Clock> Aggregator<C> {
 
     // The behavior of each protocol participant is determined by whether or not they opt in to a task.
 
-    /// Opts in or out of a taskprov task.
+    /// Opts in or out of a taskprov task. This inserts the task if it's not already present.
     ///
-    /// * `role` - The role that the peer aggregator takes (i.e. _not this_ aggregator)
+    /// * `role` - The role that the peer aggregator takes (i.e. _not this_ aggregator). Must be
+    ///   [`Role::Leader`] or [`Role::Helper`].
     async fn taskprov_opt_in(
         &self,
         role: &Role,
         task_id: &TaskId,
         task_config: &TaskConfig,
-    ) -> Result<(), Error> {
-        if self.clock.now() > *task_config.task_expiration() {
-            return Err(Error::InvalidTask(
-                *task_id,
-                "the task has expired".to_string(),
-            ));
+    ) -> Result<(), TaskprovError> {
+        let aggregator_urls = task_config
+            .aggregator_endpoints()
+            .iter()
+            .map(|url| url.try_into())
+            .collect::<Result<Vec<Url>, _>>()?;
+
+        if aggregator_urls.len() < 2 {
+            return Err(TaskprovError::MissingAggregatorEndpoints);
         }
 
-        let aggregator_url: Url = task_config
-            .aggregator_url(role)
-            .unwrap()
-            .try_into()
-            .map_err(|err| Error::InvalidTask(*task_id, format!("{}", err)))?;
+        let peer_aggregator_url = &aggregator_urls[role.index().unwrap()];
 
         // get the peer aggregator
         // inahga: cache this
         let peer_aggregator = self
             .datastore
             .run_tx_with_name("get_taskprov_peer_aggregator", |tx| {
-                Box::pin(async move { Ok(()) })
+                let peer_aggregator_url = peer_aggregator_url.clone();
+                Box::pin(async move { tx.get_taskprov_peer_aggregator(&peer_aggregator_url).await })
             })
-            .await?;
+            .await?
+            .ok_or_else(|| TaskprovError::NoSuchPeer)?;
+
+        if self.clock.now() > *task_config.task_expiration() {
+            return Err(TaskprovError::TaskExpired);
+        }
 
         // TODO(#1647): Check whether task config parameters are acceptable for privacy and
         // availability of the system.
 
         // Construct a new task
+        let task = Task::new(
+            *task_id,
+            aggregator_urls,
+            task_config.query_config().query().try_into()?,
+            task_config
+                .vdaf_config()
+                .vdaf_type()
+                .try_into()
+                .map_err(|err| TaskprovError::Invalid(err.to_string())),
+            serialized_task.role,
+            vdaf_verify_keys,
+            serialized_task.max_batch_query_count,
+            serialized_task.task_expiration,
+            serialized_task.report_expiry_age,
+            serialized_task.min_batch_size,
+            serialized_task.time_precision,
+            serialized_task.tolerable_clock_skew,
+            serialized_task.collector_hpke_config,
+            serialized_task.aggregator_auth_tokens,
+            serialized_task.collector_auth_tokens,
+            serialized_task.hpke_keys,
+        )
+        .map_err(|err| Error::InvalidTask(*task_id, format!("{}", err)))?;
+
         // insert the new task
 
         // be wary of concurrency problems

@@ -1,4 +1,4 @@
-use super::{Aggregator, Config, Error};
+use super::{error::TaskprovError, Aggregator, Config, Error};
 use crate::aggregator::problem_details::ProblemDetailsConnExt;
 use async_trait::async_trait;
 use janus_aggregator_core::{datastore::Datastore, instrumented};
@@ -100,9 +100,11 @@ impl Handler for Error {
             }
             Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
             Error::BadRequest(_) => conn.with_status(Status::BadRequest),
-            Error::InvalidTask(task_id, _) => {
-                conn.with_problem_details(DapProblemType::InvalidTask, Some(task_id))
-            }
+            Error::InvalidTask(error) => match error {
+                TaskprovError::Datastore(_) => conn.with_status(Status::InternalServerError),
+                // inahga: get the task id in here somehow
+                _ => conn.with_problem_details(DapProblemType::InvalidTask, None),
+            },
         }
     }
 }

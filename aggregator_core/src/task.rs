@@ -8,8 +8,8 @@ use janus_core::{
     task::{url_ensure_trailing_slash, AuthenticationToken, VdafInstance},
 };
 use janus_messages::{
-    AggregationJobId, CollectionJobId, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId,
-    HpkeKemId, Role, TaskId, Time,
+    taskprov, AggregationJobId, CollectionJobId, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId,
+    HpkeKdfId, HpkeKemId, Role, TaskId, Time,
 };
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
@@ -45,6 +45,20 @@ pub enum QueryType {
         /// The maximum number of reports in a batch to allow it to be collected.
         max_batch_size: u64,
     },
+}
+
+impl TryFrom<&taskprov::Query> for QueryType {
+    type Error = Error;
+
+    fn try_from(value: &taskprov::Query) -> Result<Self, Self::Error> {
+        match value {
+            taskprov::Query::TimeInterval => Ok(Self::TimeInterval),
+            taskprov::Query::FixedSize { max_batch_size } => Ok(Self::FixedSize {
+                max_batch_size: *max_batch_size as u64,
+            }),
+            _ => Err(Error::InvalidParameter("unknown query type")),
+        }
+    }
 }
 
 /// A verification key for a VDAF, with a fixed length. It must be kept secret from clients to

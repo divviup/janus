@@ -241,7 +241,12 @@ impl Decode for QueryConfig {
 ///   - The parent mod decoding logic assumes that the query type is encoded
 ///     directly adjacent to its associated parameters. This is not the case
 ///     in taskprov.
+///
+/// The redefinition of [`aggregator_core::task::QueryType`] is because the
+/// two types are subtly incompatible (presence of Reserved, size of
+/// max_batch_size).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Query {
     Reserved,
     TimeInterval,

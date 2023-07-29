@@ -4408,46 +4408,46 @@ impl<C: Clock> Transaction<'_, C> {
         collector_auth_token_rows: &[Row],
     ) -> Result<TaskprovPeerAggregator, Error> {
         // Aggregator authentication tokens.
-        let mut aggregator_auth_tokens = Vec::new();
-        for row in aggregator_auth_token_rows {
-            let ord: i64 = row.get("ord");
-            let auth_token_type: AuthenticationTokenType = row.get("type");
-            let encrypted_aggregator_auth_token: Vec<u8> = row.get("token");
+        // let mut aggregator_auth_tokens = Vec::new();
+        // for row in aggregator_auth_token_rows {
+        //     let ord: i64 = row.get("ord");
+        //     let auth_token_type: AuthenticationTokenType = row.get("type");
+        //     let encrypted_aggregator_auth_token: Vec<u8> = row.get("token");
 
-            let mut row_id = [0u8; TaskId::LEN + size_of::<i64>()];
-            row_id[..TaskId::LEN].copy_from_slice(task_id.as_ref());
-            row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
+        //     let mut row_id = [0u8; TaskId::LEN + size_of::<i64>()];
+        //     row_id[..TaskId::LEN].copy_from_slice(task_id.as_ref());
+        //     row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
 
-            aggregator_auth_tokens.push(auth_token_type.as_authentication(
-                &self.crypter.decrypt(
-                    "task_aggregator_auth_tokens",
-                    &row_id,
-                    "token",
-                    &encrypted_aggregator_auth_token,
-                )?,
-            )?);
-        }
+        //     aggregator_auth_tokens.push(auth_token_type.as_authentication(
+        //         &self.crypter.decrypt(
+        //             "task_aggregator_auth_tokens",
+        //             &row_id,
+        //             "token",
+        //             &encrypted_aggregator_auth_token,
+        //         )?,
+        //     )?);
+        // }
 
         // Collector authentication tokens.
-        let mut collector_auth_tokens = Vec::new();
-        for row in collector_auth_token_rows {
-            let ord: i64 = row.get("ord");
-            let auth_token_type: AuthenticationTokenType = row.get("type");
-            let encrypted_collector_auth_token: Vec<u8> = row.get("token");
+        // let mut collector_auth_tokens = Vec::new();
+        // for row in collector_auth_token_rows {
+        //     let ord: i64 = row.get("ord");
+        //     let auth_token_type: AuthenticationTokenType = row.get("type");
+        //     let encrypted_collector_auth_token: Vec<u8> = row.get("token");
 
-            let mut row_id = [0u8; TaskId::LEN + size_of::<i64>()];
-            row_id[..TaskId::LEN].copy_from_slice(task_id.as_ref());
-            row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
+        //     let mut row_id = [0u8; TaskId::LEN + size_of::<i64>()];
+        //     row_id[..TaskId::LEN].copy_from_slice(task_id.as_ref());
+        //     row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
 
-            collector_auth_tokens.push(auth_token_type.as_authentication(
-                &self.crypter.decrypt(
-                    "task_collector_auth_tokens",
-                    &row_id,
-                    "token",
-                    &encrypted_collector_auth_token,
-                )?,
-            )?);
-        }
+        //     collector_auth_tokens.push(auth_token_type.as_authentication(
+        //         &self.crypter.decrypt(
+        //             "task_collector_auth_tokens",
+        //             &row_id,
+        //             "token",
+        //             &encrypted_collector_auth_token,
+        //         )?,
+        //     )?);
+        // }
 
         todo!()
     }

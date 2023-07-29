@@ -127,7 +127,26 @@ pub enum Error {
     BadRequest(String),
     /// Corresponds to taskprov invalidType (§2)
     #[error("aggregator has opted out of the indicated task: {0}")]
-    InvalidTask(TaskId, String),
+    InvalidTask(#[from] TaskprovError),
+}
+
+/// Errors that cause the aggregator to opt-out of a taskprov task.
+#[derive(Debug, thiserror::Error)]
+pub enum TaskprovError {
+    #[error("datastore error: {0}")]
+    Datastore(datastore::Error),
+    #[error("missing one or both aggregator endpoints")]
+    MissingAggregatorEndpoints,
+    #[error("aggregator is not peered with the given aggregator")]
+    NoSuchPeer,
+    #[error("task has expired")]
+    TaskExpired,
+    #[error("invalid task parameters: {0}")]
+    TaskParameters(#[from] task::Error),
+    #[error("URL parse error: {0}")]
+    Url(#[from] url::ParseError),
+    #[error("{0}")]
+    Invalid(String),
 }
 
 impl Error {
@@ -165,7 +184,7 @@ impl Error {
             Error::Internal(_) => "internal",
             Error::ForbiddenMutation { .. } => "forbidden_mutation",
             Error::BadRequest(_) => "bad_request",
-            Error::InvalidTask(_, _) => "invalid_task",
+            Error::InvalidTask(_) => "invalid_task",
         }
     }
 }
