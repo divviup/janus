@@ -2,7 +2,7 @@ use http_api_problem::HttpApiProblem;
 use janus_aggregator_core::{datastore, task};
 use janus_messages::{
     problem_type::DapProblemType, AggregationJobId, AggregationJobRound, CollectionJobId,
-    HpkeConfigId, Interval, ReportId, ReportIdChecksum, TaskId, Time,
+    HpkeConfigId, Interval, ReportId, ReportIdChecksum, Role, TaskId, Time,
 };
 use prio::vdaf::VdafError;
 use std::{
@@ -127,26 +127,25 @@ pub enum Error {
     BadRequest(String),
     /// Corresponds to taskprov invalidType (§2)
     #[error("aggregator has opted out of the indicated task: {0}")]
-    InvalidTask(#[from] TaskprovError),
+    InvalidTask(#[from] TaskprovOptOutError),
 }
 
 /// Errors that cause the aggregator to opt-out of a taskprov task.
 #[derive(Debug, thiserror::Error)]
-pub enum TaskprovError {
-    #[error("datastore error: {0}")]
-    Datastore(datastore::Error),
+pub enum TaskprovOptOutError {
     #[error("missing one or both aggregator endpoints")]
     MissingAggregatorEndpoints,
-    #[error("aggregator is not peered with the given aggregator")]
-    NoSuchPeer,
+    #[error("this aggregator is not peered with the given aggregator in the role {0}")]
+    NoSuchPeer(Role),
     #[error("task has expired")]
     TaskExpired,
-    #[error("invalid task parameters: {0}")]
+    #[error("invalid task parameter: {0}")]
     TaskParameters(#[from] task::Error),
     #[error("URL parse error: {0}")]
     Url(#[from] url::ParseError),
-    #[error("{0}")]
-    Invalid(String),
+    /// Catch-all error for generally invalid parameters.
+    #[error("invalid parameter: {0}")]
+    InvalidParameter(String),
 }
 
 impl Error {

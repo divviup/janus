@@ -17,7 +17,7 @@ use chrono::NaiveDateTime;
 use futures::future::try_join_all;
 use janus_core::{
     hpke::{HpkeKeypair, HpkePrivateKey},
-    task::{url_ensure_trailing_slash, AuthenticationToken, VdafInstance},
+    task::{AuthenticationToken, VdafInstance},
     time::{Clock, TimeExt},
 };
 use janus_messages::{
@@ -543,36 +543,38 @@ impl<C: Clock> Transaction<'_, C> {
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
             )
             .await?;
-        self.execute(
-            &stmt,
-            &[
-                /* task_id */ &task.id().as_ref(),
-                /* aggregator_role */ &AggregatorRole::from_role(*task.role())?,
-                /* aggregator_endpoints */ &endpoints,
-                /* query_type */ &Json(task.query_type()),
-                /* vdaf */ &Json(task.vdaf()),
-                /* max_batch_query_count */
-                &i64::try_from(task.max_batch_query_count())?,
-                /* task_expiration */
-                &task
-                    .task_expiration()
-                    .map(Time::as_naive_date_time)
-                    .transpose()?,
-                /* report_expiry_age */
-                &task
-                    .report_expiry_age()
-                    .map(Duration::as_seconds)
-                    .map(i64::try_from)
-                    .transpose()?,
-                /* min_batch_size */ &i64::try_from(task.min_batch_size())?,
-                /* time_precision */
-                &i64::try_from(task.time_precision().as_seconds())?,
-                /* tolerable_clock_skew */
-                &i64::try_from(task.tolerable_clock_skew().as_seconds())?,
-                /* collector_hpke_config */ &task.collector_hpke_config().get_encoded(),
-            ],
-        )
-        .await?;
+        check_single_row_mutation(
+            self.execute(
+                &stmt,
+                &[
+                    /* task_id */ &task.id().as_ref(),
+                    /* aggregator_role */ &AggregatorRole::from_role(*task.role())?,
+                    /* aggregator_endpoints */ &endpoints,
+                    /* query_type */ &Json(task.query_type()),
+                    /* vdaf */ &Json(task.vdaf()),
+                    /* max_batch_query_count */
+                    &i64::try_from(task.max_batch_query_count())?,
+                    /* task_expiration */
+                    &task
+                        .task_expiration()
+                        .map(Time::as_naive_date_time)
+                        .transpose()?,
+                    /* report_expiry_age */
+                    &task
+                        .report_expiry_age()
+                        .map(Duration::as_seconds)
+                        .map(i64::try_from)
+                        .transpose()?,
+                    /* min_batch_size */ &i64::try_from(task.min_batch_size())?,
+                    /* time_precision */
+                    &i64::try_from(task.time_precision().as_seconds())?,
+                    /* tolerable_clock_skew */
+                    &i64::try_from(task.tolerable_clock_skew().as_seconds())?,
+                    /* collector_hpke_config */ &task.collector_hpke_config().get_encoded(),
+                ],
+            )
+            .await?,
+        )?;
 
         // Aggregator auth tokens.
         let mut aggregator_auth_token_ords = Vec::new();
@@ -4341,26 +4343,20 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_taskprov_aggregator_auth_tokens_for_peer(
-        &self,
-        aggregator_url: &Url,
-    ) -> Result<Vec<AuthenticationToken>, Error> {
-        todo!("inahga")
-    }
-
-    #[tracing::instrument(skip(self), err)]
     pub async fn get_taskprov_peer_aggregator(
         &self,
         aggregator_url: &Url,
+        peer_role: &Role,
     ) -> Result<Option<TaskprovPeerAggregator>, Error> {
         // inahga: trailing slash?
         let aggregator_url = aggregator_url.as_str();
-        let params: &[&(dyn ToSql + Sync)] = &[&aggregator_url];
+        let params: &[&(dyn ToSql + Sync)] =
+            &[&aggregator_url, &AggregatorRole::from_role(*peer_role)?];
 
         let stmt = self
             .prepare_cached(
                 "SELECT endpoint, role, verify_key_init, collector_hpke_config
-                    FROM taskprov_peer_aggregators WHERE endpoint = $1",
+                    FROM taskprov_peer_aggregators WHERE endpoint = $1 AND role = $2",
             )
             .await?;
         let peer_aggregator_row = self.query_opt(&stmt, params);
@@ -4368,7 +4364,8 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "SELECT ord, type, token FROM taskprov_aggregator_auth_tokens
-                    WHERE peer_aggregator_id = (SELECT id FROM taskprov_peer_aggregators WHERE endpoint = $1)
+                    WHERE peer_aggregator_id =
+                        (SELECT id FROM taskprov_peer_aggregators WHERE endpoint = $1 AND role = $2)
                     ORDER BY ord ASC",
             )
             .await?;
@@ -4377,7 +4374,8 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "SELECT ord, type, token FROM taskprov_collector_auth_tokens
-                    WHERE peer_aggregator_id = (SELECT id FROM taskprov_peer_aggregators WHERE endpoint = $1)
+                    WHERE peer_aggregator_id =
+                        (SELECT id FROM taskprov_peer_aggregators WHERE endpoint = $1 AND role = $2)
                     ORDER BY ord ASC",
             )
             .await?;

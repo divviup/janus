@@ -5,7 +5,6 @@ use crate::{
     aggregator::{
         aggregate_share::compute_aggregate_share,
         error::BatchMismatch,
-        error::TaskprovError,
         query_type::{CollectableQueryType, UploadableQueryType},
         report_writer::{ReportWriteBatcher, WritableReport},
     },
@@ -31,7 +30,7 @@ use janus_aggregator_core::{
             BatchAggregationState, BatchState, CollectionJob, CollectionJobState,
             LeaderStoredReport, ReportAggregation, ReportAggregationState,
         },
-        Datastore, Transaction,
+        Datastore, Error as DatastoreError, Transaction,
     },
     query_type::AccumulableQueryType,
     task::{self, Task, VerifyKey},
@@ -84,6 +83,8 @@ use std::{
 use tokio::{sync::Mutex, try_join};
 use tracing::{debug, info, trace_span, warn};
 use url::Url;
+
+use self::error::TaskprovOptOutError;
 
 pub mod accumulator;
 #[cfg(test)]
@@ -318,74 +319,44 @@ impl<C: Clock> Aggregator<C> {
         taskprov_header: Option<&[u8]>,
     ) -> Result<AggregationJobResp, Error> {
         let task_aggregator = match self.task_aggregator_for(task_id).await? {
-            Some(task_aggregator) => task_aggregator,
-            None => {
-                if self.cfg.taskprov_config.enabled {
-                    match taskprov_header {
-                        Some(taskprov_header) => {
-                            if task_id.as_ref() != digest(&SHA256, &taskprov_header).as_ref() {
-                                return Err(Error::UnrecognizedTask(*task_id));
-                            }
-
-                            let task_config = TaskConfig::decode(&mut Cursor::new(
-                                &URL_SAFE_NO_PAD
-                                    .decode(&taskprov_header)
-                                    .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?,
-                            ))?;
-
-                            self.taskprov_opt_in(&Role::Leader, task_id, &task_config)
-                                .await?;
-
-                            self.task_aggregator_for(task_id).await?.ok_or_else(|| {
-                                // inahga: more tracing, better error message
-                                Error::Internal("unexpectedly failed to create task".to_string())
-                            })?
-                        }
-                        None => return Err(Error::UnrecognizedTask(*task_id)),
-                    }
-                } else {
+            Some(task_aggregator) => {
+                if !auth_token
+                    .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
+                    .unwrap_or(false)
+                {
+                    return Err(Error::UnauthorizedRequest(*task_id));
+                }
+                if task_aggregator.task.role() != &Role::Helper {
                     return Err(Error::UnrecognizedTask(*task_id));
                 }
+                task_aggregator
+            }
+            // Note that we're only proceeding down this path
+            None if self.cfg.taskprov_config.enabled && taskprov_header.is_some() => {
+                // Decode taskprov header.
+                let taskprov_header = &URL_SAFE_NO_PAD
+                    .decode(&taskprov_header.unwrap())
+                    .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
+                if task_id.as_ref() != digest(&SHA256, &taskprov_header).as_ref() {
+                    return Err(Error::UnrecognizedTask(*task_id));
+                }
+
+                // Determine whether we accept the task.
+                let task_config = TaskConfig::decode(&mut Cursor::new(&taskprov_header))?;
+                self.taskprov_opt_in(&Role::Leader, task_id, &task_config, auth_token.as_ref())
+                    .await?;
+
+                // Retry fetching the aggregator.
+                // inahga PROBLEM: this has already cached the None response
+                self.task_aggregator_for(task_id).await?.ok_or_else(|| {
+                    // inahga: more tracing, better error message
+                    Error::Internal("unexpectedly failed to create task".to_string())
+                })?
+            }
+            _ => {
+                return Err(Error::UnrecognizedTask(*task_id));
             }
         };
-
-        if task_aggregator.task.role() != &Role::Helper {
-            return Err(Error::UnrecognizedTask(*task_id));
-        }
-
-        // If we've gotten this far, we've proved that the header does refer to the given
-        // task ID, and that we're referring to a taskprov task. Therefore, use the
-        // taskprov-specific auth tokens which we've preshared with the taskprov
-        // peer aggregator.
-        if taskprov_header.is_some() {
-            let peer_aggregator = task_aggregator.task.aggregator_url(&Role::Leader).unwrap();
-
-            // inahga: cache this
-            let aggregator_auth_tokens = self
-                .datastore
-                .run_tx_with_name("get_taskprov_aggregator_auth_tokens_for_peer", |tx| {
-                    let peer_aggregator = peer_aggregator.clone();
-                    Box::pin(async move {
-                        tx.get_taskprov_aggregator_auth_tokens_for_peer(&peer_aggregator)
-                            .await
-                    })
-                })
-                .await?;
-
-            if !auth_token
-                .map(|t| aggregator_auth_tokens.iter().any(|token| t == *token))
-                .unwrap_or(false)
-            {
-                return Err(Error::UnauthorizedRequest(*task_id));
-            }
-        } else {
-            if !auth_token
-                .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
-                .unwrap_or(false)
-            {
-                return Err(Error::UnauthorizedRequest(*task_id));
-            }
-        }
 
         task_aggregator
             .handle_aggregate_init(
@@ -410,10 +381,11 @@ impl<C: Clock> Aggregator<C> {
             .task_aggregator_for(task_id)
             .await?
             .ok_or_else(|| Error::UnrecognizedMessage(None, "task_id"))?;
-        // inahga taskprov
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
         }
+
+        // inahga taskprov
         if !auth_token
             .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
             .unwrap_or(false)
@@ -596,43 +568,23 @@ impl<C: Clock> Aggregator<C> {
         }
     }
 
-    // Prior to participating in a task, each protocol participant must determine if the TaskConfig disseminated by the Author can be configured. The participant is said to "opt in" to the task if the derived task ID (see {{construct-task-id}}) corresponds to an already configured task or the task ID is unrecognized and therefore corresponds to a new task.
-
-    // A protocol participant MAY "opt out" of a task if:
-
-    //     The derived task ID corresponds to an already configured task, but the task configuration disseminated by the Author does not match the existing configuration.
-
-    //     The VDAF, DP, or query configuration is deemed insufficient for privacy.
-
-    //     A secure connection to one or both of the Aggregator endpoints could not be established.
-
-    //     The task lifetime is too long.
-
-    // A protocol participant MUST opt out if the task has expired. f
-
-    // The behavior of each protocol participant is determined by whether or not they opt in to a task.
-
-    /// Opts in or out of a taskprov task. This inserts the task if it's not already present.
-    ///
-    /// * `role` - The role that the peer aggregator takes (i.e. _not this_ aggregator). Must be
-    ///   [`Role::Leader`] or [`Role::Helper`].
+    /// Opts in or out of a taskprov task.
     async fn taskprov_opt_in(
         &self,
-        role: &Role,
+        peer_role: &Role,
         task_id: &TaskId,
         task_config: &TaskConfig,
-    ) -> Result<(), TaskprovError> {
+        auth_token: Option<&AuthenticationToken>,
+    ) -> Result<(), Error> {
         let aggregator_urls = task_config
             .aggregator_endpoints()
             .iter()
             .map(|url| url.try_into())
             .collect::<Result<Vec<Url>, _>>()?;
-
         if aggregator_urls.len() < 2 {
-            return Err(TaskprovError::MissingAggregatorEndpoints);
+            return Err(TaskprovOptOutError::MissingAggregatorEndpoints.into());
         }
-
-        let peer_aggregator_url = &aggregator_urls[role.index().unwrap()];
+        let peer_aggregator_url = &aggregator_urls[peer_role.index().unwrap()];
 
         // get the peer aggregator
         // inahga: cache this
@@ -640,48 +592,79 @@ impl<C: Clock> Aggregator<C> {
             .datastore
             .run_tx_with_name("get_taskprov_peer_aggregator", |tx| {
                 let peer_aggregator_url = peer_aggregator_url.clone();
-                Box::pin(async move { tx.get_taskprov_peer_aggregator(&peer_aggregator_url).await })
+                let peer_role = peer_role.clone();
+                Box::pin(async move {
+                    // This implictly checks whether the current aggregator role is appropriate for
+                    // the upstream API call.
+                    tx.get_taskprov_peer_aggregator(&peer_aggregator_url, &peer_role)
+                        .await
+                })
             })
             .await?
-            .ok_or_else(|| TaskprovError::NoSuchPeer)?;
+            .ok_or_else(|| TaskprovOptOutError::NoSuchPeer(*peer_role))?;
+
+        if !auth_token
+            .map(|t| peer_aggregator.check_aggregator_auth_token(&t))
+            .unwrap_or(false)
+        {
+            return Err(Error::UnauthorizedRequest(*task_id));
+        }
 
         if self.clock.now() > *task_config.task_expiration() {
-            return Err(TaskprovError::TaskExpired);
+            return Err(TaskprovOptOutError::TaskExpired.into());
         }
 
         // TODO(#1647): Check whether task config parameters are acceptable for privacy and
         // availability of the system.
 
-        // Construct a new task
+        let vdaf_instance = task_config
+            .vdaf_config()
+            .vdaf_type()
+            .try_into()
+            .map_err(|err: &str| TaskprovOptOutError::InvalidParameter(err.to_string()))?;
+
+        let our_role = match peer_role {
+            Role::Leader => Role::Helper,
+            Role::Helper => Role::Leader,
+            _ => {
+                return Err(Error::Internal(
+                    "role should have only been Helper or Leader".to_string(),
+                ))
+            }
+        };
+
+        // inahga PROBLEM: this rejects empty aggregator auth tokens
         let task = Task::new(
             *task_id,
             aggregator_urls,
             task_config.query_config().query().try_into()?,
-            task_config
-                .vdaf_config()
-                .vdaf_type()
-                .try_into()
-                .map_err(|err| TaskprovError::Invalid(err.to_string())),
-            serialized_task.role,
-            vdaf_verify_keys,
-            serialized_task.max_batch_query_count,
-            serialized_task.task_expiration,
-            serialized_task.report_expiry_age,
-            serialized_task.min_batch_size,
-            serialized_task.time_precision,
-            serialized_task.tolerable_clock_skew,
-            serialized_task.collector_hpke_config,
-            serialized_task.aggregator_auth_tokens,
-            serialized_task.collector_auth_tokens,
-            serialized_task.hpke_keys,
-        )
-        .map_err(|err| Error::InvalidTask(*task_id, format!("{}", err)))?;
+            vdaf_instance,
+            our_role,
+            Vec::from([peer_aggregator.derive_vdaf_verify_key(task_id)]),
+            task_config.query_config().max_batch_query_count() as u64,
+            Some(*task_config.task_expiration()),
+            peer_aggregator.report_expiry_age().cloned(),
+            task_config.query_config().min_batch_size() as u64,
+            *task_config.query_config().time_precision(),
+            *peer_aggregator.tolerable_clock_skew(),
+            peer_aggregator.collector_hpke_config().clone(),
+            /* aggregator_auth_tokens */ Vec::new(),
+            /* collector_auth_tokens */ Vec::new(),
+            /* hpke_keys */ Vec::new(),
+        )?;
 
-        // insert the new task
-
-        // be wary of concurrency problems
-
-        Ok(())
+        self.datastore
+            .run_tx_with_name("taskprov_put_task", |tx| {
+                let task = task.clone();
+                Box::pin(async move { tx.put_task(&task).await })
+            })
+            .await
+            .or_else(|error| match error {
+                // If the task is already in the datastore, then some other request beat us to inserting
+                // it. This is fine, we can proceed as normal.
+                DatastoreError::MutationTargetAlreadyExists => Ok(()),
+                error => Err(error.into()),
+            })
     }
 
     #[cfg(feature = "test-util")]
