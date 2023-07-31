@@ -182,13 +182,6 @@ impl InClusterJanusPair {
         }
     }
 
-    fn in_cluster_aggregator_dap_url(namespace: &str) -> Url {
-        Url::parse(&format!(
-            "http://aggregator.{namespace}.svc.cluster.local:80"
-        ))
-        .unwrap()
-    }
-
     fn in_cluster_aggregator_api_url(namespace: &str) -> Url {
         Url::parse(&format!(
             "http://aggregator.{namespace}.svc.cluster.local:80/aggregator-api/"
