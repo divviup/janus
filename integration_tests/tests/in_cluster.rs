@@ -123,10 +123,8 @@ impl InClusterJanusPair {
         //   is necessary for the task we later provision to pass a validity check.
         let paired_leader_aggregator = divviup_api
             .pair_global_aggregator(&NewAggregatorRequest {
-                role: "Leader".to_string(),
                 name: "leader".to_string(),
                 api_url: Self::in_cluster_aggregator_api_url(&leader_namespace).to_string(),
-                dap_url: Self::in_cluster_aggregator_dap_url(&leader_namespace).to_string(),
                 bearer_token: leader_aggregator_api_auth_token,
             })
             .await;
@@ -135,10 +133,8 @@ impl InClusterJanusPair {
             .pair_aggregator(
                 &account,
                 &NewAggregatorRequest {
-                    role: "Helper".to_string(),
                     name: "helper".to_string(),
                     api_url: Self::in_cluster_aggregator_api_url(&helper_namespace).to_string(),
-                    dap_url: Self::in_cluster_aggregator_dap_url(&helper_namespace).to_string(),
                     bearer_token: helper_aggregator_api_auth_token,
                 },
             )
