@@ -331,9 +331,7 @@ impl<C: Clock> Aggregator<C> {
                 }
                 task_aggregator
             }
-            // Note that we're only proceeding down this path
             None if self.cfg.taskprov_config.enabled && taskprov_header.is_some() => {
-                // Decode taskprov header.
                 let taskprov_header = &URL_SAFE_NO_PAD
                     .decode(&taskprov_header.unwrap())
                     .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
@@ -341,13 +339,11 @@ impl<C: Clock> Aggregator<C> {
                     return Err(Error::UnrecognizedTask(*task_id));
                 }
 
-                // Determine whether we accept the task.
                 let task_config = TaskConfig::decode(&mut Cursor::new(&taskprov_header))?;
                 self.taskprov_opt_in(&Role::Leader, task_id, &task_config, auth_token.as_ref())
                     .await?;
 
-                // Retry fetching the aggregator.
-                // inahga PROBLEM: this has already cached the None response
+                // Retry fetching the aggregator, since the last function would have just inserted it.
                 self.task_aggregator_for(task_id).await?.ok_or_else(|| {
                     // inahga: more tracing, better error message
                     Error::Internal("unexpectedly failed to create task".to_string())
@@ -574,7 +570,7 @@ impl<C: Clock> Aggregator<C> {
         peer_role: &Role,
         task_id: &TaskId,
         task_config: &TaskConfig,
-        auth_token: Option<&AuthenticationToken>,
+        aggregator_auth_token: Option<&AuthenticationToken>,
     ) -> Result<(), Error> {
         let aggregator_urls = task_config
             .aggregator_endpoints()
@@ -603,7 +599,7 @@ impl<C: Clock> Aggregator<C> {
             .await?
             .ok_or_else(|| TaskprovOptOutError::NoSuchPeer(*peer_role))?;
 
-        if !auth_token
+        if !aggregator_auth_token
             .map(|t| peer_aggregator.check_aggregator_auth_token(&t))
             .unwrap_or(false)
         {
@@ -633,6 +629,9 @@ impl<C: Clock> Aggregator<C> {
             }
         };
 
+        let vdaf_verify_keys =
+            Vec::from([peer_aggregator.derive_vdaf_verify_key(task_id, &vdaf_instance)]);
+
         // inahga PROBLEM: this rejects empty aggregator auth tokens
         let task = Task::new(
             *task_id,
@@ -640,7 +639,7 @@ impl<C: Clock> Aggregator<C> {
             task_config.query_config().query().try_into()?,
             vdaf_instance,
             our_role,
-            Vec::from([peer_aggregator.derive_vdaf_verify_key(task_id)]),
+            vdaf_verify_keys,
             task_config.query_config().max_batch_query_count() as u64,
             Some(*task_config.task_expiration()),
             peer_aggregator.report_expiry_age().cloned(),
@@ -652,7 +651,6 @@ impl<C: Clock> Aggregator<C> {
             /* collector_auth_tokens */ Vec::new(),
             /* hpke_keys */ Vec::new(),
         )?;
-
         self.datastore
             .run_tx_with_name("taskprov_put_task", |tx| {
                 let task = task.clone();

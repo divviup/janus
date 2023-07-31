@@ -14,7 +14,7 @@ use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     AggregationJobId, AggregationJobRound, BatchId, CollectionJobId, Duration, Extension,
     HpkeCiphertext, HpkeConfig, Interval, PrepareStep, ReportId, ReportIdChecksum, ReportMetadata,
-    ReportShareError, Role, TaskId, Time, Url,
+    ReportShareError, Role, TaskId, Time,
 };
 use lazy_static::lazy_static;
 use postgres_protocol::types::{
@@ -32,6 +32,7 @@ use std::{
     hash::{Hash, Hasher},
     ops::RangeInclusive,
 };
+use url::Url;
 
 // We have to manually implement [Partial]Eq for a number of types because the derived
 // implementations don't play nice with generic fields, even if those fields are constrained to
@@ -1736,7 +1737,7 @@ pub struct TaskprovPeerAggregator {
     endpoint: Url,
     role: Role,
     #[derivative(Debug = "ignore")]
-    verify_key_init: [u8; 32],
+    verify_key_init: SecretBytes,
     collector_hpke_config: HpkeConfig,
     report_expiry_age: Option<Duration>,
     tolerable_clock_skew: Duration,
@@ -1762,7 +1763,7 @@ impl TaskprovPeerAggregator {
     pub(crate) fn new(
         endpoint: Url,
         role: Role,
-        verify_key_init: [u8; 32],
+        verify_key_init: SecretBytes,
         collector_hpke_config: HpkeConfig,
         report_expiry_age: Option<Duration>,
         tolerable_clock_skew: Duration,
@@ -1789,7 +1790,7 @@ impl TaskprovPeerAggregator {
         &self.role
     }
 
-    pub fn verify_key_init(&self) -> &[u8; 32] {
+    pub fn verify_key_init(&self) -> &SecretBytes {
         &self.verify_key_init
     }
 
@@ -1849,7 +1850,7 @@ impl TaskprovPeerAggregator {
         task_id: &TaskId,
         vdaf_instance: &VdafInstance,
     ) -> SecretBytes {
-        let prk = SALT.extract(&self.verify_key_init);
+        let prk = SALT.extract(self.verify_key_init.as_ref());
         let info = [task_id.as_ref().as_slice()];
 
         // Unwrap safety: this function only errors if the OKM length is too long
@@ -1871,6 +1872,7 @@ impl TaskprovPeerAggregator {
 
 /// Helper type for using `ring::Prk::expand()`.
 struct VdafVerifyKeyLength(usize);
+
 impl KeyType for VdafVerifyKeyLength {
     fn len(&self) -> usize {
         self.0
