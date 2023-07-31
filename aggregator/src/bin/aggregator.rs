@@ -4,71 +4,63 @@ use clap::Parser;
 use janus_aggregator::{
     aggregator::{self, garbage_collector::GarbageCollector, http_handlers::aggregator_handler},
     binary_utils::{
-        janus_main, setup_server, setup_signal_handler, BinaryOptions, CommonBinaryOptions,
+        janus_main, setup_server, setup_signal_handler, BinaryContext, BinaryOptions,
+        CommonBinaryOptions,
     },
     cache::GlobalHpkeKeypairCache,
     config::{BinaryConfig, CommonConfig, TaskprovConfig},
 };
 use janus_aggregator_api::{self, aggregator_api_handler};
-use janus_aggregator_core::SecretBytes;
+use janus_aggregator_core::{datastore::Datastore, SecretBytes};
 use janus_core::time::RealClock;
 use serde::{Deserialize, Serialize};
-use std::{future::Future, pin::Pin};
+use std::{
+    future::{ready, Future},
+    pin::Pin,
+};
 use std::{iter::Iterator, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{join, time::interval};
 use tracing::{error, info};
-use trillium::Headers;
+use trillium::{Handler, Headers};
 use trillium_router::router;
 use trillium_tokio::Stopper;
+use url::Url;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     janus_main::<_, Options, Config, _, _>(RealClock::default(), |ctx| async move {
-        let datastore = Arc::new(ctx.datastore);
+        let BinaryContext {
+            clock,
+            options,
+            mut config,
+            datastore,
+            meter,
+        } = ctx;
+
+        let datastore = Arc::new(datastore);
         let stopper = Stopper::new();
         setup_signal_handler(stopper.clone())
             .context("failed to register SIGTERM signal handler")?;
-        let response_headers = ctx
-            .config
+        let response_headers = config
             .response_headers()
             .context("failed to parse response headers")?;
 
         let mut handlers = (
             aggregator_handler(
                 Arc::clone(&datastore),
-                ctx.clock,
-                &ctx.meter,
-                ctx.config.aggregator_config(),
+                clock,
+                &meter,
+                config.aggregator_config(),
             )
             .await?,
             None,
         );
 
-        let aggregator_api_auth_tokens = ctx
-            .options
-            .aggregator_api_auth_tokens
-            .iter()
-            .filter(|token| !token.is_empty())
-            .map(|token| {
-                let token_bytes = STANDARD
-                    .decode(token)
-                    .context("couldn't base64-decode aggregator API auth token")?;
-
-                Ok(SecretBytes::new(token_bytes))
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        let inner_aggregator_api_handler = aggregator_api_handler(
-            Arc::clone(&datastore),
-            janus_aggregator_api::Config {
-                auth_tokens: aggregator_api_auth_tokens,
-            },
-        );
-
         let garbage_collector_future = {
             let datastore = Arc::clone(&datastore);
+            let gc_config = config.garbage_collection.take();
             async move {
-                if let Some(gc_config) = ctx.config.garbage_collection {
+                if let Some(gc_config) = gc_config {
                     let gc = GarbageCollector::new(
                         datastore,
                         gc_config.report_limit,
@@ -86,44 +78,50 @@ async fn main() -> Result<()> {
             }
         };
 
-        // No-op closure to unconditionally pass to tokio::join!
-        let mut aggregator_api_future = Box::pin(async {}) as Pin<Box<dyn Future<Output = ()>>>;
-
-        match ctx.config.aggregator_api {
-            Some(AggregatorApi::ListenAddress { listen_address }) => {
-                // Bind the requested address and spawn a future that serves the aggregator API on
-                // it, which we'll `tokio::join!` on below
-                let (aggregator_api_bound_address, aggregator_api_server) = setup_server(
-                    listen_address,
-                    response_headers.clone(),
-                    stopper.clone(),
+        let aggregator_api_future: Pin<Box<dyn Future<Output = ()> + 'static>> =
+            match build_aggregator_api_handler(&options, &config, &datastore)? {
+                Some((
                     inner_aggregator_api_handler,
-                )
-                .await
-                .context("failed to create aggregator API server")?;
+                    AggregatorApi::ListenAddress { listen_address, .. },
+                )) => {
+                    // Bind the requested address and spawn a future that serves the aggregator API
+                    // on it, which we'll `tokio::join!` on below
+                    let (aggregator_api_bound_address, aggregator_api_server) = setup_server(
+                        *listen_address,
+                        response_headers.clone(),
+                        stopper.clone(),
+                        inner_aggregator_api_handler,
+                    )
+                    .await
+                    .context("failed to create aggregator API server")?;
 
-                info!(?aggregator_api_bound_address, "Running aggregator API");
+                    info!(?aggregator_api_bound_address, "Running aggregator API");
 
-                aggregator_api_future =
-                    Box::pin(aggregator_api_server) as Pin<Box<dyn Future<Output = ()>>>
-            }
-            Some(AggregatorApi::PathPrefix { path_prefix }) => {
-                // Create a Trillium handler under the requested path prefix, which we'll add to the
-                // DAP API handler in the setup_server call below
-                info!(
-                    aggregator_bound_address = ?ctx.config.listen_address,
-                    path_prefix,
-                    "Serving aggregator API relative to DAP API"
-                );
-                // Append wildcard so that this handler will match anything under the prefix
-                let path_prefix = format!("{path_prefix}/*");
-                handlers.1 = Some(router().all(path_prefix, inner_aggregator_api_handler));
-            }
-            None => { /* Do nothing */ }
-        }
+                    Box::pin(aggregator_api_server)
+                }
+
+                Some((
+                    inner_aggregator_api_handler,
+                    AggregatorApi::PathPrefix { path_prefix, .. },
+                )) => {
+                    // Create a Trillium handler under the requested path prefix, which we'll add to
+                    // the DAP API handler in the setup_server call below
+                    info!(
+                        aggregator_bound_address = ?config.listen_address,
+                        path_prefix,
+                        "Serving aggregator API relative to DAP API"
+                    );
+                    // Append wildcard so that this handler will match anything under the prefix
+                    let path_prefix = format!("{path_prefix}/*");
+                    handlers.1 = Some(router().all(path_prefix, inner_aggregator_api_handler));
+                    Box::pin(ready(()))
+                }
+
+                None => Box::pin(ready(())),
+            };
 
         let (aggregator_bound_address, aggregator_server) = setup_server(
-            ctx.config.listen_address,
+            config.listen_address,
             response_headers,
             stopper.clone(),
             handlers,
@@ -141,6 +139,39 @@ async fn main() -> Result<()> {
         Ok(())
     })
     .await
+}
+
+fn build_aggregator_api_handler<'a>(
+    options: &Options,
+    config: &'a Config,
+    datastore: &Arc<Datastore<RealClock>>,
+) -> anyhow::Result<Option<(impl Handler, &'a AggregatorApi)>> {
+    let Some(aggregator_api) = &config.aggregator_api else {
+        return Ok(None);
+    };
+    let aggregator_api_auth_tokens = options
+        .aggregator_api_auth_tokens
+        .iter()
+        .filter(|token| !token.is_empty())
+        .map(|token| {
+            let token_bytes = STANDARD
+                .decode(token)
+                .context("couldn't base64-decode aggregator API auth token")?;
+
+            Ok(SecretBytes::new(token_bytes))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(Some((
+        aggregator_api_handler(
+            Arc::clone(datastore),
+            janus_aggregator_api::Config {
+                auth_tokens: aggregator_api_auth_tokens,
+                public_dap_url: aggregator_api.public_dap_url().clone(),
+            },
+        ),
+        aggregator_api,
+    )))
 }
 
 #[derive(Debug, Parser)]
@@ -183,14 +214,34 @@ pub struct HeaderEntry {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum AggregatorApi {
-    /// Address on which this server should listen for connections to the Janus aggregator API and
-    /// serve its API endpoints, independently from the address on which the DAP API is served.
-    ListenAddress { listen_address: SocketAddr },
-    /// The Janus aggregator API will be served on the same address as the DAP API, but relative to
-    /// the provided prefix. e.g., if `path_prefix` is `aggregator-api`, then the DAP API's uploads
-    /// endpoint would be `{listen-address}/tasks/{task-id}/reports`, while task IDs could be
-    /// obtained from the aggregator API at `{listen-address}/aggregator-api/task_ids`.
-    PathPrefix { path_prefix: String },
+    ListenAddress {
+        /// Address on which this server should listen for connections to the Janus aggregator API
+        /// and serve its API endpoints, independently from the address on which the DAP API is
+        /// served.
+        listen_address: SocketAddr,
+        /// Resource location at which the DAP service managed by this aggregator api can be found
+        /// on the public internet. Required.
+        public_dap_url: Url,
+    },
+    PathPrefix {
+        /// The Janus aggregator API will be served on the same address as the DAP API, but relative
+        /// to the provided prefix. e.g., if `path_prefix` is `aggregator-api`, then the DAP API's
+        /// uploads endpoint would be `{listen-address}/tasks/{task-id}/reports`, while task IDs
+        /// could be obtained from the aggregator API at `{listen-address}/aggregator-api/task_ids`.
+        path_prefix: String,
+        /// Resource location at which the DAP service managed by this aggregator api can be found
+        /// on the public internet. Required.
+        public_dap_url: Url,
+    },
+}
+
+impl AggregatorApi {
+    fn public_dap_url(&self) -> &Url {
+        match self {
+            AggregatorApi::ListenAddress { public_dap_url, .. } => public_dap_url,
+            AggregatorApi::PathPrefix { public_dap_url, .. } => public_dap_url,
+        }
+    }
 }
 
 /// Non-secret configuration options for a Janus aggregator, deserialized from YAML.
@@ -205,6 +256,7 @@ pub enum AggregatorApi {
 /// listen_address: "0.0.0.0:8080"
 /// aggregator_api:
 ///   listen_address: "0.0.0.0:8081"
+///   public_dap_url: "https://dap.example.test"
 /// response_headers:
 /// - name: "Example"
 ///   value: "header value"
@@ -228,6 +280,7 @@ pub enum AggregatorApi {
 /// listen_address: "0.0.0.0:8080"
 /// aggregator_api:
 ///   path_prefix: "aggregator-api"
+///   public_dap_url: "https://dap.example.test"
 /// response_headers:
 /// - name: "Example"
 ///   value: "header value"
@@ -280,10 +333,10 @@ struct Config {
     /// the cost of collection.
     batch_aggregation_shard_count: u64,
 
-    /// Defines how often to refresh the global HPKE configs cache in milliseconds. This affects
-    /// how often an aggregator becomes aware of key state changes. If unspecified, default is
-    /// defined by [`GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally
-    /// have to specify this.
+    /// Defines how often to refresh the global HPKE configs cache in milliseconds. This affects how
+    /// often an aggregator becomes aware of key state changes. If unspecified, default is defined
+    /// by [`GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally have to
+    /// specify this.
     #[serde(default)]
     global_hpke_configs_refresh_interval: Option<u64>,
 }
@@ -375,8 +428,12 @@ mod tests {
     #[rstest::rstest]
     #[case::listen_address(AggregatorApi::ListenAddress {
         listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8081)),
+        public_dap_url: "https://dap.url".parse().unwrap()
     })]
-    #[case::path_prefix(AggregatorApi::PathPrefix { path_prefix: "prefix".to_string() })]
+    #[case::path_prefix(AggregatorApi::PathPrefix {
+        path_prefix: "prefix".to_string(),
+        public_dap_url: "https://dap.url".parse().unwrap()
+    })]
     #[test]
     fn roundtrip_config(#[case] aggregator_api: AggregatorApi) {
         roundtrip_encoding(Config {
@@ -492,12 +549,14 @@ mod tests {
     batch_aggregation_shard_count: 32
     aggregator_api:
         listen_address: "0.0.0.0:8081"
+        public_dap_url: "https://dap.url"
     "#
             )
             .unwrap()
             .aggregator_api,
             Some(AggregatorApi::ListenAddress {
-                listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8081))
+                listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8081)),
+                public_dap_url: "https://dap.url".parse().unwrap()
             })
         );
     }
@@ -516,12 +575,14 @@ mod tests {
     batch_aggregation_shard_count: 32
     aggregator_api:
         path_prefix: "aggregator-api"
+        public_dap_url: "https://dap.url"
     "#
             )
             .unwrap()
             .aggregator_api,
             Some(AggregatorApi::PathPrefix {
-                path_prefix: "aggregator-api".to_string()
+                path_prefix: "aggregator-api".to_string(),
+                public_dap_url: "https://dap.url".parse().unwrap()
             })
         );
     }

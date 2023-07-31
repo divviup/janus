@@ -248,6 +248,7 @@ async fn aggregator_shutdown() {
         "listen_address".into(),
         format!("{aggregator_api_listen_address}").into(),
     );
+    aggregator_api.insert("public_dap_url".into(), "https://public.dap.url".into());
     config.insert("aggregator_api".into(), Value::Mapping(aggregator_api));
     config.insert("max_upload_batch_size".into(), 100.into());
     config.insert("max_upload_batch_write_delay_ms".into(), 250.into());
