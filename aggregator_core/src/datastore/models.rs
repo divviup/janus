@@ -26,7 +26,7 @@ use prio::{
     vdaf::{self, Aggregatable},
 };
 use rand::{distributions::Standard, prelude::Distribution};
-use ring::hkdf::{Salt, HKDF_SHA256};
+use ring::hkdf::{KeyType, Salt, HKDF_SHA256};
 use std::{
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
@@ -1844,9 +1844,35 @@ impl TaskprovPeerAggregator {
             .any(|t| t == auth_token)
     }
 
-    pub fn derive_vdaf_verify_key(&self, task_id: &TaskId) -> SecretBytes {
-        // SALT.extract(&self.verify_key_init)
-        //     .expand(&[task_id.as_ref()], SEED_SIZE);
-        todo!()
+    pub fn derive_vdaf_verify_key(
+        &self,
+        task_id: &TaskId,
+        vdaf_instance: &VdafInstance,
+    ) -> SecretBytes {
+        let prk = SALT.extract(&self.verify_key_init);
+        let info = [task_id.as_ref().as_slice()];
+
+        // Unwrap safety: this function only errors if the OKM length is too long
+        // (<= 255 * HashLength). It is not expected that a VDAF's verify key length will ever
+        // be _that_ long.
+        let okm = prk
+            .expand(
+                &info,
+                VdafVerifyKeyLength(vdaf_instance.verify_key_length()),
+            )
+            .unwrap();
+
+        let mut vdaf_verify_key = Vec::new();
+        // Same unwrap rationale as above.
+        okm.fill(&mut vdaf_verify_key).unwrap();
+        SecretBytes::new(vdaf_verify_key)
+    }
+}
+
+/// Helper type for using `ring::Prk::expand()`.
+struct VdafVerifyKeyLength(usize);
+impl KeyType for VdafVerifyKeyLength {
+    fn len(&self) -> usize {
+        self.0
     }
 }
