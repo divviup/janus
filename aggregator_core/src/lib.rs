@@ -21,6 +21,7 @@ use janus_core::test_util::dummy_vdaf;
 pub mod datastore;
 pub mod query_type;
 pub mod task;
+pub mod taskprov;
 
 /// A secret byte array. This does not implement `Debug` or `Display`, to avoid accidental
 /// inclusion in logs.

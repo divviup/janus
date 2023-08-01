@@ -28,12 +28,13 @@ use janus_aggregator_core::{
         models::{
             AggregateShareJob, AggregationJob, AggregationJobState, Batch, BatchAggregation,
             BatchAggregationState, BatchState, CollectionJob, CollectionJobState,
-            LeaderStoredReport, ReportAggregation, ReportAggregationState, TaskprovPeerAggregator,
+            LeaderStoredReport, ReportAggregation, ReportAggregationState,
         },
         Datastore, Error as DatastoreError, Transaction,
     },
     query_type::AccumulableQueryType,
     task::{self, Task, VerifyKey},
+    taskprov::PeerAggregator,
 };
 #[cfg(feature = "test-util")]
 use janus_core::test_util::dummy_vdaf;
@@ -662,7 +663,7 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         taskprov_header: &[u8],
         aggregator_auth_token: Option<&AuthenticationToken>,
-    ) -> Result<(TaskConfig, TaskprovPeerAggregator, Vec<Url>), Error> {
+    ) -> Result<(TaskConfig, PeerAggregator, Vec<Url>), Error> {
         let taskprov_header = &URL_SAFE_NO_PAD
             .decode(&taskprov_header)
             .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;

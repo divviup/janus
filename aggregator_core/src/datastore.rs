@@ -5,11 +5,12 @@ use self::models::{
     AggregatorRole, AuthenticationTokenType, Batch, BatchAggregation, CollectionJob,
     CollectionJobState, CollectionJobStateCode, GlobalHpkeKeypair, HpkeKeyState,
     LeaderStoredReport, Lease, LeaseToken, OutstandingBatch, ReportAggregation,
-    ReportAggregationState, ReportAggregationStateCode, SqlInterval, TaskprovPeerAggregator,
+    ReportAggregationState, ReportAggregationStateCode, SqlInterval,
 };
 use crate::{
     query_type::{AccumulableQueryType, CollectableQueryType},
     task::{self, Task},
+    taskprov::PeerAggregator,
     SecretBytes,
 };
 use anyhow::anyhow;
@@ -17,7 +18,7 @@ use chrono::NaiveDateTime;
 use futures::future::try_join_all;
 use janus_core::{
     hpke::{HpkeKeypair, HpkePrivateKey},
-    task::VdafInstance,
+    task::{AuthenticationToken, VdafInstance},
     time::{Clock, TimeExt},
 };
 use janus_messages::{
@@ -99,7 +100,7 @@ macro_rules! supported_schema_versions {
 // version is seen, [`Datastore::new`] fails.
 //
 // Note that the latest supported version must be first in the list.
-supported_schema_versions!(13);
+supported_schema_versions!(14);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -543,7 +544,7 @@ impl<C: Clock> Transaction<'_, C> {
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
             )
             .await?;
-        check_single_row_mutation(
+        check_insert(
             self.execute(
                 &stmt,
                 &[
@@ -4347,8 +4348,7 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         aggregator_url: &Url,
         peer_role: &Role,
-    ) -> Result<Option<TaskprovPeerAggregator>, Error> {
-        // inahga: trailing slash?
+    ) -> Result<Option<PeerAggregator>, Error> {
         let aggregator_url = aggregator_url.as_str();
         let params: &[&(dyn ToSql + Sync)] =
             &[&aggregator_url, &AggregatorRole::from_role(*peer_role)?];
@@ -4405,9 +4405,9 @@ impl<C: Clock> Transaction<'_, C> {
         peer_aggregator_row: &Row,
         aggregator_auth_token_rows: &[Row],
         collector_auth_token_rows: &[Row],
-    ) -> Result<TaskprovPeerAggregator, Error> {
+    ) -> Result<PeerAggregator, Error> {
         let endpoint = Url::parse(peer_aggregator_row.get::<_, &str>("endpoint"))?;
-        let role: AggregatorRole = peer_aggregator_row.get("aggregator_role");
+        let role: AggregatorRole = peer_aggregator_row.get("role");
         let report_expiry_age = peer_aggregator_row
             .get_nullable_bigint_and_convert("report_expiry_age")?
             .map(Duration::from_seconds);
@@ -4418,57 +4418,46 @@ impl<C: Clock> Transaction<'_, C> {
             HpkeConfig::get_decoded(peer_aggregator_row.get("collector_hpke_config"))?;
 
         let encrypted_verify_key_init: Vec<u8> = peer_aggregator_row.get("verify_key_init");
-        let verify_key_init = SecretBytes::new(self.crypter.decrypt(
-            "taskprov_peer_aggregator_verify_key_init",
-            aggregator_url.as_ref(),
-            "verify_key_init",
-            &encrypted_verify_key_init,
-        )?);
+        let verify_key_init = self
+            .crypter
+            .decrypt(
+                "taskprov_peer_aggregator",
+                aggregator_url.as_ref(),
+                "verify_key_init",
+                &encrypted_verify_key_init,
+            )?
+            .as_slice()
+            .try_into()?;
 
-        // inahga: refactor these with the other decryptions
-        // Aggregator authentication tokens.
-        let mut aggregator_auth_tokens = Vec::new();
-        for row in aggregator_auth_token_rows {
-            let ord: i64 = row.get("ord");
-            let auth_token_type: AuthenticationTokenType = row.get("type");
-            let encrypted_aggregator_auth_token: Vec<u8> = row.get("token");
+        let decrypt_tokens = |rows: &[Row], table| -> Result<Vec<_>, Error> {
+            rows.iter()
+                .map(|row| {
+                    let ord: i64 = row.get("ord");
+                    let auth_token_type: AuthenticationTokenType = row.get("type");
+                    let encrypted_token: Vec<u8> = row.get("token");
 
-            let mut row_id = [0u8; TaskId::LEN + size_of::<i64>()];
-            row_id[..TaskId::LEN].copy_from_slice(aggregator_url.as_ref());
-            row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
+                    let mut row_id = Vec::new();
+                    row_id.extend_from_slice(aggregator_url.as_ref());
+                    row_id.extend_from_slice(&ord.to_be_bytes());
 
-            aggregator_auth_tokens.push(auth_token_type.as_authentication(
-                &self.crypter.decrypt(
-                    "taskprov_aggregator_auth_tokens",
-                    &row_id,
-                    "token",
-                    &encrypted_aggregator_auth_token,
-                )?,
-            )?);
-        }
+                    auth_token_type.as_authentication(&self.crypter.decrypt(
+                        table,
+                        &row_id,
+                        "token",
+                        &encrypted_token,
+                    )?)
+                })
+                .collect()
+        };
 
-        // Collector authentication tokens.
-        let mut collector_auth_tokens = Vec::new();
-        for row in collector_auth_token_rows {
-            let ord: i64 = row.get("ord");
-            let auth_token_type: AuthenticationTokenType = row.get("type");
-            let encrypted_collector_auth_token: Vec<u8> = row.get("token");
+        let aggregator_auth_tokens = decrypt_tokens(
+            aggregator_auth_token_rows,
+            "taskprov_aggregator_auth_tokens",
+        )?;
+        let collector_auth_tokens =
+            decrypt_tokens(collector_auth_token_rows, "taskprov_collector_auth_tokens")?;
 
-            let mut row_id = [0u8; TaskId::LEN + size_of::<i64>()];
-            row_id[..TaskId::LEN].copy_from_slice(aggregator_url.as_ref());
-            row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
-
-            collector_auth_tokens.push(auth_token_type.as_authentication(
-                &self.crypter.decrypt(
-                    "taskprov_collector_auth_tokens",
-                    &row_id,
-                    "token",
-                    &encrypted_collector_auth_token,
-                )?,
-            )?);
-        }
-
-        Ok(TaskprovPeerAggregator::new(
+        Ok(PeerAggregator::new(
             endpoint,
             role.as_role(),
             verify_key_init,
@@ -4482,12 +4471,12 @@ impl<C: Clock> Transaction<'_, C> {
 
     pub async fn put_taskprov_peer_aggregator(
         &self,
-        peer_aggregator: &TaskprovPeerAggregator,
+        peer_aggregator: &PeerAggregator,
     ) -> Result<(), Error> {
         let endpoint = peer_aggregator.endpoint().as_str();
         let role = &AggregatorRole::from_role(*peer_aggregator.role())?;
         let encrypted_verify_key_init = self.crypter.encrypt(
-            "taskprov_peer_aggregator_verify_key_init",
+            "taskprov_peer_aggregator",
             endpoint.as_ref(),
             "verify_key_init",
             peer_aggregator.verify_key_init().as_ref(),
@@ -4498,10 +4487,10 @@ impl<C: Clock> Transaction<'_, C> {
                 "INSERT INTO taskprov_peer_aggregators (
                     endpoint, role, verify_key_init, tolerable_clock_skew, report_expiry_age,
                     collector_hpke_config
-                VALUES ($1, $2, $3, $4, $5, $6)",
+                ) VALUES ($1, $2, $3, $4, $5, $6)",
             )
             .await?;
-        check_single_row_mutation(
+        check_insert(
             self.execute(
                 &stmt,
                 &[
@@ -4523,149 +4512,73 @@ impl<C: Clock> Transaction<'_, C> {
             .await?,
         )?;
 
-        // Aggregator auth tokens.
-        let mut aggregator_auth_token_ords = Vec::new();
-        let mut aggregator_auth_token_types = Vec::new();
-        let mut aggregator_auth_tokens = Vec::new();
-        for (ord, token) in task.aggregator_auth_tokens().iter().enumerate() {
-            let ord = i64::try_from(ord)?;
+        let encrypt_tokens = |tokens: &[AuthenticationToken], table| -> Result<_, Error> {
+            let mut ords = Vec::new();
+            let mut types = Vec::new();
+            let mut encrypted_tokens = Vec::new();
+            for (ord, token) in tokens.iter().enumerate() {
+                let ord = i64::try_from(ord)?;
 
-            let mut row_id = [0; TaskId::LEN + size_of::<i64>()];
-            row_id[..TaskId::LEN].copy_from_slice(task.id().as_ref());
-            row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
+                let mut row_id = Vec::new();
+                row_id.extend_from_slice(endpoint.as_ref());
+                row_id.extend_from_slice(&ord.to_be_bytes());
 
-            let encrypted_aggregator_auth_token = self.crypter.encrypt(
-                "task_aggregator_auth_tokens",
-                &row_id,
-                "token",
-                token.as_ref(),
+                let encrypted_auth_token =
+                    self.crypter
+                        .encrypt(table, &row_id, "token", token.as_ref())?;
+
+                ords.push(ord);
+                types.push(AuthenticationTokenType::from(token));
+                encrypted_tokens.push(encrypted_auth_token);
+            }
+            Ok((ords, types, encrypted_tokens))
+        };
+
+        let (aggregator_auth_token_ords, aggregator_auth_token_types, aggregator_auth_tokens) =
+            encrypt_tokens(
+                peer_aggregator.aggregator_auth_tokens(),
+                "taskprov_aggregator_auth_tokens",
             )?;
-
-            aggregator_auth_token_ords.push(ord);
-            aggregator_auth_token_types.push(AuthenticationTokenType::from(token));
-            aggregator_auth_tokens.push(encrypted_aggregator_auth_token);
-        }
         let stmt = self
             .prepare_cached(
-                "INSERT INTO task_aggregator_auth_tokens (task_id, ord, type, token)
+                "INSERT INTO taskprov_aggregator_auth_tokens (peer_aggregator_id, ord, type, token)
                 SELECT
-                    (SELECT id FROM tasks WHERE task_id = $1),
-                    * FROM UNNEST($2::BIGINT[], $3::AUTH_TOKEN_TYPE[], $4::BYTEA[])",
+                    (SELECT id FROM taskprov_peer_aggregators WHERE endpoint = $1 AND role = $2),
+                    * FROM UNNEST($3::BIGINT[], $4::AUTH_TOKEN_TYPE[], $5::BYTEA[])",
             )
             .await?;
         let aggregator_auth_tokens_params: &[&(dyn ToSql + Sync)] = &[
-            /* task_id */ &task.id().as_ref(),
+            /* endpoint */ &endpoint,
+            /* role */ role,
             /* ords */ &aggregator_auth_token_ords,
             /* token_types */ &aggregator_auth_token_types,
             /* tokens */ &aggregator_auth_tokens,
         ];
         let aggregator_auth_tokens_future = self.execute(&stmt, aggregator_auth_tokens_params);
 
-        // Collector auth tokens.
-        let mut collector_auth_token_ords = Vec::new();
-        let mut collector_auth_token_types = Vec::new();
-        let mut collector_auth_tokens = Vec::new();
-        for (ord, token) in task.collector_auth_tokens().iter().enumerate() {
-            let ord = i64::try_from(ord)?;
-
-            let mut row_id = [0; TaskId::LEN + size_of::<i64>()];
-            row_id[..TaskId::LEN].copy_from_slice(task.id().as_ref());
-            row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
-
-            let encrypted_collector_auth_token = self.crypter.encrypt(
-                "task_collector_auth_tokens",
-                &row_id,
-                "token",
-                token.as_ref(),
+        let (collector_auth_token_ords, collector_auth_token_types, collector_auth_tokens) =
+            encrypt_tokens(
+                peer_aggregator.collector_auth_tokens(),
+                "taskprov_collector_auth_tokens",
             )?;
-
-            collector_auth_token_ords.push(ord);
-            collector_auth_token_types.push(AuthenticationTokenType::from(token));
-            collector_auth_tokens.push(encrypted_collector_auth_token);
-        }
         let stmt = self
             .prepare_cached(
-                "INSERT INTO task_collector_auth_tokens (task_id, ord, type, token)
+                "INSERT INTO taskprov_collector_auth_tokens (peer_aggregator_id, ord, type, token)
                 SELECT
-                    (SELECT id FROM tasks WHERE task_id = $1),
-                    * FROM UNNEST($2::BIGINT[], $3::AUTH_TOKEN_TYPE[], $4::BYTEA[])",
+                    (SELECT id FROM taskprov_peer_aggregators WHERE endpoint = $1 AND role = $2),
+                    * FROM UNNEST($3::BIGINT[], $4::AUTH_TOKEN_TYPE[], $5::BYTEA[])",
             )
             .await?;
         let collector_auth_tokens_params: &[&(dyn ToSql + Sync)] = &[
-            /* task_id */ &task.id().as_ref(),
+            /* endpoint */ &endpoint,
+            /* role */ role,
             /* ords */ &collector_auth_token_ords,
             /* token_types */ &collector_auth_token_types,
             /* tokens */ &collector_auth_tokens,
         ];
         let collector_auth_tokens_future = self.execute(&stmt, collector_auth_tokens_params);
 
-        // HPKE keys.
-        let mut hpke_config_ids: Vec<i16> = Vec::new();
-        let mut hpke_configs: Vec<Vec<u8>> = Vec::new();
-        let mut hpke_private_keys: Vec<Vec<u8>> = Vec::new();
-        for hpke_keypair in task.hpke_keys().values() {
-            let mut row_id = [0u8; TaskId::LEN + size_of::<u8>()];
-            row_id[..TaskId::LEN].copy_from_slice(task.id().as_ref());
-            row_id[TaskId::LEN..]
-                .copy_from_slice(&u8::from(*hpke_keypair.config().id()).to_be_bytes());
-
-            let encrypted_hpke_private_key = self.crypter.encrypt(
-                "task_hpke_keys",
-                &row_id,
-                "private_key",
-                hpke_keypair.private_key().as_ref(),
-            )?;
-
-            hpke_config_ids.push(u8::from(*hpke_keypair.config().id()) as i16);
-            hpke_configs.push(hpke_keypair.config().get_encoded());
-            hpke_private_keys.push(encrypted_hpke_private_key);
-        }
-        let stmt = self
-            .prepare_cached(
-                "INSERT INTO task_hpke_keys (task_id, config_id, config, private_key)
-                SELECT
-                    (SELECT id FROM tasks WHERE task_id = $1),
-                    * FROM UNNEST($2::SMALLINT[], $3::BYTEA[], $4::BYTEA[])",
-            )
-            .await?;
-        let hpke_configs_params: &[&(dyn ToSql + Sync)] = &[
-            /* task_id */ &task.id().as_ref(),
-            /* config_id */ &hpke_config_ids,
-            /* configs */ &hpke_configs,
-            /* private_keys */ &hpke_private_keys,
-        ];
-        let hpke_configs_future = self.execute(&stmt, hpke_configs_params);
-
-        // VDAF verification keys.
-        let mut vdaf_verify_keys: Vec<Vec<u8>> = Vec::new();
-        for vdaf_verify_key in task.vdaf_verify_keys() {
-            let encrypted_vdaf_verify_key = self.crypter.encrypt(
-                "task_vdaf_verify_keys",
-                task.id().as_ref(),
-                "vdaf_verify_key",
-                vdaf_verify_key.as_ref(),
-            )?;
-            vdaf_verify_keys.push(encrypted_vdaf_verify_key);
-        }
-        let stmt = self
-            .prepare_cached(
-                "INSERT INTO task_vdaf_verify_keys (task_id, vdaf_verify_key)
-                SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::BYTEA[])",
-            )
-            .await?;
-        let vdaf_verify_keys_params: &[&(dyn ToSql + Sync)] = &[
-            /* task_id */ &task.id().as_ref(),
-            /* vdaf_verify_keys */ &vdaf_verify_keys,
-        ];
-        let vdaf_verify_keys_future = self.execute(&stmt, vdaf_verify_keys_params);
-
-        try_join!(
-            aggregator_auth_tokens_future,
-            collector_auth_tokens_future,
-            hpke_configs_future,
-            vdaf_verify_keys_future
-        )?;
-
+        try_join!(aggregator_auth_tokens_future, collector_auth_tokens_future)?;
         Ok(())
     }
 }

@@ -16,6 +16,7 @@ use crate::{
     },
     query_type::CollectableQueryType,
     task::{self, test_util::TaskBuilder, Task},
+    taskprov::PeerAggregator,
     test_util::noop_meter,
 };
 
@@ -27,7 +28,7 @@ use janus_core::{
     hpke::{
         self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
     },
-    task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
+    task::{AuthenticationToken, VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
     test_util::{
         dummy_vdaf::{self, AggregateShare, AggregationParam},
         install_test_trace_subscriber, run_vdaf,
@@ -54,6 +55,7 @@ use std::{
     time::Duration as StdDuration,
 };
 use tokio::time::timeout;
+use url::Url;
 
 const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
 const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
@@ -6513,6 +6515,145 @@ async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) 
                 assert_eq!(tx.get_global_hpke_keypairs().await?, vec![]);
                 assert_matches!(
                     tx.get_global_hpke_keypair(keypair.config().id()).await?,
+                    None
+                );
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatastore) {
+    let datastore = ephemeral_datastore.datastore(MockClock::default()).await;
+
+    // Basic aggregator.
+    let example_leader_peer_aggregator = PeerAggregator::new(
+        Url::parse("https://example.com/").unwrap(),
+        Role::Leader,
+        random(),
+        generate_test_hpke_config_and_private_key().config().clone(),
+        Some(Duration::from_seconds(3600)),
+        Duration::from_seconds(60),
+        vec![
+            AuthenticationToken::DapAuth(random()),
+            AuthenticationToken::DapAuth(random()),
+        ],
+        vec![AuthenticationToken::DapAuth(random())],
+    );
+
+    // Ensure we can have the same peer aggregator, except in another role.
+    let example_helper_peer_aggregator = PeerAggregator::new(
+        Url::parse("https://example.com/").unwrap(),
+        Role::Helper,
+        random(),
+        generate_test_hpke_config_and_private_key().config().clone(),
+        Some(Duration::from_seconds(3600)),
+        Duration::from_seconds(60),
+        vec![AuthenticationToken::DapAuth(random())],
+        vec![AuthenticationToken::DapAuth(random())],
+    );
+
+    // Ensure we can still add other unrelated aggregators.
+    let another_example_leader_peer_aggregator = PeerAggregator::new(
+        Url::parse("https://another.example.com/").unwrap(),
+        Role::Leader,
+        random(),
+        generate_test_hpke_config_and_private_key().config().clone(),
+        Some(Duration::from_seconds(3600)),
+        Duration::from_seconds(60),
+        vec![AuthenticationToken::DapAuth(random())],
+        vec![],
+    );
+
+    datastore
+        .run_tx(|tx| {
+            let example_leader_peer_aggregator = example_leader_peer_aggregator.clone();
+            let example_helper_peer_aggregator = example_helper_peer_aggregator.clone();
+            let another_example_leader_peer_aggregator =
+                another_example_leader_peer_aggregator.clone();
+            Box::pin(async move {
+                tx.put_taskprov_peer_aggregator(&example_leader_peer_aggregator)
+                    .await?;
+                tx.put_taskprov_peer_aggregator(&example_helper_peer_aggregator)
+                    .await?;
+                tx.put_taskprov_peer_aggregator(&another_example_leader_peer_aggregator)
+                    .await?;
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+    // Should not be able to put an aggregator with the same endpoint and role.
+    assert_matches!(
+        datastore
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    let colliding_peer_aggregator = PeerAggregator::new(
+                        Url::parse("https://example.com/").unwrap(),
+                        Role::Leader,
+                        random(),
+                        generate_test_hpke_config_and_private_key().config().clone(),
+                        Some(Duration::from_seconds(3600)),
+                        Duration::from_seconds(60),
+                        vec![AuthenticationToken::DapAuth(random())],
+                        vec![AuthenticationToken::DapAuth(random())],
+                    );
+                    tx.put_taskprov_peer_aggregator(&colliding_peer_aggregator)
+                        .await
+                })
+            })
+            .await,
+        Err(Error::Db(_))
+    );
+
+    datastore
+        .run_tx(|tx| {
+            let example_leader_peer_aggregator = example_leader_peer_aggregator.clone();
+            let example_helper_peer_aggregator = example_helper_peer_aggregator.clone();
+            let another_example_leader_peer_aggregator =
+                another_example_leader_peer_aggregator.clone();
+            Box::pin(async move {
+                assert_eq!(
+                    tx.get_taskprov_peer_aggregator(
+                        &Url::parse("https://example.com/").unwrap(),
+                        &Role::Leader
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                    example_leader_peer_aggregator
+                );
+                assert_eq!(
+                    tx.get_taskprov_peer_aggregator(
+                        &Url::parse("https://example.com").unwrap(),
+                        &Role::Helper
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                    example_helper_peer_aggregator
+                );
+                assert_eq!(
+                    tx.get_taskprov_peer_aggregator(
+                        &Url::parse("https://another.example.com").unwrap(),
+                        &Role::Leader
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                    another_example_leader_peer_aggregator
+                );
+                assert_matches!(
+                    tx.get_taskprov_peer_aggregator(
+                        &Url::parse("https://doesnt.exist.example.com").unwrap(),
+                        &Role::Leader,
+                    )
+                    .await
+                    .unwrap(),
                     None
                 );
                 Ok(())
