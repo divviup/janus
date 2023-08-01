@@ -63,7 +63,7 @@ lazy_static = { version = "1", optional = true }
 once_cell = "1.18.0"
 opentelemetry = { workspace = true, features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.12", optional = true, features = ["metrics"] } # ensure that the version of tonic below matches what this uses
-opentelemetry-prometheus = { version = "0.12", optional = true }
+opentelemetry-prometheus = { version = "0.13", optional = true }
 opentelemetry-semantic-conventions = { version = "0.12", optional = true }
 postgres-protocol = "0.6.5"
 postgres-types = { version = "0.2.5", features = ["derive", "array-impls"] }
