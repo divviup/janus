@@ -1,14 +1,11 @@
 #![cfg(feature = "in-cluster")]
 
-use base64::engine::{
-    general_purpose::{STANDARD, URL_SAFE_NO_PAD},
-    Engine,
-};
+use base64::engine::{general_purpose::STANDARD, Engine};
 use common::{submit_measurements_and_verify_aggregate, test_task_builders};
 use janus_aggregator_core::task::QueryType;
-use janus_collector::AuthenticationToken;
 use janus_core::{
-    task::{DapAuthToken, VdafInstance},
+    task::AuthenticationToken,
+    task::VdafInstance,
     test_util::{
         install_test_trace_subscriber,
         kubernetes::{Cluster, PortForward},
@@ -163,17 +160,14 @@ impl InClusterJanusPair {
         let collector_auth_tokens = divviup_api
             .list_collector_auth_tokens(&provisioned_task)
             .await;
+        assert_eq!(collector_auth_tokens[0].r#type, "Bearer");
 
         // Update the task parameters with the ID and collector auth token from divviup-api.
         task_parameters.task_id = TaskId::from_str(provisioned_task.id.as_ref()).unwrap();
-        task_parameters.collector_auth_token = AuthenticationToken::DapAuth(
-            DapAuthToken::try_from(
-                URL_SAFE_NO_PAD
-                    .decode(collector_auth_tokens[0].clone())
-                    .unwrap(),
-            )
-            .unwrap(),
-        );
+        task_parameters.collector_auth_token = AuthenticationToken::new_bearer_token_from_string(
+            collector_auth_tokens[0].token.clone(),
+        )
+        .unwrap();
 
         Self {
             task_parameters,

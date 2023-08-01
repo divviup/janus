@@ -784,7 +784,7 @@ mod tests {
     };
     use janus_core::{
         hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair, HpkePrivateKey},
-        task::{AuthenticationToken, DapAuthToken, PRIO3_VERIFY_KEY_LENGTH},
+        task::{AuthenticationToken, PRIO3_VERIFY_KEY_LENGTH},
         test_util::roundtrip_encoding,
         time::DurationExt,
     };
@@ -1017,10 +1017,14 @@ mod tests {
                     HpkeAeadId::Aes128Gcm,
                     HpkePublicKey::from(b"collector hpke public key".to_vec()),
                 ),
-                Vec::from([AuthenticationToken::DapAuth(
-                    DapAuthToken::try_from(b"aggregator token".to_vec()).unwrap(),
-                )]),
-                Vec::from([AuthenticationToken::Bearer(b"collector token".to_vec())]),
+                Vec::from([AuthenticationToken::new_dap_auth_token_from_string(
+                    "YWdncmVnYXRvciB0b2tlbg",
+                )
+                .unwrap()]),
+                Vec::from([AuthenticationToken::new_bearer_token_from_string(
+                    "Y29sbGVjdG9yIHRva2Vu",
+                )
+                .unwrap()]),
                 [HpkeKeypair::new(
                     HpkeConfig::new(
                         HpkeConfigId::from(255),
@@ -1197,7 +1201,10 @@ mod tests {
                     HpkeAeadId::Aes128Gcm,
                     HpkePublicKey::from(b"collector hpke public key".to_vec()),
                 ),
-                Vec::from([AuthenticationToken::Bearer(b"aggregator token".to_vec())]),
+                Vec::from([AuthenticationToken::new_bearer_token_from_string(
+                    "YWdncmVnYXRvciB0b2tlbg",
+                )
+                .unwrap()]),
                 Vec::new(),
                 [HpkeKeypair::new(
                     HpkeConfig::new(
@@ -1304,7 +1311,7 @@ mod tests {
                 Token::Str("type"),
                 Token::Str("Bearer"),
                 Token::Str("token"),
-                Token::Str("YWdncmVnYXRvciB0b2tlbg=="),
+                Token::Str("YWdncmVnYXRvciB0b2tlbg"),
                 Token::StructEnd,
                 Token::SeqEnd,
                 Token::Str("collector_auth_tokens"),

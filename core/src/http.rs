@@ -1,5 +1,5 @@
+use crate::task::AuthenticationToken;
 use anyhow::{anyhow, Context};
-use base64::{engine::general_purpose::STANDARD, Engine};
 use http_api_problem::{HttpApiProblem, PROBLEM_JSON_MEDIA_TYPE};
 use reqwest::{header::CONTENT_TYPE, Response};
 use tracing::warn;
@@ -27,13 +27,13 @@ pub async fn response_to_problem_details(response: Response) -> HttpApiProblem {
 /// If the request in `conn` has an `authorization` header, returns the bearer token in the header
 /// value. Returns `None` if there is no `authorization` header, and an error if there is an
 /// `authorization` header whose value is not a bearer token.
-pub fn extract_bearer_token(conn: &Conn) -> Result<Option<Vec<u8>>, anyhow::Error> {
+pub fn extract_bearer_token(conn: &Conn) -> Result<Option<AuthenticationToken>, anyhow::Error> {
     if let Some(authorization_value) = conn.headers().get("authorization") {
-        if let Some(received_token) = authorization_value.as_ref().strip_prefix(b"Bearer ") {
-            let decoded = STANDARD
-                .decode(received_token)
-                .context("bearer token cannot be decoded from Base64")?;
-            return Ok(Some(decoded));
+        if let Some(received_token) = authorization_value.to_string().strip_prefix("Bearer ") {
+            return Ok(Some(
+                AuthenticationToken::new_bearer_token_from_string(received_token)
+                    .context("invalid bearer token")?,
+            ));
         } else {
             return Err(anyhow!("authorization header value is not a bearer token"));
         }

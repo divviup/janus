@@ -1,13 +1,10 @@
-use base64::{
-    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
-    Engine,
-};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
-use http::header::{HeaderValue, AUTHORIZATION};
+use http::header::AUTHORIZATION;
 use rand::{distributions::Standard, prelude::Distribution};
 use reqwest::Url;
 use ring::constant_time;
-use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de::Error, Deserialize, Deserializer, Serialize};
 use std::{fmt, str};
 
 /// HTTP header where auth tokens are provided in messages between participants.
@@ -547,21 +544,18 @@ macro_rules! vdaf_dispatch {
 
 /// Different modes of authentication supported by Janus for either sending requests (e.g., leader
 /// to helper) or receiving them (e.g., collector to leader).
-#[derive(Clone, Derivative, Serialize, Deserialize)]
+#[derive(Clone, Derivative, Serialize, Deserialize, PartialEq, Eq)]
 #[derivative(Debug)]
 #[serde(tag = "type", content = "token")]
 #[non_exhaustive]
 pub enum AuthenticationToken {
-    /// A bearer token. The value is an opaque byte string. Its Base64 encoding is inserted into
-    /// HTTP requests as specified in [RFC 6750 section 2.1][1]. The token is not necessarily an
-    /// OAuth token.
+    /// A bearer token, presented as the value of the "Authorization" HTTP header as specified in
+    /// [RFC 6750 section 2.1][1].
+    ///
+    /// The token is not necessarily an OAuth token.
     ///
     /// [1]: https://datatracker.ietf.org/doc/html/rfc6750#section-2.1
-    Bearer(
-        #[derivative(Debug = "ignore")]
-        #[serde(serialize_with = "as_base64", deserialize_with = "from_base64")]
-        Vec<u8>,
-    ),
+    Bearer(TokenInner),
 
     /// Token presented as the value of the "DAP-Auth-Token" HTTP header. Conforms to
     /// [draft-dcook-ppm-dap-interop-test-design-03][1], sections [4.3.3][2] and [4.4.2][3], and
@@ -571,44 +565,50 @@ pub enum AuthenticationToken {
     /// [2]: https://datatracker.ietf.org/doc/html/draft-dcook-ppm-dap-interop-test-design-03#section-4.3.3
     /// [3]: https://datatracker.ietf.org/doc/html/draft-dcook-ppm-dap-interop-test-design-03#section-4.4.2
     /// [4]: https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-01#name-https-sender-authentication
-    DapAuth(DapAuthToken),
+    DapAuth(TokenInner),
 }
 
 impl AuthenticationToken {
+    /// Attempts to create a new bearer token from the provided bytes.
+    pub fn new_bearer_token_from_bytes<T: AsRef<[u8]>>(bytes: T) -> Result<Self, anyhow::Error> {
+        TokenInner::try_from(bytes.as_ref().to_vec()).map(AuthenticationToken::Bearer)
+    }
+
+    /// Attempts to create a new bearer token from the provided string
+    pub fn new_bearer_token_from_string<T: Into<String>>(string: T) -> Result<Self, anyhow::Error> {
+        TokenInner::try_from_str(string.into()).map(AuthenticationToken::Bearer)
+    }
+
+    /// Attempts to create a new DAP auth token from the provided bytes.
+    pub fn new_dap_auth_token_from_bytes<T: AsRef<[u8]>>(bytes: T) -> Result<Self, anyhow::Error> {
+        TokenInner::try_from(bytes.as_ref().to_vec()).map(AuthenticationToken::DapAuth)
+    }
+
+    /// Attempts to create a new DAP auth token from the provided string.
+    pub fn new_dap_auth_token_from_string<T: Into<String>>(
+        string: T,
+    ) -> Result<Self, anyhow::Error> {
+        TokenInner::try_from_str(string.into()).map(AuthenticationToken::DapAuth)
+    }
+
     /// Returns an HTTP header and value that should be used to authenticate an HTTP request with
     /// this credential.
-    pub fn request_authentication(&self) -> (&'static str, Vec<u8>) {
+    pub fn request_authentication(&self) -> (&'static str, String) {
         match self {
-            Self::Bearer(token) => (
-                AUTHORIZATION.as_str(),
-                // When encoding into a request, we use Base64 standard encoding
-                format!("Bearer {}", STANDARD.encode(token.as_slice())).into_bytes(),
-            ),
-            // A DAP-Auth-Token is already HTTP header-safe, so no encoding is needed. Cloning is
-            // unfortunate but necessary since other arms must allocate.
-            Self::DapAuth(token) => (DAP_AUTH_HEADER, token.as_ref().to_vec()),
+            Self::Bearer(token) => (AUTHORIZATION.as_str(), format!("Bearer {}", token.as_str())),
+            // Cloning is unfortunate but necessary since other arms must allocate.
+            Self::DapAuth(token) => (DAP_AUTH_HEADER, token.as_str().to_string()),
+        }
+    }
+
+    /// Returns the token as a string.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::DapAuth(token) => token.as_str(),
+            Self::Bearer(token) => token.as_str(),
         }
     }
 }
-
-impl PartialEq for AuthenticationToken {
-    fn eq(&self, other: &Self) -> bool {
-        let (own, other) = match (self, other) {
-            (Self::Bearer(own), Self::Bearer(other)) => (own.as_slice(), other.as_slice()),
-            (Self::DapAuth(own), Self::DapAuth(other)) => (own.as_ref(), other.as_ref()),
-            _ => {
-                return false;
-            }
-        };
-        // We attempt constant-time comparisons of the token data to mitigate timing attacks. Note
-        // that this function still eaks whether the lengths of the tokens are equal -- this is
-        // acceptable because we expec the content of the tokens to provide enough randomness that
-        // needs to be guessed even if the length is known.
-        constant_time::verify_slices_are_equal(own, other).is_ok()
-    }
-}
-
-impl Eq for AuthenticationToken {}
 
 impl AsRef<[u8]> for AuthenticationToken {
     fn as_ref(&self) -> &[u8] {
@@ -619,80 +619,77 @@ impl AsRef<[u8]> for AuthenticationToken {
     }
 }
 
-/// Serialize bytes into format suitable for bearer tokens in Janus configuration files.
-fn as_base64<S: Serializer, T: AsRef<[u8]>>(key: &T, serializer: S) -> Result<S::Ok, S::Error> {
-    let bytes: &[u8] = key.as_ref();
-    serializer.serialize_str(&STANDARD.encode(bytes))
-}
-
-/// Deserialize bytes from Janus configuration files into a bearer token.
-fn from_base64<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
-    String::deserialize(deserializer).and_then(|s| {
-        STANDARD
-            .decode(s)
-            .map_err(|e| D::Error::custom(format!("cannot decode value from Base64: {e:?}")))
-    })
-}
-
 impl Distribution<AuthenticationToken> for Standard {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> AuthenticationToken {
-        AuthenticationToken::Bearer(Vec::from(rng.gen::<[u8; 16]>()))
+        AuthenticationToken::Bearer(Standard::sample(self, rng))
     }
 }
 
-/// Token presented as the value of the "DAP-Auth-Token" HTTP header. The token is used directly in
-/// the HTTP request without further encoding and so must be a legal HTTP header value. Conforms to
-/// [draft-ietf-dap-ppm-01 section 3.2][1].
+/// A token value used to authenticate HTTP requests.
 ///
-/// This opaque type ensures it's impossible to construct an [`AuthenticationToken::DapAuth`] whose
-/// contents are invalid.
+/// The token is used directly in HTTP request headers without further encoding and so much be a
+/// legal HTTP header value. More specifically, the token is restricted to the unpadded, URL-safe
+/// Base64 alphabet, as specified in [RFC 4648 section 5][1]. The unpadded, URL-safe Base64 string
+/// is the canonical form of the token and is used in configuration files, Janus aggregator API
+/// requests and HTTP authentication headers.
 ///
-/// [1]: https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-01#name-https-sender-authentication
-#[derive(Clone, Derivative)]
+/// This opaque type ensures it's impossible to construct an [`AuthenticationToken`] whose contents
+/// are invalid.
+///
+/// [1]: https://datatracker.ietf.org/doc/html/rfc4648#section-5
+#[derive(Clone, Derivative, Serialize)]
 #[derivative(Debug)]
-pub struct DapAuthToken(#[derivative(Debug = "ignore")] Vec<u8>);
+#[serde(transparent)]
+pub struct TokenInner(#[derivative(Debug = "ignore")] String);
 
-impl DapAuthToken {}
-
-impl AsRef<[u8]> for DapAuthToken {
-    fn as_ref(&self) -> &[u8] {
+impl TokenInner {
+    /// Returns the token as a string.
+    pub fn as_str(&self) -> &str {
         &self.0
     }
-}
 
-impl TryFrom<Vec<u8>> for DapAuthToken {
-    type Error = anyhow::Error;
+    fn try_from_str(value: String) -> Result<Self, anyhow::Error> {
+        // Verify that the string is legal unpadded, URL-safe Base64
+        URL_SAFE_NO_PAD.decode(&value)?;
+        Ok(Self(value))
+    }
 
-    fn try_from(token: Vec<u8>) -> Result<Self, Self::Error> {
-        HeaderValue::try_from(token.as_slice())?;
-        Ok(Self(token))
+    fn try_from(value: Vec<u8>) -> Result<Self, anyhow::Error> {
+        Self::try_from_str(String::from_utf8(value)?)
     }
 }
 
-impl Serialize for DapAuthToken {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&URL_SAFE_NO_PAD.encode(self.as_ref()))
+impl AsRef<[u8]> for TokenInner {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_bytes()
     }
 }
 
-impl<'de> Deserialize<'de> for DapAuthToken {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        // Verify that the string is a safe HTTP header value
+impl<'de> Deserialize<'de> for TokenInner {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
         String::deserialize(deserializer)
-            .and_then(|string| {
-                URL_SAFE_NO_PAD.decode(string).map_err(|e| {
-                    D::Error::custom(format!(
-                        "cannot decode value from unpadded Base64URL: {e:?}"
-                    ))
-                })
-            })
-            .and_then(|bytes| Self::try_from(bytes).map_err(D::Error::custom))
+            .and_then(|string| Self::try_from_str(string).map_err(D::Error::custom))
     }
 }
 
-impl Distribution<DapAuthToken> for Standard {
-    fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> DapAuthToken {
-        DapAuthToken(Vec::from(hex::encode(rng.gen::<[u8; 16]>())))
+impl PartialEq for TokenInner {
+    fn eq(&self, other: &Self) -> bool {
+        // We attempt constant-time comparisons of the token data to mitigate timing attacks. Note
+        // that this function still eaks whether the lengths of the tokens are equal -- this is
+        // acceptable because we expec the content of the tokens to provide enough randomness that
+        // needs to be guessed even if the length is known.
+        constant_time::verify_slices_are_equal(self.0.as_bytes(), other.0.as_bytes()).is_ok()
+    }
+}
+
+impl Eq for TokenInner {}
+
+impl Distribution<TokenInner> for Standard {
+    fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> TokenInner {
+        TokenInner(URL_SAFE_NO_PAD.encode(rng.gen::<[u8; 16]>()))
     }
 }
 
@@ -805,12 +802,14 @@ mod tests {
         );
     }
 
+    #[rstest::rstest]
+    #[case::dap_auth("DapAuth")]
+    #[case::bearer("Bearer")]
     #[test]
-    fn reject_invalid_dap_auth_token() {
-        let err = serde_yaml::from_str::<AuthenticationToken>(
-            "{type: \"DapAuth\", token: \"AAAAAAAAAAAAAA\"}",
-        )
+    fn reject_invalid_auth_token(#[case] token_type: &str) {
+        serde_yaml::from_str::<AuthenticationToken>(&format!(
+            "{{type: \"{token_type}\", token: \"é\"}}"
+        ))
         .unwrap_err();
-        assert!(err.to_string().contains("failed to parse header value"));
     }
 }

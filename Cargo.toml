@@ -45,6 +45,8 @@ opentelemetry = { version = "0.19", features = ["metrics"] }
 prio = { version = "0.12.2", features = ["multithreaded"] }
 serde = { version = "1.0.180", features = ["derive"] }
 rstest = "0.17.0"
+thiserror = "1.0"
+tokio = { version = "1.29", features = ["full", "tracing"] }
 trillium = "0.2.9"
 trillium-api = { version = "0.2.0-rc.3", default-features = false }
 trillium-caching-headers = "0.2.1"
