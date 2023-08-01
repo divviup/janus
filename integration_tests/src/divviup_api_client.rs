@@ -67,10 +67,8 @@ pub struct DivviUpApiTask {
 /// Request to pair an aggregator with divviup-api
 #[derive(Serialize)]
 pub struct NewAggregatorRequest {
-    pub role: String,
     pub name: String,
     pub api_url: String,
-    pub dap_url: String,
     /// Bearer token for authenticating requests to this aggregator's aggregator API
     pub bearer_token: String,
 }
