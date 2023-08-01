@@ -134,7 +134,7 @@ impl Task {
     #[allow(clippy::too_many_arguments)]
     pub fn new<I: IntoIterator<Item = HpkeKeypair>>(
         task_id: TaskId,
-        mut aggregator_endpoints: Vec<Url>,
+        aggregator_endpoints: Vec<Url>,
         query_type: QueryType,
         vdaf: VdafInstance,
         role: Role,
@@ -150,20 +150,7 @@ impl Task {
         collector_auth_tokens: Vec<AuthenticationToken>,
         hpke_keys: I,
     ) -> Result<Self, Error> {
-        // Ensure provided aggregator endpoints end with a slash, as we will be joining additional
-        // path segments into these endpoints & the Url::join implementation is persnickety about
-        // the slash at the end of the path.
-        for url in &mut aggregator_endpoints {
-            url_ensure_trailing_slash(url);
-        }
-
-        // Compute hpke_configs mapping cfg.id -> (cfg, key).
-        let hpke_keys: HashMap<HpkeConfigId, HpkeKeypair> = hpke_keys
-            .into_iter()
-            .map(|keypair| (*keypair.config().id(), keypair))
-            .collect();
-
-        let task = Self {
+        let task = Self::new_without_validation(
             task_id,
             aggregator_endpoints,
             query_type,
@@ -180,9 +167,63 @@ impl Task {
             aggregator_auth_tokens,
             collector_auth_tokens,
             hpke_keys,
-        };
+        );
         task.validate()?;
         Ok(task)
+    }
+
+    /// Create a new [`Task`] from the provided values, without performing validation. Used for
+    /// crate-internal functions that know what they're doing.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_without_validation<I: IntoIterator<Item = HpkeKeypair>>(
+        task_id: TaskId,
+        mut aggregator_endpoints: Vec<Url>,
+        query_type: QueryType,
+        vdaf: VdafInstance,
+        role: Role,
+        vdaf_verify_keys: Vec<SecretBytes>,
+        max_batch_query_count: u64,
+        task_expiration: Option<Time>,
+        report_expiry_age: Option<Duration>,
+        min_batch_size: u64,
+        time_precision: Duration,
+        tolerable_clock_skew: Duration,
+        collector_hpke_config: HpkeConfig,
+        aggregator_auth_tokens: Vec<AuthenticationToken>,
+        collector_auth_tokens: Vec<AuthenticationToken>,
+        hpke_keys: I,
+    ) -> Self {
+        // Ensure provided aggregator endpoints end with a slash, as we will be joining additional
+        // path segments into these endpoints & the Url::join implementation is persnickety about
+        // the slash at the end of the path.
+        for url in &mut aggregator_endpoints {
+            url_ensure_trailing_slash(url);
+        }
+
+        // Compute hpke_configs mapping cfg.id -> (cfg, key).
+        let hpke_keys: HashMap<HpkeConfigId, HpkeKeypair> = hpke_keys
+            .into_iter()
+            .map(|keypair| (*keypair.config().id(), keypair))
+            .collect();
+
+        Self {
+            task_id,
+            aggregator_endpoints,
+            query_type,
+            vdaf,
+            role,
+            vdaf_verify_keys,
+            max_batch_query_count,
+            task_expiration,
+            report_expiry_age,
+            min_batch_size,
+            time_precision,
+            tolerable_clock_skew,
+            collector_hpke_config,
+            aggregator_auth_tokens,
+            collector_auth_tokens,
+            hpke_keys,
+        }
     }
 
     fn validate(&self) -> Result<(), Error> {

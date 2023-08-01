@@ -1,12 +1,19 @@
 use derivative::Derivative;
-use janus_core::task::{AuthenticationToken, VdafInstance};
-use janus_messages::{Duration, HpkeConfig, Role, TaskId};
+use janus_core::{
+    hpke::generate_hpke_config_and_private_key,
+    task::{AuthenticationToken, VdafInstance},
+};
+use janus_messages::{Duration, HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId, Role, TaskId, Time};
 use lazy_static::lazy_static;
-use rand::{distributions::Standard, prelude::Distribution};
+use rand::{distributions::Standard, prelude::Distribution, random};
 use ring::hkdf::{KeyType, Salt, HKDF_SHA256};
 use url::Url;
 
-use crate::{datastore::Error, SecretBytes};
+use crate::{
+    datastore::Error,
+    task::{self, QueryType},
+    SecretBytes,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct VerifyKeyInit([u8; Self::LEN]);
@@ -37,13 +44,23 @@ impl Distribution<VerifyKeyInit> for Standard {
     }
 }
 
+/// Represents another aggregator that is peered with our aggregator for taskprov purposes. Contains
+/// data that needs to be identical between both aggregators for the taskprov flow to work.
 #[derive(Clone, Derivative, PartialEq, Eq)]
 #[derivative(Debug)]
 pub struct PeerAggregator {
+    /// The URL at which the peer aggregator can be reached. This, along with `role`, is used to
+    /// uniquely represent the peer aggregator.
     endpoint: Url,
+
+    /// The role that the peer aggregator takes in DAP. Must be [`Role::Leader`] or [`Role::Helper`].
+    /// This, along with `endpoint`, uniquely represents the peer aggregator.
     role: Role,
+
+    /// The preshared key used to derive the VDAF verify key for each task.
     #[derivative(Debug = "ignore")]
     verify_key_init: VerifyKeyInit,
+
     collector_hpke_config: HpkeConfig,
     report_expiry_age: Option<Duration>,
     tolerable_clock_skew: Duration,
@@ -65,7 +82,8 @@ lazy_static! {
 }
 
 impl PeerAggregator {
-    pub(crate) fn new(
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
         endpoint: Url,
         role: Role,
         verify_key_init: VerifyKeyInit,
@@ -150,6 +168,8 @@ impl PeerAggregator {
             .any(|t| t == auth_token)
     }
 
+    /// Computes the VDAF verify key using the method defined in [draft-wang-ppm-dap-taskprov][1].
+    /// [1]: https://www.ietf.org/archive/id/draft-wang-ppm-dap-taskprov-04.html#name-deriving-the-vdaf-verificat
     pub fn derive_vdaf_verify_key(
         &self,
         task_id: &TaskId,
@@ -181,5 +201,81 @@ struct VdafVerifyKeyLength(usize);
 impl KeyType for VdafVerifyKeyLength {
     fn len(&self) -> usize {
         self.0
+    }
+}
+
+/// Newtype for [`task::Task`], which omits certain fields that aren't required for taskprov tasks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Task(task::Task);
+
+impl Task {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        task_id: TaskId,
+        aggregator_endpoints: Vec<Url>,
+        query_type: QueryType,
+        vdaf: VdafInstance,
+        role: Role,
+        vdaf_verify_keys: Vec<SecretBytes>,
+        max_batch_query_count: u64,
+        task_expiration: Option<Time>,
+        report_expiry_age: Option<Duration>,
+        min_batch_size: u64,
+        time_precision: Duration,
+        tolerable_clock_skew: Duration,
+    ) -> Result<Self, Error> {
+        let task = Self(task::Task::new_without_validation(
+            task_id,
+            aggregator_endpoints,
+            query_type,
+            vdaf,
+            role,
+            vdaf_verify_keys,
+            max_batch_query_count,
+            task_expiration,
+            report_expiry_age,
+            min_batch_size,
+            time_precision,
+            tolerable_clock_skew,
+            // inahga: don't make a junk key, instead turn collector hpke config optional.
+            generate_hpke_config_and_private_key(
+                random(),
+                HpkeKemId::X25519HkdfSha256,
+                HpkeKdfId::HkdfSha256,
+                HpkeAeadId::Aes128Gcm,
+            )
+            .config()
+            .clone(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ));
+        task.validate()?;
+        Ok(task)
+    }
+
+    fn validate(&self) -> Result<(), Error> {
+        // DAP currently only supports configurations of exactly two aggregators.
+        if self.0.aggregator_endpoints().len() != 2 {
+            return Err(Error::InvalidParameter("aggregator_endpoints"));
+        }
+        if !self.0.role().is_aggregator() {
+            return Err(Error::InvalidParameter("role"));
+        }
+        if self.0.vdaf_verify_keys().is_empty() {
+            return Err(Error::InvalidParameter("vdaf_verify_keys"));
+        }
+        if let QueryType::FixedSize { max_batch_size } = self.0.query_type() {
+            if *max_batch_size < self.0.min_batch_size() {
+                return Err(Error::InvalidParameter("max_batch_size"));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl From<Task> for task::Task {
+    fn from(value: Task) -> Self {
+        value.0
     }
 }

@@ -34,7 +34,7 @@ use janus_aggregator_core::{
     },
     query_type::AccumulableQueryType,
     task::{self, Task, VerifyKey},
-    taskprov::PeerAggregator,
+    taskprov::{self, PeerAggregator},
 };
 #[cfg(feature = "test-util")]
 use janus_core::test_util::dummy_vdaf;
@@ -343,7 +343,6 @@ impl<C: Clock> Aggregator<C> {
 
                 // Retry fetching the aggregator, since the last function would have just inserted it.
                 self.task_aggregator_for(task_id).await?.ok_or_else(|| {
-                    // inahga: more tracing, better error message
                     Error::Internal("unexpectedly failed to create task".to_string())
                 })?
             }
@@ -563,8 +562,10 @@ impl<C: Clock> Aggregator<C> {
             }
         }
 
+        // TODO(#1639): not holding the lock while querying means that multiple tokio::tasks could
+        // enter this section and redundantly query the database. This could be costly at high QPS.
+
         // Slow path: retrieve task, create a task aggregator, store it to the cache, then return it.
-        // inahga: this is a mess
         match self
             .datastore
             .run_tx_with_name("task_aggregator_get_task", |tx| {
@@ -583,6 +584,9 @@ impl<C: Clock> Aggregator<C> {
                     )))
                 }
             }
+            // Avoid caching None, in case a previously non-existent task is provisioned while the
+            // system is live. Note that for #238, if we're improving this cache to indeed cache
+            // None, we must provide some mechanism for taskprov tasks to force a cache refresh.
             None => Ok(None),
         }
     }
@@ -621,8 +625,7 @@ impl<C: Clock> Aggregator<C> {
         let vdaf_verify_keys =
             Vec::from([peer_aggregator.derive_vdaf_verify_key(task_id, &vdaf_instance)]);
 
-        // inahga PROBLEM: this rejects empty aggregator auth tokens
-        let task = Task::new(
+        let task = taskprov::Task::new(
             *task_id,
             aggregator_urls,
             task_config.query_config().query().try_into()?,
@@ -635,22 +638,18 @@ impl<C: Clock> Aggregator<C> {
             task_config.query_config().min_batch_size() as u64,
             *task_config.query_config().time_precision(),
             *peer_aggregator.tolerable_clock_skew(),
-            peer_aggregator.collector_hpke_config().clone(),
-            /* aggregator_auth_tokens */ Vec::new(),
-            /* collector_auth_tokens */ Vec::new(),
-            /* hpke_keys */ Vec::new(),
         )?;
         self.datastore
             .run_tx_with_name("taskprov_put_task", |tx| {
                 let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
+                Box::pin(async move { tx.put_task(&task.into()).await })
             })
             .await
             .or_else(|error| match error {
                 // If the task is already in the datastore, then some other request beat us to inserting
                 // it. They _should_ have inserted all the same parameters as we would have, so we can
                 // proceed as normal.
-                // inahga PROBLEM, it don't work like this
+                // inahga PROBLEM, it don't work like this?
                 DatastoreError::MutationTargetAlreadyExists => Ok(()),
                 error => Err(error.into()),
             })
