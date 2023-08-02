@@ -4488,28 +4488,31 @@ impl<C: Clock> Transaction<'_, C> {
                 "INSERT INTO taskprov_peer_aggregators (
                     endpoint, role, verify_key_init, tolerable_clock_skew, report_expiry_age,
                     collector_hpke_config
-                ) VALUES ($1, $2, $3, $4, $5, $6)",
+                ) VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT DO NOTHING",
             )
             .await?;
-        self.execute(
-            &stmt,
-            &[
-                /* endpoint */ &endpoint,
-                /* role */ role,
-                /* verify_key_init */ &encrypted_verify_key_init,
-                /* tolerable_clock_skew */
-                &i64::try_from(peer_aggregator.tolerable_clock_skew().as_seconds())?,
-                /* report_expiry_age */
-                &peer_aggregator
-                    .report_expiry_age()
-                    .map(Duration::as_seconds)
-                    .map(i64::try_from)
-                    .transpose()?,
-                /* collector_hpke_config */
-                &peer_aggregator.collector_hpke_config().get_encoded(),
-            ],
-        )
-        .await?;
+        check_insert(
+            self.execute(
+                &stmt,
+                &[
+                    /* endpoint */ &endpoint,
+                    /* role */ role,
+                    /* verify_key_init */ &encrypted_verify_key_init,
+                    /* tolerable_clock_skew */
+                    &i64::try_from(peer_aggregator.tolerable_clock_skew().as_seconds())?,
+                    /* report_expiry_age */
+                    &peer_aggregator
+                        .report_expiry_age()
+                        .map(Duration::as_seconds)
+                        .map(i64::try_from)
+                        .transpose()?,
+                    /* collector_hpke_config */
+                    &peer_aggregator.collector_hpke_config().get_encoded(),
+                ],
+            )
+            .await?,
+        )?;
 
         let encrypt_tokens = |tokens: &[AuthenticationToken], table| -> Result<_, Error> {
             let mut ords = Vec::new();

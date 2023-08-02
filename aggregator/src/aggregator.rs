@@ -268,7 +268,7 @@ impl<C: Clock> Aggregator<C> {
                 let task_aggregator = self
                     .task_aggregator_for(&task_id)
                     .await?
-                    .ok_or_else(|| Error::UnrecognizedMessage(None, "task_id"))?;
+                    .ok_or_else(|| Error::UnrecognizedTask(task_id))?;
                 Ok(task_aggregator.handle_hpke_config())
             }
             None => {
@@ -296,7 +296,7 @@ impl<C: Clock> Aggregator<C> {
         let task_aggregator = self
             .task_aggregator_for(task_id)
             .await?
-            .ok_or_else(|| Error::UnrecognizedMessage(None, "task_id"))?;
+            .ok_or_else(|| Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Arc::new(Error::UnrecognizedTask(*task_id)));
         }
@@ -374,7 +374,7 @@ impl<C: Clock> Aggregator<C> {
         let task_aggregator = self
             .task_aggregator_for(task_id)
             .await?
-            .ok_or_else(|| Error::UnrecognizedMessage(None, "task_id"))?;
+            .ok_or_else(|| Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
         }
@@ -427,7 +427,7 @@ impl<C: Clock> Aggregator<C> {
         let task_aggregator = self
             .task_aggregator_for(task_id)
             .await?
-            .ok_or_else(|| Error::UnrecognizedMessage(None, "task_id"))?;
+            .ok_or_else(|| Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Error::UnrecognizedTask(*task_id));
         }
@@ -456,7 +456,7 @@ impl<C: Clock> Aggregator<C> {
         let task_aggregator = self
             .task_aggregator_for(task_id)
             .await?
-            .ok_or_else(|| Error::UnrecognizedMessage(None, "task_id"))?;
+            .ok_or_else(|| Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Error::UnrecognizedTask(*task_id));
         }
@@ -482,7 +482,7 @@ impl<C: Clock> Aggregator<C> {
         let task_aggregator = self
             .task_aggregator_for(task_id)
             .await?
-            .ok_or_else(|| Error::UnrecognizedMessage(None, "task_id"))?;
+            .ok_or_else(|| Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Error::UnrecognizedTask(*task_id));
         }
@@ -512,7 +512,7 @@ impl<C: Clock> Aggregator<C> {
         let task_aggregator = self
             .task_aggregator_for(task_id)
             .await?
-            .ok_or_else(|| Error::UnrecognizedMessage(None, "task_id"))?;
+            .ok_or_else(|| Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
         }
@@ -647,9 +647,9 @@ impl<C: Clock> Aggregator<C> {
             })
             .await
             .or_else(|error| match error {
-                // If the task is already in the datastore, then some other request beat us to inserting
-                // it. They _should_ have inserted all the same parameters as we would have, so we can
-                // proceed as normal.
+                // If the task is already in the datastore, then some other request or aggregator
+                // replica beat us to inserting it. They _should_ have inserted all the same parameters
+                // as we would have, so we can proceed as normal.
                 DatastoreError::MutationTargetAlreadyExists => Ok(()),
                 error => Err(error.into()),
             })
@@ -665,13 +665,13 @@ impl<C: Clock> Aggregator<C> {
         aggregator_auth_token: Option<&AuthenticationToken>,
     ) -> Result<(TaskConfig, PeerAggregator, Vec<Url>), Error> {
         let taskprov_header = &URL_SAFE_NO_PAD
-            .decode(&taskprov_header)
+            .decode(taskprov_header)
             .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
-        if task_id.as_ref() != digest(&SHA256, &taskprov_header).as_ref() {
+        if task_id.as_ref() != digest(&SHA256, taskprov_header).as_ref() {
             return Err(Error::UnrecognizedTask(*task_id));
         }
 
-        let task_config = TaskConfig::decode(&mut Cursor::new(&taskprov_header))?;
+        let task_config = TaskConfig::decode(&mut Cursor::new(taskprov_header))?;
 
         let aggregator_urls = task_config
             .aggregator_endpoints()
@@ -683,13 +683,12 @@ impl<C: Clock> Aggregator<C> {
         }
         let peer_aggregator_url = &aggregator_urls[peer_role.index().unwrap()];
 
-        // get the peer aggregator
         // inahga: cache this
         let peer_aggregator = self
             .datastore
             .run_tx_with_name("get_taskprov_peer_aggregator", |tx| {
                 let peer_aggregator_url = peer_aggregator_url.clone();
-                let peer_role = peer_role.clone();
+                let peer_role = *peer_role;
                 Box::pin(async move {
                     // This implictly checks whether the current aggregator role is appropriate for
                     // the upstream API call.
@@ -698,10 +697,10 @@ impl<C: Clock> Aggregator<C> {
                 })
             })
             .await?
-            .ok_or_else(|| TaskprovOptOutError::NoSuchPeer(*peer_role))?;
+            .ok_or(TaskprovOptOutError::NoSuchPeer(*peer_role))?;
 
         if !aggregator_auth_token
-            .map(|t| peer_aggregator.check_aggregator_auth_token(&t))
+            .map(|t| peer_aggregator.check_aggregator_auth_token(t))
             .unwrap_or(false)
         {
             return Err(Error::UnauthorizedRequest(*task_id));

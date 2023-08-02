@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use janus_aggregator_core::{datastore::Datastore, instrumented};
 use janus_core::{
     http::extract_bearer_token,
-    task::{AuthenticationToken, DapAuthToken, DAP_AUTH_HEADER},
+    task::{AuthenticationToken, DAP_AUTH_HEADER},
     taskprov::TASKPROV_HEADER,
     time::Clock,
 };
@@ -100,10 +100,8 @@ impl Handler for Error {
             }
             Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
             Error::BadRequest(_) => conn.with_status(Status::BadRequest),
-            Error::InvalidTask(error) => match error {
-                // inahga: get the task id in here somehow
-                _ => conn.with_problem_details(DapProblemType::InvalidTask, None),
-            },
+            // inahga: get the task ID in here somehow
+            Error::InvalidTask(_) => conn.with_problem_details(DapProblemType::InvalidTask, None),
         }
     }
 }

@@ -1,6 +1,6 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
-use http::header::{HeaderValue, AUTHORIZATION};
+use http::header::AUTHORIZATION;
 use janus_messages::taskprov;
 use rand::{distributions::Standard, prelude::Distribution};
 use reqwest::Url;
@@ -630,25 +630,6 @@ impl AuthenticationToken {
         }
     }
 }
-
-impl PartialEq for AuthenticationToken {
-    fn eq(&self, other: &Self) -> bool {
-        let (own, other) = match (self, other) {
-            (Self::Bearer(own), Self::Bearer(other)) => (own.as_slice(), other.as_slice()),
-            (Self::DapAuth(own), Self::DapAuth(other)) => (own.as_ref(), other.as_ref()),
-            _ => {
-                return false;
-            }
-        };
-        // We attempt constant-time comparisons of the token data to mitigate timing attacks. Note
-        // that this function still eaks whether the lengths of the tokens are equal -- this is
-        // acceptable because we expect the content of the tokens to provide enough randomness that
-        // needs to be guessed even if the length is known.
-        constant_time::verify_slices_are_equal(own, other).is_ok()
-    }
-}
-
-impl Eq for AuthenticationToken {}
 
 impl AsRef<[u8]> for AuthenticationToken {
     fn as_ref(&self) -> &[u8] {

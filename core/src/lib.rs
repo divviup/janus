@@ -37,5 +37,5 @@ impl Runtime for TokioRuntime {
 }
 
 pub mod taskprov {
-    pub const TASKPROV_HEADER: &'static str = "dap-taskprov";
+    pub const TASKPROV_HEADER: &str = "dap-taskprov";
 }

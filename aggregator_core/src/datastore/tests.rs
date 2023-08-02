@@ -6540,10 +6540,10 @@ async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatast
         Some(Duration::from_seconds(3600)),
         Duration::from_seconds(60),
         vec![
-            AuthenticationToken::DapAuth(random()),
-            AuthenticationToken::DapAuth(random()),
+            AuthenticationToken::Bearer(random()),
+            AuthenticationToken::Bearer(random()),
         ],
-        vec![AuthenticationToken::DapAuth(random())],
+        vec![AuthenticationToken::Bearer(random())],
     );
 
     // Ensure we can have the same peer aggregator, except in another role.
@@ -6554,8 +6554,8 @@ async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatast
         generate_test_hpke_config_and_private_key().config().clone(),
         Some(Duration::from_seconds(3600)),
         Duration::from_seconds(60),
-        vec![AuthenticationToken::DapAuth(random())],
-        vec![AuthenticationToken::DapAuth(random())],
+        vec![AuthenticationToken::Bearer(random())],
+        vec![AuthenticationToken::Bearer(random())],
     );
 
     // Ensure we can still add other unrelated aggregators.
@@ -6566,7 +6566,7 @@ async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatast
         generate_test_hpke_config_and_private_key().config().clone(),
         Some(Duration::from_seconds(3600)),
         Duration::from_seconds(60),
-        vec![AuthenticationToken::DapAuth(random())],
+        vec![AuthenticationToken::Bearer(random())],
         vec![],
     );
 
