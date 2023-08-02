@@ -10,13 +10,14 @@ use janus_aggregator_core::{
     SecretBytes,
 };
 use janus_core::{
-    hpke::generate_hpke_config_and_private_key,
-    http::extract_bearer_token,
-    task::{AuthenticationToken, DapAuthToken},
-    time::Clock,
+    hpke::generate_hpke_config_and_private_key, http::extract_bearer_token,
+    task::AuthenticationToken, time::Clock,
 };
-use janus_messages::{Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, Role, TaskId};
-use models::{GetTaskMetricsResp, TaskResp};
+use janus_messages::{
+    query_type::Code as SupportedQueryType, Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, Role,
+    TaskId,
+};
+use models::{AggregatorApiConfig, AggregatorRole, GetTaskMetricsResp, SupportedVdaf, TaskResp};
 use querystring::querify;
 use rand::random;
 use ring::{
@@ -39,7 +40,8 @@ use url::Url;
 /// Represents the configuration for an instance of the Aggregator API.
 #[derive(Clone)]
 pub struct Config {
-    pub auth_tokens: Vec<SecretBytes>,
+    pub auth_tokens: Vec<AuthenticationToken>,
+    pub public_dap_url: Url,
 }
 
 /// Content type
@@ -90,6 +92,7 @@ pub fn aggregator_api_handler<C: Clock>(ds: Arc<Datastore<C>>, cfg: Config) -> i
         ReplaceMimeTypes,
         // Main functionality router.
         Router::new()
+            .get("/", instrumented(api(get_config)))
             .get("/task_ids", instrumented(api(get_task_ids::<C>)))
             .post("/tasks", instrumented(api(post_task::<C>)))
             .get("/tasks/:task_id", instrumented(api(get_task::<C>)))
@@ -101,23 +104,40 @@ pub fn aggregator_api_handler<C: Clock>(ds: Arc<Datastore<C>>, cfg: Config) -> i
     )
 }
 
-async fn auth_check(conn: &mut Conn, State(cfg): State<Arc<Config>>) -> impl Handler {
-    let bearer_token = match extract_bearer_token(conn) {
-        Ok(Some(t)) => t,
-        _ => {
-            return Some((Status::Unauthorized, Halt));
-        }
+async fn auth_check(conn: &mut Conn, (): ()) -> impl Handler {
+    let (Some(cfg), Ok(Some(bearer_token))) =
+        (conn.state::<Arc<Config>>(), extract_bearer_token(conn))
+    else {
+        return Some((Status::Unauthorized, Halt));
     };
 
     if cfg.auth_tokens.iter().any(|key| {
         constant_time::verify_slices_are_equal(bearer_token.as_ref(), key.as_ref()).is_ok()
     }) {
         // Authorization succeeds.
-        return None;
+        None
+    } else {
+        // Authorization fails.
+        Some((Status::Unauthorized, Halt))
     }
+}
 
-    // Authorization fails.
-    Some((Status::Unauthorized, Halt))
+async fn get_config(_: &mut Conn, State(config): State<Arc<Config>>) -> Json<AggregatorApiConfig> {
+    Json(AggregatorApiConfig {
+        dap_url: config.public_dap_url.clone(),
+        role: AggregatorRole::Either,
+        vdafs: vec![
+            SupportedVdaf::Prio3Count,
+            SupportedVdaf::Prio3Sum,
+            SupportedVdaf::Prio3Histogram,
+            SupportedVdaf::Prio3CountVec,
+            SupportedVdaf::Prio3SumVec,
+        ],
+        query_types: vec![
+            SupportedQueryType::TimeInterval,
+            SupportedQueryType::FixedSize,
+        ],
+    })
 }
 
 async fn get_task_ids<C: Clock>(
@@ -156,6 +176,8 @@ async fn get_task_ids<C: Clock>(
 }
 
 /// A simple error type that holds a message and an HTTP status. This can be used as a [`Handler`].
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
 struct Error {
     message: String,
     status: Status,
@@ -195,6 +217,7 @@ async fn post_task<C: Clock>(
     // struct `aggregator_core::task::Task` expects to get two aggregator endpoint URLs, but only
     // the one for the peer aggregator is in the incoming request (or for that matter, is ever used
     // by Janus), so we insert a fake URL for "self".
+    // TODO(#1524): clean this up with `aggregator_core::task::Task` changes
     // unwrap safety: this fake URL is valid
     let fake_aggregator_url = Url::parse("http://never-used.example.com").unwrap();
     let aggregator_endpoints = match req.role {
@@ -230,33 +253,16 @@ async fn post_task<C: Clock>(
 
     let vdaf_verify_keys = Vec::from([SecretBytes::new(vdaf_verify_key_bytes)]);
 
-    let aggregator_auth_tokens = match req.role {
+    let (aggregator_auth_tokens, collector_auth_tokens) = match req.role {
         Role::Leader => {
-            let encoded = req.aggregator_auth_token.as_ref().ok_or_else(|| {
+            let aggregator_auth_token = req.aggregator_auth_token.ok_or_else(|| {
                 Error::new(
                     "aggregator acting in leader role must be provided an aggregator auth token"
                         .to_string(),
                     Status::BadRequest,
                 )
             })?;
-            let token_bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|err| {
-                Error::new(
-                    format!("Invalid base64 value for aggregator_auth_token: {err}"),
-                    Status::BadRequest,
-                )
-            })?;
-            Vec::from([
-                // TODO(#472): Each token in the PostTaskReq should indicate whether it is a bearer
-                // token or a DAP-Auth-Token. For now, assume the latter.
-                DapAuthToken::try_from(token_bytes)
-                    .map(AuthenticationToken::DapAuth)
-                    .map_err(|_| {
-                        Error::new(
-                            "Invalid HTTP header value in aggregator_auth_token".to_string(),
-                            Status::BadRequest,
-                        )
-                    })?,
-            ])
+            (Vec::from([aggregator_auth_token]), Vec::from([random()]))
         }
 
         Role::Helper => {
@@ -267,19 +273,13 @@ async fn post_task<C: Clock>(
                     Status::BadRequest,
                 ));
             }
-            // TODO(#472): switch to generating bearer tokens by default
-            Vec::from([AuthenticationToken::DapAuth(random())])
+
+            (Vec::from([random()]), Vec::new())
         }
 
         _ => unreachable!(),
     };
 
-    let collector_auth_tokens = match req.role {
-        // TODO(#472): switch to generating bearer tokens by default
-        Role::Leader => Vec::from([AuthenticationToken::DapAuth(random())]),
-        Role::Helper => Vec::new(),
-        _ => unreachable!(),
-    };
     let hpke_keys = Vec::from([generate_hpke_config_and_private_key(
         random(),
         HpkeKemId::X25519HkdfSha256,
@@ -318,15 +318,49 @@ async fn post_task<C: Clock>(
 
     ds.run_tx_with_name("post_task", |tx| {
         let task = Arc::clone(&task);
-        Box::pin(async move { tx.put_task(&task).await })
+        Box::pin(async move {
+            if let Some(existing_task) = tx.get_task(task.id()).await? {
+            // Check whether the existing task in the DB corresponds to the incoming task, ignoring
+            // those fields that are randomly generated.
+            if existing_task.aggregator_endpoints() == task.aggregator_endpoints()
+                && existing_task.query_type() == task.query_type()
+                && existing_task.vdaf() == task.vdaf()
+                && existing_task.vdaf_verify_keys() == task.vdaf_verify_keys()
+                && existing_task.role() == task.role()
+                && existing_task.max_batch_query_count() == task.max_batch_query_count()
+                && existing_task.task_expiration() == task.task_expiration()
+                && existing_task.min_batch_size() == task.min_batch_size()
+                && existing_task.time_precision() == task.time_precision()
+                && existing_task.collector_hpke_config() == task.collector_hpke_config() {
+                    return Ok(())
+                }
+
+                let err = Error::new(
+                    "task with same VDAF verify key and task ID already exists with different parameters".to_string(),
+                    Status::Conflict,
+                );
+                return Err(datastore::Error::User(err.into()));
+            }
+
+            tx.put_task(&task).await
+        })
     })
     .await
     .map_err(|err| {
-        error!(err = %err, "Database transaction error");
-        Error::new(
-            "Error storing task".to_string(),
-            Status::InternalServerError,
-        )
+        match err {
+            datastore::Error::User(user_err) if user_err.is::<Error>() => {
+                // unwrap safety: we checked if the downcast is valid in the guard
+                *user_err.downcast::<Error>().unwrap()
+            }
+            _ => {
+                error!(err = %err, "Database transaction error");
+                Error::new(
+                    "Error storing task".to_string(),
+                    Status::InternalServerError,
+                )
+            }
+        }
+
     })?;
 
     Ok(Json(TaskResp::try_from(task.as_ref()).map_err(|err| {
@@ -404,10 +438,40 @@ async fn get_task_metrics<C: Clock>(
 mod models {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use janus_aggregator_core::task::{QueryType, Task};
-    use janus_core::task::VdafInstance;
-    use janus_messages::{Duration, HpkeConfig, Role, TaskId, Time};
+    use janus_core::task::{AuthenticationToken, VdafInstance};
+    use janus_messages::{
+        query_type::Code as SupportedQueryType, Duration, HpkeConfig, Role, TaskId, Time,
+    };
     use serde::{Deserialize, Serialize};
     use url::Url;
+
+    #[allow(dead_code)]
+    // ^^ allowed in order to fully describe the interface and for later use
+    #[derive(Serialize, PartialEq, Eq, Debug)]
+    pub(crate) enum AggregatorRole {
+        Either,
+        Leader,
+        Helper,
+    }
+
+    #[derive(Serialize, PartialEq, Eq, Debug)]
+    pub(crate) struct AggregatorApiConfig {
+        pub dap_url: Url,
+        pub role: AggregatorRole,
+        pub vdafs: Vec<SupportedVdaf>,
+        pub query_types: Vec<SupportedQueryType>,
+    }
+
+    #[allow(clippy::enum_variant_names)]
+    // ^^ allowed because it just happens to be the case that all of the supported vdafs are prio3
+    #[derive(Serialize, PartialEq, Eq, Debug)]
+    pub(crate) enum SupportedVdaf {
+        Prio3Count,
+        Prio3Sum,
+        Prio3Histogram,
+        Prio3SumVec,
+        Prio3CountVec,
+    }
 
     #[derive(Serialize)]
     pub(crate) struct GetTaskIdsResp {
@@ -441,10 +505,9 @@ mod models {
         pub(crate) time_precision: Duration,
         /// HPKE configuration for the collector.
         pub(crate) collector_hpke_config: HpkeConfig,
-        /// If this aggregator is the leader, this is the bearer token to use to authenticate
-        /// requests to the helper, as Base64 encoded bytes. If this aggregator is the helper, the
-        /// value is `None`.
-        pub(crate) aggregator_auth_token: Option<String>,
+        /// If this aggregator is the leader, this is the token to use to authenticate requests to
+        /// the helper. If this aggregator is the helper, the value is `None`.
+        pub(crate) aggregator_auth_token: Option<AuthenticationToken>,
     }
 
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -477,20 +540,18 @@ mod models {
         /// How much clock skew to allow between client and aggregator. Reports from
         /// farther than this duration into the future will be rejected.
         pub(crate) tolerable_clock_skew: Duration,
-        /// The authentication token for inter-aggregator communication in this task, as Base64
-        /// encoded bytes.
+        /// The authentication token for inter-aggregator communication in this task.
         /// If `role` is Leader, this token is used by the aggregator to authenticate requests to
         /// the Helper. If `role` is Helper, this token is used by the aggregator to authenticate
         /// requests from the Leader.
         // TODO(#1509): This field will have to change as Janus helpers will only store a salted
         // hash of aggregator auth tokens.
-        pub(crate) aggregator_auth_token: String,
-        /// The authentication token used by the task's Collector to authenticate to the Leader, as
-        /// Base64 encoded bytes.
+        pub(crate) aggregator_auth_token: AuthenticationToken,
+        /// The authentication token used by the task's Collector to authenticate to the Leader.
         /// `Some` if `role` is Leader, `None` otherwise.
         // TODO(#1509) This field will have to change as Janus leaders will only store a salted hash
         // of collector auth tokens.
-        pub(crate) collector_auth_token: Option<String>,
+        pub(crate) collector_auth_token: Option<AuthenticationToken>,
         /// HPKE configuration used by the collector to decrypt aggregate shares.
         pub(crate) collector_hpke_config: HpkeConfig,
         /// HPKE configuration(s) used by this aggregator to decrypt report shares.
@@ -526,9 +587,8 @@ mod models {
                 Role::Leader => {
                     if task.collector_auth_tokens().len() != 1 {
                         return Err("illegal number of collector auth tokens in task");
-                    } else {
-                        Some(URL_SAFE_NO_PAD.encode(task.collector_auth_tokens()[0].as_ref()))
                     }
+                    Some(task.primary_collector_auth_token().clone())
                 }
                 Role::Helper => None,
                 _ => return Err("illegal aggregator role in task"),
@@ -554,8 +614,7 @@ mod models {
                 min_batch_size: task.min_batch_size(),
                 time_precision: *task.time_precision(),
                 tolerable_clock_skew: *task.tolerable_clock_skew(),
-                aggregator_auth_token: URL_SAFE_NO_PAD
-                    .encode(task.aggregator_auth_tokens()[0].as_ref()),
+                aggregator_auth_token: task.primary_aggregator_auth_token().clone(),
                 collector_auth_token,
                 collector_hpke_config: task.collector_hpke_config().clone(),
                 aggregator_hpke_configs,
@@ -594,10 +653,7 @@ mod tests {
         models::{GetTaskIdsResp, GetTaskMetricsResp, PostTaskReq, TaskResp},
         Config, CONTENT_TYPE,
     };
-    use base64::{
-        engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
-        Engine,
-    };
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use futures::future::try_join_all;
     use janus_aggregator_core::{
         datastore::{
@@ -613,7 +669,7 @@ mod tests {
     };
     use janus_core::{
         hpke::{generate_hpke_config_and_private_key, HpkeKeypair, HpkePrivateKey},
-        task::{AuthenticationToken, DapAuthToken, VdafInstance},
+        task::{AuthenticationToken, VdafInstance},
         test_util::{
             dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber,
@@ -633,7 +689,7 @@ mod tests {
         prelude::{delete, get, post},
     };
 
-    const AUTH_TOKEN: &str = "auth_token";
+    const AUTH_TOKEN: &str = "Y29sbGVjdG9yLWFiY2RlZjAw";
 
     async fn setup_api_test() -> (impl Handler, EphemeralDatastore, Arc<Datastore<MockClock>>) {
         install_test_trace_subscriber();
@@ -642,11 +698,33 @@ mod tests {
         let handler = aggregator_api_handler(
             Arc::clone(&datastore),
             Config {
-                auth_tokens: Vec::from([SecretBytes::new(AUTH_TOKEN.as_bytes().to_vec())]),
+                auth_tokens: Vec::from([AuthenticationToken::new_bearer_token_from_string(
+                    AUTH_TOKEN,
+                )
+                .unwrap()]),
+                public_dap_url: "https://dap.url".parse().unwrap(),
             },
         );
 
         (handler, ephemeral_datastore, datastore)
+    }
+
+    #[tokio::test]
+    async fn get_config() {
+        let (handler, ..) = setup_api_test().await;
+        assert_response!(
+            get("/")
+                .with_request_header("Authorization", format!("Bearer {}", AUTH_TOKEN))
+                .with_request_header("Accept", CONTENT_TYPE)
+                .run_async(&handler)
+                .await,
+            Status::Ok,
+            concat!(
+                r#"{"dap_url":"https://dap.url/","role":"Either","vdafs":"#,
+                r#"["Prio3Count","Prio3Sum","Prio3Histogram","Prio3CountVec","Prio3SumVec"],"#,
+                r#""query_types":["TimeInterval","FixedSize"]}"#
+            )
+        );
     }
 
     #[tokio::test]
@@ -684,10 +762,7 @@ mod tests {
         // Verify: we can get the task IDs we wrote back from the API.
         assert_response!(
             get("/task_ids")
-                .with_request_header(
-                    "Authorization",
-                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
-                )
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
                 .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
@@ -701,10 +776,7 @@ mod tests {
                 "/task_ids?pagination_token={}",
                 task_ids.first().unwrap()
             ))
-            .with_request_header(
-                "Authorization",
-                format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
-            )
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
             .await,
@@ -719,10 +791,7 @@ mod tests {
                 "/task_ids?pagination_token={}",
                 task_ids.last().unwrap()
             ))
-            .with_request_header(
-                "Authorization",
-                format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
-            )
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
             .await,
@@ -743,10 +812,7 @@ mod tests {
         // Verify: requests without the Accept header are denied.
         assert_response!(
             get("/task_ids")
-                .with_request_header(
-                    "Authorization",
-                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
-                )
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
                 .run_async(&handler)
                 .await,
             Status::NotAcceptable,
@@ -781,15 +847,12 @@ mod tests {
             )
             .config()
             .clone(),
-            aggregator_auth_token: Some(URL_SAFE_NO_PAD.encode(&aggregator_auth_token)),
+            aggregator_auth_token: Some(aggregator_auth_token),
         };
         assert_response!(
             post("/tasks")
                 .with_request_body(serde_json::to_vec(&req).unwrap())
-                .with_request_header(
-                    "Authorization",
-                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
-                )
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
                 .with_request_header("Accept", CONTENT_TYPE)
                 .with_request_header("Content-Type", CONTENT_TYPE)
                 .run_async(&handler)
@@ -825,7 +888,7 @@ mod tests {
             )
             .config()
             .clone(),
-            aggregator_auth_token: Some(URL_SAFE_NO_PAD.encode(&aggregator_auth_token)),
+            aggregator_auth_token: Some(aggregator_auth_token),
         };
         assert_response!(
             post("/tasks")
@@ -871,10 +934,7 @@ mod tests {
         };
         let mut conn = post("/tasks")
             .with_request_body(serde_json::to_vec(&req).unwrap())
-            .with_request_header(
-                "Authorization",
-                format!("Bearer {}", STANDARD.encode(AUTH_TOKEN)),
-            )
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .with_request_header("Content-Type", CONTENT_TYPE)
             .run_async(&handler)
@@ -947,21 +1007,99 @@ mod tests {
             )
             .config()
             .clone(),
-            aggregator_auth_token: Some(URL_SAFE_NO_PAD.encode(&aggregator_auth_token)),
+            aggregator_auth_token: Some(aggregator_auth_token),
         };
         assert_response!(
             post("/tasks")
                 .with_request_body(serde_json::to_vec(&req).unwrap())
-                .with_request_header(
-                    "Authorization",
-                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN)),
-                )
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
                 .with_request_header("Accept", CONTENT_TYPE)
                 .with_request_header("Content-Type", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
             Status::BadRequest
         );
+    }
+
+    #[tokio::test]
+    async fn post_task_idempotence() {
+        // Setup: create a datastore & handler.
+        let (handler, ephemeral_datastore, _) = setup_api_test().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+
+        let vdaf_verify_key =
+            SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
+        let aggregator_auth_token = AuthenticationToken::DapAuth(random());
+
+        // Verify: posting a task creates a new task which matches the request.
+        let mut req = PostTaskReq {
+            peer_aggregator_endpoint: "http://aggregator.endpoint".try_into().unwrap(),
+            query_type: QueryType::TimeInterval,
+            vdaf: VdafInstance::Prio3Count,
+            role: Role::Leader,
+            vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
+            max_batch_query_count: 12,
+            task_expiration: Some(Time::from_seconds_since_epoch(12345)),
+            min_batch_size: 223,
+            time_precision: Duration::from_seconds(62),
+            collector_hpke_config: generate_hpke_config_and_private_key(
+                random(),
+                HpkeKemId::X25519HkdfSha256,
+                HpkeKdfId::HkdfSha256,
+                HpkeAeadId::Aes128Gcm,
+            )
+            .config()
+            .clone(),
+            aggregator_auth_token: Some(aggregator_auth_token.clone()),
+        };
+
+        let post_task = || async {
+            let mut conn = post("/tasks")
+                .with_request_body(serde_json::to_vec(&req).unwrap())
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+                .with_request_header("Accept", CONTENT_TYPE)
+                .with_request_header("Content-Type", CONTENT_TYPE)
+                .run_async(&handler)
+                .await;
+            assert_status!(conn, Status::Ok);
+            serde_json::from_slice::<TaskResp>(
+                &conn
+                    .take_response_body()
+                    .unwrap()
+                    .into_bytes()
+                    .await
+                    .unwrap(),
+            )
+            .unwrap()
+        };
+
+        let first_task_resp = post_task().await;
+        let second_task_resp = post_task().await;
+
+        assert_eq!(first_task_resp.task_id, second_task_resp.task_id);
+        assert_eq!(
+            first_task_resp.vdaf_verify_key,
+            second_task_resp.vdaf_verify_key
+        );
+
+        let got_tasks = ds
+            .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+            .await
+            .unwrap();
+
+        assert!(got_tasks.len() == 1);
+        assert_eq!(got_tasks[0].id(), &first_task_resp.task_id);
+
+        // Mutate the PostTaskReq and re-send it.
+        req.max_batch_query_count = 10;
+        let conn = post("/tasks")
+            .with_request_body(serde_json::to_vec(&req).unwrap())
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .with_request_header("Content-Type", CONTENT_TYPE)
+            .run_async(&handler)
+            .await;
+        assert_status!(conn, Status::Conflict);
     }
 
     /// Test the POST /tasks endpoint, with a leader task with all of the optional fields provided.
@@ -993,14 +1131,11 @@ mod tests {
             )
             .config()
             .clone(),
-            aggregator_auth_token: Some(URL_SAFE_NO_PAD.encode(&aggregator_auth_token)),
+            aggregator_auth_token: Some(aggregator_auth_token.clone()),
         };
         let mut conn = post("/tasks")
             .with_request_body(serde_json::to_vec(&req).unwrap())
-            .with_request_header(
-                "Authorization",
-                format!("Bearer {}", STANDARD.encode(AUTH_TOKEN)),
-            )
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .with_request_header("Content-Type", CONTENT_TYPE)
             .run_async(&handler)
@@ -1089,10 +1224,7 @@ mod tests {
         assert_response!(
             post("/tasks")
                 .with_request_body(serde_json::to_vec(&req).unwrap())
-                .with_request_header(
-                    "Authorization",
-                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN)),
-                )
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
                 .with_request_header("Accept", CONTENT_TYPE)
                 .with_request_header("Content-Type", CONTENT_TYPE)
                 .run_async(&handler)
@@ -1124,10 +1256,7 @@ mod tests {
         // Verify: getting the task returns the expected result.
         let want_task_resp = TaskResp::try_from(&task).unwrap();
         let mut conn = get(&format!("/tasks/{}", task.id()))
-            .with_request_header(
-                "Authorization",
-                format!("Bearer {}", STANDARD.encode(AUTH_TOKEN)),
-            )
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
             .await;
@@ -1146,10 +1275,7 @@ mod tests {
         // Verify: getting a nonexistent task returns NotFound.
         assert_response!(
             get(&format!("/tasks/{}", random::<TaskId>()))
-                .with_request_header(
-                    "Authorization",
-                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
-                )
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
                 .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
@@ -1191,10 +1317,7 @@ mod tests {
         // Verify: deleting a task succeeds (and actually deletes the task).
         assert_response!(
             delete(&format!("/tasks/{}", &task_id))
-                .with_request_header(
-                    "Authorization",
-                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
-                )
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
                 .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
@@ -1214,10 +1337,7 @@ mod tests {
         // Verify: deleting a task twice returns NotFound.
         assert_response!(
             delete(&format!("/tasks/{}", &task_id))
-                .with_request_header(
-                    "Authorization",
-                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
-                )
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
                 .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
@@ -1228,10 +1348,7 @@ mod tests {
         // Verify: deleting an arbitrary nonexistent task ID returns NotFound.
         assert_response!(
             delete(&format!("/tasks/{}", &random::<TaskId>()))
-                .with_request_header(
-                    "Authorization",
-                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
-                )
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
                 .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
@@ -1325,10 +1442,7 @@ mod tests {
         // Verify: requesting metrics on a task returns the correct result.
         assert_response!(
             get(&format!("/tasks/{}/metrics", &task_id))
-                .with_request_header(
-                    "Authorization",
-                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
-                )
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
                 .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
@@ -1343,10 +1457,7 @@ mod tests {
         // Verify: requesting metrics on a nonexistent task returns NotFound.
         assert_response!(
             delete(&format!("/tasks/{}", &random::<TaskId>()))
-                .with_request_header(
-                    "Authorization",
-                    format!("Bearer {}", STANDARD.encode(AUTH_TOKEN))
-                )
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
                 .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
@@ -1527,7 +1638,9 @@ mod tests {
                     HpkeAeadId::Aes128Gcm,
                     HpkePublicKey::from([0u8; 32].to_vec()),
                 ),
-                aggregator_auth_token: Some("encoded".to_owned()),
+                aggregator_auth_token: Some(
+                    AuthenticationToken::new_dap_auth_token_from_string("ZW5jb2RlZA").unwrap(),
+                ),
             },
             &[
                 Token::Struct {
@@ -1602,7 +1715,15 @@ mod tests {
                 Token::StructEnd,
                 Token::Str("aggregator_auth_token"),
                 Token::Some,
-                Token::Str("encoded"),
+                Token::Struct {
+                    name: "AuthenticationToken",
+                    len: 2,
+                },
+                Token::Str("type"),
+                Token::Str("DapAuth"),
+                Token::Str("token"),
+                Token::Str("ZW5jb2RlZA"),
+                Token::StructEnd,
                 Token::StructEnd,
             ],
         );
@@ -1635,12 +1756,14 @@ mod tests {
                 HpkeAeadId::Aes128Gcm,
                 HpkePublicKey::from([0u8; 32].to_vec()),
             ),
-            Vec::from([AuthenticationToken::DapAuth(
-                DapAuthToken::try_from(b"aggregator-12345678".to_vec()).unwrap(),
-            )]),
-            Vec::from([AuthenticationToken::DapAuth(
-                DapAuthToken::try_from(b"collector-abcdef00".to_vec()).unwrap(),
-            )]),
+            Vec::from([AuthenticationToken::new_dap_auth_token_from_string(
+                "Y29sbGVjdG9yLWFiY2RlZjAw",
+            )
+            .unwrap()]),
+            Vec::from([AuthenticationToken::new_dap_auth_token_from_string(
+                "Y29sbGVjdG9yLWFiY2RlZjAw",
+            )
+            .unwrap()]),
             [(HpkeKeypair::new(
                 HpkeConfig::new(
                     HpkeConfigId::from(13),
@@ -1704,10 +1827,26 @@ mod tests {
                 Token::NewtypeStruct { name: "Duration" },
                 Token::U64(60),
                 Token::Str("aggregator_auth_token"),
-                Token::Str("YWdncmVnYXRvci0xMjM0NTY3OA"),
+                Token::Struct {
+                    name: "AuthenticationToken",
+                    len: 2,
+                },
+                Token::Str("type"),
+                Token::Str("DapAuth"),
+                Token::Str("token"),
+                Token::Str("Y29sbGVjdG9yLWFiY2RlZjAw"),
+                Token::StructEnd,
                 Token::Str("collector_auth_token"),
                 Token::Some,
+                Token::Struct {
+                    name: "AuthenticationToken",
+                    len: 2,
+                },
+                Token::Str("type"),
+                Token::Str("DapAuth"),
+                Token::Str("token"),
                 Token::Str("Y29sbGVjdG9yLWFiY2RlZjAw"),
+                Token::StructEnd,
                 Token::Str("collector_hpke_config"),
                 Token::Struct {
                     name: "HpkeConfig",

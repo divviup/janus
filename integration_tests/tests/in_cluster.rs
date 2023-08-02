@@ -1,14 +1,11 @@
 #![cfg(feature = "in-cluster")]
 
-use base64::engine::{
-    general_purpose::{STANDARD, URL_SAFE_NO_PAD},
-    Engine,
-};
+use base64::engine::{general_purpose::STANDARD, Engine};
 use common::{submit_measurements_and_verify_aggregate, test_task_builders};
 use janus_aggregator_core::task::QueryType;
-use janus_collector::AuthenticationToken;
 use janus_core::{
-    task::{DapAuthToken, VdafInstance},
+    task::AuthenticationToken,
+    task::VdafInstance,
     test_util::{
         install_test_trace_subscriber,
         kubernetes::{Cluster, PortForward},
@@ -123,10 +120,8 @@ impl InClusterJanusPair {
         //   is necessary for the task we later provision to pass a validity check.
         let paired_leader_aggregator = divviup_api
             .pair_global_aggregator(&NewAggregatorRequest {
-                role: "Leader".to_string(),
                 name: "leader".to_string(),
                 api_url: Self::in_cluster_aggregator_api_url(&leader_namespace).to_string(),
-                dap_url: Self::in_cluster_aggregator_dap_url(&leader_namespace).to_string(),
                 bearer_token: leader_aggregator_api_auth_token,
             })
             .await;
@@ -135,10 +130,8 @@ impl InClusterJanusPair {
             .pair_aggregator(
                 &account,
                 &NewAggregatorRequest {
-                    role: "Helper".to_string(),
                     name: "helper".to_string(),
                     api_url: Self::in_cluster_aggregator_api_url(&helper_namespace).to_string(),
-                    dap_url: Self::in_cluster_aggregator_dap_url(&helper_namespace).to_string(),
                     bearer_token: helper_aggregator_api_auth_token,
                 },
             )
@@ -167,30 +160,20 @@ impl InClusterJanusPair {
         let collector_auth_tokens = divviup_api
             .list_collector_auth_tokens(&provisioned_task)
             .await;
+        assert_eq!(collector_auth_tokens[0].r#type, "Bearer");
 
         // Update the task parameters with the ID and collector auth token from divviup-api.
         task_parameters.task_id = TaskId::from_str(provisioned_task.id.as_ref()).unwrap();
-        task_parameters.collector_auth_token = AuthenticationToken::DapAuth(
-            DapAuthToken::try_from(
-                URL_SAFE_NO_PAD
-                    .decode(collector_auth_tokens[0].clone())
-                    .unwrap(),
-            )
-            .unwrap(),
-        );
+        task_parameters.collector_auth_token = AuthenticationToken::new_bearer_token_from_string(
+            collector_auth_tokens[0].token.clone(),
+        )
+        .unwrap();
 
         Self {
             task_parameters,
             leader: InClusterJanus::new(&cluster, &leader_namespace).await,
             helper: InClusterJanus::new(&cluster, &helper_namespace).await,
         }
-    }
-
-    fn in_cluster_aggregator_dap_url(namespace: &str) -> Url {
-        Url::parse(&format!(
-            "http://aggregator.{namespace}.svc.cluster.local:80"
-        ))
-        .unwrap()
     }
 
     fn in_cluster_aggregator_api_url(namespace: &str) -> Url {

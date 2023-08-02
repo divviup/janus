@@ -67,10 +67,8 @@ pub struct DivviUpApiTask {
 /// Request to pair an aggregator with divviup-api
 #[derive(Serialize)]
 pub struct NewAggregatorRequest {
-    pub role: String,
     pub name: String,
     pub api_url: String,
-    pub dap_url: String,
     /// Bearer token for authenticating requests to this aggregator's aggregator API
     pub bearer_token: String,
 }
@@ -81,6 +79,15 @@ pub struct NewAggregatorRequest {
 pub struct DivviUpAggregator {
     pub id: String,
     pub dap_url: Url,
+}
+
+/// Representation of a collector auth token in divviup-api.
+#[derive(Deserialize)]
+pub struct CollectorAuthToken {
+    /// Type of the authentication token. Always "Bearer" in divviup-api.
+    pub r#type: String,
+    /// Encoded value of the token. The encoding is opaque to divviup-api.
+    pub token: String,
 }
 
 const DIVVIUP_CONTENT_TYPE: &str = "application/vnd.divviup+json;version=0.1";
@@ -178,7 +185,10 @@ impl DivviupApiClient {
         .await
     }
 
-    pub async fn list_collector_auth_tokens(&self, task: &DivviUpApiTask) -> Vec<String> {
+    pub async fn list_collector_auth_tokens(
+        &self,
+        task: &DivviUpApiTask,
+    ) -> Vec<CollectorAuthToken> {
         // Hack: we must choose some specialization for the B type despite the request having no
         // Body
         self.make_request::<String, _>(

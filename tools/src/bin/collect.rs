@@ -1,7 +1,4 @@
-use base64::{
-    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
-    Engine,
-};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::{
     builder::{NonEmptyStringValueParser, StringValueParser, TypedValueParser},
     error::ErrorKind,
@@ -13,7 +10,7 @@ use fixed::types::extra::{U15, U31, U63};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32, FixedI64};
 use janus_collector::{default_http_client, AuthenticationToken, Collector, CollectorParameters};
-use janus_core::{hpke::HpkePrivateKey, task::DapAuthToken};
+use janus_core::hpke::HpkePrivateKey;
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     BatchId, Duration, FixedSizeQuery, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId,
@@ -145,14 +142,6 @@ impl TypedValueParser for BatchIdValueParser {
     }
 }
 
-fn parse_authentication_token(value: String) -> Result<AuthenticationToken, anyhow::Error> {
-    DapAuthToken::try_from(value.into_bytes()).map(AuthenticationToken::DapAuth)
-}
-
-fn parse_authentication_token_base64(value: String) -> Result<AuthenticationToken, anyhow::Error> {
-    Ok(AuthenticationToken::Bearer(STANDARD.decode(value)?))
-}
-
 #[derive(Clone)]
 struct HpkeConfigValueParser {
     inner: NonEmptyStringValueParser,
@@ -257,7 +246,7 @@ struct AuthenticationOptions {
     #[clap(
         long,
         required = false,
-        value_parser = StringValueParser::new().try_map(parse_authentication_token),
+        value_parser = StringValueParser::new().try_map(AuthenticationToken::new_dap_auth_token_from_string),
         env,
         help_heading = "Authorization",
         display_order = 0,
@@ -266,11 +255,11 @@ struct AuthenticationOptions {
     #[derivative(Debug = "ignore")]
     dap_auth_token: Option<AuthenticationToken>,
 
-    /// Authentication token for the "Authorization: Bearer ..." HTTP header, in base64
+    /// Authentication token for the "Authorization: Bearer ..." HTTP header
     #[clap(
         long,
         required = false,
-        value_parser = StringValueParser::new().try_map(parse_authentication_token_base64),
+        value_parser = StringValueParser::new().try_map(AuthenticationToken::new_bearer_token_from_string),
         env,
         help_heading = "Authorization",
         display_order = 1,
@@ -605,13 +594,14 @@ impl QueryTypeExt for FixedSize {
 #[cfg(test)]
 mod tests {
     use crate::{
-        run, AuthenticationOptions, AuthenticationToken, DapAuthToken, Error, Options,
-        QueryOptions, VdafType,
+        run, AuthenticationOptions, AuthenticationToken, Error, Options, QueryOptions, VdafType,
     };
     use assert_matches::assert_matches;
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use clap::{error::ErrorKind, CommandFactory, Parser};
-    use janus_core::hpke::test_util::generate_test_hpke_config_and_private_key;
+    use janus_core::{
+        hpke::test_util::generate_test_hpke_config_and_private_key, task::TokenInner,
+    };
     use janus_messages::{BatchId, TaskId};
     use prio::codec::Encode;
     use rand::random;
@@ -630,14 +620,13 @@ mod tests {
 
         let task_id = random();
         let leader = Url::parse("https://example.com/dap/").unwrap();
+        let auth_token = AuthenticationToken::DapAuth(random());
 
         let expected = Options {
             task_id,
             leader: leader.clone(),
             authentication: AuthenticationOptions {
-                dap_auth_token: Some(AuthenticationToken::DapAuth(
-                    DapAuthToken::try_from(b"collector-authentication-token".to_vec()).unwrap(),
-                )),
+                dap_auth_token: Some(auth_token.clone()),
                 authorization_bearer_token: None,
             },
             hpke_config: hpke_keypair.config().clone(),
@@ -660,7 +649,7 @@ mod tests {
             "--leader",
             leader.as_str(),
             "--dap-auth-token",
-            "collector-authentication-token",
+            auth_token.as_str(),
             &format!("--hpke-config={encoded_hpke_config}"),
             &format!("--hpke-private-key={encoded_private_key}"),
             "--vdaf",
@@ -723,7 +712,7 @@ mod tests {
             "--leader".to_string(),
             leader.to_string(),
             "--dap-auth-token".to_string(),
-            "collector-authentication-token".to_string(),
+            auth_token.as_str().to_string(),
             format!("--hpke-config={encoded_hpke_config}"),
             format!("--hpke-private-key={encoded_private_key}"),
             "--batch-interval-start".to_string(),
@@ -887,16 +876,14 @@ mod tests {
         let hpke_keypair = generate_test_hpke_config_and_private_key();
         let encoded_hpke_config = URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded());
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
-        let auth_token = Some(AuthenticationToken::DapAuth(
-            DapAuthToken::try_from(b"collector-authentication-token".to_vec()).unwrap(),
-        ));
+        let auth_token = AuthenticationToken::DapAuth(random());
 
         // Check parsing arguments for a current batch query.
         let expected = Options {
             task_id,
             leader: leader.clone(),
             authentication: AuthenticationOptions {
-                dap_auth_token: auth_token.clone(),
+                dap_auth_token: Some(auth_token.clone()),
                 authorization_bearer_token: None,
             },
             hpke_config: hpke_keypair.config().clone(),
@@ -918,7 +905,7 @@ mod tests {
             "--leader",
             leader.as_str(),
             "--dap-auth-token",
-            "collector-authentication-token",
+            auth_token.as_str(),
             &format!("--hpke-config={encoded_hpke_config}"),
             &format!("--hpke-private-key={encoded_private_key}"),
             "--vdaf",
@@ -937,7 +924,7 @@ mod tests {
             task_id,
             leader: leader.clone(),
             authentication: AuthenticationOptions {
-                dap_auth_token: auth_token,
+                dap_auth_token: Some(auth_token.clone()),
                 authorization_bearer_token: None,
             },
             hpke_config: hpke_keypair.config().clone(),
@@ -959,7 +946,7 @@ mod tests {
             "--leader",
             leader.as_str(),
             "--dap-auth-token",
-            "collector-authentication-token",
+            auth_token.as_str(),
             &format!("--hpke-config={encoded_hpke_config}"),
             &format!("--hpke-private-key={encoded_private_key}"),
             "--vdaf",
@@ -977,7 +964,7 @@ mod tests {
             "--leader".to_string(),
             "https://example.com/dap/".to_string(),
             "--dap-auth-token".to_string(),
-            "collector-authentication-token".to_string(),
+            auth_token.as_str().to_string(),
             format!("--hpke-config={encoded_hpke_config}"),
             format!("--hpke-private-key={encoded_private_key}"),
             "--vdaf=count".to_string(),
@@ -1096,13 +1083,17 @@ mod tests {
             "1000".to_string(),
             "--vdaf=count".to_string(),
         ]);
+
+        let dap_auth_token: TokenInner = random();
+        let bearer_token: TokenInner = random();
+
         let dap_auth_token_arguments = Vec::from([
             "--dap-auth-token".to_string(),
-            "collector-authentication-token".to_string(),
+            dap_auth_token.as_str().to_string(),
         ]);
         let authorization_bearer_token_arguments = Vec::from([
             "--authorization-bearer-token".to_string(),
-            "/////////////////////w==".to_string(),
+            bearer_token.as_str().to_string(),
         ]);
 
         let mut case_1_arguments = base_arguments.clone();
@@ -1112,9 +1103,7 @@ mod tests {
                 .unwrap()
                 .authentication,
             AuthenticationOptions {
-                dap_auth_token: Some(AuthenticationToken::DapAuth(
-                    DapAuthToken::try_from(b"collector-authentication-token".to_vec()).unwrap()
-                )),
+                dap_auth_token: Some(AuthenticationToken::DapAuth(dap_auth_token)),
                 authorization_bearer_token: None,
             }
         );
@@ -1127,9 +1116,7 @@ mod tests {
                 .authentication,
             AuthenticationOptions {
                 dap_auth_token: None,
-                authorization_bearer_token: Some(AuthenticationToken::Bearer(Vec::from(
-                    [0xff; 16]
-                )),)
+                authorization_bearer_token: Some(AuthenticationToken::Bearer(bearer_token)),
             }
         );
 

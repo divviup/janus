@@ -567,14 +567,13 @@ fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<Authenticati
     if let Some(bearer_token) =
         extract_bearer_token(conn).map_err(|_| Error::UnauthorizedRequest(*task_id))?
     {
-        return Ok(Some(AuthenticationToken::Bearer(bearer_token)));
+        return Ok(Some(bearer_token));
     }
 
     conn.request_headers()
         .get(DAP_AUTH_HEADER)
         .map(|value| {
-            DapAuthToken::try_from(value.as_ref().to_vec())
-                .map(AuthenticationToken::DapAuth)
+            AuthenticationToken::new_dap_auth_token_from_bytes(value.as_ref())
                 .map_err(|e| Error::BadRequest(format!("bad DAP-Auth-Token header: {e}")))
         })
         .transpose()
@@ -1405,7 +1404,7 @@ mod tests {
             .aggregator_auth_tokens()
             .iter()
             .find(|token| matches!(token, AuthenticationToken::DapAuth(_)))
-            .map(|token| AuthenticationToken::Bearer(token.as_ref().to_vec()))
+            .map(|token| AuthenticationToken::new_bearer_token_from_bytes(token.as_ref()).unwrap())
             .unwrap();
 
         for auth_token in [Some(wrong_token_value), Some(wrong_token_format), None] {

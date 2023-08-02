@@ -7,7 +7,6 @@ use fixed::types::extra::{U15, U31, U63};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32, FixedI64};
 use janus_collector::{Collector, CollectorParameters};
-use janus_core::task::DapAuthToken;
 use janus_core::{
     hpke::HpkeKeypair,
     task::{AuthenticationToken, VdafInstance},
@@ -167,10 +166,9 @@ async fn handle_add_task(
     let keypair = keyring.lock().await.get_random_keypair();
     let hpke_config = keypair.config().clone();
 
-    let auth_token = AuthenticationToken::DapAuth(
-        DapAuthToken::try_from(request.collector_authentication_token.into_bytes())
-            .context("invalid header value in \"collector_authentication_token\"")?,
-    );
+    let auth_token =
+        AuthenticationToken::new_dap_auth_token_from_string(request.collector_authentication_token)
+            .context("invalid header value in \"collector_authentication_token\"")?;
 
     entry.or_insert(TaskState {
         keypair,

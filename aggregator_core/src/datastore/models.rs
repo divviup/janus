@@ -7,7 +7,7 @@ use derivative::Derivative;
 use janus_core::{
     hpke::HpkeKeypair,
     report_id::ReportIdChecksumExt,
-    task::{AuthenticationToken, DapAuthToken, VdafInstance},
+    task::{AuthenticationToken, VdafInstance},
     time::{DurationExt, IntervalExt, TimeExt},
 };
 use janus_messages::{
@@ -47,13 +47,14 @@ pub enum AuthenticationTokenType {
 }
 
 impl AuthenticationTokenType {
-    pub fn as_authentication(&self, token: &[u8]) -> Result<AuthenticationToken, Error> {
+    pub fn as_authentication(&self, token_bytes: &[u8]) -> Result<AuthenticationToken, Error> {
         match self {
-            Self::DapAuthToken => DapAuthToken::try_from(token.to_vec())
-                .map(AuthenticationToken::DapAuth)
-                .map_err(|e| Error::DbState(format!("invalid DAP auth token in database: {e:?}"))),
-            Self::AuthorizationBearerToken => Ok(AuthenticationToken::Bearer(token.into())),
+            Self::DapAuthToken => AuthenticationToken::new_dap_auth_token_from_bytes(token_bytes),
+            Self::AuthorizationBearerToken => {
+                AuthenticationToken::new_bearer_token_from_bytes(token_bytes)
+            }
         }
+        .map_err(|e| Error::DbState(format!("invalid DAP auth token in database: {e:?}")))
     }
 }
 

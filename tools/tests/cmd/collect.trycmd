@@ -33,7 +33,7 @@ Authorization:
           [env: DAP_AUTH_TOKEN=]
 
       --authorization-bearer-token <AUTHORIZATION_BEARER_TOKEN>
-          Authentication token for the "Authorization: Bearer ..." HTTP header, in base64
+          Authentication token for the "Authorization: Bearer ..." HTTP header
           
           [env: AUTHORIZATION_BEARER_TOKEN=]
 
