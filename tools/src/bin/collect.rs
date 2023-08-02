@@ -648,8 +648,7 @@ mod tests {
             &format!("--task-id={task_id_encoded}"),
             "--leader",
             leader.as_str(),
-            "--dap-auth-token",
-            auth_token.as_str(),
+            &format!("--dap-auth-token={}", auth_token.as_str()),
             &format!("--hpke-config={encoded_hpke_config}"),
             &format!("--hpke-private-key={encoded_private_key}"),
             "--vdaf",
@@ -693,14 +692,14 @@ mod tests {
         );
 
         let mut bad_arguments = correct_arguments;
-        bad_arguments[6] = "--hpke-config=not valid base64";
+        bad_arguments[5] = "--hpke-config=not valid base64";
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ValueValidation,
         );
 
         let mut bad_arguments = correct_arguments;
-        bad_arguments[7] = "--hpke-private-key=not valid base64";
+        bad_arguments[6] = "--hpke-private-key=not valid base64";
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ValueValidation,
@@ -711,8 +710,7 @@ mod tests {
             format!("--task-id={task_id_encoded}"),
             "--leader".to_string(),
             leader.to_string(),
-            "--dap-auth-token".to_string(),
-            auth_token.as_str().to_string(),
+            format!("--dap-auth-token={}", auth_token.as_str()),
             format!("--hpke-config={encoded_hpke_config}"),
             format!("--hpke-private-key={encoded_private_key}"),
             "--batch-interval-start".to_string(),
@@ -904,8 +902,7 @@ mod tests {
             &format!("--task-id={task_id_encoded}"),
             "--leader",
             leader.as_str(),
-            "--dap-auth-token",
-            auth_token.as_str(),
+            &format!("--dap-auth-token={}", auth_token.as_str()),
             &format!("--hpke-config={encoded_hpke_config}"),
             &format!("--hpke-private-key={encoded_private_key}"),
             "--vdaf",
@@ -945,8 +942,7 @@ mod tests {
             &format!("--task-id={task_id_encoded}"),
             "--leader",
             leader.as_str(),
-            "--dap-auth-token",
-            auth_token.as_str(),
+            &format!("--dap-auth-token={}", auth_token.as_str()),
             &format!("--hpke-config={encoded_hpke_config}"),
             &format!("--hpke-private-key={encoded_private_key}"),
             "--vdaf",
@@ -963,8 +959,7 @@ mod tests {
             format!("--task-id={task_id_encoded}"),
             "--leader".to_string(),
             "https://example.com/dap/".to_string(),
-            "--dap-auth-token".to_string(),
-            auth_token.as_str().to_string(),
+            format!("--dap-auth-token={}", auth_token.as_str()),
             format!("--hpke-config={encoded_hpke_config}"),
             format!("--hpke-private-key={encoded_private_key}"),
             "--vdaf=count".to_string(),
@@ -1087,17 +1082,12 @@ mod tests {
         let dap_auth_token: TokenInner = random();
         let bearer_token: TokenInner = random();
 
-        let dap_auth_token_arguments = Vec::from([
-            "--dap-auth-token".to_string(),
-            dap_auth_token.as_str().to_string(),
-        ]);
-        let authorization_bearer_token_arguments = Vec::from([
-            "--authorization-bearer-token".to_string(),
-            bearer_token.as_str().to_string(),
-        ]);
+        let dap_auth_token_argument = format!("--dap-auth-token={}", dap_auth_token.as_str());
+        let authorization_bearer_token_argument =
+            format!("--authorization-bearer-token={}", bearer_token.as_str());
 
         let mut case_1_arguments = base_arguments.clone();
-        case_1_arguments.extend(dap_auth_token_arguments.iter().cloned());
+        case_1_arguments.push(dap_auth_token_argument.clone());
         assert_eq!(
             Options::try_parse_from(case_1_arguments)
                 .unwrap()
@@ -1109,7 +1099,7 @@ mod tests {
         );
 
         let mut case_2_arguments = base_arguments.clone();
-        case_2_arguments.extend(authorization_bearer_token_arguments.iter().cloned());
+        case_2_arguments.push(authorization_bearer_token_argument.clone());
         assert_eq!(
             Options::try_parse_from(case_2_arguments)
                 .unwrap()
@@ -1129,8 +1119,8 @@ mod tests {
         );
 
         let mut case_4_arguments = base_arguments.clone();
-        case_4_arguments.extend(dap_auth_token_arguments.iter().cloned());
-        case_4_arguments.extend(authorization_bearer_token_arguments.iter().cloned());
+        case_4_arguments.push(dap_auth_token_argument);
+        case_4_arguments.push(authorization_bearer_token_argument);
         assert_eq!(
             Options::try_parse_from(case_4_arguments)
                 .unwrap_err()
