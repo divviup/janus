@@ -6444,6 +6444,7 @@ async fn roundtrip_interval_sql(ephemeral_datastore: EphemeralDatastore) {
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
 async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
     let datastore = ephemeral_datastore.datastore(MockClock::default()).await;
     let clock = datastore.clock.clone();
     let keypair = generate_test_hpke_config_and_private_key();
@@ -6527,6 +6528,7 @@ async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
 async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
     let datastore = ephemeral_datastore.datastore(MockClock::default()).await;
 
     // Basic aggregator.
@@ -6607,7 +6609,7 @@ async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatast
                 })
             })
             .await,
-        Err(Error::Db(_))
+        Err(Error::MutationTargetAlreadyExists)
     );
 
     datastore

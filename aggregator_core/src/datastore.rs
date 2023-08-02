@@ -541,7 +541,8 @@ impl<C: Clock> Transaction<'_, C> {
                     task_id, aggregator_role, aggregator_endpoints, query_type, vdaf,
                     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
                     time_precision, tolerable_clock_skew, collector_hpke_config)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                ON CONFLICT DO NOTHING",
             )
             .await?;
         check_insert(
@@ -4490,27 +4491,25 @@ impl<C: Clock> Transaction<'_, C> {
                 ) VALUES ($1, $2, $3, $4, $5, $6)",
             )
             .await?;
-        check_insert(
-            self.execute(
-                &stmt,
-                &[
-                    /* endpoint */ &endpoint,
-                    /* role */ role,
-                    /* verify_key_init */ &encrypted_verify_key_init,
-                    /* tolerable_clock_skew */
-                    &i64::try_from(peer_aggregator.tolerable_clock_skew().as_seconds())?,
-                    /* report_expiry_age */
-                    &peer_aggregator
-                        .report_expiry_age()
-                        .map(Duration::as_seconds)
-                        .map(i64::try_from)
-                        .transpose()?,
-                    /* collector_hpke_config */
-                    &peer_aggregator.collector_hpke_config().get_encoded(),
-                ],
-            )
-            .await?,
-        )?;
+        self.execute(
+            &stmt,
+            &[
+                /* endpoint */ &endpoint,
+                /* role */ role,
+                /* verify_key_init */ &encrypted_verify_key_init,
+                /* tolerable_clock_skew */
+                &i64::try_from(peer_aggregator.tolerable_clock_skew().as_seconds())?,
+                /* report_expiry_age */
+                &peer_aggregator
+                    .report_expiry_age()
+                    .map(Duration::as_seconds)
+                    .map(i64::try_from)
+                    .transpose()?,
+                /* collector_hpke_config */
+                &peer_aggregator.collector_hpke_config().get_encoded(),
+            ],
+        )
+        .await?;
 
         let encrypt_tokens = |tokens: &[AuthenticationToken], table| -> Result<_, Error> {
             let mut ords = Vec::new();
