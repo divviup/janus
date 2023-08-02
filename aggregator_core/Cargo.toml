@@ -48,11 +48,11 @@ regex = "1"
 reqwest = { version = "0.11.18", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.16.20"
 serde.workspace = true
-serde_json = "1.0.103"
-serde_yaml = "0.9.25"
+serde_json.workspace = true
+serde_yaml.workspace = true
 sqlx = { version = "0.7.1", optional = true, features = ["runtime-tokio-rustls", "migrate", "postgres"] }
 testcontainers = { version = "0.14.0", optional = true }
-thiserror = "1.0"
+thiserror.workspace = true
 tokio.workspace = true
 tokio-postgres = { version = "0.7.8", features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1", "array-impls"] }
 tracing = "0.1.37"
@@ -70,7 +70,7 @@ janus_aggregator_core = { path = ".", features = ["test-util"] }
 janus_core = { workspace = true, features = ["test-util"] }
 rstest.workspace = true
 rstest_reuse = "0.6.0"
-serde_test = "1.0.175"
+serde_test.workspace = true
 tempfile = "3.7.0"
 tokio = { version = "1", features = ["test-util"] }  # ensure this remains compatible with the non-dev dependency
 
