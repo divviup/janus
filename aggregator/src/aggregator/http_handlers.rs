@@ -2389,6 +2389,129 @@ mod tests {
         );
     }
 
+    #[allow(clippy::unit_arg)]
+    #[tokio::test]
+    async fn aggregate_init_taskprov() {
+        // Prepare datastore & request.
+        install_test_trace_subscriber();
+
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        datastore.put_task(&task).await.unwrap();
+
+        let vdaf = dummy_vdaf::Vdaf::new();
+        let verify_key: VerifyKey<0> = task.primary_vdaf_verify_key().unwrap();
+        let hpke_key = task.current_hpke_key();
+
+        // report_share_0 is a "happy path" report.
+        let report_metadata_0 = ReportMetadata::new(
+            random(),
+            clock
+                .now()
+                .to_batch_interval_start(task.time_precision())
+                .unwrap(),
+        );
+        let transcript = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &dummy_vdaf::AggregationParam(0),
+            report_metadata_0.id(),
+            &(),
+        );
+        let report_share_0 = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+            *task.id(),
+            report_metadata_0,
+            hpke_key.config(),
+            &transcript.public_share,
+            Vec::new(),
+            &transcript.input_shares[1],
+        );
+
+        let request = AggregationJobInitializeReq::new(
+            dummy_vdaf::AggregationParam(0).get_encoded(),
+            PartialBatchSelector::new_time_interval(),
+            Vec::from([report_share_0.clone()]),
+        );
+
+        // Create aggregator handler, send request, and parse response. Do this twice to prove that
+        // the request is idempotent.
+        let handler = aggregator_handler(
+            Arc::clone(&datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
+        let aggregation_job_id: AggregationJobId = random();
+
+        let mut test_conn =
+            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert_headers!(
+            &test_conn,
+            "content-type" => (AggregationJobResp::MEDIA_TYPE)
+        );
+        let body_bytes = take_response_body(&mut test_conn).await;
+        let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
+
+        // Validate response.
+        assert_eq!(aggregate_resp.prepare_steps().len(), 1);
+
+        let prepare_step_0 = aggregate_resp.prepare_steps().get(0).unwrap();
+        assert_eq!(prepare_step_0.report_id(), report_share_0.metadata().id());
+        assert_matches!(prepare_step_0.result(), &PrepareStepResult::Continued(..));
+
+        // Check aggregation job in datastore.
+        let aggregation_jobs = datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move {
+                    tx.get_aggregation_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(task.id())
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(aggregation_jobs.len(), 1);
+        assert!(
+            aggregation_jobs[0].task_id().eq(task.id())
+                && aggregation_jobs[0].id().eq(&aggregation_job_id)
+                && aggregation_jobs[0].partial_batch_identifier().eq(&())
+                && aggregation_jobs[0]
+                    .state()
+                    .eq(&AggregationJobState::InProgress)
+        );
+
+        // happy path
+        // construct peer aggregator
+        // construct global HPKE key
+        // construct reports with global HPKE key
+        // construct taskprov task config
+        // construct init request with taskprov header
+        // afterwards, check both job and task have been inserted
+
+        // test opt-in flow thoroughly
+
+        // sha of task config doesn't match task id
+
+        // task config doesn't decode cleanly
+
+        // missing one or more aggregator endpoints
+
+        // peer aggregator has wrong role
+
+        // unrecognized peer aggregator
+
+        // unauthorized token
+
+        // task expired
+    }
+
     #[tokio::test]
     async fn aggregate_init_duplicated_report_id() {
         install_test_trace_subscriber();
@@ -4068,6 +4191,11 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn aggregate_continue_taskprov() {
+        // just check happy path, most authorization testing is done with the init test
+    }
+
+    #[tokio::test]
     async fn collection_job_put_request_to_helper() {
         let test_case = setup_collection_job_test_case(Role::Helper, QueryType::TimeInterval).await;
 
@@ -5416,6 +5544,11 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[tokio::test]
+    async fn aggregate_share_taskprov() {
+        // just check happy path, most authorization testing is done with the init test
     }
 
     async fn take_response_body(test_conn: &mut TestConn) -> Cow<'_, [u8]> {
