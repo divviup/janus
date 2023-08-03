@@ -35,7 +35,6 @@ use prio::{
 use reqwest::Method;
 use std::{
     collections::{HashMap, HashSet},
-    hash::Hash,
     sync::Arc,
     time::Duration,
 };
@@ -127,7 +126,7 @@ impl AggregationJobDriver {
     ) -> Result<()>
     where
         A: 'static + Send + Sync,
-        A::AggregationParam: Send + Sync + PartialEq + Eq + Hash,
+        A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::AggregateShare: Send + Sync,
         A::OutputShare: PartialEq + Eq + Send + Sync,
         for<'a> A::PrepareState:
@@ -295,7 +294,7 @@ impl AggregationJobDriver {
     ) -> Result<()>
     where
         A: 'static,
-        A::AggregationParam: Send + Sync + PartialEq + Eq + Hash,
+        A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::AggregateShare: Send + Sync,
         A::OutputShare: PartialEq + Eq + Send + Sync,
         A::PrepareState: PartialEq + Eq + Send + Sync + Encode,
@@ -441,7 +440,7 @@ impl AggregationJobDriver {
     ) -> Result<()>
     where
         A: 'static,
-        A::AggregationParam: Send + Sync + PartialEq + Eq + Hash,
+        A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::AggregateShare: Send + Sync,
         A::OutputShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
@@ -557,7 +556,7 @@ impl AggregationJobDriver {
     ) -> Result<()>
     where
         A: 'static,
-        A::AggregationParam: Send + Sync + Eq + PartialEq + Hash,
+        A::AggregationParam: Send + Sync + Eq + PartialEq,
         A::AggregateShare: Send + Sync,
         A::OutputShare: Send + Sync,
         A::PrepareMessage: Send + Sync,
@@ -765,7 +764,7 @@ impl AggregationJobDriver {
     where
         A: Send + Sync + 'static,
         A::AggregateShare: Send + Sync,
-        A::AggregationParam: Send + Sync + PartialEq + Eq + Hash,
+        A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::PrepareMessage: Send + Sync,
         for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
     {

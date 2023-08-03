@@ -19,7 +19,6 @@ use prio::{codec::Encode, vdaf};
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
-    hash::Hash,
     sync::{Arc, Mutex},
 };
 use tokio::try_join;
@@ -162,7 +161,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
     where
         C: Clock,
         A: Send + Sync,
-        A::AggregationParam: PartialEq + Eq + Hash,
+        A::AggregationParam: PartialEq + Eq,
         A::PrepareState: Encode,
     {
         // Create a copy-on-write instance of our state to allow efficient imperative updates.
