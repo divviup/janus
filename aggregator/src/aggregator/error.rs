@@ -139,7 +139,7 @@ pub enum TaskprovOptOutError {
     NoSuchPeer(Role),
     #[error("task has expired")]
     TaskExpired,
-    #[error("invalid task parameter: {0}")]
+    #[error("invalid task: {0}")]
     TaskParameters(#[from] task::Error),
     #[error("URL parse error: {0}")]
     Url(#[from] url::ParseError),

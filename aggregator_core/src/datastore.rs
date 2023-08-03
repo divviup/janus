@@ -1050,7 +1050,9 @@ impl<C: Clock> Transaction<'_, C> {
             )?));
         }
 
-        Ok(Task::new(
+        // Don't validate a task on its way out. If it's in the database, we'll assume that it was
+        // constructed in a valid way.
+        Ok(Task::new_without_validation(
             *task_id,
             endpoints,
             query_type,
@@ -1067,7 +1069,7 @@ impl<C: Clock> Transaction<'_, C> {
             aggregator_auth_tokens,
             collector_auth_tokens,
             hpke_keypairs,
-        )?)
+        ))
     }
 
     /// Retrieves report & report aggregation metrics for a given task: either a tuple

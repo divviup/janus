@@ -1,17 +1,21 @@
 use derivative::Derivative;
 use janus_core::{
-    hpke::generate_hpke_config_and_private_key,
+    hpke::{
+        generate_hpke_config_and_private_key, test_util::generate_test_hpke_config_and_private_key,
+    },
     task::{AuthenticationToken, VdafInstance},
+    time::TimeExt,
 };
 use janus_messages::{Duration, HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId, Role, TaskId, Time};
 use lazy_static::lazy_static;
 use rand::{distributions::Standard, prelude::Distribution, random};
 use ring::hkdf::{KeyType, Salt, HKDF_SHA256};
+
+#[cfg(feature = "test-util")]
 use url::Url;
 
 use crate::{
-    datastore::Error,
-    task::{self, QueryType},
+    task::{self, Error, QueryType},
     SecretBytes,
 };
 
@@ -181,14 +185,10 @@ impl PeerAggregator {
         // Unwrap safety: this function only errors if the OKM length is too long
         // (<= 255 * HashLength). It is not expected that a VDAF's verify key length will ever
         // be _that_ long.
-        let okm = prk
-            .expand(
-                &info,
-                VdafVerifyKeyLength(vdaf_instance.verify_key_length()),
-            )
-            .unwrap();
+        let length = vdaf_instance.verify_key_length();
+        let okm = prk.expand(&info, VdafVerifyKeyLength(length)).unwrap();
 
-        let mut vdaf_verify_key = Vec::new();
+        let mut vdaf_verify_key = vec![0; length];
         // Same unwrap rationale as above.
         okm.fill(&mut vdaf_verify_key).unwrap();
         SecretBytes::new(vdaf_verify_key)
@@ -201,6 +201,92 @@ struct VdafVerifyKeyLength(usize);
 impl KeyType for VdafVerifyKeyLength {
     fn len(&self) -> usize {
         self.0
+    }
+}
+
+#[cfg(feature = "test-util")]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
+#[derive(Debug, Clone)]
+pub struct PeerAggregatorBuilder(PeerAggregator);
+
+impl PeerAggregatorBuilder {
+    pub fn new() -> Self {
+        Self(PeerAggregator::new(
+            Url::parse("https://example.com").unwrap(),
+            Role::Leader,
+            random(),
+            generate_test_hpke_config_and_private_key().config().clone(),
+            None,
+            Duration::from_seconds(1),
+            Vec::from([random()]),
+            Vec::from([random()]),
+        ))
+    }
+
+    pub fn with_endpoint(self, endpoint: Url) -> Self {
+        Self(PeerAggregator { endpoint, ..self.0 })
+    }
+
+    pub fn with_role(self, role: Role) -> Self {
+        Self(PeerAggregator { role, ..self.0 })
+    }
+
+    pub fn with_verify_key_init(self, verify_key_init: VerifyKeyInit) -> Self {
+        Self(PeerAggregator {
+            verify_key_init,
+            ..self.0
+        })
+    }
+
+    pub fn with_collector_hpke_config(self, collector_hpke_config: HpkeConfig) -> Self {
+        Self(PeerAggregator {
+            collector_hpke_config,
+            ..self.0
+        })
+    }
+
+    pub fn with_report_expiry_age(self, report_expiry_age: Option<Duration>) -> Self {
+        Self(PeerAggregator {
+            report_expiry_age,
+            ..self.0
+        })
+    }
+
+    pub fn with_tolerable_clock_skew(self, tolerable_clock_skew: Duration) -> Self {
+        Self(PeerAggregator {
+            tolerable_clock_skew,
+            ..self.0
+        })
+    }
+
+    pub fn with_aggregator_auth_tokens(
+        self,
+        aggregator_auth_tokens: Vec<AuthenticationToken>,
+    ) -> Self {
+        Self(PeerAggregator {
+            aggregator_auth_tokens,
+            ..self.0
+        })
+    }
+
+    pub fn with_collector_auth_tokens(
+        self,
+        collector_auth_tokens: Vec<AuthenticationToken>,
+    ) -> Self {
+        Self(PeerAggregator {
+            collector_auth_tokens,
+            ..self.0
+        })
+    }
+
+    pub fn build(self) -> PeerAggregator {
+        self.0
+    }
+}
+
+impl From<PeerAggregator> for PeerAggregatorBuilder {
+    fn from(value: PeerAggregator) -> Self {
+        Self(value)
     }
 }
 
@@ -270,7 +356,26 @@ impl Task {
                 return Err(Error::InvalidParameter("max_batch_size"));
             }
         }
+
+        // These fields are stored as 64-bit signed integers in the database but are held in
+        // memory as unsigned. Reject values that are too large. (perhaps these should be
+        // represented by different types?)
+        if let Some(report_expiry_age) = self.0.report_expiry_age() {
+            if report_expiry_age > &Duration::from_seconds(i64::MAX as u64) {
+                return Err(Error::InvalidParameter("report_expiry_age too large"));
+            }
+        }
+        if let Some(task_expiration) = self.0.task_expiration() {
+            task_expiration
+                .as_naive_date_time()
+                .map_err(|_| Error::InvalidParameter("task_expiration out of range"))?;
+        }
+
         Ok(())
+    }
+
+    pub fn task(&self) -> &task::Task {
+        &self.0
     }
 }
 

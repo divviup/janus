@@ -16,7 +16,7 @@ use crate::{
     },
     query_type::CollectableQueryType,
     task::{self, test_util::TaskBuilder, Task},
-    taskprov::PeerAggregator,
+    taskprov::{PeerAggregator, PeerAggregatorBuilder},
     test_util::noop_meter,
 };
 
@@ -6532,43 +6532,18 @@ async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatast
     let datastore = ephemeral_datastore.datastore(MockClock::default()).await;
 
     // Basic aggregator.
-    let example_leader_peer_aggregator = PeerAggregator::new(
-        Url::parse("https://example.com/").unwrap(),
-        Role::Leader,
-        random(),
-        generate_test_hpke_config_and_private_key().config().clone(),
-        Some(Duration::from_seconds(3600)),
-        Duration::from_seconds(60),
-        vec![
-            AuthenticationToken::Bearer(random()),
-            AuthenticationToken::Bearer(random()),
-        ],
-        vec![AuthenticationToken::Bearer(random())],
-    );
-
-    // Ensure we can have the same peer aggregator, except in another role.
-    let example_helper_peer_aggregator = PeerAggregator::new(
-        Url::parse("https://example.com/").unwrap(),
-        Role::Helper,
-        random(),
-        generate_test_hpke_config_and_private_key().config().clone(),
-        Some(Duration::from_seconds(3600)),
-        Duration::from_seconds(60),
-        vec![AuthenticationToken::Bearer(random())],
-        vec![AuthenticationToken::Bearer(random())],
-    );
-
-    // Ensure we can still add other unrelated aggregators.
-    let another_example_leader_peer_aggregator = PeerAggregator::new(
-        Url::parse("https://another.example.com/").unwrap(),
-        Role::Leader,
-        random(),
-        generate_test_hpke_config_and_private_key().config().clone(),
-        Some(Duration::from_seconds(3600)),
-        Duration::from_seconds(60),
-        vec![AuthenticationToken::Bearer(random())],
-        vec![],
-    );
+    let example_leader_peer_aggregator =
+        PeerAggregatorBuilder::new().with_role(Role::Leader).build();
+    let example_helper_peer_aggregator = PeerAggregatorBuilder::new()
+        .with_role(Role::Helper)
+        .with_aggregator_auth_tokens(vec![random(), random()])
+        .with_collector_auth_tokens(vec![])
+        .build();
+    let another_example_leader_peer_aggregator = PeerAggregatorBuilder::new()
+        .with_endpoint(Url::parse("https://another.example.com/").unwrap())
+        .with_aggregator_auth_tokens(vec![])
+        .with_collector_auth_tokens(vec![random(), random()])
+        .build();
 
     datastore
         .run_tx(|tx| {
@@ -6594,16 +6569,7 @@ async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatast
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    let colliding_peer_aggregator = PeerAggregator::new(
-                        Url::parse("https://example.com/").unwrap(),
-                        Role::Leader,
-                        random(),
-                        generate_test_hpke_config_and_private_key().config().clone(),
-                        Some(Duration::from_seconds(3600)),
-                        Duration::from_seconds(60),
-                        vec![AuthenticationToken::DapAuth(random())],
-                        vec![AuthenticationToken::DapAuth(random())],
-                    );
+                    let colliding_peer_aggregator = PeerAggregatorBuilder::new().build();
                     tx.put_taskprov_peer_aggregator(&colliding_peer_aggregator)
                         .await
                 })

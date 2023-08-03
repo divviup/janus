@@ -579,22 +579,26 @@ fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<Authenticati
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::{
-        aggregate_init_tests::{put_aggregation_job, setup_aggregate_init_test},
-        aggregation_job_continue::test_util::{
-            post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
+    use crate::{
+        aggregator::{
+            aggregate_init_tests::{put_aggregation_job, setup_aggregate_init_test},
+            aggregation_job_continue::test_util::{
+                post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
+            },
+            collection_job_tests::setup_collection_job_test_case,
+            empty_batch_aggregations,
+            http_handlers::{aggregator_handler, aggregator_handler_with_aggregator},
+            tests::{
+                create_report, create_report_custom, default_aggregator_config,
+                generate_helper_report_share, generate_helper_report_share_for_plaintext,
+                BATCH_AGGREGATION_SHARD_COUNT,
+            },
+            Config,
         },
-        collection_job_tests::setup_collection_job_test_case,
-        empty_batch_aggregations,
-        http_handlers::{aggregator_handler, aggregator_handler_with_aggregator},
-        tests::{
-            create_report, create_report_custom, default_aggregator_config,
-            generate_helper_report_share, generate_helper_report_share_for_plaintext,
-            BATCH_AGGREGATION_SHARD_COUNT,
-        },
-        Config,
+        config::TaskprovConfig,
     };
     use assert_matches::assert_matches;
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use futures::future::try_join_all;
     use janus_aggregator_core::{
         datastore::{
@@ -607,6 +611,7 @@ mod tests {
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
         task::{test_util::TaskBuilder, QueryType, VerifyKey},
+        taskprov::PeerAggregatorBuilder,
         test_util::noop_meter,
     };
     use janus_core::{
@@ -620,27 +625,36 @@ mod tests {
         },
         report_id::ReportIdChecksumExt,
         task::{AuthenticationToken, VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
+        taskprov::TASKPROV_HEADER,
         test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf},
         time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
     };
     use janus_messages::{
-        query_type::TimeInterval, AggregateShare as AggregateShareMessage, AggregateShareAad,
-        AggregateShareReq, AggregationJobContinueReq, AggregationJobId,
-        AggregationJobInitializeReq, AggregationJobResp, AggregationJobRound, BatchSelector,
-        Collection, CollectionJobId, CollectionReq, Duration, Extension, ExtensionType,
-        HpkeCiphertext, HpkeConfigId, HpkeConfigList, InputShareAad, Interval,
-        PartialBatchSelector, PrepareStep, PrepareStepResult, Query, Report, ReportId,
-        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
+        query_type::{FixedSize, TimeInterval},
+        taskprov::{
+            DpConfig, DpMechanism, Query as TaskprovQuery, QueryConfig, TaskConfig, VdafConfig,
+            VdafType,
+        },
+        AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq,
+        AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq,
+        AggregationJobResp, AggregationJobRound, BatchSelector, Collection, CollectionJobId,
+        CollectionReq, Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId,
+        HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PrepareStep,
+        PrepareStepResult, Query, Report, ReportId, ReportIdChecksum, ReportMetadata, ReportShare,
+        ReportShareError, Role, TaskId, Time,
     };
     use prio::{
         codec::{Decode, Encode},
         field::Field64,
+        flp::types::Count,
         vdaf::{
+            prg::PrgSha3,
             prio3::{Prio3, Prio3Count},
             AggregateShare, Aggregator, OutputShare,
         },
     };
     use rand::random;
+    use ring::digest::{digest, SHA256};
     use serde_json::json;
     use std::{
         borrow::Cow, collections::HashMap, io::Cursor, sync::Arc, time::Duration as StdDuration,
@@ -2395,44 +2409,91 @@ mod tests {
         // Prepare datastore & request.
         install_test_trace_subscriber();
 
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-        datastore.put_task(&task).await.unwrap();
 
-        let vdaf = dummy_vdaf::Vdaf::new();
-        let verify_key: VerifyKey<0> = task.primary_vdaf_verify_key().unwrap();
-        let hpke_key = task.current_hpke_key();
+        let global_hpke_key = generate_test_hpke_config_and_private_key();
+        let peer_aggregator = PeerAggregatorBuilder::new()
+            .with_endpoint(url::Url::parse("https://leader.example.com/").unwrap())
+            .with_role(Role::Leader)
+            .build();
+
+        datastore
+            .run_tx(|tx| {
+                let global_hpke_key = global_hpke_key.clone();
+                let peer_aggregator = peer_aggregator.clone();
+                Box::pin(async move {
+                    tx.put_global_hpke_keypair(&global_hpke_key).await.unwrap();
+                    tx.put_taskprov_peer_aggregator(&peer_aggregator)
+                        .await
+                        .unwrap();
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        let time_precision = Duration::from_seconds(1);
+        let max_batch_query_count = 1;
+        let min_batch_size = 1;
+        let max_batch_size = 1;
+        let task_expiration = clock.now().add(&Duration::from_hours(24).unwrap()).unwrap();
+        let task_config = TaskConfig::new(
+            Vec::from("foobar".as_bytes()),
+            Vec::from([
+                "https://leader.example.com/".as_bytes().try_into().unwrap(),
+                "https://helper.example.com/".as_bytes().try_into().unwrap(),
+            ]),
+            QueryConfig::new(
+                time_precision.clone(),
+                max_batch_query_count,
+                min_batch_size,
+                TaskprovQuery::FixedSize { max_batch_size },
+            ),
+            task_expiration,
+            VdafConfig::new(DpConfig::new(DpMechanism::None), VdafType::Prio3Count).unwrap(),
+        )
+        .unwrap();
+
+        let mut task_config_encoded = vec![];
+        task_config.encode(&mut task_config_encoded);
+
+        // We use a real VDAF since taskprov doesn't have any allowance for a test VDAF.
+        let vdaf = Prio3Count::new_count(2).unwrap();
+
+        let task_id = TaskId::try_from(digest(&SHA256, &task_config_encoded).as_ref()).unwrap();
+        let vdaf_instance = task_config.vdaf_config().vdaf_type().try_into().unwrap();
+        let vdaf_verify_key = peer_aggregator.derive_vdaf_verify_key(&task_id, &vdaf_instance);
 
         // report_share_0 is a "happy path" report.
         let report_metadata_0 = ReportMetadata::new(
             random(),
             clock
                 .now()
-                .to_batch_interval_start(task.time_precision())
+                .to_batch_interval_start(&time_precision)
                 .unwrap(),
         );
         let transcript = run_vdaf(
             &vdaf,
-            verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(0),
-            report_metadata_0.id(),
+            vdaf_verify_key.as_ref().try_into().unwrap(),
             &(),
+            report_metadata_0.id(),
+            &1,
         );
-        let report_share_0 = generate_helper_report_share::<dummy_vdaf::Vdaf>(
-            *task.id(),
+        let report_share_0 = generate_helper_report_share::<Prio3Count>(
+            task_id.clone(),
             report_metadata_0,
-            hpke_key.config(),
+            global_hpke_key.config(),
             &transcript.public_share,
             Vec::new(),
             &transcript.input_shares[1],
         );
 
+        let batch_id = random();
         let request = AggregationJobInitializeReq::new(
-            dummy_vdaf::AggregationParam(0).get_encoded(),
-            PartialBatchSelector::new_time_interval(),
+            ().get_encoded(),
+            PartialBatchSelector::new_fixed_size(batch_id),
             Vec::from([report_share_0.clone()]),
         );
 
@@ -2440,16 +2501,59 @@ mod tests {
         // the request is idempotent.
         let handler = aggregator_handler(
             Arc::clone(&datastore),
-            clock,
+            clock.clone(),
             &noop_meter(),
-            default_aggregator_config(),
+            Config {
+                taskprov_config: TaskprovConfig { enabled: true },
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
-        let mut test_conn =
-            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        let want_task = janus_aggregator_core::taskprov::Task::new(
+            task_id,
+            Vec::from([
+                url::Url::parse("https://leader.example.com/").unwrap(),
+                url::Url::parse("https://helper.example.com/").unwrap(),
+            ]),
+            QueryType::FixedSize {
+                max_batch_size: max_batch_size as u64,
+            },
+            vdaf_instance,
+            Role::Helper,
+            Vec::from([vdaf_verify_key]),
+            max_batch_query_count as u64,
+            Some(task_expiration),
+            peer_aggregator.report_expiry_age().copied(),
+            min_batch_size as u64,
+            Duration::from_seconds(1),
+            Duration::from_seconds(1),
+        )
+        .unwrap();
+
+        let auth = peer_aggregator
+            .primary_aggregator_auth_token()
+            .request_authentication();
+
+        let mut test_conn = put(want_task
+            .task()
+            .aggregation_job_uri(&aggregation_job_id)
+            .unwrap()
+            .path())
+        .with_request_header(auth.0, auth.1)
+        .with_request_header(
+            KnownHeaderName::ContentType,
+            AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+        )
+        .with_request_header(TASKPROV_HEADER, URL_SAFE_NO_PAD.encode(task_config_encoded))
+        .with_request_body(request.get_encoded())
+        .run_async(&handler)
+        .await;
+
+        println!("{:?}", test_conn);
+
         assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_headers!(
             &test_conn,
@@ -2465,13 +2569,15 @@ mod tests {
         assert_eq!(prepare_step_0.report_id(), report_share_0.metadata().id());
         assert_matches!(prepare_step_0.result(), &PrepareStepResult::Continued(..));
 
-        // Check aggregation job in datastore.
-        let aggregation_jobs = datastore
+        let (aggregation_jobs, task) = datastore
             .run_tx(|tx| {
-                let task = task.clone();
                 Box::pin(async move {
-                    tx.get_aggregation_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(task.id())
-                        .await
+                    Ok((
+                        tx.get_aggregation_jobs_for_task::<16, FixedSize, Prio3<Count<Field64>, PrgSha3, 16>>(&task_id)
+                            .await
+                            .unwrap(),
+                        tx.get_task(&task_id).await.unwrap(),
+                    ))
                 })
             })
             .await
@@ -2479,21 +2585,14 @@ mod tests {
 
         assert_eq!(aggregation_jobs.len(), 1);
         assert!(
-            aggregation_jobs[0].task_id().eq(task.id())
+            aggregation_jobs[0].task_id().eq(&task_id)
                 && aggregation_jobs[0].id().eq(&aggregation_job_id)
-                && aggregation_jobs[0].partial_batch_identifier().eq(&())
+                && aggregation_jobs[0].partial_batch_identifier().eq(&batch_id)
                 && aggregation_jobs[0]
                     .state()
                     .eq(&AggregationJobState::InProgress)
         );
-
-        // happy path
-        // construct peer aggregator
-        // construct global HPKE key
-        // construct reports with global HPKE key
-        // construct taskprov task config
-        // construct init request with taskprov header
-        // afterwards, check both job and task have been inserted
+        assert_eq!(want_task.task(), &task.unwrap());
 
         // test opt-in flow thoroughly
 

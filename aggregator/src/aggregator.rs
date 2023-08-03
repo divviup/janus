@@ -645,7 +645,8 @@ impl<C: Clock> Aggregator<C> {
             task_config.query_config().min_batch_size() as u64,
             *task_config.query_config().time_precision(),
             *peer_aggregator.tolerable_clock_skew(),
-        )?;
+        )
+        .map_err(|err| TaskprovOptOutError::TaskParameters(err))?;
         self.datastore
             .run_tx_with_name("taskprov_put_task", |tx| {
                 let task = task.clone();
@@ -683,17 +684,17 @@ impl<C: Clock> Aggregator<C> {
         taskprov_header: &[u8],
         aggregator_auth_token: Option<&AuthenticationToken>,
     ) -> Result<(TaskConfig, PeerAggregator, Vec<Url>), Error> {
-        let taskprov_header = &URL_SAFE_NO_PAD.decode(taskprov_header).map_err(|_| {
+        let task_config_encoded = &URL_SAFE_NO_PAD.decode(taskprov_header).map_err(|_| {
             Error::UnrecognizedMessage(Some(*task_id), "taskprov header could not be decoded")
         })?;
-        if task_id.as_ref() != digest(&SHA256, taskprov_header).as_ref() {
+        if task_id.as_ref() != digest(&SHA256, task_config_encoded).as_ref() {
             return Err(Error::UnrecognizedMessage(
                 None,
                 "derived task ID does not match task config",
             ));
         }
 
-        let task_config = TaskConfig::decode(&mut Cursor::new(taskprov_header))?;
+        let task_config = TaskConfig::decode(&mut Cursor::new(task_config_encoded))?;
 
         let aggregator_urls = task_config
             .aggregator_endpoints()
