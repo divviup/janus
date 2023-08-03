@@ -1525,6 +1525,7 @@ mod tests {
                 peer_aggregator_endpoint: "https://example.com/".parse().unwrap(),
                 query_type: QueryType::FixedSize {
                     max_batch_size: 999,
+                    batch_time_window_size: None,
                 },
                 vdaf: VdafInstance::Prio3CountVec { length: 5 },
                 role: Role::Helper,
@@ -1553,10 +1554,12 @@ mod tests {
                 Token::StructVariant {
                     name: "QueryType",
                     variant: "FixedSize",
-                    len: 1,
+                    len: 2,
                 },
                 Token::Str("max_batch_size"),
                 Token::U64(999),
+                Token::Str("batch_time_window_size"),
+                Token::None,
                 Token::StructVariantEnd,
                 Token::Str("vdaf"),
                 Token::StructVariant {
@@ -1623,6 +1626,7 @@ mod tests {
                 peer_aggregator_endpoint: "https://example.com/".parse().unwrap(),
                 query_type: QueryType::FixedSize {
                     max_batch_size: 999,
+                    batch_time_window_size: None,
                 },
                 vdaf: VdafInstance::Prio3CountVec { length: 5 },
                 role: Role::Leader,
@@ -1653,10 +1657,12 @@ mod tests {
                 Token::StructVariant {
                     name: "QueryType",
                     variant: "FixedSize",
-                    len: 1,
+                    len: 2,
                 },
                 Token::Str("max_batch_size"),
                 Token::U64(999),
+                Token::Str("batch_time_window_size"),
+                Token::None,
                 Token::StructVariantEnd,
                 Token::Str("vdaf"),
                 Token::StructVariant {
@@ -1739,6 +1745,7 @@ mod tests {
             ]),
             QueryType::FixedSize {
                 max_batch_size: 999,
+                batch_time_window_size: None,
             },
             VdafInstance::Prio3CountVec { length: 5 },
             Role::Leader,
@@ -1791,10 +1798,12 @@ mod tests {
                 Token::StructVariant {
                     name: "QueryType",
                     variant: "FixedSize",
-                    len: 1,
+                    len: 2,
                 },
                 Token::Str("max_batch_size"),
                 Token::U64(999),
+                Token::Str("batch_time_window_size"),
+                Token::None,
                 Token::StructVariantEnd,
                 Token::Str("vdaf"),
                 Token::StructVariant {

@@ -159,9 +159,14 @@ pub(crate) async fn setup_collection_job_test_case(
 
 async fn setup_fixed_size_current_batch_collection_job_test_case(
 ) -> (CollectionJobTestCase, BatchId, BatchId, Interval) {
-    let test_case =
-        setup_collection_job_test_case(Role::Leader, QueryType::FixedSize { max_batch_size: 10 })
-            .await;
+    let test_case = setup_collection_job_test_case(
+        Role::Leader,
+        QueryType::FixedSize {
+            max_batch_size: 10,
+            batch_time_window_size: None,
+        },
+    )
+    .await;
 
     // Fill the datastore with the necessary data so that there is are two outstanding batches to be
     // collected.
@@ -239,7 +244,7 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
                     .await
                     .unwrap();
 
-                    tx.put_outstanding_batch(task.id(), &batch_id)
+                    tx.put_outstanding_batch(task.id(), &batch_id, &None)
                         .await
                         .unwrap();
                 }
@@ -640,9 +645,14 @@ async fn collection_job_put_idempotence_fixed_size_current_batch_mutate_aggregat
 
 #[tokio::test]
 async fn collection_job_put_idempotence_fixed_size_by_batch_id() {
-    let test_case =
-        setup_collection_job_test_case(Role::Leader, QueryType::FixedSize { max_batch_size: 10 })
-            .await;
+    let test_case = setup_collection_job_test_case(
+        Role::Leader,
+        QueryType::FixedSize {
+            max_batch_size: 10,
+            batch_time_window_size: None,
+        },
+    )
+    .await;
 
     let collection_job_id = random();
     let batch_id = random();
@@ -688,9 +698,14 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id() {
 
 #[tokio::test]
 async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_batch_id() {
-    let test_case =
-        setup_collection_job_test_case(Role::Leader, QueryType::FixedSize { max_batch_size: 10 })
-            .await;
+    let test_case = setup_collection_job_test_case(
+        Role::Leader,
+        QueryType::FixedSize {
+            max_batch_size: 10,
+            batch_time_window_size: None,
+        },
+    )
+    .await;
 
     let collection_job_id = random();
     let first_batch_id = random();
@@ -752,9 +767,14 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_batch_id()
 
 #[tokio::test]
 async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_aggregation_param() {
-    let test_case =
-        setup_collection_job_test_case(Role::Leader, QueryType::FixedSize { max_batch_size: 10 })
-            .await;
+    let test_case = setup_collection_job_test_case(
+        Role::Leader,
+        QueryType::FixedSize {
+            max_batch_size: 10,
+            batch_time_window_size: None,
+        },
+    )
+    .await;
 
     let collection_job_id = random();
     let batch_id = random();

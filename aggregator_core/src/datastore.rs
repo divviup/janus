@@ -99,7 +99,7 @@ macro_rules! supported_schema_versions {
 // version is seen, [`Datastore::new`] fails.
 //
 // Note that the latest supported version must be first in the list.
-supported_schema_versions!(13);
+supported_schema_versions!(14);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -1312,6 +1312,7 @@ impl<C: Clock> Transaction<'_, C> {
                     WHERE tasks.task_id = $1
                       AND client_reports.aggregation_started = FALSE
                       AND client_reports.client_timestamp >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                    ORDER BY client_timestamp DESC
                     FOR UPDATE OF client_reports SKIP LOCKED
                     LIMIT 5000
                 )
@@ -3644,13 +3645,14 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         task_id: &TaskId,
         batch_id: &BatchId,
+        time_bucket_start: &Option<Time>,
     ) -> Result<(), Error> {
         let stmt = self
             .prepare_cached(
-                "INSERT INTO outstanding_batches (task_id, batch_id)
-                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2)
+                "INSERT INTO outstanding_batches (task_id, batch_id, time_bucket_start)
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3)
                 ON CONFLICT DO NOTHING
-                RETURNING COALESCE(UPPER((SELECT client_timestamp_interval FROM batches WHERE task_id = outstanding_batches.task_id AND batch_identifier = outstanding_batches.batch_id)) < COALESCE($3::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
+                RETURNING COALESCE(UPPER((SELECT client_timestamp_interval FROM batches WHERE task_id = outstanding_batches.task_id AND batch_identifier = outstanding_batches.batch_id)) < COALESCE($4::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
             )
             .await?;
         let rows = self
@@ -3659,6 +3661,11 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* task_id */ task_id.as_ref(),
                     /* batch_id */ batch_id.as_ref(),
+                    /* time_bucket_start */
+                    &time_bucket_start
+                        .as_ref()
+                        .map(Time::as_naive_date_time)
+                        .transpose()?,
                     /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
             )
@@ -3693,24 +3700,46 @@ impl<C: Clock> Transaction<'_, C> {
         check_insert(row_count)
     }
 
-    /// Retrieves all [`OutstandingBatch`]es for a given task.
+    /// Retrieves all [`OutstandingBatch`]es for a given task and time bucket, if applicable.
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_outstanding_batches_for_task(
+    pub async fn get_outstanding_batches(
         &self,
         task_id: &TaskId,
+        time_bucket_start: &Option<Time>,
     ) -> Result<Vec<OutstandingBatch>, Error> {
-        let stmt = self
-            .prepare_cached(
-                "SELECT batch_id FROM outstanding_batches
-                JOIN tasks ON tasks.id = outstanding_batches.task_id
-                JOIN batches ON batches.task_id = outstanding_batches.task_id
-                            AND batches.batch_identifier = outstanding_batches.batch_id
-                WHERE tasks.task_id = $1
-                  AND UPPER(batches.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+        let rows = if let Some(time_bucket_start) = time_bucket_start {
+            let stmt = self
+                .prepare_cached(
+                    "SELECT batch_id FROM outstanding_batches
+                    JOIN tasks ON tasks.id = outstanding_batches.task_id
+                    JOIN batches ON batches.task_id = outstanding_batches.task_id
+                                AND batches.batch_identifier = outstanding_batches.batch_id
+                    WHERE tasks.task_id = $1
+                    AND time_bucket_start = $2
+                    AND UPPER(batches.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                )
+                .await?;
+            self.query(
+                &stmt,
+                &[
+                    /* task_id */ task_id.as_ref(),
+                    /* time_bucket_start */ &time_bucket_start.as_naive_date_time()?,
+                    /* now */ &self.clock.now().as_naive_date_time()?,
+                ],
             )
-            .await?;
-
-        try_join_all(
+            .await?
+        } else {
+            let stmt = self
+                .prepare_cached(
+                    "SELECT batch_id FROM outstanding_batches
+                    JOIN tasks ON tasks.id = outstanding_batches.task_id
+                    JOIN batches ON batches.task_id = outstanding_batches.task_id
+                                AND batches.batch_identifier = outstanding_batches.batch_id
+                    WHERE tasks.task_id = $1
+                    AND time_bucket_start IS NULL
+                    AND UPPER(batches.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                )
+                .await?;
             self.query(
                 &stmt,
                 &[
@@ -3719,13 +3748,13 @@ impl<C: Clock> Transaction<'_, C> {
                 ],
             )
             .await?
-            .into_iter()
-            .map(|row| async move {
-                let batch_id = BatchId::get_decoded(row.get("batch_id"))?;
-                let size = self.read_batch_size(task_id, &batch_id).await?;
-                Ok(OutstandingBatch::new(*task_id, batch_id, size))
-            }),
-        )
+        };
+
+        try_join_all(rows.into_iter().map(|row| async move {
+            let batch_id = BatchId::get_decoded(row.get("batch_id"))?;
+            let size = self.read_batch_size(task_id, &batch_id).await?;
+            Ok(OutstandingBatch::new(*task_id, batch_id, size))
+        }))
         .await
     }
 

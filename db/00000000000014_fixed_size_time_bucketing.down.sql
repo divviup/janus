@@ -1,0 +1,4 @@
+DROP INDEX outstanding_batches_task_and_time_bucket_index;
+ALTER TABLE outstanding_batches DROP COLUMN time_bucket_start;
+CREATE INDEX client_reports_task_unaggregated ON client_reports (task_id) WHERE aggregation_started = FALSE;
+DROP INDEX client_reports_task_and_timestamp_unaggregated_index CASCADE;

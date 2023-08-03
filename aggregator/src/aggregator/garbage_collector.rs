@@ -493,7 +493,10 @@ mod tests {
                 let (clock, vdaf) = (clock.clone(), vdaf.clone());
                 Box::pin(async move {
                     let task = TaskBuilder::new(
-                        task::QueryType::FixedSize { max_batch_size: 10 },
+                        task::QueryType::FixedSize {
+                            max_batch_size: 10,
+                            batch_time_window_size: None,
+                        },
                         VdafInstance::Fake,
                         Role::Leader,
                     )
@@ -549,7 +552,7 @@ mod tests {
                     .await
                     .unwrap();
 
-                    tx.put_outstanding_batch(task.id(), &batch_id)
+                    tx.put_outstanding_batch(task.id(), &batch_id, &None)
                         .await
                         .unwrap();
 
@@ -632,7 +635,7 @@ mod tests {
                     .unwrap()
                     .is_empty());
                 assert!(tx
-                    .get_outstanding_batches_for_task(task.id())
+                    .get_outstanding_batches(task.id(), &None)
                     .await
                     .unwrap()
                     .is_empty());
@@ -674,7 +677,10 @@ mod tests {
                 let clock = clock.clone();
                 Box::pin(async move {
                     let task = TaskBuilder::new(
-                        task::QueryType::FixedSize { max_batch_size: 10 },
+                        task::QueryType::FixedSize {
+                            max_batch_size: 10,
+                            batch_time_window_size: None,
+                        },
                         VdafInstance::Fake,
                         Role::Helper,
                     )
@@ -738,7 +744,7 @@ mod tests {
                     .await
                     .unwrap();
 
-                    tx.put_outstanding_batch(task.id(), &batch_id)
+                    tx.put_outstanding_batch(task.id(), &batch_id, &None)
                         .await
                         .unwrap();
 

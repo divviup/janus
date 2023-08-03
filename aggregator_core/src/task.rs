@@ -39,11 +39,20 @@ pub enum QueryType {
     /// Time-interval: used to support a collection style based on fixed time intervals.
     TimeInterval,
 
-    /// Fixed-size: used to support collection of batches as quickly as possible, without aligning
-    /// to a fixed batch window.
+    /// Fixed-size: used to support collection of batches as quickly as possible, without the
+    /// latency of waiting for batch time intervals to pass, and with direct control over the number
+    /// of reports per batch.
     FixedSize {
         /// The maximum number of reports in a batch to allow it to be collected.
         max_batch_size: u64,
+        /// If present, reports will be separated into different batches by timestamp, such that
+        /// the client timestamp interval duration will not exceed this value. The minimum and
+        /// maximum allowed report timestamps for each batch will be multiples of this value as
+        /// well. This must be a multiple of the task's time precision.
+        ///
+        /// This is an implementation-specific configuration parameter, and not part of the query
+        /// type as defined in DAP.
+        batch_time_window_size: Option<Duration>,
     },
 }
 
@@ -193,9 +202,18 @@ impl Task {
         if self.hpke_keys.is_empty() {
             return Err(Error::InvalidParameter("hpke_keys"));
         }
-        if let QueryType::FixedSize { max_batch_size } = self.query_type() {
+        if let QueryType::FixedSize {
+            max_batch_size,
+            batch_time_window_size,
+        } = self.query_type()
+        {
             if *max_batch_size < self.min_batch_size() {
                 return Err(Error::InvalidParameter("max_batch_size"));
+            }
+            if let Some(batch_time_window_size) = batch_time_window_size {
+                if batch_time_window_size.as_seconds() % self.time_precision().as_seconds() != 0 {
+                    return Err(Error::InvalidParameter("batch_time_window_size"));
+                }
             }
         }
         Ok(())
@@ -299,7 +317,7 @@ impl Task {
                 // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.2
                 batch_size >= self.min_batch_size()
             }
-            QueryType::FixedSize { max_batch_size } => {
+            QueryType::FixedSize { max_batch_size, .. } => {
                 // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.2.2
                 batch_size >= self.min_batch_size() && batch_size <= max_batch_size
             }
@@ -782,6 +800,7 @@ mod tests {
         task::{test_util::TaskBuilder, QueryType, Task, VdafInstance},
         SecretBytes,
     };
+    use assert_matches::assert_matches;
     use janus_core::{
         hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair, HpkePrivateKey},
         task::{AuthenticationToken, PRIO3_VERIFY_KEY_LENGTH},
@@ -793,7 +812,8 @@ mod tests {
         TaskId,
     };
     use rand::random;
-    use serde_test::{assert_tokens, Token};
+    use serde_json::json;
+    use serde_test::{assert_de_tokens, assert_tokens, Token};
     use url::Url;
 
     #[test]
@@ -1184,7 +1204,10 @@ mod tests {
                     "https://example.com/".parse().unwrap(),
                     "https://example.net/".parse().unwrap(),
                 ]),
-                QueryType::FixedSize { max_batch_size: 10 },
+                QueryType::FixedSize {
+                    max_batch_size: 10,
+                    batch_time_window_size: None,
+                },
                 VdafInstance::Prio3CountVec { length: 8 },
                 Role::Helper,
                 Vec::from([SecretBytes::new(b"1234567812345678".to_vec())]),
@@ -1235,10 +1258,12 @@ mod tests {
                 Token::StructVariant {
                     name: "QueryType",
                     variant: "FixedSize",
-                    len: 1,
+                    len: 2,
                 },
                 Token::Str("max_batch_size"),
                 Token::U64(10),
+                Token::Str("batch_time_window_size"),
+                Token::None,
                 Token::StructVariantEnd,
                 Token::Str("vdaf"),
                 Token::StructVariant {
@@ -1357,6 +1382,87 @@ mod tests {
                 Token::SeqEnd,
                 Token::StructEnd,
             ],
+        );
+    }
+
+    #[test]
+    fn query_type_serde() {
+        assert_tokens(
+            &QueryType::TimeInterval,
+            &[Token::UnitVariant {
+                name: "QueryType",
+                variant: "TimeInterval",
+            }],
+        );
+        assert_tokens(
+            &QueryType::FixedSize {
+                max_batch_size: 10,
+                batch_time_window_size: None,
+            },
+            &[
+                Token::StructVariant {
+                    name: "QueryType",
+                    variant: "FixedSize",
+                    len: 2,
+                },
+                Token::Str("max_batch_size"),
+                Token::U64(10),
+                Token::Str("batch_time_window_size"),
+                Token::None,
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_tokens(
+            &QueryType::FixedSize {
+                max_batch_size: 10,
+                batch_time_window_size: Some(Duration::from_hours(1).unwrap()),
+            },
+            &[
+                Token::StructVariant {
+                    name: "QueryType",
+                    variant: "FixedSize",
+                    len: 2,
+                },
+                Token::Str("max_batch_size"),
+                Token::U64(10),
+                Token::Str("batch_time_window_size"),
+                Token::Some,
+                Token::NewtypeStruct { name: "Duration" },
+                Token::U64(3600),
+                Token::StructVariantEnd,
+            ],
+        );
+
+        // Backwards compatibility cases:
+        assert_de_tokens(
+            &QueryType::FixedSize {
+                max_batch_size: 10,
+                batch_time_window_size: None,
+            },
+            &[
+                Token::StructVariant {
+                    name: "QueryType",
+                    variant: "FixedSize",
+                    len: 2,
+                },
+                Token::Str("max_batch_size"),
+                Token::U64(10),
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_matches!(
+            serde_json::from_value(json!({ "FixedSize": { "max_batch_size": 10 } })),
+            Ok(QueryType::FixedSize {
+                max_batch_size: 10,
+                batch_time_window_size: None,
+            })
+        );
+        assert_matches!(
+            serde_yaml::from_str("!FixedSize { max_batch_size: 10 }"),
+            Ok(QueryType::FixedSize {
+                max_batch_size: 10,
+                batch_time_window_size: None,
+            })
         );
     }
 }
