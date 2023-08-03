@@ -16,7 +16,7 @@ use janus_messages::{
 };
 use opentelemetry::{
     metrics::{Histogram, Meter, Unit},
-    Context, KeyValue,
+    KeyValue,
 };
 use prio::{
     codec::Encode,
@@ -135,7 +135,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             };
 
             task_update_time_histogram.record(
-                &Context::current(),
                 start.elapsed().as_secs_f64(),
                 &[KeyValue::new("status", status)],
             );
@@ -246,7 +245,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 }
             }
             job_creation_time_histogram.record(
-                &Context::current(),
                 start.elapsed().as_secs_f64(),
                 &[KeyValue::new("status", status)],
             );

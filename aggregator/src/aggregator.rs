@@ -48,7 +48,7 @@ use janus_messages::{
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter},
-    Context, KeyValue,
+    KeyValue,
 };
 #[cfg(feature = "test-util")]
 use prio::vdaf::{PrepareTransition, VdafError};
@@ -124,11 +124,7 @@ pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
         "duplicate_extension",
         "missing_client_report",
     ] {
-        aggregate_step_failure_counter.add(
-            &Context::current(),
-            0,
-            &[KeyValue::new("type", failure_type)],
-        );
+        aggregate_step_failure_counter.add(0, &[KeyValue::new("type", failure_type)]);
     }
 
     aggregate_step_failure_counter
@@ -213,16 +209,16 @@ impl<C: Clock> Aggregator<C> {
             .u64_counter("janus_upload_decrypt_failures")
             .with_description("Number of decryption failures in the /upload endpoint.")
             .init();
-        upload_decrypt_failure_counter.add(&Context::current(), 0, &[]);
+        upload_decrypt_failure_counter.add(0, &[]);
 
         let upload_decode_failure_counter = meter
             .u64_counter("janus_upload_decode_failures")
             .with_description("Number of message decode failures in the /upload endpoint.")
             .init();
-        upload_decode_failure_counter.add(&Context::current(), 0, &[]);
+        upload_decode_failure_counter.add(0, &[]);
 
         let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
-        aggregate_step_failure_counter.add(&Context::current(), 0, &[]);
+        aggregate_step_failure_counter.add(0, &[]);
 
         let global_hpke_keypairs = GlobalHpkeKeypairCache::new(
             datastore.clone(),
@@ -989,7 +985,7 @@ impl VdafOps {
                         ?err,
                         "public share decoding failed",
                     );
-                    upload_decode_failure_counter.add(&Context::current(), 1, &[]);
+                    upload_decode_failure_counter.add(1, &[]);
                     return Ok(());
                 }
             };
@@ -1041,7 +1037,7 @@ impl VdafOps {
                     ?error,
                     "Report decryption failed",
                 );
-                upload_decrypt_failure_counter.add(&Context::current(), 1, &[]);
+                upload_decrypt_failure_counter.add(1, &[]);
                 return Ok(());
             }
         };
@@ -1058,7 +1054,7 @@ impl VdafOps {
                     ?err,
                     "Leader input share decoding failed",
                 );
-                upload_decode_failure_counter.add(&Context::current(), 1, &[]);
+                upload_decode_failure_counter.add(1, &[]);
                 return Ok(());
             }
         };
@@ -1201,11 +1197,8 @@ impl VdafOps {
                     config_id = %report_share.encrypted_input_share().config_id(),
                     "Helper encrypted input share references unknown HPKE config ID"
                 );
-                aggregate_step_failure_counter.add(
-                    &Context::current(),
-                    1,
-                    &[KeyValue::new("type", "unknown_hpke_config_id")],
-                );
+                aggregate_step_failure_counter
+                    .add(1, &[KeyValue::new("type", "unknown_hpke_config_id")]);
                 Err(ReportShareError::HpkeUnknownConfigId)
             } else {
                 Ok(())
@@ -1232,28 +1225,57 @@ impl VdafOps {
                         ?error,
                         "Couldn't decrypt helper's report share"
                     );
-                    aggregate_step_failure_counter.add(
-                        &Context::current(),
-                        1,
-                        &[KeyValue::new("type", "decrypt_failure")],
-                    );
+                    aggregate_step_failure_counter
+                        .add(1, &[KeyValue::new("type", "decrypt_failure")]);
                     ReportShareError::HpkeDecryptError
                 })
             });
 
+<<<<<<< HEAD
+=======
+            let plaintext_input_share = plaintext.and_then(|plaintext| {
+                let plaintext_input_share = PlaintextInputShare::get_decoded(&plaintext).map_err(|error| {
+                    info!(task_id = %task.id(), metadata = ?report_share.metadata(), ?error, "Couldn't decode helper's plaintext input share");
+                    aggregate_step_failure_counter.add(1, &[KeyValue::new("type", "plaintext_input_share_decode_failure")]);
+                    ReportShareError::UnrecognizedMessage
+                })?;
+                // Check for repeated extensions.
+                let mut extension_types = HashSet::new();
+                if !plaintext_input_share
+                    .extensions()
+                    .iter()
+                    .all(|extension| extension_types.insert(extension.extension_type())) {
+                        info!(task_id = %task.id(), metadata = ?report_share.metadata(), "Received report share with duplicate extensions");
+                        aggregate_step_failure_counter.add(1, &[KeyValue::new("type", "duplicate_extension")]);
+                        return Err(ReportShareError::UnrecognizedMessage)
+                }
+                Ok(plaintext_input_share)
+            });
+
+>>>>>>> 7f5b03e3 (Update all other opentelemetry crates, too.)
             let input_share = plaintext_input_share.and_then(|plaintext_input_share| {
                 A::InputShare::get_decoded_with_param(&(vdaf, Role::Helper.index().unwrap()), &plaintext_input_share)
                     .map_err(|error| {
                         info!(task_id = %task.id(), metadata = ?report_share.metadata(), ?error, "Couldn't decode helper's input share");
+<<<<<<< HEAD
                         aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "input_share_decode_failure")]);
                         ReportShareError::VdafPrepError
+=======
+                        aggregate_step_failure_counter.add(1, &[KeyValue::new("type", "input_share_decode_failure")]);
+                        ReportShareError::UnrecognizedMessage
+>>>>>>> 7f5b03e3 (Update all other opentelemetry crates, too.)
                     })
             });
 
             let public_share = A::PublicShare::get_decoded_with_param(&vdaf, report_share.public_share()).map_err(|error|{
                 info!(task_id = %task.id(), metadata = ?report_share.metadata(), ?error, "Couldn't decode public share");
+<<<<<<< HEAD
                 aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "public_share_decode_failure")]);
                 ReportShareError::VdafPrepError
+=======
+                aggregate_step_failure_counter.add(1, &[KeyValue::new("type", "public_share_decode_failure")]);
+                ReportShareError::UnrecognizedMessage
+>>>>>>> 7f5b03e3 (Update all other opentelemetry crates, too.)
             });
 
             let shares = input_share.and_then(|input_share| Ok((public_share?, input_share)));
@@ -1280,11 +1302,8 @@ impl VdafOps {
                             ?error,
                             "Couldn't prepare_init report share"
                         );
-                        aggregate_step_failure_counter.add(
-                            &Context::current(),
-                            1,
-                            &[KeyValue::new("type", "prepare_init_failure")],
-                        );
+                        aggregate_step_failure_counter
+                            .add(1, &[KeyValue::new("type", "prepare_init_failure")]);
                         ReportShareError::VdafPrepError
                     })
             });
@@ -2373,7 +2392,6 @@ async fn send_request_to_helper<T: Encode>(
         Ok(response) => response,
         Err(error) => {
             http_request_duration_histogram.record(
-                &Context::current(),
                 start.elapsed().as_secs_f64(),
                 &[
                     KeyValue::new("status", "error"),
@@ -2388,7 +2406,6 @@ async fn send_request_to_helper<T: Encode>(
     let status = response.status();
     if !status.is_success() {
         http_request_duration_histogram.record(
-            &Context::current(),
             start.elapsed().as_secs_f64(),
             &[
                 KeyValue::new("status", "error"),
@@ -2410,7 +2427,6 @@ async fn send_request_to_helper<T: Encode>(
     match response.bytes().await {
         Ok(response_body) => {
             http_request_duration_histogram.record(
-                &Context::current(),
                 start.elapsed().as_secs_f64(),
                 &[
                     KeyValue::new("status", "success"),
@@ -2422,7 +2438,6 @@ async fn send_request_to_helper<T: Encode>(
         }
         Err(error) => {
             http_request_duration_histogram.record(
-                &Context::current(),
                 start.elapsed().as_secs_f64(),
                 &[
                     KeyValue::new("status", "error"),

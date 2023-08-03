@@ -16,7 +16,7 @@ use janus_messages::{
     AggregateContinueReq, AggregateContinueResp, AggregateInitializeResp, PrepareStep,
     PrepareStepResult, ReportShareError,
 };
-use opentelemetry::{metrics::Counter, Context, KeyValue};
+use opentelemetry::{metrics::Counter, KeyValue};
 use prio::{
     codec::{Encode, ParameterizedDecode},
     vdaf::{self, PrepareTransition},
@@ -192,6 +192,7 @@ impl VdafOps {
                         report_id = %leader_prep_step.report_id(),
                         ?error, "Prepare step failed",
                     );
+<<<<<<< HEAD
                     aggregate_step_failure_counter.add(
                         &Context::current(),
                         1,
@@ -200,6 +201,11 @@ impl VdafOps {
 
                     report_aggregation_data.report_aggregation = report_aggregation_data
                         .report_aggregation
+=======
+                    aggregate_step_failure_counter
+                        .add(1, &[KeyValue::new("type", "prepare_step_failure")]);
+                    *report_aggregation = report_aggregation
+>>>>>>> 7f5b03e3 (Update all other opentelemetry crates, too.)
                         .clone()
                         .with_state(ReportAggregationState::Failed(
                             ReportShareError::VdafPrepError,
