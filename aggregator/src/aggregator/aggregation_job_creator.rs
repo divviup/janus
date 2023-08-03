@@ -22,7 +22,7 @@ use janus_messages::{
 };
 use opentelemetry::{
     metrics::{Histogram, Meter, Unit},
-    Context, KeyValue,
+    KeyValue,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded;
@@ -145,7 +145,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             };
 
             task_update_time_histogram.record(
-                &Context::current(),
                 start.elapsed().as_secs_f64(),
                 &[KeyValue::new("status", status)],
             );
@@ -256,7 +255,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 }
             }
             job_creation_time_histogram.record(
-                &Context::current(),
                 start.elapsed().as_secs_f64(),
                 &[KeyValue::new("status", status)],
             );

@@ -23,7 +23,7 @@ use janus_messages::{
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
-    Context, KeyValue, Value,
+    KeyValue, Value,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -203,9 +203,7 @@ impl CollectionJobDriver {
 
         if matches!(collection_job.state(), CollectionJobState::Finished { .. }) {
             warn!("collection job being stepped already has a computed helper share");
-            self.metrics
-                .jobs_already_finished_counter
-                .add(&Context::current(), 1, &[]);
+            self.metrics.jobs_already_finished_counter.add(1, &[]);
             return Ok(());
         }
 
@@ -269,7 +267,7 @@ impl CollectionJobDriver {
                                 tx.update_collection_job::<SEED_SIZE, Q, A>(&collection_job),
                                 tx.release_collection_job(&lease),
                             )?;
-                            metrics.jobs_finished_counter.add(&Context::current(), 1, &[]);
+                            metrics.jobs_finished_counter.add( 1, &[]);
                         }
 
                         CollectionJobState::Deleted => {
@@ -281,7 +279,7 @@ impl CollectionJobDriver {
                                 collection_job_id = %collection_job.id(),
                                 "collection job was deleted while lease was held. Discarding aggregate results.",
                             );
-                            metrics.deleted_jobs_encountered_counter.add(&Context::current(), 1, &[]);
+                            metrics.deleted_jobs_encountered_counter.add( 1, &[]);
                         }
 
                         state => {
@@ -289,7 +287,7 @@ impl CollectionJobDriver {
                             // abandoned or finished state while this collection job driver held its
                             // lease, and we should not have acquired a lease if we were in the
                             // start state.
-                            metrics.unexpected_job_state_counter.add(&Context::current(), 1, &[KeyValue::new("state", Value::from(format!("{state}")))]);
+                            metrics.unexpected_job_state_counter.add( 1, &[KeyValue::new("state", Value::from(format!("{state}")))]);
                             panic!(
                                 "collection job {} unexpectedly in state {}",
                                 collection_job.id(), state
@@ -417,18 +415,14 @@ impl CollectionJobDriver {
                         max_attempts = %maximum_attempts_before_failure,
                         "Abandoning job due to too many failed attempts"
                     );
-                    this.metrics
-                        .jobs_abandoned_counter
-                        .add(&Context::current(), 1, &[]);
+                    this.metrics.jobs_abandoned_counter.add(1, &[]);
                     return this
                         .abandon_collection_job(datastore, collection_job_lease)
                         .await;
                 }
 
                 if collection_job_lease.lease_attempts() > 1 {
-                    this.metrics
-                        .job_steps_retried_counter
-                        .add(&Context::current(), 1, &[]);
+                    this.metrics.job_steps_retried_counter.add(1, &[]);
                 }
 
                 this.step_collection_job(datastore, Arc::new(collection_job_lease))
@@ -456,10 +450,10 @@ impl CollectionJobDriverMetrics {
             .u64_counter("janus_collection_jobs_finished")
             .with_description("Count of finished collection jobs.")
             .init();
-        jobs_finished_counter.add(&Context::current(), 0, &[]);
+        jobs_finished_counter.add(0, &[]);
 
         let http_request_duration_histogram = meter
-            .f64_histogram("janus_http_request_duration_seconds")
+            .f64_histogram("janus_http_request_duration")
             .with_description(
                 "The amount of time elapsed while making an HTTP request to a helper.",
             )
@@ -470,7 +464,7 @@ impl CollectionJobDriverMetrics {
             .u64_counter("janus_collection_jobs_abandoned")
             .with_description("Count of abandoned collection jobs.")
             .init();
-        jobs_abandoned_counter.add(&Context::current(), 0, &[]);
+        jobs_abandoned_counter.add(0, &[]);
 
         let jobs_already_finished_counter = meter
             .u64_counter("janus_collection_jobs_already_finished")
@@ -479,7 +473,7 @@ impl CollectionJobDriverMetrics {
                  finished.",
             )
             .init();
-        jobs_already_finished_counter.add(&Context::current(), 0, &[]);
+        jobs_already_finished_counter.add(0, &[]);
 
         let deleted_jobs_encountered_counter = meter
             .u64_counter("janus_collect_deleted_jobs_encountered")
@@ -488,7 +482,7 @@ impl CollectionJobDriverMetrics {
                  deleted.",
             )
             .init();
-        deleted_jobs_encountered_counter.add(&Context::current(), 0, &[]);
+        deleted_jobs_encountered_counter.add(0, &[]);
 
         let unexpected_job_state_counter = meter
             .u64_counter("janus_collect_unexpected_job_state")
@@ -497,13 +491,13 @@ impl CollectionJobDriverMetrics {
                  state.",
             )
             .init();
-        unexpected_job_state_counter.add(&Context::current(), 0, &[]);
+        unexpected_job_state_counter.add(0, &[]);
 
         let job_steps_retried_counter = meter
             .u64_counter("janus_job_retries")
             .with_description("Count of retried job steps.")
             .init();
-        job_steps_retried_counter.add(&Context::current(), 0, &[]);
+        job_steps_retried_counter.add(0, &[]);
 
         Self {
             jobs_finished_counter,

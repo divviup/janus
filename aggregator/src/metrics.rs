@@ -2,20 +2,17 @@
 
 #[cfg(any(not(feature = "prometheus"), not(feature = "otlp")))]
 use anyhow::anyhow;
-use opentelemetry::sdk::{
-    export::metrics::AggregatorSelector,
-    metrics::{
-        aggregators::Aggregator,
-        sdk_api::{Descriptor, InstrumentKind},
-    },
+use opentelemetry::{
+    global::set_meter_provider,
+    sdk::metrics::{reader::AggregationSelector, Aggregation, InstrumentKind},
 };
+use prometheus::Registry;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, net::AddrParseError, sync::Arc};
+use std::{collections::HashMap, net::AddrParseError};
 
 #[cfg(feature = "prometheus")]
 use {
     anyhow::Context,
-    opentelemetry::sdk::metrics::{controllers, processors},
     std::net::{IpAddr, Ipv4Addr},
     tokio::{sync::oneshot, task::JoinHandle},
     trillium::{Info, Init},
@@ -23,16 +20,13 @@ use {
 
 #[cfg(feature = "otlp")]
 use {
-    opentelemetry::{runtime::Tokio, sdk::metrics::controllers::BasicController},
+    opentelemetry::{runtime::Tokio, sdk::metrics::MeterProvider},
     opentelemetry_otlp::WithExportConfig,
     tonic::metadata::{MetadataKey, MetadataMap, MetadataValue},
 };
 
 #[cfg(any(feature = "otlp", feature = "prometheus"))]
-use {
-    opentelemetry::sdk::export::metrics::aggregation::stateless_temporality_selector,
-    std::str::FromStr,
-};
+use std::str::FromStr;
 
 /// Errors from initializing metrics provider, registry, and exporter.
 #[derive(Debug, thiserror::Error)]
@@ -88,42 +82,28 @@ pub enum MetricsExporterHandle {
         port: u16,
     },
     #[cfg(feature = "otlp")]
-    Otlp(BasicController),
+    Otlp(MeterProvider),
     Noop,
 }
 
 #[derive(Debug)]
-struct CustomAggregatorSelector;
+struct CustomAggregationSelector;
 
-/// These boundaries are copied from the Ruby and Go Prometheus clients. They are well-suited for
-/// HTTP request latencies.
-static DEFAULT_HISTOGRAM_BOUNDARIES: &[f64] = &[
-    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
-];
-/// These boundaries are intended to be used with durations in seconds. They cover a large range, so
-/// that they can accurately capture long-running operations.
-static ALTERNATE_HISTOGRAM_BOUNDARIES: &[f64] =
-    &[0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 90.0, 300.0];
+impl AggregationSelector for CustomAggregationSelector {
+    fn aggregation(&self, kind: InstrumentKind) -> Aggregation {
+        /// These boundaries are intended to be able to capture the length of short-lived operations
+        /// (e.g HTTP requests) as well as longer-running operations.
+        const DEFAULT_HISTOGRAM_BOUNDARIES: &[f64] = &[
+            0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 90.0, 300.0,
+        ];
 
-impl AggregatorSelector for CustomAggregatorSelector {
-    fn aggregator_for(&self, descriptor: &Descriptor) -> Option<Arc<dyn Aggregator + Send + Sync>> {
-        match descriptor.instrument_kind() {
-            InstrumentKind::Histogram => match descriptor.name() {
-                "janus_job_acquire_time" | "janus_database_transaction_duration_seconds" => Some(
-                    Arc::new(opentelemetry::sdk::metrics::aggregators::histogram(
-                        ALTERNATE_HISTOGRAM_BOUNDARIES,
-                    )),
-                ),
-                _ => Some(Arc::new(
-                    opentelemetry::sdk::metrics::aggregators::histogram(
-                        DEFAULT_HISTOGRAM_BOUNDARIES,
-                    ),
-                )),
+        match kind {
+            InstrumentKind::Histogram => Aggregation::ExplicitBucketHistogram {
+                boundaries: Vec::from(DEFAULT_HISTOGRAM_BOUNDARIES),
+                record_min_max: true,
             },
-            InstrumentKind::GaugeObserver => Some(Arc::new(
-                opentelemetry::sdk::metrics::aggregators::last_value(),
-            )),
-            _ => Some(Arc::new(opentelemetry::sdk::metrics::aggregators::sum())),
+            InstrumentKind::ObservableGauge => Aggregation::LastValue,
+            _ => Aggregation::Sum,
         }
     }
 }
@@ -140,16 +120,13 @@ pub async fn install_metrics_exporter(
             host: config_exporter_host,
             port: config_exporter_port,
         }) => {
-            let exporter = Arc::new(
-                opentelemetry_prometheus::exporter(
-                    controllers::basic(processors::factory(
-                        CustomAggregatorSelector,
-                        stateless_temporality_selector(),
-                    ))
-                    .build(),
-                )
-                .try_init()?,
-            );
+            let registry = Registry::new();
+            let exporter = opentelemetry_prometheus::exporter()
+                .with_aggregation_selector(CustomAggregationSelector)
+                .with_registry(registry.clone())
+                .build()?;
+
+            set_meter_provider(MeterProvider::builder().with_reader(exporter).build());
 
             let host = config_exporter_host
                 .as_ref()
@@ -157,7 +134,7 @@ pub async fn install_metrics_exporter(
                 .unwrap_or_else(|| Ok(Ipv4Addr::UNSPECIFIED.into()))?;
             let port = config_exporter_port.unwrap_or_else(|| 9464);
 
-            let router = trillium_prometheus::text_format_handler(exporter.registry().clone());
+            let router = trillium_prometheus::text_format_handler(registry.clone());
 
             let (sender, receiver) = oneshot::channel();
             let init = Init::new(|info: Info| async move {
@@ -193,12 +170,9 @@ pub async fn install_metrics_exporter(
                 map.insert(MetadataKey::from_str(key)?, MetadataValue::try_from(value)?);
             }
 
-            let basic_controller = opentelemetry_otlp::new_pipeline()
-                .metrics(
-                    CustomAggregatorSelector,
-                    stateless_temporality_selector(),
-                    Tokio,
-                )
+            let meter_provider = opentelemetry_otlp::new_pipeline()
+                .metrics(Tokio)
+                .with_aggregation_selector(CustomAggregationSelector)
                 .with_exporter(
                     opentelemetry_otlp::new_exporter()
                         .tonic()
@@ -207,7 +181,7 @@ pub async fn install_metrics_exporter(
                 .build()?;
             // We can't drop the PushController, as that would stop pushes, so return it to the
             // caller.
-            Ok(MetricsExporterHandle::Otlp(basic_controller))
+            Ok(MetricsExporterHandle::Otlp(meter_provider))
         }
         #[cfg(not(feature = "otlp"))]
         Some(MetricsExporterConfiguration::Otlp(_)) => Err(Error::Other(anyhow!(
@@ -231,8 +205,6 @@ mod tests {
     use http::StatusCode;
     #[cfg(feature = "prometheus")]
     use janus_core::retries::{retry_http_request, test_http_request_exponential_backoff};
-    #[cfg(feature = "prometheus")]
-    use opentelemetry::Context;
 
     #[cfg(feature = "prometheus")]
     #[tokio::test]
@@ -254,7 +226,7 @@ mod tests {
             .u64_observable_gauge("test_metric")
             .with_description("Gauge for test purposes")
             .init()
-            .observe(&Context::current(), 1, &[]);
+            .observe(1, &[]);
 
         let url = format!("http://127.0.0.1:{port}/metrics");
         let response = retry_http_request(test_http_request_exponential_backoff(), || {

@@ -15,7 +15,7 @@ use janus_core::time::Clock;
 use janus_messages::{
     AggregationJobContinueReq, AggregationJobResp, PrepareStep, PrepareStepResult, ReportShareError,
 };
-use opentelemetry::{metrics::Counter, Context, KeyValue};
+use opentelemetry::{metrics::Counter, KeyValue};
 use prio::{
     codec::{Encode, ParameterizedDecode},
     vdaf::{self, PrepareTransition},
@@ -171,11 +171,8 @@ impl VdafOps {
                         report_id = %prep_step.report_id(),
                         ?error, "Prepare step failed",
                     );
-                    aggregate_step_failure_counter.add(
-                        &Context::current(),
-                        1,
-                        &[KeyValue::new("type", "prepare_step_failure")],
-                    );
+                    aggregate_step_failure_counter
+                        .add(1, &[KeyValue::new("type", "prepare_step_failure")]);
                     *report_aggregation = report_aggregation
                         .clone()
                         .with_state(ReportAggregationState::Failed(

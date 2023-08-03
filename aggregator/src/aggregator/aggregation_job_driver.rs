@@ -26,7 +26,7 @@ use janus_messages::{
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
-    Context, KeyValue,
+    KeyValue,
 };
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
@@ -69,16 +69,16 @@ impl AggregationJobDriver {
             .u64_counter("janus_job_cancellations")
             .with_description("Count of cancelled jobs.")
             .init();
-        job_cancel_counter.add(&Context::current(), 0, &[]);
+        job_cancel_counter.add(0, &[]);
 
         let job_retry_counter = meter
             .u64_counter("janus_job_retries")
             .with_description("Count of retried job steps.")
             .init();
-        job_retry_counter.add(&Context::current(), 0, &[]);
+        job_retry_counter.add(0, &[]);
 
         let http_request_duration_histogram = meter
-            .f64_histogram("janus_http_request_duration_seconds")
+            .f64_histogram("janus_http_request_duration")
             .with_description(
                 "The amount of time elapsed while making an HTTP request to a helper.",
             )
@@ -322,11 +322,8 @@ impl AggregationJobDriver {
                 report
             } else {
                 info!(report_id = %report_aggregation.report_id(), "Attempted to aggregate missing report (most likely garbage collected)");
-                self.aggregate_step_failure_counter.add(
-                    &Context::current(),
-                    1,
-                    &[KeyValue::new("type", "missing_client_report")],
-                );
+                self.aggregate_step_failure_counter
+                    .add(1, &[KeyValue::new("type", "missing_client_report")]);
                 report_aggregations_to_write.push(report_aggregation.with_state(
                     ReportAggregationState::Failed(ReportShareError::ReportDropped),
                 ));
@@ -341,11 +338,8 @@ impl AggregationJobDriver {
                 .all(|extension| extension_types.insert(extension.extension_type()))
             {
                 info!(report_id = %report_aggregation.report_id(), "Received report with duplicate extensions");
-                self.aggregate_step_failure_counter.add(
-                    &Context::current(),
-                    1,
-                    &[KeyValue::new("type", "duplicate_extension")],
-                );
+                self.aggregate_step_failure_counter
+                    .add(1, &[KeyValue::new("type", "duplicate_extension")]);
                 report_aggregations_to_write.push(report_aggregation.with_state(
                     ReportAggregationState::Failed(ReportShareError::UnrecognizedMessage),
                 ));
@@ -367,11 +361,8 @@ impl AggregationJobDriver {
                 Ok(prep_state_and_share) => prep_state_and_share,
                 Err(error) => {
                     info!(report_id = %report_aggregation.report_id(), ?error, "Couldn't initialize leader's preparation state");
-                    self.aggregate_step_failure_counter.add(
-                        &Context::current(),
-                        1,
-                        &[KeyValue::new("type", "prepare_init_failure")],
-                    );
+                    self.aggregate_step_failure_counter
+                        .add(1, &[KeyValue::new("type", "prepare_init_failure")]);
                     report_aggregations_to_write.push(report_aggregation.with_state(
                         ReportAggregationState::Failed(ReportShareError::VdafPrepError),
                     ));
@@ -465,11 +456,8 @@ impl AggregationJobDriver {
                         // single report, rather than failing the entire request, to minimize impact
                         // if we ever encounter this bug.
                         info!(report_id = %report_aggregation.report_id(), "Report aggregation is missing prepare message");
-                        self.aggregate_step_failure_counter.add(
-                            &Context::current(),
-                            1,
-                            &[KeyValue::new("type", "missing_prepare_message")],
-                        );
+                        self.aggregate_step_failure_counter
+                            .add(1, &[KeyValue::new("type", "missing_prepare_message")]);
                         report_aggregations_to_write.push(report_aggregation.with_state(
                             ReportAggregationState::Failed(ReportShareError::VdafPrepError),
                         ));
@@ -484,11 +472,8 @@ impl AggregationJobDriver {
                     Ok(leader_transition) => leader_transition,
                     Err(error) => {
                         info!(report_id = %report_aggregation.report_id(), ?error, "Prepare step failed");
-                        self.aggregate_step_failure_counter.add(
-                            &Context::current(),
-                            1,
-                            &[KeyValue::new("type", "prepare_step_failure")],
-                        );
+                        self.aggregate_step_failure_counter
+                            .add(1, &[KeyValue::new("type", "prepare_step_failure")]);
                         report_aggregations_to_write.push(report_aggregation.with_state(
                             ReportAggregationState::Failed(ReportShareError::VdafPrepError),
                         ));
@@ -614,21 +599,15 @@ impl AggregationJobDriver {
                             }
                             Err(error) => {
                                 info!(report_id = %report_aggregation.report_id(), ?error, "Couldn't compute prepare message");
-                                self.aggregate_step_failure_counter.add(
-                                    &Context::current(),
-                                    1,
-                                    &[KeyValue::new("type", "prepare_message_failure")],
-                                );
+                                self.aggregate_step_failure_counter
+                                    .add(1, &[KeyValue::new("type", "prepare_message_failure")]);
                                 ReportAggregationState::Failed(ReportShareError::VdafPrepError)
                             }
                         }
                     } else {
                         warn!(report_id = %report_aggregation.report_id(), "Helper continued but leader did not");
-                        self.aggregate_step_failure_counter.add(
-                            &Context::current(),
-                            1,
-                            &[KeyValue::new("type", "continue_mismatch")],
-                        );
+                        self.aggregate_step_failure_counter
+                            .add(1, &[KeyValue::new("type", "continue_mismatch")]);
                         ReportAggregationState::Failed(ReportShareError::VdafPrepError)
                     }
                 }
@@ -646,21 +625,15 @@ impl AggregationJobDriver {
                             Ok(_) => ReportAggregationState::Finished,
                             Err(error) => {
                                 warn!(report_id = %report_aggregation.report_id(), ?error, "Could not update batch aggregation");
-                                self.aggregate_step_failure_counter.add(
-                                    &Context::current(),
-                                    1,
-                                    &[KeyValue::new("type", "accumulate_failure")],
-                                );
+                                self.aggregate_step_failure_counter
+                                    .add(1, &[KeyValue::new("type", "accumulate_failure")]);
                                 ReportAggregationState::Failed(ReportShareError::VdafPrepError)
                             }
                         }
                     } else {
                         warn!(report_id = %report_aggregation.report_id(), "Helper finished but leader did not");
-                        self.aggregate_step_failure_counter.add(
-                            &Context::current(),
-                            1,
-                            &[KeyValue::new("type", "finish_mismatch")],
-                        );
+                        self.aggregate_step_failure_counter
+                            .add(1, &[KeyValue::new("type", "finish_mismatch")]);
                         ReportAggregationState::Failed(ReportShareError::VdafPrepError)
                     }
                 }
@@ -669,11 +642,8 @@ impl AggregationJobDriver {
                     // If the helper failed, we move to FAILED immediately.
                     // TODO(#236): is it correct to just record the transition error that the helper reports?
                     info!(report_id = %report_aggregation.report_id(), helper_error = ?err, "Helper couldn't step report aggregation");
-                    self.aggregate_step_failure_counter.add(
-                        &Context::current(),
-                        1,
-                        &[KeyValue::new("type", "helper_step_failure")],
-                    );
+                    self.aggregate_step_failure_counter
+                        .add(1, &[KeyValue::new("type", "helper_step_failure")]);
                     ReportAggregationState::Failed(*err)
                 }
             };
@@ -871,12 +841,12 @@ impl AggregationJobDriver {
                         max_attempts = %maximum_attempts_before_failure,
                         "Canceling job due to too many failed attempts"
                     );
-                    this.job_cancel_counter.add(&Context::current(), 1, &[]);
+                    this.job_cancel_counter.add(1, &[]);
                     return this.cancel_aggregation_job(datastore, lease).await;
                 }
 
                 if lease.lease_attempts() > 1 {
-                    this.job_retry_counter.add(&Context::current(), 1, &[]);
+                    this.job_retry_counter.add(1, &[]);
                 }
 
                 this.step_aggregation_job(datastore, Arc::new(lease)).await

@@ -14,7 +14,7 @@ use janus_messages::{
 };
 use opentelemetry::{
     metrics::{Counter, Meter},
-    Context, KeyValue,
+    KeyValue,
 };
 use prio::codec::Encode;
 use routefinder::Captures;
@@ -183,7 +183,6 @@ impl Handler for StatusCounter {
             .map(ToString::to_string)
             .unwrap_or_else(|| "unknown".to_owned());
         self.0.add(
-            &Context::current(),
             1,
             &[
                 KeyValue::new("method", method),
