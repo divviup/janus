@@ -145,7 +145,7 @@ impl InClusterJanusPair {
             min_batch_size: task.min_batch_size(),
             max_batch_size: match task.query_type() {
                 QueryType::TimeInterval => None,
-                QueryType::FixedSize { max_batch_size } => Some(*max_batch_size),
+                QueryType::FixedSize { max_batch_size, .. } => Some(*max_batch_size),
             },
             expiration: "3000-01-01T00:00:00Z".to_owned(),
             time_precision_seconds: task.time_precision().as_seconds(),
@@ -269,6 +269,7 @@ async fn in_cluster_fixed_size() {
         VdafInstance::Prio3Count,
         QueryType::FixedSize {
             max_batch_size: 110,
+            batch_time_window_size: None,
         },
     )
     .await;

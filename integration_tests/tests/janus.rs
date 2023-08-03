@@ -148,7 +148,10 @@ async fn janus_janus_fixed_size() {
     let janus_pair = JanusPair::new(
         &container_client,
         VdafInstance::Prio3Count,
-        QueryType::FixedSize { max_batch_size: 50 },
+        QueryType::FixedSize {
+            max_batch_size: 50,
+            batch_time_window_size: None,
+        },
     )
     .await;
 
