@@ -333,6 +333,7 @@ impl<C: Clock> Aggregator<C> {
                 task_aggregator
             }
             None if self.cfg.taskprov_config.enabled && taskprov_header.is_some() => {
+                debug!(?task_id, "taskprov: attempting opt-in");
                 self.taskprov_opt_in(
                     &Role::Leader,
                     task_id,
@@ -343,6 +344,10 @@ impl<C: Clock> Aggregator<C> {
 
                 // Retry fetching the aggregator, since the last function would have just inserted
                 // its task.
+                debug!(
+                    ?task_id,
+                    "taskprov: opt-in successful, retrying task acquisition"
+                );
                 self.task_aggregator_for(task_id).await?.ok_or_else(|| {
                     Error::Internal("unexpectedly failed to create task".to_string())
                 })?
@@ -593,6 +598,7 @@ impl<C: Clock> Aggregator<C> {
     }
 
     /// Opts in or out of a taskprov task.
+    #[tracing::instrument(skip(self, aggregator_auth_token), err)]
     async fn taskprov_opt_in(
         &self,
         peer_role: &Role,
@@ -646,17 +652,30 @@ impl<C: Clock> Aggregator<C> {
                 Box::pin(async move { tx.put_task(&task.into()).await })
             })
             .await
-            .or_else(|error| match error {
-                // If the task is already in the datastore, then some other request or aggregator
-                // replica beat us to inserting it. They _should_ have inserted all the same parameters
-                // as we would have, so we can proceed as normal.
-                DatastoreError::MutationTargetAlreadyExists => Ok(()),
-                error => Err(error.into()),
-            })
+            .or_else(|error| -> Result<(), Error> {
+                match error {
+                    // If the task is already in the datastore, then some other request or aggregator
+                    // replica beat us to inserting it. They _should_ have inserted all the same parameters
+                    // as we would have, so we can proceed as normal.
+                    DatastoreError::MutationTargetAlreadyExists => {
+                        warn!(
+                            ?task_id,
+                            ?error,
+                            "taskprov: went to insert task into db, but it already exists"
+                        );
+                        Ok(())
+                    }
+                    error => Err(error.into()),
+                }
+            })?;
+
+        info!(?task, ?peer_aggregator, "taskprov: opted into new task");
+        Ok(())
     }
 
     /// Validate and authorize a taskprov request. Returns values necessary for determining whether
     /// we can opt into the task.
+    #[tracing::instrument(skip(self, aggregator_auth_token), err)]
     async fn taskprov_authorize_request(
         &self,
         peer_role: &Role,
@@ -664,11 +683,14 @@ impl<C: Clock> Aggregator<C> {
         taskprov_header: &[u8],
         aggregator_auth_token: Option<&AuthenticationToken>,
     ) -> Result<(TaskConfig, PeerAggregator, Vec<Url>), Error> {
-        let taskprov_header = &URL_SAFE_NO_PAD
-            .decode(taskprov_header)
-            .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
+        let taskprov_header = &URL_SAFE_NO_PAD.decode(taskprov_header).map_err(|_| {
+            Error::UnrecognizedMessage(Some(*task_id), "taskprov header could not be decoded")
+        })?;
         if task_id.as_ref() != digest(&SHA256, taskprov_header).as_ref() {
-            return Err(Error::UnrecognizedTask(*task_id));
+            return Err(Error::UnrecognizedMessage(
+                None,
+                "derived task ID does not match task config",
+            ));
         }
 
         let task_config = TaskConfig::decode(&mut Cursor::new(taskprov_header))?;
@@ -709,6 +731,13 @@ impl<C: Clock> Aggregator<C> {
         if self.clock.now() > *task_config.task_expiration() {
             return Err(TaskprovOptOutError::TaskExpired.into());
         }
+
+        info!(
+            ?task_id,
+            ?task_config,
+            ?peer_aggregator,
+            "taskprov: authorized request"
+        );
         Ok((task_config, peer_aggregator, aggregator_urls))
     }
 
