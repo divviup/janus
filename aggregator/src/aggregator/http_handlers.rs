@@ -5649,6 +5649,7 @@ mod tests {
     #[tokio::test]
     async fn aggregate_share_taskprov() {
         // just check happy path, most authorization testing is done with the init test
+        // ensure that aggregate share is encrypted with collector hpke key
     }
 
     async fn take_response_body(test_conn: &mut TestConn) -> Cow<'_, [u8]> {

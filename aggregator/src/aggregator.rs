@@ -391,23 +391,20 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnrecognizedTask(*task_id));
         }
 
-        match taskprov_header {
-            Some(taskprov_header) => {
-                self.taskprov_authorize_request(
-                    &Role::Leader,
-                    task_id,
-                    taskprov_header,
-                    auth_token.as_ref(),
-                )
-                .await?;
-            }
-            None => {
-                if !auth_token
-                    .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
-                    .unwrap_or(false)
-                {
-                    return Err(Error::UnauthorizedRequest(*task_id));
-                }
+        if self.cfg.taskprov_config.enabled && taskprov_header.is_some() {
+            self.taskprov_authorize_request(
+                &Role::Leader,
+                task_id,
+                taskprov_header.unwrap(),
+                auth_token.as_ref(),
+            )
+            .await?;
+        } else {
+            if !auth_token
+                .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
+                .unwrap_or(false)
+            {
+                return Err(Error::UnauthorizedRequest(*task_id));
             }
         }
 
@@ -529,25 +526,25 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnrecognizedTask(*task_id));
         }
 
-        match taskprov_header {
-            Some(taskprov_header) => {
-                self.taskprov_authorize_request(
+        let peer_aggregator = if self.cfg.taskprov_config.enabled && taskprov_header.is_some() {
+            let (_, peer_aggregator, _) = self
+                .taskprov_authorize_request(
                     &Role::Leader,
                     task_id,
-                    taskprov_header,
+                    taskprov_header.unwrap(),
                     auth_token.as_ref(),
                 )
                 .await?;
+            Some(peer_aggregator)
+        } else {
+            if !auth_token
+                .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
+                .unwrap_or(false)
+            {
+                return Err(Error::UnauthorizedRequest(*task_id));
             }
-            None => {
-                if !auth_token
-                    .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
-                    .unwrap_or(false)
-                {
-                    return Err(Error::UnauthorizedRequest(*task_id));
-                }
-            }
-        }
+            None
+        };
 
         task_aggregator
             .handle_aggregate_share(
@@ -555,6 +552,7 @@ impl<C: Clock> Aggregator<C> {
                 &self.clock,
                 self.cfg.batch_aggregation_shard_count,
                 req_bytes,
+                peer_aggregator.as_deref(),
             )
             .await
     }
@@ -971,6 +969,7 @@ impl<C: Clock> TaskAggregator<C> {
         clock: &C,
         batch_aggregation_shard_count: u64,
         req_bytes: &[u8],
+        peer_aggregator: Option<&PeerAggregator>,
     ) -> Result<AggregateShare, Error> {
         self.vdaf_ops
             .handle_aggregate_share(
@@ -979,6 +978,7 @@ impl<C: Clock> TaskAggregator<C> {
                 Arc::clone(&self.task),
                 batch_aggregation_shard_count,
                 req_bytes,
+                peer_aggregator,
             )
             .await
     }
@@ -2681,6 +2681,7 @@ impl VdafOps {
         task: Arc<Task>,
         batch_aggregation_shard_count: u64,
         req_bytes: &[u8],
+        peer_aggregator: Option<&PeerAggregator>,
     ) -> Result<AggregateShare, Error> {
         match task.query_type() {
             task::QueryType::TimeInterval => {
@@ -2690,7 +2691,7 @@ impl VdafOps {
                         TimeInterval,
                         VdafType,
                         _,
-                    >(datastore, clock, task, Arc::clone(vdaf), req_bytes, batch_aggregation_shard_count)
+                    >(datastore, clock, task, Arc::clone(vdaf), req_bytes, batch_aggregation_shard_count, peer_aggregator)
                     .await
                 })
             }
@@ -2701,7 +2702,7 @@ impl VdafOps {
                         FixedSize,
                         VdafType,
                         _,
-                    >(datastore, clock, task, Arc::clone(vdaf), req_bytes, batch_aggregation_shard_count)
+                    >(datastore, clock, task, Arc::clone(vdaf), req_bytes, batch_aggregation_shard_count, peer_aggregator)
                     .await
                 })
             }
@@ -2720,6 +2721,7 @@ impl VdafOps {
         vdaf: Arc<A>,
         req_bytes: &[u8],
         batch_aggregation_shard_count: u64,
+        peer_aggregator: Option<&PeerAggregator>,
     ) -> Result<AggregateShare, Error>
     where
         A::AggregationParam: Send + Sync,
@@ -2889,9 +2891,14 @@ impl VdafOps {
         // shares in the datastore so that we can encrypt cached results to the collector HPKE
         // config valid when the current AggregateShareReq was made, and not whatever was valid at
         // the time the aggregate share was first computed.
+        let collector_hpke_config = match peer_aggregator {
+            Some(peer_aggregator) => peer_aggregator.collector_hpke_config(),
+            None => task.collector_hpke_config().ok_or(Error::Internal(format!(
+                "task is missing collector_hpke_config"
+            )))?,
+        };
         let encrypted_aggregate_share = hpke::seal(
-            // inahga: use taskprov collector hpke config
-            task.collector_hpke_config().unwrap(),
+            collector_hpke_config,
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
             &aggregate_share_job.helper_aggregate_share().get_encoded(),
             &AggregateShareAad::new(*task.id(), aggregate_share_req.batch_selector().clone())
