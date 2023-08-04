@@ -4418,11 +4418,6 @@ impl<C: Clock> Transaction<'_, C> {
             collector_auth_token_rows,
         )?;
 
-        let peer_row_by_id: Vec<_> = peer_aggregator_rows
-            .into_iter()
-            .map(|row| (row.get("id"), row))
-            .collect();
-
         let mut aggregator_auth_token_rows_by_peer_id: HashMap<i64, Vec<Row>> = HashMap::new();
         for row in aggregator_auth_token_rows {
             aggregator_auth_token_rows_by_peer_id
@@ -4439,8 +4434,9 @@ impl<C: Clock> Transaction<'_, C> {
                 .push(row);
         }
 
-        peer_row_by_id
+        peer_aggregator_rows
             .into_iter()
+            .map(|row| (row.get("id"), row))
             .map(|(peer_id, peer_aggregator_row)| {
                 self.taskprov_peer_aggregator_from_rows(
                     &peer_aggregator_row,
