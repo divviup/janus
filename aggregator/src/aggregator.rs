@@ -105,6 +105,8 @@ pub mod http_handlers;
 pub mod problem_details;
 pub mod query_type;
 pub mod report_writer;
+#[cfg(test)]
+mod taskprov_tests;
 
 pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
     let aggregate_step_failure_counter = meter
@@ -680,7 +682,8 @@ impl<C: Clock> Aggregator<C> {
     }
 
     /// Validate and authorize a taskprov request. Returns values necessary for determining whether
-    /// we can opt into the task.
+    /// we can opt into the task. This function might return an opt-out error for conditions that
+    /// are relevant for all DAP workflows (e.g. task expiration).
     #[tracing::instrument(skip(self, aggregator_auth_token), err)]
     async fn taskprov_authorize_request(
         &self,
