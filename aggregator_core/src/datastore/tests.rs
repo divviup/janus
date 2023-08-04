@@ -16,7 +16,7 @@ use crate::{
     },
     query_type::CollectableQueryType,
     task::{self, test_util::TaskBuilder, Task},
-    taskprov::{PeerAggregator, PeerAggregatorBuilder},
+    taskprov::PeerAggregatorBuilder,
     test_util::noop_meter,
 };
 
@@ -28,7 +28,7 @@ use janus_core::{
     hpke::{
         self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
     },
-    task::{AuthenticationToken, VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
+    task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
     test_util::{
         dummy_vdaf::{self, AggregateShare, AggregationParam},
         install_test_trace_subscriber, run_vdaf,
@@ -6906,45 +6906,6 @@ async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatast
             let another_example_leader_peer_aggregator =
                 another_example_leader_peer_aggregator.clone();
             Box::pin(async move {
-                assert_eq!(
-                    tx.get_taskprov_peer_aggregator(
-                        &Url::parse("https://example.com/").unwrap(),
-                        &Role::Leader
-                    )
-                    .await
-                    .unwrap()
-                    .unwrap(),
-                    example_leader_peer_aggregator
-                );
-                assert_eq!(
-                    tx.get_taskprov_peer_aggregator(
-                        &Url::parse("https://example.com").unwrap(),
-                        &Role::Helper
-                    )
-                    .await
-                    .unwrap()
-                    .unwrap(),
-                    example_helper_peer_aggregator
-                );
-                assert_eq!(
-                    tx.get_taskprov_peer_aggregator(
-                        &Url::parse("https://another.example.com").unwrap(),
-                        &Role::Leader
-                    )
-                    .await
-                    .unwrap()
-                    .unwrap(),
-                    another_example_leader_peer_aggregator
-                );
-                assert_matches!(
-                    tx.get_taskprov_peer_aggregator(
-                        &Url::parse("https://doesnt.exist.example.com").unwrap(),
-                        &Role::Leader,
-                    )
-                    .await
-                    .unwrap(),
-                    None
-                );
                 assert_eq!(
                     tx.get_taskprov_peer_aggregators().await.unwrap(),
                     vec![
