@@ -36,3 +36,7 @@ CREATE TABLE taskprov_collector_auth_tokens(
     CONSTRAINT task_collector_auth_tokens_unique_peer_aggregator_id_and_ord UNIQUE(peer_aggregator_id, ord),
     CONSTRAINT fk_peer_aggregator_id FOREIGN KEY(peer_aggregator_id) REFERENCES taskprov_peer_aggregators(id) ON DELETE CASCADE
 );
+
+-- A task can now have no collector HPKE config set, in which case we'll look at the peer aggregator
+-- for the config.
+ALTER TABLE tasks ALTER COLUMN collector_hpke_config DROP NOT NULL;

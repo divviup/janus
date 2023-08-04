@@ -572,7 +572,10 @@ impl<C: Clock> Transaction<'_, C> {
                     &i64::try_from(task.time_precision().as_seconds())?,
                     /* tolerable_clock_skew */
                     &i64::try_from(task.tolerable_clock_skew().as_seconds())?,
-                    /* collector_hpke_config */ &task.collector_hpke_config().get_encoded(),
+                    /* collector_hpke_config */
+                    &task
+                        .collector_hpke_config()
+                        .map(|config| config.get_encoded()),
                 ],
             )
             .await?,
@@ -973,7 +976,10 @@ impl<C: Clock> Transaction<'_, C> {
         let time_precision = Duration::from_seconds(row.get_bigint_and_convert("time_precision")?);
         let tolerable_clock_skew =
             Duration::from_seconds(row.get_bigint_and_convert("tolerable_clock_skew")?);
-        let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
+        let collector_hpke_config = row
+            .get::<_, Option<Vec<u8>>>("collector_hpke_config")
+            .map(|config| HpkeConfig::get_decoded(&config))
+            .transpose()?;
 
         // Aggregator authentication tokens.
         let mut aggregator_auth_tokens = Vec::new();

@@ -130,7 +130,7 @@ pub struct Task {
     /// farther than this duration into the future will be rejected.
     tolerable_clock_skew: Duration,
     /// HPKE configuration for the collector.
-    collector_hpke_config: HpkeConfig,
+    collector_hpke_config: Option<HpkeConfig>,
     /// Tokens used to authenticate messages sent to or received from the other aggregator.
     aggregator_auth_tokens: Vec<AuthenticationToken>,
     /// Tokens used to authenticate messages sent to or received from the collector.
@@ -173,7 +173,7 @@ impl Task {
             min_batch_size,
             time_precision,
             tolerable_clock_skew,
-            collector_hpke_config,
+            Some(collector_hpke_config),
             aggregator_auth_tokens,
             collector_auth_tokens,
             hpke_keys,
@@ -198,7 +198,7 @@ impl Task {
         min_batch_size: u64,
         time_precision: Duration,
         tolerable_clock_skew: Duration,
-        collector_hpke_config: HpkeConfig,
+        collector_hpke_config: Option<HpkeConfig>,
         aggregator_auth_tokens: Vec<AuthenticationToken>,
         collector_auth_tokens: Vec<AuthenticationToken>,
         hpke_keys: I,
@@ -336,8 +336,8 @@ impl Task {
     }
 
     /// Retrieves the collector HPKE config associated with this task.
-    pub fn collector_hpke_config(&self) -> &HpkeConfig {
-        &self.collector_hpke_config
+    pub fn collector_hpke_config(&self) -> Option<&HpkeConfig> {
+        self.collector_hpke_config.as_ref()
     }
 
     /// Retrieves the aggregator authentication tokens associated with this task.
@@ -576,7 +576,10 @@ impl Serialize for Task {
             min_batch_size: self.min_batch_size,
             time_precision: self.time_precision,
             tolerable_clock_skew: self.tolerable_clock_skew,
-            collector_hpke_config: self.collector_hpke_config.clone(),
+            collector_hpke_config: self
+                .collector_hpke_config()
+                .expect("serializable tasks must have collector_hpke_config")
+                .clone(),
             aggregator_auth_tokens: self.aggregator_auth_tokens.clone(),
             collector_auth_tokens: self.collector_auth_tokens.clone(),
             hpke_keys,
@@ -781,7 +784,7 @@ pub mod test_util {
         /// Associates the eventual task with the given collector HPKE config.
         pub fn with_collector_hpke_config(self, collector_hpke_config: HpkeConfig) -> Self {
             Self(Task {
-                collector_hpke_config,
+                collector_hpke_config: Some(collector_hpke_config),
                 ..self.0
             })
         }

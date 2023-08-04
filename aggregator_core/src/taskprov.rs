@@ -1,17 +1,12 @@
 use derivative::Derivative;
 use janus_core::{
-    hpke::{
-        generate_hpke_config_and_private_key, test_util::generate_test_hpke_config_and_private_key,
-    },
     task::{AuthenticationToken, VdafInstance},
     time::TimeExt,
 };
-use janus_messages::{Duration, HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId, Role, TaskId, Time};
+use janus_messages::{Duration, HpkeConfig, Role, TaskId, Time};
 use lazy_static::lazy_static;
-use rand::{distributions::Standard, prelude::Distribution, random};
+use rand::{distributions::Standard, prelude::Distribution};
 use ring::hkdf::{KeyType, Salt, HKDF_SHA256};
-
-#[cfg(feature = "test-util")]
 use url::Url;
 
 use crate::{
@@ -204,92 +199,6 @@ impl KeyType for VdafVerifyKeyLength {
     }
 }
 
-#[cfg(feature = "test-util")]
-#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
-#[derive(Debug, Clone)]
-pub struct PeerAggregatorBuilder(PeerAggregator);
-
-impl PeerAggregatorBuilder {
-    pub fn new() -> Self {
-        Self(PeerAggregator::new(
-            Url::parse("https://example.com").unwrap(),
-            Role::Leader,
-            random(),
-            generate_test_hpke_config_and_private_key().config().clone(),
-            None,
-            Duration::from_seconds(1),
-            Vec::from([random()]),
-            Vec::from([random()]),
-        ))
-    }
-
-    pub fn with_endpoint(self, endpoint: Url) -> Self {
-        Self(PeerAggregator { endpoint, ..self.0 })
-    }
-
-    pub fn with_role(self, role: Role) -> Self {
-        Self(PeerAggregator { role, ..self.0 })
-    }
-
-    pub fn with_verify_key_init(self, verify_key_init: VerifyKeyInit) -> Self {
-        Self(PeerAggregator {
-            verify_key_init,
-            ..self.0
-        })
-    }
-
-    pub fn with_collector_hpke_config(self, collector_hpke_config: HpkeConfig) -> Self {
-        Self(PeerAggregator {
-            collector_hpke_config,
-            ..self.0
-        })
-    }
-
-    pub fn with_report_expiry_age(self, report_expiry_age: Option<Duration>) -> Self {
-        Self(PeerAggregator {
-            report_expiry_age,
-            ..self.0
-        })
-    }
-
-    pub fn with_tolerable_clock_skew(self, tolerable_clock_skew: Duration) -> Self {
-        Self(PeerAggregator {
-            tolerable_clock_skew,
-            ..self.0
-        })
-    }
-
-    pub fn with_aggregator_auth_tokens(
-        self,
-        aggregator_auth_tokens: Vec<AuthenticationToken>,
-    ) -> Self {
-        Self(PeerAggregator {
-            aggregator_auth_tokens,
-            ..self.0
-        })
-    }
-
-    pub fn with_collector_auth_tokens(
-        self,
-        collector_auth_tokens: Vec<AuthenticationToken>,
-    ) -> Self {
-        Self(PeerAggregator {
-            collector_auth_tokens,
-            ..self.0
-        })
-    }
-
-    pub fn build(self) -> PeerAggregator {
-        self.0
-    }
-}
-
-impl From<PeerAggregator> for PeerAggregatorBuilder {
-    fn from(value: PeerAggregator) -> Self {
-        Self(value)
-    }
-}
-
 /// Newtype for [`task::Task`], which omits certain fields that aren't required for taskprov tasks.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Task(task::Task);
@@ -323,15 +232,7 @@ impl Task {
             min_batch_size,
             time_precision,
             tolerable_clock_skew,
-            // inahga: don't make a junk key, instead turn collector hpke config optional.
-            generate_hpke_config_and_private_key(
-                random(),
-                HpkeKemId::X25519HkdfSha256,
-                HpkeKdfId::HkdfSha256,
-                HpkeAeadId::Aes128Gcm,
-            )
-            .config()
-            .clone(),
+            None,
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -393,5 +294,102 @@ impl Task {
 impl From<Task> for task::Task {
     fn from(value: Task) -> Self {
         value.0
+    }
+}
+
+#[cfg(feature = "test-util")]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
+pub mod test_util {
+    use janus_core::{
+        hpke::test_util::generate_test_hpke_config_and_private_key, task::AuthenticationToken,
+    };
+    use janus_messages::{Duration, HpkeConfig, Role};
+    use rand::random;
+    use url::Url;
+
+    use super::{PeerAggregator, VerifyKeyInit};
+
+    #[derive(Debug, Clone)]
+    pub struct PeerAggregatorBuilder(PeerAggregator);
+
+    impl PeerAggregatorBuilder {
+        pub fn new() -> Self {
+            Self(PeerAggregator::new(
+                Url::parse("https://example.com").unwrap(),
+                Role::Leader,
+                random(),
+                generate_test_hpke_config_and_private_key().config().clone(),
+                None,
+                Duration::from_seconds(1),
+                Vec::from([random()]),
+                Vec::from([random()]),
+            ))
+        }
+
+        pub fn with_endpoint(self, endpoint: Url) -> Self {
+            Self(PeerAggregator { endpoint, ..self.0 })
+        }
+
+        pub fn with_role(self, role: Role) -> Self {
+            Self(PeerAggregator { role, ..self.0 })
+        }
+
+        pub fn with_verify_key_init(self, verify_key_init: VerifyKeyInit) -> Self {
+            Self(PeerAggregator {
+                verify_key_init,
+                ..self.0
+            })
+        }
+
+        pub fn with_collector_hpke_config(self, collector_hpke_config: HpkeConfig) -> Self {
+            Self(PeerAggregator {
+                collector_hpke_config,
+                ..self.0
+            })
+        }
+
+        pub fn with_report_expiry_age(self, report_expiry_age: Option<Duration>) -> Self {
+            Self(PeerAggregator {
+                report_expiry_age,
+                ..self.0
+            })
+        }
+
+        pub fn with_tolerable_clock_skew(self, tolerable_clock_skew: Duration) -> Self {
+            Self(PeerAggregator {
+                tolerable_clock_skew,
+                ..self.0
+            })
+        }
+
+        pub fn with_aggregator_auth_tokens(
+            self,
+            aggregator_auth_tokens: Vec<AuthenticationToken>,
+        ) -> Self {
+            Self(PeerAggregator {
+                aggregator_auth_tokens,
+                ..self.0
+            })
+        }
+
+        pub fn with_collector_auth_tokens(
+            self,
+            collector_auth_tokens: Vec<AuthenticationToken>,
+        ) -> Self {
+            Self(PeerAggregator {
+                collector_auth_tokens,
+                ..self.0
+            })
+        }
+
+        pub fn build(self) -> PeerAggregator {
+            self.0
+        }
+    }
+
+    impl From<PeerAggregator> for PeerAggregatorBuilder {
+        fn from(value: PeerAggregator) -> Self {
+            Self(value)
+        }
     }
 }

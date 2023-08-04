@@ -16,7 +16,7 @@ use crate::{
     },
     query_type::CollectableQueryType,
     task::{self, test_util::TaskBuilder, Task},
-    taskprov::PeerAggregatorBuilder,
+    taskprov::test_util::PeerAggregatorBuilder,
     test_util::noop_meter,
 };
 
@@ -2516,7 +2516,7 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
             assert_eq!(second_collection_job, second_collection_job_again);
 
             let encrypted_helper_aggregate_share = hpke::seal(
-                task.collector_hpke_config(),
+                task.collector_hpke_config().unwrap(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
                 &[0, 1, 2, 3, 4, 5],
                 &AggregateShareAad::new(

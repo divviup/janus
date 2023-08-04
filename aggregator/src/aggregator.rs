@@ -2545,7 +2545,10 @@ impl VdafOps {
                     "Serving cached collection job response"
                 );
                 let encrypted_leader_aggregate_share = hpke::seal(
-                    task.collector_hpke_config(),
+                    // Unwrap safety: collector_hpke_config is only None for taskprov tasks. Taskprov
+                    // is not currently supported for Janus operating as the Leader, so this unwrap
+                    // is not reachable.
+                    task.collector_hpke_config().unwrap(),
                     &HpkeApplicationInfo::new(
                         &Label::AggregateShare,
                         &Role::Leader,
@@ -2887,7 +2890,8 @@ impl VdafOps {
         // config valid when the current AggregateShareReq was made, and not whatever was valid at
         // the time the aggregate share was first computed.
         let encrypted_aggregate_share = hpke::seal(
-            task.collector_hpke_config(),
+            // inahga: use taskprov collector hpke config
+            task.collector_hpke_config().unwrap(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
             &aggregate_share_job.helper_aggregate_share().get_encoded(),
             &AggregateShareAad::new(*task.id(), aggregate_share_req.batch_selector().clone())
