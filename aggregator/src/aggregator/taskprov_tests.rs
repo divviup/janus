@@ -1,5 +1,12 @@
 use crate::{
-    aggregator::{http_handlers::aggregator_handler, tests::generate_helper_report_share, Config},
+    aggregator::{
+        http_handlers::{
+            aggregator_handler,
+            test_util::{take_problem_details, take_response_body},
+        },
+        tests::generate_helper_report_share,
+        Config,
+    },
     config::TaskprovConfig,
 };
 use assert_matches::assert_matches;
@@ -50,12 +57,12 @@ use prio::{
 };
 use rand::random;
 use ring::digest::{digest, SHA256};
-use std::{borrow::Cow, sync::Arc};
+use serde_json::json;
+use std::sync::Arc;
 use trillium::{Handler, KnownHeaderName, Status};
 use trillium_testing::{
     assert_headers,
     prelude::{post, put},
-    TestConn,
 };
 
 type TestVdaf = Prio3<Count<Field64>, PrgSha3, 16>;
@@ -226,6 +233,35 @@ async fn taskprov_aggregate_init() {
         .primary_aggregator_auth_token()
         .request_authentication();
 
+    // Attempt using the wrong credentials, should reject.
+    let mut test_conn = put(test
+        .task
+        .aggregation_job_uri(&aggregation_job_id)
+        .unwrap()
+        .path())
+    .with_request_header(auth.0, "Bearer invalid_token")
+    .with_request_header(
+        KnownHeaderName::ContentType,
+        AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+    )
+    .with_request_header(
+        TASKPROV_HEADER,
+        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
+    )
+    .with_request_body(request.get_encoded())
+    .run_async(&test.handler)
+    .await;
+    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(
+        take_problem_details(&mut test_conn).await,
+        json!({
+            "status": Status::BadRequest as u16,
+            "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+            "title": "The request's authorization is not valid.",
+            "taskid": format!("{}", test.task_id),
+        })
+    );
+
     let mut test_conn = put(test
         .task
         .aggregation_job_uri(&aggregation_job_id)
@@ -388,6 +424,36 @@ async fn taskprov_aggregate_continue() {
         .primary_aggregator_auth_token()
         .request_authentication();
 
+    // Attempt using the wrong credentials, should reject.
+    let mut test_conn = post(
+        test.task
+            .aggregation_job_uri(&aggregation_job_id)
+            .unwrap()
+            .path(),
+    )
+    .with_request_header(auth.0, "Bearer invalid_token")
+    .with_request_header(
+        KnownHeaderName::ContentType,
+        AggregationJobContinueReq::MEDIA_TYPE,
+    )
+    .with_request_header(
+        TASKPROV_HEADER,
+        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
+    )
+    .with_request_body(request.get_encoded())
+    .run_async(&test.handler)
+    .await;
+    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(
+        take_problem_details(&mut test_conn).await,
+        json!({
+            "status": Status::BadRequest as u16,
+            "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+            "title": "The request's authorization is not valid.",
+            "taskid": format!("{}", test.task_id),
+        })
+    );
+
     let mut test_conn = post(
         test.task
             .aggregation_job_uri(&aggregation_job_id)
@@ -488,6 +554,31 @@ async fn taskprov_aggregate_share() {
         .primary_aggregator_auth_token()
         .request_authentication();
 
+    // Attempt using the wrong credentials, should reject.
+    let mut test_conn = post(test.task.aggregate_shares_uri().unwrap().path())
+        .with_request_header(auth.0, "Bearer invalid_token")
+        .with_request_header(
+            KnownHeaderName::ContentType,
+            AggregateShareReq::<FixedSize>::MEDIA_TYPE,
+        )
+        .with_request_header(
+            TASKPROV_HEADER,
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
+        )
+        .with_request_body(request.get_encoded())
+        .run_async(&test.handler)
+        .await;
+    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(
+        take_problem_details(&mut test_conn).await,
+        json!({
+            "status": Status::BadRequest as u16,
+            "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+            "title": "The request's authorization is not valid.",
+            "taskid": format!("{}", test.task_id),
+        })
+    );
+
     let mut test_conn = post(test.task.aggregate_shares_uri().unwrap().path())
         .with_request_header(auth.0, auth.1)
         .with_request_header(
@@ -520,15 +611,6 @@ async fn taskprov_aggregate_share() {
         &AggregateShareAad::new(test.task_id, request.batch_selector().clone()).get_encoded(),
     )
     .unwrap();
-}
-
-async fn take_response_body(test_conn: &mut TestConn) -> Cow<'_, [u8]> {
-    test_conn
-        .take_response_body()
-        .unwrap()
-        .into_bytes()
-        .await
-        .unwrap()
 }
 
 // test opt-in flow thoroughly

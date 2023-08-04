@@ -577,6 +577,26 @@ fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<Authenticati
         .transpose()
 }
 
+#[cfg(feature = "test-util")]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
+pub mod test_util {
+    use std::borrow::Cow;
+    use trillium_testing::TestConn;
+
+    pub async fn take_response_body(test_conn: &mut TestConn) -> Cow<'_, [u8]> {
+        test_conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap()
+    }
+
+    pub async fn take_problem_details(test_conn: &mut TestConn) -> serde_json::Value {
+        serde_json::from_slice(&take_response_body(test_conn).await).unwrap()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::aggregator::{
@@ -586,7 +606,10 @@ mod tests {
         },
         collection_job_tests::setup_collection_job_test_case,
         empty_batch_aggregations,
-        http_handlers::{aggregator_handler, aggregator_handler_with_aggregator},
+        http_handlers::{
+            aggregator_handler, aggregator_handler_with_aggregator,
+            test_util::{take_problem_details, take_response_body},
+        },
         tests::{
             create_report, create_report_custom, default_aggregator_config,
             generate_helper_report_share, generate_helper_report_share_for_plaintext,
@@ -642,9 +665,7 @@ mod tests {
     };
     use rand::random;
     use serde_json::json;
-    use std::{
-        borrow::Cow, collections::HashMap, io::Cursor, sync::Arc, time::Duration as StdDuration,
-    };
+    use std::{collections::HashMap, io::Cursor, sync::Arc, time::Duration as StdDuration};
     use trillium::{KnownHeaderName, Status};
     use trillium_testing::{
         assert_headers,
@@ -5416,18 +5437,5 @@ mod tests {
                 })
             );
         }
-    }
-
-    async fn take_response_body(test_conn: &mut TestConn) -> Cow<'_, [u8]> {
-        test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap()
-    }
-
-    async fn take_problem_details(test_conn: &mut TestConn) -> serde_json::Value {
-        serde_json::from_slice(&take_response_body(test_conn).await).unwrap()
     }
 }
