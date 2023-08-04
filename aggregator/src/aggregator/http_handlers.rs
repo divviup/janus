@@ -101,7 +101,9 @@ impl Handler for Error {
             Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
             Error::BadRequest(_) => conn.with_status(Status::BadRequest),
             // inahga: get the task ID in here somehow
-            Error::InvalidTask(_) => conn.with_problem_details(DapProblemType::InvalidTask, None),
+            Error::InvalidTask(task_id, _) => {
+                conn.with_problem_details(DapProblemType::InvalidTask, Some(task_id))
+            }
         }
     }
 }

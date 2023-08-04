@@ -4,7 +4,7 @@ pub use crate::aggregator::error::Error;
 use crate::{
     aggregator::{
         aggregate_share::compute_aggregate_share,
-        error::BatchMismatch,
+        error::{BatchMismatch, OptOutReason},
         query_type::{CollectableQueryType, UploadableQueryType},
         report_writer::{ReportWriteBatcher, WritableReport},
     },
@@ -84,8 +84,6 @@ use std::{
 use tokio::{sync::Mutex, try_join};
 use tracing::{debug, info, trace_span, warn};
 use url::Url;
-
-use self::error::TaskprovOptOutError;
 
 pub mod accumulator;
 #[cfg(test)]
@@ -617,11 +615,14 @@ impl<C: Clock> Aggregator<C> {
         // TODO(#1647): Check whether task config parameters are acceptable for privacy and
         // availability of the system.
 
-        let vdaf_instance = task_config
-            .vdaf_config()
-            .vdaf_type()
-            .try_into()
-            .map_err(|err: &str| TaskprovOptOutError::InvalidParameter(err.to_string()))?;
+        let vdaf_instance =
+            task_config
+                .vdaf_config()
+                .vdaf_type()
+                .try_into()
+                .map_err(|err: &str| {
+                    Error::InvalidTask(*task_id, OptOutReason::InvalidParameter(err.to_string()))
+                })?;
 
         let our_role = match peer_role {
             Role::Leader => Role::Helper,
@@ -650,7 +651,7 @@ impl<C: Clock> Aggregator<C> {
             *task_config.query_config().time_precision(),
             *peer_aggregator.tolerable_clock_skew(),
         )
-        .map_err(TaskprovOptOutError::TaskParameters)?;
+        .map_err(|err| Error::InvalidTask(*task_id, OptOutReason::TaskParameters(err)))?;
         self.datastore
             .run_tx_with_name("taskprov_put_task", |tx| {
                 let task = task.clone();
@@ -694,6 +695,7 @@ impl<C: Clock> Aggregator<C> {
         })?;
         if task_id.as_ref() != digest(&SHA256, task_config_encoded).as_ref() {
             return Err(Error::UnrecognizedMessage(
+                // Don't bother reporting the task ID, since we don't know which one is valid.
                 None,
                 "derived taskprov task ID does not match task config",
             ));
@@ -717,7 +719,10 @@ impl<C: Clock> Aggregator<C> {
         let peer_aggregator = self
             .peer_aggregators
             .get(peer_aggregator_url, peer_role)
-            .ok_or(TaskprovOptOutError::NoSuchPeer(*peer_role))?;
+            .ok_or(Error::InvalidTask(
+                *task_id,
+                OptOutReason::NoSuchPeer(*peer_role),
+            ))?;
 
         if !aggregator_auth_token
             .map(|t| peer_aggregator.check_aggregator_auth_token(t))
@@ -727,7 +732,10 @@ impl<C: Clock> Aggregator<C> {
         }
 
         if self.clock.now() > *task_config.task_expiration() {
-            return Err(TaskprovOptOutError::TaskExpired.into());
+            return Err(Error::InvalidTask(
+                *task_id,
+                OptOutReason::TaskExpired.into(),
+            ));
         }
 
         info!(

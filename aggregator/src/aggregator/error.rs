@@ -126,14 +126,14 @@ pub enum Error {
     #[error("request error: {0}")]
     BadRequest(String),
     /// Corresponds to taskprov invalidType (§2)
-    #[error("aggregator has opted out of the indicated task: {0}")]
-    InvalidTask(#[from] TaskprovOptOutError),
+    #[error("aggregator has opted out of the indicated task: {1}")]
+    InvalidTask(TaskId, OptOutReason),
 }
 
 /// Errors that cause the aggregator to opt-out of a taskprov task.
 #[derive(Debug, thiserror::Error)]
-pub enum TaskprovOptOutError {
-    #[error("this aggregator is not peered with the given aggregator in the role {0}")]
+pub enum OptOutReason {
+    #[error("this aggregator is not peered with the given {0} aggregator")]
     NoSuchPeer(Role),
     #[error("task has expired")]
     TaskExpired,
@@ -181,7 +181,7 @@ impl Error {
             Error::Internal(_) => "internal",
             Error::ForbiddenMutation { .. } => "forbidden_mutation",
             Error::BadRequest(_) => "bad_request",
-            Error::InvalidTask(_) => "invalid_task",
+            Error::InvalidTask(_, _) => "invalid_task",
         }
     }
 }
