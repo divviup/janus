@@ -149,7 +149,7 @@ impl InClusterJanusPair {
             },
             expiration: "3000-01-01T00:00:00Z".to_owned(),
             time_precision_seconds: task.time_precision().as_seconds(),
-            hpke_config: STANDARD.encode(task.collector_hpke_config().get_encoded()),
+            hpke_config: STANDARD.encode(task.collector_hpke_config().unwrap().get_encoded()),
         };
 
         // Provision the task into both aggregators via divviup-api
