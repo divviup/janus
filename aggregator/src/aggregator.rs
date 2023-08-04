@@ -275,7 +275,7 @@ impl<C: Clock> Aggregator<C> {
                 let task_aggregator = self
                     .task_aggregator_for(&task_id)
                     .await?
-                    .ok_or_else(|| Error::UnrecognizedTask(task_id))?;
+                    .ok_or(Error::UnrecognizedTask(task_id))?;
                 Ok(task_aggregator.handle_hpke_config())
             }
             None => {
@@ -303,7 +303,7 @@ impl<C: Clock> Aggregator<C> {
         let task_aggregator = self
             .task_aggregator_for(task_id)
             .await?
-            .ok_or_else(|| Error::UnrecognizedTask(*task_id))?;
+            .ok_or(Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Arc::new(Error::UnrecognizedTask(*task_id)));
         }
@@ -385,7 +385,7 @@ impl<C: Clock> Aggregator<C> {
         let task_aggregator = self
             .task_aggregator_for(task_id)
             .await?
-            .ok_or_else(|| Error::UnrecognizedTask(*task_id))?;
+            .ok_or(Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
         }
@@ -433,7 +433,7 @@ impl<C: Clock> Aggregator<C> {
         let task_aggregator = self
             .task_aggregator_for(task_id)
             .await?
-            .ok_or_else(|| Error::UnrecognizedTask(*task_id))?;
+            .ok_or(Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Error::UnrecognizedTask(*task_id));
         }
@@ -462,7 +462,7 @@ impl<C: Clock> Aggregator<C> {
         let task_aggregator = self
             .task_aggregator_for(task_id)
             .await?
-            .ok_or_else(|| Error::UnrecognizedTask(*task_id))?;
+            .ok_or(Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Error::UnrecognizedTask(*task_id));
         }
@@ -488,7 +488,7 @@ impl<C: Clock> Aggregator<C> {
         let task_aggregator = self
             .task_aggregator_for(task_id)
             .await?
-            .ok_or_else(|| Error::UnrecognizedTask(*task_id))?;
+            .ok_or(Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Error::UnrecognizedTask(*task_id));
         }
@@ -518,7 +518,7 @@ impl<C: Clock> Aggregator<C> {
         let task_aggregator = self
             .task_aggregator_for(task_id)
             .await?
-            .ok_or_else(|| Error::UnrecognizedTask(*task_id))?;
+            .ok_or(Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
         }
@@ -2898,9 +2898,9 @@ impl VdafOps {
         // the time the aggregate share was first computed.
         let collector_hpke_config = match peer_aggregator {
             Some(peer_aggregator) => peer_aggregator.collector_hpke_config(),
-            None => task.collector_hpke_config().ok_or(Error::Internal(
-                "task is missing collector_hpke_config".to_string(),
-            ))?,
+            None => task.collector_hpke_config().ok_or_else(|| {
+                Error::Internal("task is missing collector_hpke_config".to_string())
+            })?,
         };
         let encrypted_aggregate_share = hpke::seal(
             collector_hpke_config,
