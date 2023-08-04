@@ -351,9 +351,20 @@ impl Task {
         if self.0.vdaf_verify_keys().is_empty() {
             return Err(Error::InvalidParameter("vdaf_verify_keys"));
         }
-        if let QueryType::FixedSize { max_batch_size } = self.0.query_type() {
+        if let QueryType::FixedSize { max_batch_size, .. } = self.0.query_type() {
             if *max_batch_size < self.0.min_batch_size() {
                 return Err(Error::InvalidParameter("max_batch_size"));
+            }
+        }
+        if let QueryType::FixedSize {
+            batch_time_window_size,
+            ..
+        } = self.0.query_type()
+        {
+            if batch_time_window_size.is_some() {
+                return Err(Error::InvalidParameter(
+                    "batch_time_window_size is not supported for taskprov",
+                ));
             }
         }
 

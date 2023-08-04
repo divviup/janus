@@ -6945,6 +6945,14 @@ async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatast
                     .unwrap(),
                     None
                 );
+                assert_eq!(
+                    tx.get_taskprov_peer_aggregators().await.unwrap(),
+                    vec![
+                        example_leader_peer_aggregator.clone(),
+                        example_helper_peer_aggregator.clone(),
+                        another_example_leader_peer_aggregator.clone(),
+                    ]
+                );
                 Ok(())
             })
         })

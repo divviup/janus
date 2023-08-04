@@ -8,7 +8,7 @@ use crate::{
         query_type::{CollectableQueryType, UploadableQueryType},
         report_writer::{ReportWriteBatcher, WritableReport},
     },
-    cache::GlobalHpkeKeypairCache,
+    cache::{GlobalHpkeKeypairCache, PeerAggregatorCache},
     config::TaskprovConfig,
     Operation,
 };
@@ -170,6 +170,9 @@ pub struct Aggregator<C: Clock> {
 
     /// Cache of global HPKE keypairs and configs.
     global_hpke_keypairs: GlobalHpkeKeypairCache,
+
+    /// Cache of taskprov peer aggregators.
+    peer_aggregators: PeerAggregatorCache,
 }
 
 /// Config represents a configuration for an Aggregator.
@@ -242,6 +245,8 @@ impl<C: Clock> Aggregator<C> {
         )
         .await?;
 
+        let peer_aggregators = PeerAggregatorCache::new(datastore.clone()).await?;
+
         Ok(Self {
             datastore,
             clock,
@@ -252,6 +257,7 @@ impl<C: Clock> Aggregator<C> {
             upload_decode_failure_counter,
             aggregate_step_failure_counter,
             global_hpke_keypairs,
+            peer_aggregators,
         })
     }
 
@@ -684,7 +690,7 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         taskprov_header: &[u8],
         aggregator_auth_token: Option<&AuthenticationToken>,
-    ) -> Result<(TaskConfig, PeerAggregator, Vec<Url>), Error> {
+    ) -> Result<(TaskConfig, Arc<PeerAggregator>, Vec<Url>), Error> {
         let task_config_encoded = &URL_SAFE_NO_PAD.decode(taskprov_header).map_err(|_| {
             Error::UnrecognizedMessage(Some(*task_id), "taskprov header could not be decoded")
         })?;
@@ -707,20 +713,9 @@ impl<C: Clock> Aggregator<C> {
         }
         let peer_aggregator_url = &aggregator_urls[peer_role.index().unwrap()];
 
-        // inahga: cache this
         let peer_aggregator = self
-            .datastore
-            .run_tx_with_name("get_taskprov_peer_aggregator", |tx| {
-                let peer_aggregator_url = peer_aggregator_url.clone();
-                let peer_role = *peer_role;
-                Box::pin(async move {
-                    // This implictly checks whether the current aggregator role is appropriate for
-                    // the upstream API call.
-                    tx.get_taskprov_peer_aggregator(&peer_aggregator_url, &peer_role)
-                        .await
-                })
-            })
-            .await?
+            .peer_aggregators
+            .get(&peer_aggregator_url, &peer_role)
             .ok_or(TaskprovOptOutError::NoSuchPeer(*peer_role))?;
 
         if !aggregator_auth_token

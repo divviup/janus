@@ -4376,6 +4376,80 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     #[tracing::instrument(skip(self), err)]
+    pub async fn get_taskprov_peer_aggregators(&self) -> Result<Vec<PeerAggregator>, Error> {
+        let stmt = self
+            .prepare_cached(
+                "SELECT id, endpoint, role, verify_key_init, collector_hpke_config,
+                        report_expiry_age, tolerable_clock_skew
+                    FROM taskprov_peer_aggregators",
+            )
+            .await?;
+        let peer_aggregator_rows = self.query(&stmt, &[]);
+
+        let stmt = self
+            .prepare_cached(
+                "SELECT (SELECT p.id FROM taskprov_peer_aggregators AS p 
+                    WHERE p.id = a.peer_aggregator_id) AS peer_id,
+                ord, type, token FROM taskprov_aggregator_auth_tokens AS a
+                    ORDER BY ord ASC",
+            )
+            .await?;
+        let aggregator_auth_token_rows = self.query(&stmt, &[]);
+
+        let stmt = self
+            .prepare_cached(
+                "SELECT (SELECT p.id FROM taskprov_peer_aggregators AS p 
+                    WHERE p.id = a.peer_aggregator_id) AS peer_id,
+                ord, type, token FROM taskprov_collector_auth_tokens AS a
+                    ORDER BY ord ASC",
+            )
+            .await?;
+        let collector_auth_token_rows = self.query(&stmt, &[]);
+
+        let (peer_aggregator_rows, aggregator_auth_token_rows, collector_auth_token_rows) = try_join!(
+            peer_aggregator_rows,
+            aggregator_auth_token_rows,
+            collector_auth_token_rows,
+        )?;
+
+        let peer_row_by_id: Vec<_> = peer_aggregator_rows
+            .into_iter()
+            .map(|row| (row.get("id"), row))
+            .collect();
+
+        let mut aggregator_auth_token_rows_by_peer_id: HashMap<i64, Vec<Row>> = HashMap::new();
+        for row in aggregator_auth_token_rows {
+            aggregator_auth_token_rows_by_peer_id
+                .entry(row.get("peer_id"))
+                .or_default()
+                .push(row);
+        }
+
+        let mut collector_auth_token_rows_by_peer_id: HashMap<i64, Vec<Row>> = HashMap::new();
+        for row in collector_auth_token_rows {
+            collector_auth_token_rows_by_peer_id
+                .entry(row.get("peer_id"))
+                .or_default()
+                .push(row);
+        }
+
+        peer_row_by_id
+            .into_iter()
+            .map(|(peer_id, peer_aggregator_row)| {
+                self.taskprov_peer_aggregator_from_rows(
+                    &peer_aggregator_row,
+                    &aggregator_auth_token_rows_by_peer_id
+                        .remove(&peer_id)
+                        .unwrap_or_default(),
+                    &collector_auth_token_rows_by_peer_id
+                        .remove(&peer_id)
+                        .unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+
+    #[tracing::instrument(skip(self), err)]
     pub async fn get_taskprov_peer_aggregator(
         &self,
         aggregator_url: &Url,
@@ -4422,7 +4496,6 @@ impl<C: Clock> Transaction<'_, C> {
         peer_aggregator_row
             .map(|peer_aggregator_row| {
                 self.taskprov_peer_aggregator_from_rows(
-                    aggregator_url,
                     &peer_aggregator_row,
                     &aggregator_auth_token_rows,
                     &collector_auth_token_rows,
@@ -4433,7 +4506,6 @@ impl<C: Clock> Transaction<'_, C> {
 
     fn taskprov_peer_aggregator_from_rows(
         &self,
-        aggregator_url: &str,
         peer_aggregator_row: &Row,
         aggregator_auth_token_rows: &[Row],
         collector_auth_token_rows: &[Row],
@@ -4454,7 +4526,7 @@ impl<C: Clock> Transaction<'_, C> {
             .crypter
             .decrypt(
                 "taskprov_peer_aggregator",
-                aggregator_url.as_ref(),
+                endpoint.as_str().as_ref(),
                 "verify_key_init",
                 &encrypted_verify_key_init,
             )?
@@ -4469,7 +4541,7 @@ impl<C: Clock> Transaction<'_, C> {
                     let encrypted_token: Vec<u8> = row.get("token");
 
                     let mut row_id = Vec::new();
-                    row_id.extend_from_slice(aggregator_url.as_ref());
+                    row_id.extend_from_slice(endpoint.as_str().as_ref());
                     row_id.extend_from_slice(&ord.to_be_bytes());
 
                     auth_token_type.as_authentication(&self.crypter.decrypt(

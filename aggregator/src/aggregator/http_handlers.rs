@@ -2520,6 +2520,7 @@ mod tests {
             ]),
             QueryType::FixedSize {
                 max_batch_size: max_batch_size as u64,
+                batch_time_window_size: None,
             },
             vdaf_instance,
             Role::Helper,

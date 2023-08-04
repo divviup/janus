@@ -487,7 +487,7 @@ impl Distribution<ReportIdChecksum> for Standard {
 }
 
 /// DAP protocol message representing the different roles that participants can adopt.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize, Hash)]
 #[repr(u8)]
 pub enum Role {
     Collector = 0,

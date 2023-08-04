@@ -64,6 +64,7 @@ impl TryFrom<&taskprov::Query> for QueryType {
             taskprov::Query::TimeInterval => Ok(Self::TimeInterval),
             taskprov::Query::FixedSize { max_batch_size } => Ok(Self::FixedSize {
                 max_batch_size: *max_batch_size as u64,
+                batch_time_window_size: None,
             }),
             _ => Err(Error::InvalidParameter("unknown query type")),
         }
