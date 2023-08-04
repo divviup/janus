@@ -72,15 +72,9 @@ fn json_encode_vdaf(vdaf: &VdafInstance) -> Value {
             "length": format!("{length}"),
         }),
         VdafInstance::Prio3Histogram { buckets } => {
-            let buckets = Value::Array(
-                buckets
-                    .iter()
-                    .map(|value| Value::String(format!("{value}")))
-                    .collect(),
-            );
             json!({
                 "type": "Prio3Histogram",
-                "buckets": buckets,
+                "buckets": format!("{buckets}"),
             })
         }
         _ => panic!("VDAF {vdaf:?} is not yet supported"),

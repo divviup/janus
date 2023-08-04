@@ -1001,8 +1001,8 @@ mod tests {
     async fn successful_collect_prio3_histogram() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_histogram(2, &[25, 50, 75, 100]).unwrap();
-        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &80);
+        let vdaf = Prio3::new_histogram(2, 4).unwrap();
+        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &3);
         let collector = setup_collector(&mut server, vdaf);
 
         let batch_interval = Interval::new(
@@ -1058,7 +1058,7 @@ mod tests {
                     ),
                     chrono::Duration::seconds(3600),
                 ),
-                Vec::from([0, 0, 0, 1, 0])
+                Vec::from([0, 0, 0, 1])
             )
         );
 

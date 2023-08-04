@@ -291,7 +291,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             }
 
             (task::QueryType::TimeInterval, VdafInstance::Prio3Histogram { buckets }) => {
-                let vdaf = Arc::new(Prio3::new_histogram(2, buckets)?);
+                let vdaf = Arc::new(Prio3::new_histogram(2, *buckets)?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Histogram>(task, vdaf)
                     .await
             }
@@ -406,7 +406,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 },
                 VdafInstance::Prio3Histogram { buckets },
             ) => {
-                let vdaf = Arc::new(Prio3::new_histogram(2, buckets)?);
+                let vdaf = Arc::new(Prio3::new_histogram(2, *buckets)?);
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
@@ -660,10 +660,7 @@ mod tests {
     };
     use janus_core::{
         task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
-        test_util::{
-            dummy_vdaf::{self},
-            install_test_trace_subscriber,
-        },
+        test_util::{dummy_vdaf, install_test_trace_subscriber},
         time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
     };
     use janus_messages::{

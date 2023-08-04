@@ -21,7 +21,7 @@ pub enum ApiVdaf {
     /// Corresponds to Prio3Count
     Count,
     Histogram {
-        buckets: Vec<u64>,
+        buckets: usize,
     },
     Sum {
         bits: usize,
@@ -35,9 +35,9 @@ impl TryFrom<&VdafInstance> for ApiVdaf {
         match vdaf {
             VdafInstance::Prio3Count => Ok(ApiVdaf::Count),
             VdafInstance::Prio3Sum { bits } => Ok(ApiVdaf::Sum { bits: *bits }),
-            VdafInstance::Prio3Histogram { buckets } => Ok(ApiVdaf::Histogram {
-                buckets: buckets.clone(),
-            }),
+            VdafInstance::Prio3Histogram { buckets } => {
+                Ok(ApiVdaf::Histogram { buckets: *buckets })
+            }
             _ => Err(anyhow!("unsupported VDAF: {vdaf:?}")),
         }
     }

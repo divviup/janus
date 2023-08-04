@@ -6,7 +6,7 @@ use rand::{distributions::Standard, prelude::Distribution};
 use reqwest::Url;
 use ring::constant_time;
 use serde::{de::Error, Deserialize, Deserializer, Serialize};
-use std::{fmt, str};
+use std::str;
 
 /// HTTP header where auth tokens are provided in messages between participants.
 pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
@@ -31,10 +31,7 @@ pub enum VdafInstance {
     /// A vector of `Prio3` sums.
     Prio3SumVec { bits: usize, length: usize },
     /// A `Prio3` histogram.
-    Prio3Histogram {
-        #[derivative(Debug(format_with = "bucket_count"))]
-        buckets: Vec<u64>,
-    },
+    Prio3Histogram { buckets: usize },
     /// A `Prio3` 16-bit fixed point vector sum with bounded L2 norm.
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3FixedPoint16BitBoundedL2VecSum { length: usize },
@@ -61,6 +58,22 @@ pub enum VdafInstance {
     FakeFailsPrepStep,
 }
 
+impl VdafInstance {
+    /// Returns the expected length of a VDAF verification key for a VDAF of this type.
+    pub fn verify_key_length(&self) -> usize {
+        match self {
+            #[cfg(feature = "test-util")]
+            VdafInstance::Fake
+            | VdafInstance::FakeFailsPrepInit
+            | VdafInstance::FakeFailsPrepStep => 0,
+
+            // All "real" VDAFs use a verify key of length 16 currently. (Poplar1 may not, but it's
+            // not yet done being specified, so choosing 16 bytes is fine for testing.)
+            _ => PRIO3_VERIFY_KEY_LENGTH,
+        }
+    }
+}
+
 impl TryFrom<&taskprov::VdafType> for VdafInstance {
     type Error = &'static str;
 
@@ -83,22 +96,6 @@ impl TryFrom<&taskprov::VdafType> for VdafInstance {
 
 fn bucket_count(buckets: &Vec<u64>, f: &mut fmt::Formatter) -> fmt::Result {
     write!(f, "[{} buckets]", buckets.len() + 1)
-}
-
-impl VdafInstance {
-    /// Returns the expected length of a VDAF verification key for a VDAF of this type.
-    pub fn verify_key_length(&self) -> usize {
-        match self {
-            #[cfg(feature = "test-util")]
-            VdafInstance::Fake
-            | VdafInstance::FakeFailsPrepInit
-            | VdafInstance::FakeFailsPrepStep => 0,
-
-            // All "real" VDAFs use a verify key of length 16 currently. (Poplar1 may not, but it's
-            // not yet done being specified, so choosing 16 bytes is fine for testing.)
-            _ => PRIO3_VERIFY_KEY_LENGTH,
-        }
-    }
 }
 
 /// Internal implementation details of [`vdaf_dispatch`](crate::vdaf_dispatch).
@@ -175,7 +172,7 @@ macro_rules! vdaf_dispatch_impl_base {
             }
 
             ::janus_core::task::VdafInstance::Prio3Histogram { buckets } => {
-                let $vdaf = ::prio::vdaf::prio3::Prio3::new_histogram(2, buckets)?;
+                let $vdaf = ::prio::vdaf::prio3::Prio3::new_histogram(2, *buckets)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Histogram;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
@@ -768,9 +765,7 @@ mod tests {
             ],
         );
         assert_tokens(
-            &VdafInstance::Prio3Histogram {
-                buckets: Vec::from([0, 100, 200, 400]),
-            },
+            &VdafInstance::Prio3Histogram { buckets: 6 },
             &[
                 Token::StructVariant {
                     name: "VdafInstance",
@@ -778,12 +773,7 @@ mod tests {
                     len: 1,
                 },
                 Token::Str("buckets"),
-                Token::Seq { len: Some(4) },
-                Token::U64(0),
-                Token::U64(100),
-                Token::U64(200),
-                Token::U64(400),
-                Token::SeqEnd,
+                Token::U64(6),
                 Token::StructVariantEnd,
             ],
         );

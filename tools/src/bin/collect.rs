@@ -203,41 +203,6 @@ impl TypedValueParser for PrivateKeyValueParser {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Buckets(Vec<u64>);
-
-#[derive(Clone)]
-struct BucketsValueParser {
-    inner: NonEmptyStringValueParser,
-}
-
-impl BucketsValueParser {
-    fn new() -> BucketsValueParser {
-        BucketsValueParser {
-            inner: NonEmptyStringValueParser::new(),
-        }
-    }
-}
-
-impl TypedValueParser for BucketsValueParser {
-    type Value = Buckets;
-
-    fn parse_ref(
-        &self,
-        cmd: &clap::Command,
-        arg: Option<&clap::Arg>,
-        value: &std::ffi::OsStr,
-    ) -> Result<Self::Value, clap::Error> {
-        let input = self.inner.parse_ref(cmd, arg, value)?;
-        input
-            .split(',')
-            .map(|chunk| chunk.trim().parse())
-            .collect::<Result<Vec<_>, _>>()
-            .map(Buckets)
-            .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))
-    }
-}
-
 #[derive(Derivative, Args, PartialEq, Eq)]
 #[derivative(Debug)]
 #[group(required = true)]
@@ -367,10 +332,9 @@ struct Options {
         required = false,
         num_args = 1,
         action = ArgAction::Set,
-        value_parser = BucketsValueParser::new(),
         help_heading = "VDAF Algorithm and Parameters"
     )]
-    buckets: Option<Buckets>,
+    buckets: Option<usize>,
 
     #[clap(flatten)]
     query: QueryOptions,
@@ -474,9 +438,8 @@ where
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
         }
-        (VdafType::Histogram, None, None, Some(ref buckets)) => {
-            let vdaf =
-                Prio3::new_histogram(2, &buckets.0).map_err(|err| Error::Anyhow(err.into()))?;
+        (VdafType::Histogram, None, None, Some(buckets)) => {
+            let vdaf = Prio3::new_histogram(2, buckets).map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))

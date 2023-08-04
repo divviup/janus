@@ -95,13 +95,11 @@ async fn janus_janus_sum_16() {
 async fn janus_janus_histogram_4_buckets() {
     install_test_trace_subscriber();
 
-    let buckets = Vec::from([3, 6, 8]);
-
     // Start servers.
     let container_client = container_client();
     let janus_pair = JanusPair::new(
         &container_client,
-        VdafInstance::Prio3Histogram { buckets },
+        VdafInstance::Prio3Histogram { buckets: 4 },
         QueryType::TimeInterval,
     )
     .await;

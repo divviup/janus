@@ -117,7 +117,7 @@ pub enum VdafObject {
         length: NumberAsString<usize>,
     },
     Prio3Histogram {
-        buckets: Vec<NumberAsString<u64>>,
+        buckets: NumberAsString<usize>,
     },
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3FixedPoint16BitBoundedL2VecSum {
@@ -152,7 +152,7 @@ impl From<VdafInstance> for VdafObject {
             },
 
             VdafInstance::Prio3Histogram { buckets } => VdafObject::Prio3Histogram {
-                buckets: buckets.iter().copied().map(NumberAsString).collect(),
+                buckets: NumberAsString(buckets),
             },
 
             #[cfg(feature = "fpvec_bounded_l2")]
@@ -196,9 +196,9 @@ impl From<VdafObject> for VdafInstance {
                 length: length.0,
             },
 
-            VdafObject::Prio3Histogram { buckets } => VdafInstance::Prio3Histogram {
-                buckets: buckets.iter().map(|value| value.0).collect(),
-            },
+            VdafObject::Prio3Histogram { buckets } => {
+                VdafInstance::Prio3Histogram { buckets: buckets.0 }
+            }
 
             #[cfg(feature = "fpvec_bounded_l2")]
             VdafObject::Prio3FixedPoint16BitBoundedL2VecSum { length } => {
