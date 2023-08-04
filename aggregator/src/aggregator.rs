@@ -697,7 +697,7 @@ impl<C: Clock> Aggregator<C> {
         if task_id.as_ref() != digest(&SHA256, task_config_encoded).as_ref() {
             return Err(Error::UnrecognizedMessage(
                 None,
-                "derived task ID does not match task config",
+                "derived taskprov task ID does not match task config",
             ));
         }
 
@@ -709,7 +709,10 @@ impl<C: Clock> Aggregator<C> {
             .map(|url| url.try_into())
             .collect::<Result<Vec<Url>, _>>()?;
         if aggregator_urls.len() < 2 {
-            return Err(TaskprovOptOutError::MissingAggregatorEndpoints.into());
+            return Err(Error::UnrecognizedMessage(
+                Some(*task_id),
+                "taskprov configuration is missing one or both aggregators",
+            ));
         }
         let peer_aggregator_url = &aggregator_urls[peer_role.index().unwrap()];
 
