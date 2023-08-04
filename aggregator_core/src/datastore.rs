@@ -4542,6 +4542,7 @@ impl<C: Clock> Transaction<'_, C> {
 
                     let mut row_id = Vec::new();
                     row_id.extend_from_slice(endpoint.as_str().as_ref());
+                    row_id.extend_from_slice(&role.as_role().get_encoded());
                     row_id.extend_from_slice(&ord.to_be_bytes());
 
                     auth_token_type.as_authentication(&self.crypter.decrypt(
@@ -4626,6 +4627,7 @@ impl<C: Clock> Transaction<'_, C> {
 
                 let mut row_id = Vec::new();
                 row_id.extend_from_slice(endpoint.as_ref());
+                row_id.extend_from_slice(&role.as_role().get_encoded());
                 row_id.extend_from_slice(&ord.to_be_bytes());
 
                 let encrypted_auth_token =
