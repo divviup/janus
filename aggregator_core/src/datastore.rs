@@ -4456,6 +4456,7 @@ impl<C: Clock> Transaction<'_, C> {
         collector_auth_token_rows: &[Row],
     ) -> Result<PeerAggregator, Error> {
         let endpoint = Url::parse(peer_aggregator_row.get::<_, &str>("endpoint"))?;
+        let endpoint_bytes = endpoint.as_str().as_ref();
         let role: AggregatorRole = peer_aggregator_row.get("role");
         let report_expiry_age = peer_aggregator_row
             .get_nullable_bigint_and_convert("report_expiry_age")?
@@ -4471,7 +4472,7 @@ impl<C: Clock> Transaction<'_, C> {
             .crypter
             .decrypt(
                 "taskprov_peer_aggregator",
-                endpoint.as_str().as_ref(),
+                endpoint_bytes,
                 "verify_key_init",
                 &encrypted_verify_key_init,
             )?
@@ -4486,7 +4487,7 @@ impl<C: Clock> Transaction<'_, C> {
                     let encrypted_token: Vec<u8> = row.get("token");
 
                     let mut row_id = Vec::new();
-                    row_id.extend_from_slice(endpoint.as_str().as_ref());
+                    row_id.extend_from_slice(endpoint_bytes);
                     row_id.extend_from_slice(&role.as_role().get_encoded());
                     row_id.extend_from_slice(&ord.to_be_bytes());
 
