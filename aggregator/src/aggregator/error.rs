@@ -133,8 +133,6 @@ pub enum Error {
 /// Errors that cause the aggregator to opt-out of a taskprov task.
 #[derive(Debug, thiserror::Error)]
 pub enum TaskprovOptOutError {
-    #[error("missing one or both aggregator endpoints")]
-    MissingAggregatorEndpoints,
     #[error("this aggregator is not peered with the given aggregator in the role {0}")]
     NoSuchPeer(Role),
     #[error("task has expired")]
