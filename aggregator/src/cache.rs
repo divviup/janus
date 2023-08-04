@@ -158,7 +158,7 @@ impl PeerAggregatorCache {
                 })
                 .await?
                 .into_iter()
-                .map(|peer| Arc::new(peer))
+                .map(Arc::new)
                 .collect(),
         })
     }

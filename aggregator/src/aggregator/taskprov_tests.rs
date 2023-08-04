@@ -128,7 +128,7 @@ async fn setup_taskprov_test() -> TaskprovTestCase {
             "https://helper.example.com/".as_bytes().try_into().unwrap(),
         ]),
         QueryConfig::new(
-            time_precision.clone(),
+            time_precision,
             max_batch_query_count,
             min_batch_size,
             TaskprovQuery::FixedSize { max_batch_size },
@@ -193,18 +193,18 @@ async fn taskprov_aggregate_init() {
         random(),
         test.clock
             .now()
-            .to_batch_interval_start(&test.task.time_precision())
+            .to_batch_interval_start(test.task.time_precision())
             .unwrap(),
     );
     let transcript = run_vdaf(
         &test.vdaf,
-        &test.task.primary_vdaf_verify_key().unwrap().as_bytes(),
+        test.task.primary_vdaf_verify_key().unwrap().as_bytes(),
         &(),
         report_metadata.id(),
         &1,
     );
     let report_share = generate_helper_report_share::<Prio3Count>(
-        test.task_id.clone(),
+        test.task_id,
         report_metadata,
         test.global_hpke_key.config(),
         &transcript.public_share,
@@ -260,7 +260,7 @@ async fn taskprov_aggregate_init() {
     let (aggregation_jobs, got_task) = test
         .datastore
         .run_tx(|tx| {
-            let task_id = test.task_id.clone();
+            let task_id = test.task_id;
             Box::pin(async move {
                 Ok((
                     tx.get_aggregation_jobs_for_task::<16, FixedSize, TestVdaf>(&task_id)
@@ -296,12 +296,12 @@ async fn taskprov_aggregate_continue() {
         random(),
         test.clock
             .now()
-            .to_batch_interval_start(&test.task.time_precision())
+            .to_batch_interval_start(test.task.time_precision())
             .unwrap(),
     );
     let transcript = run_vdaf(
         &test.vdaf,
-        &test.task.primary_vdaf_verify_key().unwrap().as_bytes(),
+        test.task.primary_vdaf_verify_key().unwrap().as_bytes(),
         &(),
         report_metadata.id(),
         &1,
@@ -309,7 +309,7 @@ async fn taskprov_aggregate_continue() {
     let (prep_state, _) = transcript.helper_prep_state(0);
     let prep_msg = transcript.prepare_messages[0].clone();
     let report_share = generate_helper_report_share::<Prio3Count>(
-        test.task_id.clone(),
+        test.task_id,
         report_metadata.clone(),
         test.global_hpke_key.config(),
         &transcript.public_share,

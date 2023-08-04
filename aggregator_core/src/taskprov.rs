@@ -392,4 +392,10 @@ pub mod test_util {
             Self(value)
         }
     }
+
+    impl Default for PeerAggregatorBuilder {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
 }

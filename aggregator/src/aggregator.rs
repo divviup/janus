@@ -342,7 +342,6 @@ impl<C: Clock> Aggregator<C> {
                 task_aggregator
             }
             None if self.cfg.taskprov_config.enabled && taskprov_header.is_some() => {
-                debug!(?task_id, "taskprov: attempting opt-in");
                 self.taskprov_opt_in(
                     &Role::Leader,
                     task_id,
@@ -401,13 +400,11 @@ impl<C: Clock> Aggregator<C> {
                 auth_token.as_ref(),
             )
             .await?;
-        } else {
-            if !auth_token
-                .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
-                .unwrap_or(false)
-            {
-                return Err(Error::UnauthorizedRequest(*task_id));
-            }
+        } else if !auth_token
+            .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
+            .unwrap_or(false)
+        {
+            return Err(Error::UnauthorizedRequest(*task_id));
         }
 
         let req = AggregationJobContinueReq::get_decoded(req_bytes)?;
@@ -653,7 +650,7 @@ impl<C: Clock> Aggregator<C> {
             *task_config.query_config().time_precision(),
             *peer_aggregator.tolerable_clock_skew(),
         )
-        .map_err(|err| TaskprovOptOutError::TaskParameters(err))?;
+        .map_err(TaskprovOptOutError::TaskParameters)?;
         self.datastore
             .run_tx_with_name("taskprov_put_task", |tx| {
                 let task = task.clone();
@@ -719,7 +716,7 @@ impl<C: Clock> Aggregator<C> {
 
         let peer_aggregator = self
             .peer_aggregators
-            .get(&peer_aggregator_url, &peer_role)
+            .get(peer_aggregator_url, peer_role)
             .ok_or(TaskprovOptOutError::NoSuchPeer(*peer_role))?;
 
         if !aggregator_auth_token
@@ -2896,9 +2893,9 @@ impl VdafOps {
         // the time the aggregate share was first computed.
         let collector_hpke_config = match peer_aggregator {
             Some(peer_aggregator) => peer_aggregator.collector_hpke_config(),
-            None => task.collector_hpke_config().ok_or(Error::Internal(format!(
-                "task is missing collector_hpke_config"
-            )))?,
+            None => task.collector_hpke_config().ok_or(Error::Internal(
+                "task is missing collector_hpke_config".to_string(),
+            ))?,
         };
         let encrypted_aggregate_share = hpke::seal(
             collector_hpke_config,
