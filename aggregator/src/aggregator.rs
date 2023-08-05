@@ -103,6 +103,8 @@ pub mod http_handlers;
 pub mod problem_details;
 pub mod query_type;
 pub mod report_writer;
+#[cfg(test)]
+mod taskprov_tests;
 
 pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
     let aggregate_step_failure_counter = meter
