@@ -616,7 +616,10 @@ mod models {
                 tolerable_clock_skew: *task.tolerable_clock_skew(),
                 aggregator_auth_token: task.primary_aggregator_auth_token().clone(),
                 collector_auth_token,
-                collector_hpke_config: task.collector_hpke_config().clone(),
+                collector_hpke_config: task
+                    .collector_hpke_config()
+                    .ok_or("collector_hpke_config is required")?
+                    .clone(),
                 aggregator_hpke_configs,
             })
         }
@@ -973,7 +976,10 @@ mod tests {
         assert_eq!(req.min_batch_size, got_task.min_batch_size());
         assert_eq!(&req.time_precision, got_task.time_precision());
         assert_eq!(1, got_task.aggregator_auth_tokens().len());
-        assert_eq!(&req.collector_hpke_config, got_task.collector_hpke_config());
+        assert_eq!(
+            &req.collector_hpke_config,
+            got_task.collector_hpke_config().unwrap()
+        );
 
         // ...and the response.
         assert_eq!(got_task_resp, TaskResp::try_from(&got_task).unwrap());
@@ -1178,7 +1184,10 @@ mod tests {
         assert_eq!(req.task_expiration.as_ref(), got_task.task_expiration());
         assert_eq!(req.min_batch_size, got_task.min_batch_size());
         assert_eq!(&req.time_precision, got_task.time_precision());
-        assert_eq!(&req.collector_hpke_config, got_task.collector_hpke_config());
+        assert_eq!(
+            &req.collector_hpke_config,
+            got_task.collector_hpke_config().unwrap()
+        );
         assert_eq!(1, got_task.aggregator_auth_tokens().len());
         assert_eq!(
             aggregator_auth_token.as_ref(),
