@@ -5,6 +5,7 @@ use janus_aggregator_core::{datastore::Datastore, instrumented};
 use janus_core::{
     http::extract_bearer_token,
     task::{AuthenticationToken, DAP_AUTH_HEADER},
+    taskprov::TASKPROV_HEADER,
     time::Clock,
 };
 use janus_messages::{
@@ -99,6 +100,9 @@ impl Handler for Error {
             }
             Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
             Error::BadRequest(_) => conn.with_status(Status::BadRequest),
+            Error::InvalidTask(task_id, _) => {
+                conn.with_problem_details(DapProblemType::InvalidTask, Some(task_id))
+            }
         }
     }
 }
@@ -370,8 +374,18 @@ async fn aggregation_jobs_put<C: Clock>(
     let task_id = parse_task_id(&captures)?;
     let aggregation_job_id = parse_aggregation_job_id(&captures)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
+    let taskprov_header = conn
+        .request_headers()
+        .get(TASKPROV_HEADER)
+        .map(|header| header.as_ref());
     let response = aggregator
-        .handle_aggregate_init(&task_id, &aggregation_job_id, &body, auth_token)
+        .handle_aggregate_init(
+            &task_id,
+            &aggregation_job_id,
+            &body,
+            auth_token,
+            taskprov_header,
+        )
         .await?;
 
     Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))
@@ -391,8 +405,18 @@ async fn aggregation_jobs_post<C: Clock>(
     let task_id = parse_task_id(&captures)?;
     let aggregation_job_id = parse_aggregation_job_id(&captures)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
+    let taskprov_header = conn
+        .request_headers()
+        .get(TASKPROV_HEADER)
+        .map(|header| header.as_ref());
     let response = aggregator
-        .handle_aggregate_continue(&task_id, &aggregation_job_id, &body, auth_token)
+        .handle_aggregate_continue(
+            &task_id,
+            &aggregation_job_id,
+            &body,
+            auth_token,
+            taskprov_header,
+        )
         .await?;
 
     Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))
@@ -477,8 +501,12 @@ async fn aggregate_shares<C: Clock>(
 
     let task_id = parse_task_id(&captures)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
+    let taskprov_header = conn
+        .request_headers()
+        .get(TASKPROV_HEADER)
+        .map(|header| header.as_ref());
     let share = aggregator
-        .handle_aggregate_share(&task_id, &body, auth_token)
+        .handle_aggregate_share(&task_id, &body, auth_token, taskprov_header)
         .await?;
 
     Ok(EncodedBody::new(share, AggregateShare::MEDIA_TYPE))
@@ -4444,7 +4472,7 @@ mod tests {
                 let helper_aggregate_share_bytes = helper_aggregate_share.get_encoded();
                 Box::pin(async move {
                     let encrypted_helper_aggregate_share = hpke::seal(
-                        task.collector_hpke_config(),
+                        task.collector_hpke_config().unwrap(),
                         &HpkeApplicationInfo::new(
                             &Label::AggregateShare,
                             &Role::Helper,
@@ -4497,7 +4525,7 @@ mod tests {
         assert_eq!(collect_resp.encrypted_aggregate_shares().len(), 2);
 
         let decrypted_leader_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_config(),
+            test_case.task.collector_hpke_config().unwrap(),
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
             &collect_resp.encrypted_aggregate_shares()[0],
@@ -4515,7 +4543,7 @@ mod tests {
         );
 
         let decrypted_helper_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_config(),
+            test_case.task.collector_hpke_config().unwrap(),
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
             &collect_resp.encrypted_aggregate_shares()[1],

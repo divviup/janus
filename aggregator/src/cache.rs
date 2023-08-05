@@ -1,9 +1,12 @@
 //! Various in-memory caches that can be used by an aggregator.
 
 use crate::aggregator::Error;
-use janus_aggregator_core::datastore::{models::HpkeKeyState, Datastore};
+use janus_aggregator_core::{
+    datastore::{models::HpkeKeyState, Datastore},
+    taskprov::PeerAggregator,
+};
 use janus_core::{hpke::HpkeKeypair, time::Clock};
-use janus_messages::{HpkeConfig, HpkeConfigId};
+use janus_messages::{HpkeConfig, HpkeConfigId, Role};
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -12,6 +15,7 @@ use std::{
 };
 use tokio::{spawn, task::JoinHandle, time::sleep};
 use tracing::{debug, error};
+use url::Url;
 
 type HpkeConfigs = Arc<Vec<HpkeConfig>>;
 type HpkeKeypairs = HashMap<HpkeConfigId, Arc<HpkeKeypair>>;
@@ -135,5 +139,36 @@ impl GlobalHpkeKeypairCache {
 impl Drop for GlobalHpkeKeypairCache {
     fn drop(&mut self) {
         self.refresh_handle.abort()
+    }
+}
+
+/// Caches taskprov [`PeerAggregator`]'s. This cache is never invalidated, so the process needs to
+/// be restarted if there are any changes to peer aggregators.
+#[derive(Debug)]
+pub struct PeerAggregatorCache {
+    peers: Vec<Arc<PeerAggregator>>,
+}
+
+impl PeerAggregatorCache {
+    pub async fn new<C: Clock>(datastore: Arc<Datastore<C>>) -> Result<Self, Error> {
+        Ok(Self {
+            peers: datastore
+                .run_tx_with_name("refresh_peer_aggregators_cache", |tx| {
+                    Box::pin(async move { tx.get_taskprov_peer_aggregators().await })
+                })
+                .await?
+                .into_iter()
+                .map(Arc::new)
+                .collect(),
+        })
+    }
+
+    pub fn get(&self, endpoint: &Url, role: &Role) -> Option<Arc<PeerAggregator>> {
+        // The peer aggregator table is unlikely to be more than a few entries long (1-2 entries),
+        // so a linear search should be fine.
+        self.peers
+            .iter()
+            .find(|peer| peer.endpoint() == endpoint && peer.role() == role)
+            .cloned()
     }
 }
