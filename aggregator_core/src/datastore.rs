@@ -1083,7 +1083,7 @@ impl<C: Clock> Transaction<'_, C> {
                 .map_err(|taskprov_error| {
                     error!(
                         %task_id,
-                        normal_err = %error,
+                        %error,
                         %taskprov_error,
                         ?task,
                         "task has failed all available validation checks",
