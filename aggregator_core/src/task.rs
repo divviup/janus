@@ -6,6 +6,7 @@ use derivative::Derivative;
 use janus_core::{
     hpke::{generate_hpke_config_and_private_key, HpkeKeypair},
     task::{url_ensure_trailing_slash, AuthenticationToken, VdafInstance},
+    time::TimeExt,
 };
 use janus_messages::{
     taskprov, AggregationJobId, CollectionJobId, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId,
@@ -236,7 +237,8 @@ impl Task {
         }
     }
 
-    fn validate(&self) -> Result<(), Error> {
+    /// Validates using criteria common to all tasks regardless of their provenance.
+    pub(crate) fn validate_common(&self) -> Result<(), Error> {
         // DAP currently only supports configurations of exactly two aggregators.
         if self.aggregator_endpoints.len() != 2 {
             return Err(Error::InvalidParameter("aggregator_endpoints"));
@@ -244,6 +246,34 @@ impl Task {
         if !self.role.is_aggregator() {
             return Err(Error::InvalidParameter("role"));
         }
+        if self.vdaf_verify_keys.is_empty() {
+            return Err(Error::InvalidParameter("vdaf_verify_keys"));
+        }
+        if let QueryType::FixedSize { max_batch_size, .. } = self.query_type() {
+            if *max_batch_size < self.min_batch_size() {
+                return Err(Error::InvalidParameter("max_batch_size"));
+            }
+        }
+
+        // These fields are stored as 64-bit signed integers in the database but are held in
+        // memory as unsigned. Reject values that are too large. (perhaps these should be
+        // represented by different types?)
+        if let Some(report_expiry_age) = self.report_expiry_age() {
+            if report_expiry_age > &Duration::from_seconds(i64::MAX as u64) {
+                return Err(Error::InvalidParameter("report_expiry_age too large"));
+            }
+        }
+        if let Some(task_expiration) = self.task_expiration() {
+            task_expiration
+                .as_naive_date_time()
+                .map_err(|_| Error::InvalidParameter("task_expiration out of range"))?;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), Error> {
+        self.validate_common()?;
         if self.aggregator_auth_tokens.is_empty() {
             return Err(Error::InvalidParameter("aggregator_auth_tokens"));
         }
@@ -252,24 +282,16 @@ impl Task {
             // leader role.
             return Err(Error::InvalidParameter("collector_auth_tokens"));
         }
-        if self.vdaf_verify_keys.is_empty() {
-            return Err(Error::InvalidParameter("vdaf_verify_keys"));
-        }
         if self.hpke_keys.is_empty() {
             return Err(Error::InvalidParameter("hpke_keys"));
         }
         if let QueryType::FixedSize {
-            max_batch_size,
-            batch_time_window_size,
+            batch_time_window_size: Some(batch_time_window_size),
+            ..
         } = self.query_type()
         {
-            if *max_batch_size < self.min_batch_size() {
-                return Err(Error::InvalidParameter("max_batch_size"));
-            }
-            if let Some(batch_time_window_size) = batch_time_window_size {
-                if batch_time_window_size.as_seconds() % self.time_precision().as_seconds() != 0 {
-                    return Err(Error::InvalidParameter("batch_time_window_size"));
-                }
+            if batch_time_window_size.as_seconds() % self.time_precision().as_seconds() != 0 {
+                return Err(Error::InvalidParameter("batch_time_window_size"));
             }
         }
         Ok(())

@@ -1,8 +1,5 @@
 use derivative::Derivative;
-use janus_core::{
-    task::{AuthenticationToken, VdafInstance},
-    time::TimeExt,
-};
+use janus_core::task::{AuthenticationToken, VdafInstance};
 use janus_messages::{Duration, HpkeConfig, Role, TaskId, Time};
 use lazy_static::lazy_static;
 use rand::{distributions::Standard, prelude::Distribution};
@@ -225,7 +222,7 @@ impl KeyType for VdafVerifyKeyLength {
 
 /// Newtype for [`task::Task`], which omits certain fields that aren't required for taskprov tasks.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Task(task::Task);
+pub struct Task(pub(super) task::Task);
 
 impl Task {
     #[allow(clippy::too_many_arguments)]
@@ -265,22 +262,8 @@ impl Task {
         Ok(task)
     }
 
-    fn validate(&self) -> Result<(), Error> {
-        // DAP currently only supports configurations of exactly two aggregators.
-        if self.0.aggregator_endpoints().len() != 2 {
-            return Err(Error::InvalidParameter("aggregator_endpoints"));
-        }
-        if !self.0.role().is_aggregator() {
-            return Err(Error::InvalidParameter("role"));
-        }
-        if self.0.vdaf_verify_keys().is_empty() {
-            return Err(Error::InvalidParameter("vdaf_verify_keys"));
-        }
-        if let QueryType::FixedSize { max_batch_size, .. } = self.0.query_type() {
-            if *max_batch_size < self.0.min_batch_size() {
-                return Err(Error::InvalidParameter("max_batch_size"));
-            }
-        }
+    pub(super) fn validate(&self) -> Result<(), Error> {
+        self.0.validate_common()?;
         if let QueryType::FixedSize {
             batch_time_window_size,
             ..
@@ -292,21 +275,6 @@ impl Task {
                 ));
             }
         }
-
-        // These fields are stored as 64-bit signed integers in the database but are held in
-        // memory as unsigned. Reject values that are too large. (perhaps these should be
-        // represented by different types?)
-        if let Some(report_expiry_age) = self.0.report_expiry_age() {
-            if report_expiry_age > &Duration::from_seconds(i64::MAX as u64) {
-                return Err(Error::InvalidParameter("report_expiry_age too large"));
-            }
-        }
-        if let Some(task_expiration) = self.0.task_expiration() {
-            task_expiration
-                .as_naive_date_time()
-                .map_err(|_| Error::InvalidParameter("task_expiration out of range"))?;
-        }
-
         Ok(())
     }
 

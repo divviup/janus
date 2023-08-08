@@ -10,7 +10,7 @@ use self::models::{
 use crate::{
     query_type::{AccumulableQueryType, CollectableQueryType},
     task::{self, Task},
-    taskprov::PeerAggregator,
+    taskprov::{self, PeerAggregator},
     SecretBytes,
 };
 use anyhow::anyhow;
@@ -1056,9 +1056,7 @@ impl<C: Clock> Transaction<'_, C> {
             )?));
         }
 
-        // Don't validate a task on its way out. If it's in the database, we'll assume that it was
-        // constructed in a valid way.
-        Ok(Task::new_without_validation(
+        let task = Task::new_without_validation(
             *task_id,
             endpoints,
             query_type,
@@ -1075,7 +1073,29 @@ impl<C: Clock> Transaction<'_, C> {
             aggregator_auth_tokens,
             collector_auth_tokens,
             hpke_keypairs,
-        ))
+        );
+        // Trial validation through all known schemes. This is a workaround to avoid extending the
+        // schema to track the provenance of tasks. If we do end up implementing a task provenance
+        // column anyways, we can simplify this logic.
+        task.validate().or_else(|error| {
+            taskprov::Task(task.clone())
+                .validate()
+                .map_err(|taskprov_error| {
+                    error!(
+                        %task_id,
+                        normal_err = %error,
+                        %taskprov_error,
+                        ?task,
+                        "task has failed all available validation checks",
+                    );
+                    // Choose some error to bubble up to the caller. Either way this error
+                    // occurring is an indication of a bug, which we'll need to go into the
+                    // logs for.
+                    error
+                })
+        })?;
+
+        Ok(task)
     }
 
     /// Retrieves report & report aggregation metrics for a given task: either a tuple
