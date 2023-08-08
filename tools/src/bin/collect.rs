@@ -683,7 +683,7 @@ mod tests {
         ]);
 
         let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend(["--vdaf=count".to_string(), "--buckets=1,2,3,4".to_string()]);
+        bad_arguments.extend(["--vdaf=count".to_string(), "--buckets=4".to_string()]);
         let bad_options = Options::try_parse_from(bad_arguments).unwrap();
         assert_matches!(
             run(bad_options).await.unwrap_err(),
@@ -691,7 +691,7 @@ mod tests {
         );
 
         let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend(["--vdaf=sum".to_string(), "--buckets=1,2,3,4".to_string()]);
+        bad_arguments.extend(["--vdaf=sum".to_string(), "--buckets=4".to_string()]);
         let bad_options = Options::try_parse_from(bad_arguments).unwrap();
         assert_matches!(
             run(bad_options).await.unwrap_err(),
@@ -699,10 +699,7 @@ mod tests {
         );
 
         let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend([
-            "--vdaf=countvec".to_string(),
-            "--buckets=1,2,3,4".to_string(),
-        ]);
+        bad_arguments.extend(["--vdaf=countvec".to_string(), "--buckets=4".to_string()]);
         let bad_options = Options::try_parse_from(bad_arguments).unwrap();
         assert_matches!(
             run(bad_options).await.unwrap_err(),
@@ -756,7 +753,7 @@ mod tests {
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.extend([
             "--vdaf=histogram".to_string(),
-            "--buckets=1,2,3,4,apple".to_string(),
+            "--buckets=apple".to_string(),
         ]);
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
@@ -796,10 +793,7 @@ mod tests {
         Options::try_parse_from(good_arguments).unwrap();
 
         let mut good_arguments = base_arguments.clone();
-        good_arguments.extend([
-            "--vdaf=histogram".to_string(),
-            "--buckets=1,2,3,4".to_string(),
-        ]);
+        good_arguments.extend(["--vdaf=histogram".to_string(), "--buckets=4".to_string()]);
         Options::try_parse_from(good_arguments).unwrap();
 
         #[cfg(feature = "fpvec_bounded_l2")]
