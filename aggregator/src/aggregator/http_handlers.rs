@@ -1,6 +1,7 @@
 use super::{Aggregator, Config, Error};
 use crate::aggregator::problem_details::ProblemDetailsConnExt;
 use async_trait::async_trait;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{datastore::Datastore, instrumented};
 use janus_core::{
     http::extract_bearer_token,
@@ -9,19 +10,21 @@ use janus_core::{
     time::Clock,
 };
 use janus_messages::{
-    problem_type::DapProblemType, query_type::TimeInterval, AggregateShare, AggregateShareReq,
-    AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
-    Collection, CollectionJobId, CollectionReq, HpkeConfigList, Report, TaskId,
+    codec::Decode, problem_type::DapProblemType, query_type::TimeInterval, taskprov::TaskConfig,
+    AggregateShare, AggregateShareReq, AggregationJobContinueReq, AggregationJobId,
+    AggregationJobInitializeReq, AggregationJobResp, Collection, CollectionJobId, CollectionReq,
+    HpkeConfigList, Report, TaskId,
 };
 use opentelemetry::{
     metrics::{Counter, Meter},
     Context, KeyValue,
 };
 use prio::codec::Encode;
+use ring::digest::{digest, SHA256};
 use routefinder::Captures;
 use serde::Deserialize;
-use std::sync::Arc;
 use std::time::Duration as StdDuration;
+use std::{io::Cursor, sync::Arc};
 use tracing::warn;
 use trillium::{Conn, Handler, KnownHeaderName, Status};
 use trillium_api::{api, State};
@@ -374,17 +377,14 @@ async fn aggregation_jobs_put<C: Clock>(
     let task_id = parse_task_id(&captures)?;
     let aggregation_job_id = parse_aggregation_job_id(&captures)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
-    let taskprov_header = conn
-        .request_headers()
-        .get(TASKPROV_HEADER)
-        .map(|header| header.as_ref());
+    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
     let response = aggregator
         .handle_aggregate_init(
             &task_id,
             &aggregation_job_id,
             &body,
             auth_token,
-            taskprov_header,
+            taskprov_task_config.as_ref(),
         )
         .await?;
 
@@ -405,17 +405,14 @@ async fn aggregation_jobs_post<C: Clock>(
     let task_id = parse_task_id(&captures)?;
     let aggregation_job_id = parse_aggregation_job_id(&captures)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
-    let taskprov_header = conn
-        .request_headers()
-        .get(TASKPROV_HEADER)
-        .map(|header| header.as_ref());
+    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
     let response = aggregator
         .handle_aggregate_continue(
             &task_id,
             &aggregation_job_id,
             &body,
             auth_token,
-            taskprov_header,
+            taskprov_task_config.as_ref(),
         )
         .await?;
 
@@ -501,12 +498,9 @@ async fn aggregate_shares<C: Clock>(
 
     let task_id = parse_task_id(&captures)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
-    let taskprov_header = conn
-        .request_headers()
-        .get(TASKPROV_HEADER)
-        .map(|header| header.as_ref());
+    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
     let share = aggregator
-        .handle_aggregate_share(&task_id, &body, auth_token, taskprov_header)
+        .handle_aggregate_share(&task_id, &body, auth_token, taskprov_task_config.as_ref())
         .await?;
 
     Ok(EncodedBody::new(share, AggregateShare::MEDIA_TYPE))
@@ -576,6 +570,44 @@ fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<Authenticati
                 .map_err(|e| Error::BadRequest(format!("bad DAP-Auth-Token header: {e}")))
         })
         .transpose()
+}
+
+fn parse_taskprov_header<C: Clock>(
+    aggregator: &Aggregator<C>,
+    task_id: &TaskId,
+    conn: &Conn,
+) -> Result<Option<TaskConfig>, Error> {
+    if aggregator.cfg.taskprov_config.enabled {
+        match conn.request_headers().get(TASKPROV_HEADER) {
+            Some(taskprov_header) => {
+                let task_config_encoded =
+                    &URL_SAFE_NO_PAD.decode(taskprov_header).map_err(|_| {
+                        Error::UnrecognizedMessage(
+                            Some(*task_id),
+                            "taskprov header could not be decoded",
+                        )
+                    })?;
+
+                if task_id.as_ref() != digest(&SHA256, task_config_encoded).as_ref() {
+                    Err(Error::UnrecognizedMessage(
+                        Some(*task_id),
+                        "derived taskprov task ID does not match task config",
+                    ))
+                } else {
+                    // TODO(#1684): Parsing the taskprov header like this before we've been able
+                    // to actually authenticate the client is undesireable. We should rework this
+                    // such that the authorization header is handled before parsing the untrusted
+                    // input.
+                    Ok(Some(TaskConfig::decode(&mut Cursor::new(
+                        task_config_encoded,
+                    ))?))
+                }
+            }
+            None => Ok(None),
+        }
+    } else {
+        Ok(None)
+    }
 }
 
 #[cfg(feature = "test-util")]

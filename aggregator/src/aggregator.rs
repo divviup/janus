@@ -76,7 +76,6 @@ use std::{
     borrow::Borrow,
     collections::{hash_map::Entry, HashMap, HashSet},
     fmt::Debug,
-    io::Cursor,
     panic,
     sync::Arc,
     time::{Duration as StdDuration, Instant},
@@ -324,7 +323,7 @@ impl<C: Clock> Aggregator<C> {
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
-        taskprov_header: Option<&[u8]>,
+        taskprov_task_config: Option<&TaskConfig>,
     ) -> Result<AggregationJobResp, Error> {
         let task_aggregator = match self.task_aggregator_for(task_id).await? {
             Some(task_aggregator) => {
@@ -339,11 +338,11 @@ impl<C: Clock> Aggregator<C> {
                 }
                 task_aggregator
             }
-            None if self.cfg.taskprov_config.enabled && taskprov_header.is_some() => {
+            None if self.cfg.taskprov_config.enabled && taskprov_task_config.is_some() => {
                 self.taskprov_opt_in(
                     &Role::Leader,
                     task_id,
-                    taskprov_header.unwrap(),
+                    taskprov_task_config.unwrap(),
                     auth_token.as_ref(),
                 )
                 .await?;
@@ -380,7 +379,7 @@ impl<C: Clock> Aggregator<C> {
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
-        taskprov_header: Option<&[u8]>,
+        taskprov_task_config: Option<&TaskConfig>,
     ) -> Result<AggregationJobResp, Error> {
         let task_aggregator = self
             .task_aggregator_for(task_id)
@@ -390,11 +389,11 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnrecognizedTask(*task_id));
         }
 
-        if self.cfg.taskprov_config.enabled && taskprov_header.is_some() {
+        if self.cfg.taskprov_config.enabled && taskprov_task_config.is_some() {
             self.taskprov_authorize_request(
                 &Role::Leader,
                 task_id,
-                taskprov_header.unwrap(),
+                taskprov_task_config.unwrap(),
                 auth_token.as_ref(),
             )
             .await?;
@@ -513,7 +512,7 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
-        taskprov_header: Option<&[u8]>,
+        taskprov_task_config: Option<&TaskConfig>,
     ) -> Result<AggregateShare, Error> {
         let task_aggregator = self
             .task_aggregator_for(task_id)
@@ -525,33 +524,33 @@ impl<C: Clock> Aggregator<C> {
 
         // Authorize the request and retrieve the collector's HPKE config. If this is a taskprov task, we
         // have to use the peer aggregator's collector config rather than the main task.
-        let collector_hpke_config = if self.cfg.taskprov_config.enabled && taskprov_header.is_some()
-        {
-            let (_, peer_aggregator, _) = self
-                .taskprov_authorize_request(
-                    &Role::Leader,
-                    task_id,
-                    taskprov_header.unwrap(),
-                    auth_token.as_ref(),
-                )
-                .await?;
+        let collector_hpke_config =
+            if self.cfg.taskprov_config.enabled && taskprov_task_config.is_some() {
+                let (peer_aggregator, _) = self
+                    .taskprov_authorize_request(
+                        &Role::Leader,
+                        task_id,
+                        taskprov_task_config.unwrap(),
+                        auth_token.as_ref(),
+                    )
+                    .await?;
 
-            peer_aggregator.collector_hpke_config()
-        } else {
-            if !auth_token
-                .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
-                .unwrap_or(false)
-            {
-                return Err(Error::UnauthorizedRequest(*task_id));
-            }
+                peer_aggregator.collector_hpke_config()
+            } else {
+                if !auth_token
+                    .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
+                    .unwrap_or(false)
+                {
+                    return Err(Error::UnauthorizedRequest(*task_id));
+                }
 
-            task_aggregator
-                .task
-                .collector_hpke_config()
-                .ok_or_else(|| {
-                    Error::Internal("task is missing collector_hpke_config".to_string())
-                })?
-        };
+                task_aggregator
+                    .task
+                    .collector_hpke_config()
+                    .ok_or_else(|| {
+                        Error::Internal("task is missing collector_hpke_config".to_string())
+                    })?
+            };
 
         task_aggregator
             .handle_aggregate_share(
@@ -615,11 +614,11 @@ impl<C: Clock> Aggregator<C> {
         &self,
         peer_role: &Role,
         task_id: &TaskId,
-        taskprov_header: &[u8],
+        task_config: &TaskConfig,
         aggregator_auth_token: Option<&AuthenticationToken>,
     ) -> Result<(), Error> {
-        let (task_config, peer_aggregator, aggregator_urls) = self
-            .taskprov_authorize_request(peer_role, task_id, taskprov_header, aggregator_auth_token)
+        let (peer_aggregator, aggregator_urls) = self
+            .taskprov_authorize_request(peer_role, task_id, task_config, aggregator_auth_token)
             .await?;
 
         // TODO(#1647): Check whether task config parameters are acceptable for privacy and
@@ -697,22 +696,9 @@ impl<C: Clock> Aggregator<C> {
         &self,
         peer_role: &Role,
         task_id: &TaskId,
-        taskprov_header: &[u8],
+        task_config: &TaskConfig,
         aggregator_auth_token: Option<&AuthenticationToken>,
-    ) -> Result<(TaskConfig, &PeerAggregator, Vec<Url>), Error> {
-        let task_config_encoded = &URL_SAFE_NO_PAD.decode(taskprov_header).map_err(|_| {
-            Error::UnrecognizedMessage(Some(*task_id), "taskprov header could not be decoded")
-        })?;
-        if task_id.as_ref() != digest(&SHA256, task_config_encoded).as_ref() {
-            return Err(Error::UnrecognizedMessage(
-                // Don't bother reporting the task ID, since we don't know which one is valid.
-                None,
-                "derived taskprov task ID does not match task config",
-            ));
-        }
-
-        let task_config = TaskConfig::decode(&mut Cursor::new(task_config_encoded))?;
-
+    ) -> Result<(&PeerAggregator, Vec<Url>), Error> {
         let aggregator_urls = task_config
             .aggregator_endpoints()
             .iter()
@@ -751,7 +737,7 @@ impl<C: Clock> Aggregator<C> {
             ?peer_aggregator,
             "taskprov: authorized request"
         );
-        Ok((task_config, peer_aggregator, aggregator_urls))
+        Ok((peer_aggregator, aggregator_urls))
     }
 
     #[cfg(feature = "test-util")]
