@@ -14,8 +14,9 @@ use crate::{
     SecretBytes,
 };
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct VerifyKeyInit([u8; Self::LEN]);
+#[derive(Derivative, Clone, Copy, PartialEq, Eq)]
+#[derivative(Debug)]
+pub struct VerifyKeyInit(#[derivative(Debug = "ignore")] [u8; Self::LEN]);
 
 impl VerifyKeyInit {
     pub const LEN: usize = 32;
@@ -60,10 +61,23 @@ pub struct PeerAggregator {
     #[derivative(Debug = "ignore")]
     verify_key_init: VerifyKeyInit,
 
+    // The HPKE configuration of the collector. This needs to be shared out-of-band with the peer
+    // aggregator.
     collector_hpke_config: HpkeConfig,
+
+    /// How long reports exist until they're eligible for GC. Set to None for no GC. This value is
+    /// copied into the definition for a provisioned task.
     report_expiry_age: Option<Duration>,
+
+    /// The maximum allowable clock skew between peers. This value is copied into the definition for
+    /// a provisioned task.
     tolerable_clock_skew: Duration,
+
+    /// Auth tokens used for authenticating Leader to Helper requests.
     aggregator_auth_tokens: Vec<AuthenticationToken>,
+
+    /// Auth tokens used for authenticating Collector to Leader requests. It should be empty if the
+    /// peer aggregator is the Leader.
     collector_auth_tokens: Vec<AuthenticationToken>,
 }
 
@@ -105,40 +119,48 @@ impl PeerAggregator {
         }
     }
 
+    /// Retrieve the URL endpoint of the peer.
     pub fn endpoint(&self) -> &Url {
         &self.endpoint
     }
 
+    /// Retrieve the role of the peer.
     pub fn role(&self) -> &Role {
         &self.role
     }
 
+    /// Retrieve the VDAF verify key initialization parameter, used for derivation of the VDAF
+    /// verify key for a task.
     pub fn verify_key_init(&self) -> &VerifyKeyInit {
         &self.verify_key_init
     }
 
+    /// Retrieve the collector HPKE configuration for this peer.
     pub fn collector_hpke_config(&self) -> &HpkeConfig {
         &self.collector_hpke_config
     }
 
+    /// Retrieve the report expiry age that each task will be configured with.
     pub fn report_expiry_age(&self) -> Option<&Duration> {
         self.report_expiry_age.as_ref()
     }
 
+    /// Retrieve the maximum tolerable clock skew that each task will be configured with.
     pub fn tolerable_clock_skew(&self) -> &Duration {
         &self.tolerable_clock_skew
     }
 
+    /// Retrieve the [`AuthenticationToken`]s used for authenticating leader to helper requests.
     pub fn aggregator_auth_tokens(&self) -> &[AuthenticationToken] {
         &self.aggregator_auth_tokens
     }
 
+    /// Retrieve the [`AuthenticationToken`]s used for authenticating collector to leader requests.
     pub fn collector_auth_tokens(&self) -> &[AuthenticationToken] {
         &self.collector_auth_tokens
     }
 
-    /// Returns the [`AuthenticationToken`] currently used by this aggregator to authenticate itself
-    /// to other aggregators.
+    /// Returns the [`AuthenticationToken`] currently used by this peer to authenticate itself.
     pub fn primary_aggregator_auth_token(&self) -> &AuthenticationToken {
         self.aggregator_auth_tokens.iter().next_back().unwrap()
     }
@@ -399,5 +421,15 @@ pub mod test_util {
         fn default() -> Self {
             Self::new()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::taskprov::VerifyKeyInit;
+    #[test]
+    fn inahga() {
+        let bytes = [0u8; 32];
+        println!("{:?}", VerifyKeyInit::try_from(bytes.as_slice()).unwrap());
     }
 }

@@ -146,11 +146,11 @@ impl Drop for GlobalHpkeKeypairCache {
 /// be restarted if there are any changes to peer aggregators.
 #[derive(Debug)]
 pub struct PeerAggregatorCache {
-    peers: Vec<Arc<PeerAggregator>>,
+    peers: Vec<PeerAggregator>,
 }
 
 impl PeerAggregatorCache {
-    pub async fn new<C: Clock>(datastore: Arc<Datastore<C>>) -> Result<Self, Error> {
+    pub async fn new<C: Clock>(datastore: &Datastore<C>) -> Result<Self, Error> {
         Ok(Self {
             peers: datastore
                 .run_tx_with_name("refresh_peer_aggregators_cache", |tx| {
@@ -158,17 +158,15 @@ impl PeerAggregatorCache {
                 })
                 .await?
                 .into_iter()
-                .map(Arc::new)
                 .collect(),
         })
     }
 
-    pub fn get(&self, endpoint: &Url, role: &Role) -> Option<Arc<PeerAggregator>> {
+    pub fn get(&self, endpoint: &Url, role: &Role) -> Option<&PeerAggregator> {
         // The peer aggregator table is unlikely to be more than a few entries long (1-2 entries),
         // so a linear search should be fine.
         self.peers
             .iter()
             .find(|peer| peer.endpoint() == endpoint && peer.role() == role)
-            .cloned()
     }
 }

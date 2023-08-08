@@ -110,13 +110,11 @@ impl TryFrom<&[u8]> for Url {
     }
 }
 
-impl TryInto<url::Url> for &Url {
+impl TryFrom<&Url> for url::Url {
     type Error = url::ParseError;
 
-    fn try_into(self) -> Result<url::Url, Self::Error> {
-        // Unwrap safety: this type can't be constructed without being validated
-        // as consisting only of ASCII.
-        url::Url::parse(str::from_utf8(&self.0).unwrap())
+    fn try_from(value: &Url) -> Result<Self, Self::Error> {
+        url::Url::parse(str::from_utf8(&value.0).unwrap())
     }
 }
 

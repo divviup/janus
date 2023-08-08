@@ -5,7 +5,7 @@ CREATE TABLE taskprov_peer_aggregators(
     role AGGREGATOR_ROLE NOT NULL,  -- the role of this aggregator relative to the peer
     verify_key_init BYTEA NOT NULL, -- the preshared key used for VDAF verify key derivation.
 
-    -- Per task parameters.
+    -- Parameters applied to every task created with this peer aggregator.
     tolerable_clock_skew   BIGINT NOT NULL, -- the maximum acceptable clock skew to allow between client and aggregator, in seconds
     report_expiry_age      BIGINT,          -- the maximum age of a report before it is considered expired (and acceptable for garbage collection), in seconds. NULL means that GC is disabled.
     collector_hpke_config BYTEA NOT NULL,   -- the HPKE config of the collector (encoded HpkeConfig message)
