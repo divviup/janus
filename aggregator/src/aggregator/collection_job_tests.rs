@@ -422,6 +422,13 @@ async fn collection_job_success_fixed_size() {
         .put_collection_job(&collection_job_id, &request)
         .await;
     assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(
+        test_conn
+            .response_headers()
+            .get(KnownHeaderName::ContentType)
+            .unwrap(),
+        "application/problem+json"
+    );
     let problem_details: serde_json::Value = serde_json::from_slice(
         &test_conn
             .take_response_body()
