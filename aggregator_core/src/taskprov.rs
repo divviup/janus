@@ -43,8 +43,7 @@ impl Distribution<VerifyKeyInit> for Standard {
 
 /// Represents another aggregator that is peered with our aggregator for taskprov purposes. Contains
 /// data that needs to be identical between both aggregators for the taskprov flow to work.
-#[derive(Clone, Derivative, PartialEq, Eq)]
-#[derivative(Debug)]
+#[derive(Debug, Clone, Derivative, PartialEq, Eq)]
 pub struct PeerAggregator {
     /// The URL at which the peer aggregator can be reached. This, along with `role`, is used to
     /// uniquely represent the peer aggregator.
@@ -55,7 +54,6 @@ pub struct PeerAggregator {
     role: Role,
 
     /// The preshared key used to derive the VDAF verify key for each task.
-    #[derivative(Debug = "ignore")]
     verify_key_init: VerifyKeyInit,
 
     // The HPKE configuration of the collector. This needs to be shared out-of-band with the peer
