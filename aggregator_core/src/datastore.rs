@@ -4542,6 +4542,7 @@ impl<C: Clock> Transaction<'_, C> {
         ))
     }
 
+    #[tracing::instrument(skip(self), err)]
     pub async fn put_taskprov_peer_aggregator(
         &self,
         peer_aggregator: &PeerAggregator,
