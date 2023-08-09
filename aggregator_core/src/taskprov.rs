@@ -389,13 +389,3 @@ pub mod test_util {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::taskprov::VerifyKeyInit;
-    #[test]
-    fn inahga() {
-        let bytes = [0u8; 32];
-        println!("{:?}", VerifyKeyInit::try_from(bytes.as_slice()).unwrap());
-    }
-}
