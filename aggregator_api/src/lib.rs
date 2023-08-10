@@ -105,23 +105,23 @@ pub fn aggregator_api_handler<C: Clock>(ds: Arc<Datastore<C>>, cfg: Config) -> i
                 instrumented(api(get_task_metrics::<C>)),
             )
             .get(
-                "/global-hpke-keypairs",
+                "/hpke_configs",
                 instrumented(api(get_global_hpke_keypairs::<C>)),
             )
             .get(
-                "/global-hpke-keypairs/:config_id",
+                "/hpke_configs/:config_id",
                 instrumented(api(get_global_hpke_keypair::<C>)),
             )
             .put(
-                "/global-hpke-keypairs",
+                "/hpke_configs",
                 instrumented(api(put_global_hpke_keypair::<C>)),
             )
             .patch(
-                "/global-hpke-keypairs/:config_id",
+                "/hpke_configs/:config_id",
                 instrumented(api(patch_global_hpke_keypair::<C>)),
             )
             .delete(
-                "/global-hpke-keypairs/:config_id",
+                "/hpke_configs/:config_id",
                 instrumented(api(delete_global_hpke_keypair::<C>)),
             ),
     )
@@ -480,7 +480,7 @@ async fn get_global_hpke_keypairs<C: Clock>(
 async fn get_global_hpke_keypair<C: Clock>(
     conn: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
-) -> Result<impl Handler, Status> {
+) -> Result<Json<GlobalHpkeKeypairResp>, Status> {
     let config_id = conn.hpke_config_id_param()?;
     Ok(Json(GlobalHpkeKeypairResp::from(
         ds.run_tx_with_name("get_global_hpke_keypair", |tx| {
@@ -498,7 +498,7 @@ async fn get_global_hpke_keypair<C: Clock>(
 async fn put_global_hpke_keypair<C: Clock>(
     _: &mut Conn,
     (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PutGlobalHpkeKeypairReq>),
-) -> Result<impl Handler, Status> {
+) -> Result<(Status, Json<GlobalHpkeKeypairResp>), Status> {
     let existing_keypairs = ds
         .run_tx_with_name("put_global_hpke_keypair_determine_id", |tx| {
             Box::pin(async move { tx.get_global_hpke_keypairs().await })
@@ -513,7 +513,7 @@ async fn put_global_hpke_keypair<C: Clock>(
         .collect::<Vec<_>>();
 
     let config_id = HpkeConfigId::from(
-        (0..u8::MAX)
+        (0..=u8::MAX)
             .find(|i| !existing_keypairs.contains(i))
             .ok_or_else(|| {
                 warn!("All possible IDs for global HPKE key have been taken");
@@ -554,7 +554,7 @@ async fn put_global_hpke_keypair<C: Clock>(
 async fn patch_global_hpke_keypair<C: Clock>(
     conn: &mut Conn,
     (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PatchGlobalHpkeKeypairReq>),
-) -> Result<impl Handler, Status> {
+) -> Result<Status, Status> {
     let config_id = conn.hpke_config_id_param()?;
 
     ds.run_tx_with_name("patch_hpke_global_keypair", |tx| {
@@ -579,7 +579,7 @@ async fn patch_global_hpke_keypair<C: Clock>(
 async fn delete_global_hpke_keypair<C: Clock>(
     conn: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
-) -> Result<impl Handler, Status> {
+) -> Result<Status, Status> {
     let config_id = conn.hpke_config_id_param()?;
     ds.run_tx_with_name("delete_global_hpke_keypair", |tx| {
         Box::pin(async move { tx.delete_global_hpke_keypair(&config_id).await })
