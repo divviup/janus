@@ -13,7 +13,9 @@ use janus_core::{
 };
 use janus_integration_tests::{
     client::ClientBackend,
-    divviup_api_client::{DivviupApiClient, NewAggregatorRequest, NewTaskRequest},
+    divviup_api_client::{
+        DivviupApiClient, NewAggregatorRequest, NewHpkeConfigRequest, NewTaskRequest,
+    },
     TaskParameters,
 };
 use janus_messages::TaskId;
@@ -159,7 +161,7 @@ impl InClusterJanusPair {
             },
             expiration: "3000-01-01T00:00:00Z".to_owned(),
             time_precision_seconds: task.time_precision().as_seconds(),
-            hpke_config: STANDARD.encode(task.collector_hpke_config().get_encoded()),
+            hpke_config_id: collector_hpke_config.id,
         };
 
         // Provision the task into both aggregators via divviup-api
