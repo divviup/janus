@@ -1693,7 +1693,7 @@ mod tests {
     async fn get_global_hpke_keypairs() {
         let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
-        let mut conn = get("/global-hpke-keypairs")
+        let mut conn = get("/hpke_configs")
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .with_request_header("Content-Type", CONTENT_TYPE)
@@ -1732,7 +1732,7 @@ mod tests {
         .await
         .unwrap();
 
-        let mut conn = get("/global-hpke-keypairs")
+        let mut conn = get("/hpke_configs")
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .with_request_header("Content-Type", CONTENT_TYPE)
@@ -1766,7 +1766,7 @@ mod tests {
 
         // Verify: unauthorized requests are denied appropriately.
         assert_response!(
-            put("/global-hpke-keypairs")
+            put("/hpke_configs")
                 .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
@@ -1781,7 +1781,7 @@ mod tests {
 
         // Verify: non-existent key.
         assert_response!(
-            get("/global-hpke-keypairs/123")
+            get("/hpke_configs/123")
                 .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
                 .with_request_header("Accept", CONTENT_TYPE)
                 .with_request_header("Content-Type", CONTENT_TYPE)
@@ -1792,7 +1792,7 @@ mod tests {
 
         // Verify: overflow u8.
         assert_response!(
-            get("/global-hpke-keypairs/1234310294")
+            get("/hpke_configs/1234310294")
                 .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
                 .with_request_header("Accept", CONTENT_TYPE)
                 .with_request_header("Content-Type", CONTENT_TYPE)
@@ -1803,7 +1803,7 @@ mod tests {
 
         // Verify: unauthorized requests are denied appropriately.
         assert_response!(
-            put("/global-hpke-keypairs/123")
+            put("/hpke_configs/123")
                 .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
@@ -1836,7 +1836,7 @@ mod tests {
             (keypair1, HpkeKeyState::Pending),
             (keypair2, HpkeKeyState::Active),
         ] {
-            let mut conn = get(&format!("/global-hpke-keypairs/{}", key.config().id()))
+            let mut conn = get(&format!("/hpke_configs/{}", key.config().id()))
                 .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
                 .with_request_header("Accept", CONTENT_TYPE)
                 .with_request_header("Content-Type", CONTENT_TYPE)
@@ -1867,7 +1867,7 @@ mod tests {
         let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
         // No custom parameters.
-        let mut key1_resp = put("/global-hpke-keypairs")
+        let mut key1_resp = put("/hpke_configs")
             .with_request_body("{}")
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
@@ -1892,7 +1892,7 @@ mod tests {
             kdf_id: Some(HpkeKdfId::HkdfSha512),
             aead_id: Some(HpkeAeadId::ChaCha20Poly1305),
         };
-        let mut key2_resp = put("/global-hpke-keypairs")
+        let mut key2_resp = put("/hpke_configs")
             .with_request_body(serde_json::to_vec(&key2_req).unwrap())
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
@@ -1943,7 +1943,7 @@ mod tests {
 
         // Verify: unauthorized requests are denied appropriately.
         assert_response!(
-            put("/global-hpke-keypairs")
+            put("/hpke_configs")
                 .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
                 .await,
@@ -1962,7 +1962,7 @@ mod tests {
 
         // Verify: non-existent key.
         assert_response!(
-            patch("/global-hpke-keypairs/123")
+            patch("/hpke_configs/123")
                 .with_request_body(serde_json::to_vec(&req).unwrap())
                 .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
                 .with_request_header("Accept", CONTENT_TYPE)
@@ -1974,7 +1974,7 @@ mod tests {
 
         // Verify: overflow u8.
         assert_response!(
-            patch("/global-hpke-keypairs/1234310294")
+            patch("/hpke_configs/1234310294")
                 .with_request_body(serde_json::to_vec(&req).unwrap())
                 .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
                 .with_request_header("Accept", CONTENT_TYPE)
@@ -1986,7 +1986,7 @@ mod tests {
 
         // Verify: invalid body.
         assert_response!(
-            patch("/global-hpke-keypairs/1234310294")
+            patch("/hpke_configs/1234310294")
                 .with_request_body("{}")
                 .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
                 .with_request_header("Accept", CONTENT_TYPE)
@@ -1998,7 +1998,7 @@ mod tests {
 
         // Verify: unauthorized requests are denied appropriately.
         assert_response!(
-            patch("/global-hpke-keypairs/123")
+            patch("/hpke_configs/123")
                 .with_request_body(serde_json::to_vec(&req).unwrap())
                 .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
@@ -2015,7 +2015,7 @@ mod tests {
         .await
         .unwrap();
 
-        let conn = patch(&format!("/global-hpke-keypairs/{}", keypair.config().id()))
+        let conn = patch(&format!("/hpke_configs/{}", keypair.config().id()))
             .with_request_body(serde_json::to_vec(&req).unwrap())
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
@@ -2045,7 +2045,7 @@ mod tests {
 
         // Verify: non-existent key.
         assert_response!(
-            delete("/global-hpke-keypairs/123")
+            delete("/hpke_configs/123")
                 .with_request_body(serde_json::to_vec(&req).unwrap())
                 .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
                 .with_request_header("Accept", CONTENT_TYPE)
@@ -2057,7 +2057,7 @@ mod tests {
 
         // Verify: overflow u8.
         assert_response!(
-            delete("/global-hpke-keypairs/1234310294")
+            delete("/hpke_configs/1234310294")
                 .with_request_body(serde_json::to_vec(&req).unwrap())
                 .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
                 .with_request_header("Accept", CONTENT_TYPE)
@@ -2069,7 +2069,7 @@ mod tests {
 
         // Verify: unauthorized requests are denied appropriately.
         assert_response!(
-            delete("/global-hpke-keypairs/123")
+            delete("/hpke_configs/123")
                 .with_request_body(serde_json::to_vec(&req).unwrap())
                 .with_request_header("Accept", CONTENT_TYPE)
                 .run_async(&handler)
@@ -2086,7 +2086,7 @@ mod tests {
         .await
         .unwrap();
 
-        let conn = delete(&format!("/global-hpke-keypairs/{}", keypair.config().id()))
+        let conn = delete(&format!("/hpke_configs/{}", keypair.config().id()))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .with_request_header("Content-Type", CONTENT_TYPE)
