@@ -17,6 +17,7 @@ pub enum DapProblemType {
     BatchMismatch,
     UnauthorizedRequest,
     BatchOverlap,
+    InvalidTask,
 }
 
 impl DapProblemType {
@@ -45,6 +46,7 @@ impl DapProblemType {
                 "urn:ietf:params:ppm:dap:error:unauthorizedRequest"
             }
             DapProblemType::BatchOverlap => "urn:ietf:params:ppm:dap:error:batchOverlap",
+            DapProblemType::InvalidTask => "urn:ietf:params:ppm:dap:error:invalidTask",
         }
     }
 
@@ -89,6 +91,7 @@ impl DapProblemType {
             DapProblemType::BatchOverlap => {
                 "The queried batch overlaps with a previously queried batch."
             }
+            DapProblemType::InvalidTask => "Aggregator has opted out of the indicated task.",
         }
     }
 }
@@ -128,6 +131,7 @@ impl FromStr for DapProblemType {
                 Ok(DapProblemType::UnauthorizedRequest)
             }
             "urn:ietf:params:ppm:dap:error:batchOverlap" => Ok(DapProblemType::BatchOverlap),
+            "urn:ietf:params:ppm:dap:error:invalidTask" => Ok(DapProblemType::InvalidTask),
             _ => Err(DapProblemTypeParseError),
         }
     }

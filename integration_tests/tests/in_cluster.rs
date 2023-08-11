@@ -137,6 +137,16 @@ impl InClusterJanusPair {
             )
             .await;
 
+        let collector_hpke_config = divviup_api
+            .create_hpke_config(
+                &account,
+                &NewHpkeConfigRequest {
+                    name: "Integration test key".to_string(),
+                    contents: STANDARD.encode(task.collector_hpke_config().unwrap().get_encoded()),
+                },
+            )
+            .await;
+
         let provision_task_request = NewTaskRequest {
             name: "Integration test task".to_string(),
             leader_aggregator_id: paired_leader_aggregator.id,

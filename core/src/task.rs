@@ -1,6 +1,7 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use http::header::AUTHORIZATION;
+use janus_messages::taskprov;
 use rand::{distributions::Standard, prelude::Distribution};
 use reqwest::Url;
 use ring::constant_time;
@@ -47,6 +48,28 @@ pub enum VdafInstance {
     #[cfg(feature = "test-util")]
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
     FakeFailsPrepStep,
+}
+
+impl TryFrom<&taskprov::VdafType> for VdafInstance {
+    type Error = &'static str;
+
+    fn try_from(value: &taskprov::VdafType) -> Result<Self, Self::Error> {
+        match value {
+            taskprov::VdafType::Prio3Aes128Count => Ok(Self::Prio3Aes128Count),
+            taskprov::VdafType::Prio3Aes128Sum { bits } => {
+                Ok(Self::Prio3Aes128Sum { bits: *bits as u32 })
+            }
+            taskprov::VdafType::Prio3Aes128Histogram { buckets } => {
+                Ok(Self::Prio3Aes128Histogram {
+                    buckets: buckets.clone(),
+                })
+            }
+            taskprov::VdafType::Poplar1 { bits } => Ok(Self::Poplar1 {
+                bits: *bits as usize,
+            }),
+            _ => Err("unknown VdafType"),
+        }
+    }
 }
 
 fn bucket_count(buckets: &Vec<u64>, f: &mut fmt::Formatter) -> fmt::Result {

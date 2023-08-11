@@ -55,7 +55,7 @@ impl<'a> Daphne<'a> {
         // arbitrary, far-future task expiration time, instead.
         let task = if task.task_expiration().is_none() {
             TaskBuilder::from(task.clone())
-                .with_task_expiration(Some(Time::from_seconds_since_epoch(10000000000000)))
+                .with_task_expiration(Some(Time::from_seconds_since_epoch(2000000000)))
                 .build()
         } else {
             task.clone()
@@ -181,7 +181,7 @@ impl From<Task> for AggregatorAddTaskRequest {
             max_batch_size,
             time_precision: task.time_precision().as_seconds(),
             collector_hpke_config: URL_SAFE_NO_PAD
-                .encode(task.collector_hpke_config().get_encoded()),
+                .encode(task.collector_hpke_config().unwrap().get_encoded()),
             task_expiration: task.task_expiration().map(Time::as_seconds_since_epoch),
         }
     }
