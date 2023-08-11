@@ -10,14 +10,7 @@ version.workspace = true
 
 [features]
 default = []
-test-util = [
-    "dep:hex",
-    "dep:lazy_static",
-    "dep:sqlx",
-    "dep:testcontainers",
-    "janus_core/test-util",
-    "janus_messages/test-util",
-]
+test-util = ["dep:hex", "dep:sqlx", "dep:testcontainers", "janus_core/test-util", "janus_messages/test-util"]
 
 [dependencies]
 anyhow.workspace = true
@@ -38,7 +31,7 @@ janus_core.workspace = true
 janus_messages.workspace = true
 k8s-openapi.workspace = true
 kube.workspace = true
-lazy_static = { version = "1", optional = true }
+lazy_static = { version = "1" }
 opentelemetry = { workspace = true, features = ["rt-tokio"] }
 postgres-protocol = "0.6.5"
 postgres-types = { version = "0.2.5", features = ["derive", "array-impls"] }

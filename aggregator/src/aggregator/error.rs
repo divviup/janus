@@ -2,7 +2,7 @@ use http_api_problem::HttpApiProblem;
 use janus_aggregator_core::{datastore, task};
 use janus_messages::{
     problem_type::DapProblemType, AggregationJobId, AggregationJobRound, CollectionJobId,
-    HpkeConfigId, Interval, ReportId, ReportIdChecksum, TaskId, Time,
+    HpkeConfigId, Interval, ReportId, ReportIdChecksum, Role, TaskId, Time,
 };
 use prio::vdaf::VdafError;
 use std::{
@@ -125,6 +125,25 @@ pub enum Error {
     /// A catch-all error representing an issue with a request.
     #[error("request error: {0}")]
     BadRequest(String),
+    /// Corresponds to taskprov invalidType (§2)
+    #[error("aggregator has opted out of the indicated task: {1}")]
+    InvalidTask(TaskId, OptOutReason),
+}
+
+/// Errors that cause the aggregator to opt-out of a taskprov task.
+#[derive(Debug, thiserror::Error)]
+pub enum OptOutReason {
+    #[error("this aggregator is not peered with the given {0} aggregator")]
+    NoSuchPeer(Role),
+    #[error("task has expired")]
+    TaskExpired,
+    #[error("invalid task: {0}")]
+    TaskParameters(#[from] task::Error),
+    #[error("URL parse error: {0}")]
+    Url(#[from] url::ParseError),
+    /// Catch-all error for generally invalid parameters.
+    #[error("invalid parameter: {0}")]
+    InvalidParameter(String),
 }
 
 impl Error {
@@ -162,6 +181,7 @@ impl Error {
             Error::Internal(_) => "internal",
             Error::ForbiddenMutation { .. } => "forbidden_mutation",
             Error::BadRequest(_) => "bad_request",
+            Error::InvalidTask(_, _) => "invalid_task",
         }
     }
 }

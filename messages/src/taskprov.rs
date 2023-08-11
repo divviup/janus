@@ -2,7 +2,7 @@
 //!
 //! [1]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
 
-use crate::{Duration, Error, Time, Url};
+use crate::{Duration, Error, Role, Time, Url};
 use anyhow::anyhow;
 use derivative::Derivative;
 use prio::codec::{
@@ -73,6 +73,12 @@ impl TaskConfig {
 
     pub fn vdaf_config(&self) -> &VdafConfig {
         &self.vdaf_config
+    }
+
+    /// Returns the [`Url`] relative to which the server performing `role` serves its API.
+    pub fn aggregator_url(&self, role: &Role) -> Result<&Url, Error> {
+        let index = role.index().ok_or(Error::InvalidParameter(role.as_str()))?;
+        Ok(&self.aggregator_endpoints[index])
     }
 }
 
@@ -236,6 +242,7 @@ impl Decode for QueryConfig {
 ///     directly adjacent to its associated parameters. This is not the case
 ///     in taskprov.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Query {
     Reserved,
     TimeInterval,
