@@ -731,7 +731,7 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::InvalidTask(*task_id, OptOutReason::TaskExpired));
         }
 
-        info!(
+        debug!(
             ?task_id,
             ?task_config,
             ?peer_aggregator,
