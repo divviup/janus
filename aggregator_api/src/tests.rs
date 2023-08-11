@@ -688,25 +688,25 @@ async fn delete_task() {
     .await
     .unwrap();
 
-    // Verify: deleting a task twice returns NotFound.
+    // Verify: deleting a task twice returns NoContent.
     assert_response!(
         delete(&format!("/tasks/{}", &task_id))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
             .await,
-        Status::NotFound,
+        Status::NoContent,
         "",
     );
 
-    // Verify: deleting an arbitrary nonexistent task ID returns NotFound.
+    // Verify: deleting an arbitrary nonexistent task ID returns NoContent.
     assert_response!(
         delete(&format!("/tasks/{}", &random::<TaskId>()))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
             .await,
-        Status::NotFound,
+        Status::NoContent,
         "",
     );
 
@@ -803,7 +803,7 @@ async fn get_task_metrics() {
 
     // Verify: requesting metrics on a nonexistent task returns NotFound.
     assert_response!(
-        delete(&format!("/tasks/{}", &random::<TaskId>()))
+        get(&format!("/tasks/{}/metrics", &random::<TaskId>()))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
@@ -1186,7 +1186,7 @@ async fn delete_global_hpke_config() {
             .with_request_header("Content-Type", CONTENT_TYPE)
             .run_async(&handler)
             .await,
-        Status::NotFound
+        Status::NoContent
     );
 
     // Verify: overflow u8.

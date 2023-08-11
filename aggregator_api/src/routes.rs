@@ -23,8 +23,8 @@ use rand::random;
 use ring::digest::{digest, SHA256};
 use std::{str::FromStr, sync::Arc, unreachable};
 use tracing::{error, warn};
-use trillium::{Conn, Handler, Status};
-use trillium_api::{Halt, Json, State};
+use trillium::{Conn, Status};
+use trillium_api::{Json, State};
 use url::Url;
 
 pub(super) async fn get_config(
@@ -51,7 +51,7 @@ pub(super) async fn get_config(
 pub(super) async fn get_task_ids<C: Clock>(
     conn: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
-) -> Result<impl Handler, Status> {
+) -> Result<Json<GetTaskIdsResp>, Status> {
     const PAGINATION_TOKEN_KEY: &str = "pagination_token";
     let lower_bound = querify(conn.querystring())
         .into_iter()
@@ -74,19 +74,16 @@ pub(super) async fn get_task_ids<C: Clock>(
         })?;
     let pagination_token = task_ids.last().cloned();
 
-    Ok((
-        Json(GetTaskIdsResp {
-            task_ids,
-            pagination_token,
-        }),
-        Halt,
-    ))
+    Ok(Json(GetTaskIdsResp {
+        task_ids,
+        pagination_token,
+    }))
 }
 
 pub(super) async fn post_task<C: Clock>(
     _: &mut Conn,
     (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PostTaskReq>),
-) -> Result<impl Handler, Error> {
+) -> Result<Json<TaskResp>, Error> {
     // We have to resolve impedance mismatches between the aggregator API's view of a task and
     // `aggregator_core::task::Task`. For now, we deal with this in code, but someday the two
     // representations will be harmonized.
@@ -256,7 +253,7 @@ pub(super) async fn post_task<C: Clock>(
 pub(super) async fn get_task<C: Clock>(
     conn: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
-) -> Result<impl Handler, Status> {
+) -> Result<Json<TaskResp>, Status> {
     let task_id = conn.task_id_param()?;
 
     let task = ds
@@ -279,7 +276,7 @@ pub(super) async fn get_task<C: Clock>(
 pub(super) async fn delete_task<C: Clock>(
     conn: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
-) -> Result<impl Handler, Status> {
+) -> Result<Status, Status> {
     let task_id = conn.task_id_param()?;
 
     ds.run_tx_with_name("delete_task", |tx| {
@@ -287,7 +284,7 @@ pub(super) async fn delete_task<C: Clock>(
     })
     .await
     .map_err(|err| match err {
-        datastore::Error::MutationTargetNotFound => Status::NotFound,
+        datastore::Error::MutationTargetNotFound => Status::NoContent,
         _ => {
             error!(err = %err, "Database transaction error");
             Status::InternalServerError
@@ -300,7 +297,7 @@ pub(super) async fn delete_task<C: Clock>(
 pub(super) async fn get_task_metrics<C: Clock>(
     conn: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
-) -> Result<impl Handler, Status> {
+) -> Result<Json<GetTaskMetricsResp>, Status> {
     let task_id = conn.task_id_param()?;
 
     let (reports, report_aggregations) = ds
@@ -448,7 +445,7 @@ pub(super) async fn delete_global_hpke_config<C: Clock>(
     })
     .await
     .map_err(|err| match err {
-        datastore::Error::MutationTargetNotFound => Status::NotFound,
+        datastore::Error::MutationTargetNotFound => Status::NoContent,
         _ => {
             error!(err = %err, "Database transaction error");
             Status::InternalServerError
