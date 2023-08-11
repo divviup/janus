@@ -25,7 +25,7 @@ use ring::digest::{digest, SHA256};
 use std::{str::FromStr, sync::Arc, unreachable};
 use tracing::{error, warn};
 use trillium::{Conn, Status};
-use trillium_api::{Halt, Json, State};
+use trillium_api::{Json, State};
 
 use url::Url;
 
@@ -53,7 +53,7 @@ pub(super) async fn get_config(
 pub(super) async fn get_task_ids<C: Clock>(
     conn: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
-) -> Result<(Json<GetTaskIdsResp>, Halt), Status> {
+) -> Result<Json<GetTaskIdsResp>, Status> {
     const PAGINATION_TOKEN_KEY: &str = "pagination_token";
     let lower_bound = querify(conn.querystring())
         .into_iter()
@@ -76,13 +76,10 @@ pub(super) async fn get_task_ids<C: Clock>(
         })?;
     let pagination_token = task_ids.last().cloned();
 
-    Ok((
-        Json(GetTaskIdsResp {
-            task_ids,
-            pagination_token,
-        }),
-        Halt,
-    ))
+    Ok(Json(GetTaskIdsResp {
+        task_ids,
+        pagination_token,
+    }))
 }
 
 pub(super) async fn post_task<C: Clock>(
