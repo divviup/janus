@@ -1818,7 +1818,7 @@ checksum = "af150ab688ff2122fcef229be89cb50dd66af9e01a4ff320cc137eecc9bacc38"
 
 [[package]]
 name = "janus_aggregator"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -1901,7 +1901,7 @@ dependencies = [
 
 [[package]]
 name = "janus_aggregator_api"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1930,7 +1930,7 @@ dependencies = [
 
 [[package]]
 name = "janus_aggregator_core"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -1985,14 +1985,14 @@ dependencies = [
 
 [[package]]
 name = "janus_build_script_utils"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "zstd",
 ]
 
 [[package]]
 name = "janus_client"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "assert_matches",
  "backoff",
@@ -2015,7 +2015,7 @@ dependencies = [
 
 [[package]]
 name = "janus_collector"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "assert_matches",
  "backoff",
@@ -2040,7 +2040,7 @@ dependencies = [
 
 [[package]]
 name = "janus_core"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2084,7 +2084,7 @@ dependencies = [
 
 [[package]]
 name = "janus_integration_tests"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "anyhow",
  "backoff",
@@ -2115,7 +2115,7 @@ dependencies = [
 
 [[package]]
 name = "janus_interop_binaries"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "anyhow",
  "backoff",
@@ -2158,7 +2158,7 @@ dependencies = [
 
 [[package]]
 name = "janus_messages"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2176,7 +2176,7 @@ dependencies = [
 
 [[package]]
 name = "janus_tools"
-version = "0.5.12"
+version = "0.5.14"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -3266,13 +3266,13 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.9.1"
+version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2eae68fc220f7cf2532e4494aded17545fce192d59cd996e0fe7887f4ceb575"
+checksum = "81bc1d4caf89fac26a70747fe603c130093b53c773888797a6329091246d651a"
 dependencies = [
  "aho-corasick",
  "memchr",
- "regex-automata 0.3.3",
+ "regex-automata 0.3.6",
  "regex-syntax 0.7.4",
 ]
 
@@ -3287,9 +3287,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.3.3"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39354c10dd07468c2e73926b23bb9c2caca74c5501e38a35da70406f1d923310"
+checksum = "fed1ceff11a1dddaee50c9dc8e4938bd106e9d89ae372f192311e7da498e3b69"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -3641,9 +3641,9 @@ checksum = "b0293b4b29daaf487284529cc2f5675b8e57c61f70167ba415a463651fd6a918"
 
 [[package]]
 name = "serde"
-version = "1.0.180"
+version = "1.0.183"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ea67f183f058fe88a4e3ec6e2788e003840893b91bac4559cabedd00863b3ed"
+checksum = "32ac8da02677876d532745a130fc9d8e6edfa81a269b107c5b00829b91d8eb3c"
 dependencies = [
  "serde_derive",
 ]
@@ -3660,9 +3660,9 @@ dependencies = [
 
 [[package]]
 name = "serde_derive"
-version = "1.0.180"
+version = "1.0.183"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24e744d7782b686ab3b73267ef05697159cc0e5abbed3f47f9933165e5219036"
+checksum = "aafe972d60b0b9bee71a91b92fee2d4fb3c9d7e8f6b179aa99f27203d99a4816"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4266,9 +4266,9 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "tempfile"
-version = "3.7.0"
+version = "3.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5486094ee78b2e5038a6382ed7645bc084dc2ec433426ca4c3cb61e2007b8998"
+checksum = "dc02fddf48964c42031a0b3fe0428320ecf3a73c401040fc0096f97794310651"
 dependencies = [
  "cfg-if",
  "fastrand 2.0.0",
@@ -4779,9 +4779,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-api"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b9f41bf4e58d42642f4ba58d0d609d7d06499fea2df21d66f371a63f2849f8a"
+checksum = "09858200af96cce5cb8c5353df2ed6f5048b62856b35c733af4eecae8479211c"
 dependencies = [
  "log",
  "mime",

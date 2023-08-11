@@ -53,7 +53,7 @@ pub struct NewTaskRequest {
     pub max_batch_size: Option<u64>,
     pub expiration: String,
     pub time_precision_seconds: u64,
-    pub hpke_config: String,
+    pub hpke_config_id: String,
 }
 
 /// Representation of a DAP task in responses from divviup-api. This application ignores several
@@ -79,6 +79,20 @@ pub struct NewAggregatorRequest {
 pub struct DivviUpAggregator {
     pub id: String,
     pub dap_url: Url,
+}
+
+/// Request to create an HPKE config in divviup-api.
+#[derive(Serialize)]
+pub struct NewHpkeConfigRequest {
+    pub name: String,
+    pub contents: String,
+}
+
+/// Representation of an HPKE config in responses from divviup-api. This application ignores most
+/// fields that we never use.
+#[derive(Deserialize)]
+pub struct DivviUpHpkeConfig {
+    pub id: String,
 }
 
 /// Representation of a collector auth token in divviup-api.
@@ -171,6 +185,20 @@ impl DivviupApiClient {
             &format!("accounts/{}/aggregators", account.id),
             Some(request),
             "Aggregator pairing",
+        )
+        .await
+    }
+
+    pub async fn create_hpke_config(
+        &self,
+        account: &Account,
+        request: &NewHpkeConfigRequest,
+    ) -> DivviUpHpkeConfig {
+        self.make_request(
+            Method::POST,
+            &format!("accounts/{}/hpke_configs", account.id),
+            Some(request),
+            "HPKE config creation",
         )
         .await
     }

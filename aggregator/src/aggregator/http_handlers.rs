@@ -738,6 +738,13 @@ mod tests {
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
         assert_eq!(
+            test_conn
+                .response_headers()
+                .get(KnownHeaderName::ContentType)
+                .unwrap(),
+            "application/problem+json"
+        );
+        assert_eq!(
             take_problem_details(&mut test_conn).await,
             json!({
                 "status": 400u16,
@@ -753,6 +760,13 @@ mod tests {
         // Expected status and problem type should be per the protocol
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.1
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        assert_eq!(
+            test_conn
+                .response_headers()
+                .get(KnownHeaderName::ContentType)
+                .unwrap(),
+            "application/problem+json"
+        );
         assert_eq!(
             take_problem_details(&mut test_conn).await,
             json!({
