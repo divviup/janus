@@ -18,8 +18,8 @@ use janus_messages::{
     TaskId,
 };
 use models::{
-    AggregatorApiConfig, AggregatorRole, GetTaskIdsResp, GetTaskMetricsResp, GlobalHpkeKeypairResp,
-    PatchGlobalHpkeKeypairReq, PostTaskReq, PutGlobalHpkeKeypairReq, SupportedVdaf, TaskResp,
+    AggregatorApiConfig, AggregatorRole, GetTaskIdsResp, GetTaskMetricsResp, GlobalHpkeConfigResp,
+    PatchGlobalHpkeConfigReq, PostTaskReq, PutGlobalHpkeConfigReq, SupportedVdaf, TaskResp,
 };
 use querystring::querify;
 use rand::random;
@@ -106,23 +106,23 @@ pub fn aggregator_api_handler<C: Clock>(ds: Arc<Datastore<C>>, cfg: Config) -> i
             )
             .get(
                 "/hpke_configs",
-                instrumented(api(get_global_hpke_keypairs::<C>)),
+                instrumented(api(get_global_hpke_configs::<C>)),
             )
             .get(
                 "/hpke_configs/:config_id",
-                instrumented(api(get_global_hpke_keypair::<C>)),
+                instrumented(api(get_global_hpke_config::<C>)),
             )
             .put(
                 "/hpke_configs",
-                instrumented(api(put_global_hpke_keypair::<C>)),
+                instrumented(api(put_global_hpke_config::<C>)),
             )
             .patch(
                 "/hpke_configs/:config_id",
-                instrumented(api(patch_global_hpke_keypair::<C>)),
+                instrumented(api(patch_global_hpke_config::<C>)),
             )
             .delete(
                 "/hpke_configs/:config_id",
-                instrumented(api(delete_global_hpke_keypair::<C>)),
+                instrumented(api(delete_global_hpke_config::<C>)),
             ),
     )
 }
@@ -458,12 +458,12 @@ async fn get_task_metrics<C: Clock>(
     }))
 }
 
-async fn get_global_hpke_keypairs<C: Clock>(
+async fn get_global_hpke_configs<C: Clock>(
     _: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
-) -> Result<impl Handler, Status> {
+) -> Result<Json<Vec<GlobalHpkeConfigResp>>, Status> {
     Ok(Json(
-        ds.run_tx_with_name("get_global_hpke_keypairs", |tx| {
+        ds.run_tx_with_name("get_global_hpke_configs", |tx| {
             Box::pin(async move { tx.get_global_hpke_keypairs().await })
         })
         .await
@@ -472,18 +472,18 @@ async fn get_global_hpke_keypairs<C: Clock>(
             Status::InternalServerError
         })?
         .into_iter()
-        .map(GlobalHpkeKeypairResp::from)
+        .map(GlobalHpkeConfigResp::from)
         .collect::<Vec<_>>(),
     ))
 }
 
-async fn get_global_hpke_keypair<C: Clock>(
+async fn get_global_hpke_config<C: Clock>(
     conn: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
-) -> Result<Json<GlobalHpkeKeypairResp>, Status> {
+) -> Result<Json<GlobalHpkeConfigResp>, Status> {
     let config_id = conn.hpke_config_id_param()?;
-    Ok(Json(GlobalHpkeKeypairResp::from(
-        ds.run_tx_with_name("get_global_hpke_keypair", |tx| {
+    Ok(Json(GlobalHpkeConfigResp::from(
+        ds.run_tx_with_name("get_global_hpke_config", |tx| {
             Box::pin(async move { tx.get_global_hpke_keypair(&config_id).await })
         })
         .await
@@ -495,12 +495,12 @@ async fn get_global_hpke_keypair<C: Clock>(
     )))
 }
 
-async fn put_global_hpke_keypair<C: Clock>(
+async fn put_global_hpke_config<C: Clock>(
     _: &mut Conn,
-    (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PutGlobalHpkeKeypairReq>),
-) -> Result<(Status, Json<GlobalHpkeKeypairResp>), Status> {
+    (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PutGlobalHpkeConfigReq>),
+) -> Result<(Status, Json<GlobalHpkeConfigResp>), Status> {
     let existing_keypairs = ds
-        .run_tx_with_name("put_global_hpke_keypair_determine_id", |tx| {
+        .run_tx_with_name("put_global_hpke_config_determine_id", |tx| {
             Box::pin(async move { tx.get_global_hpke_keypairs().await })
         })
         .await
@@ -528,7 +528,7 @@ async fn put_global_hpke_keypair<C: Clock>(
     );
 
     let inserted_keypair = ds
-        .run_tx_with_name("put_global_hpke_keypair", |tx| {
+        .run_tx_with_name("put_global_hpke_config", |tx| {
             let keypair = keypair.clone();
             Box::pin(async move {
                 tx.put_global_hpke_keypair(&keypair).await?;
@@ -547,13 +547,13 @@ async fn put_global_hpke_keypair<C: Clock>(
 
     Ok((
         Status::Created,
-        Json(GlobalHpkeKeypairResp::from(inserted_keypair)),
+        Json(GlobalHpkeConfigResp::from(inserted_keypair)),
     ))
 }
 
-async fn patch_global_hpke_keypair<C: Clock>(
+async fn patch_global_hpke_config<C: Clock>(
     conn: &mut Conn,
-    (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PatchGlobalHpkeKeypairReq>),
+    (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PatchGlobalHpkeConfigReq>),
 ) -> Result<Status, Status> {
     let config_id = conn.hpke_config_id_param()?;
 
@@ -576,12 +576,12 @@ async fn patch_global_hpke_keypair<C: Clock>(
     Ok(Status::Ok)
 }
 
-async fn delete_global_hpke_keypair<C: Clock>(
+async fn delete_global_hpke_config<C: Clock>(
     conn: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
 ) -> Result<Status, Status> {
     let config_id = conn.hpke_config_id_param()?;
-    ds.run_tx_with_name("delete_global_hpke_keypair", |tx| {
+    ds.run_tx_with_name("delete_global_hpke_config", |tx| {
         Box::pin(async move { tx.delete_global_hpke_keypair(&config_id).await })
     })
     .await
@@ -793,12 +793,12 @@ mod models {
     }
 
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-    pub(crate) struct GlobalHpkeKeypairResp {
+    pub(crate) struct GlobalHpkeConfigResp {
         pub(crate) config: HpkeConfig,
         pub(crate) state: HpkeKeyState,
     }
 
-    impl From<GlobalHpkeKeypair> for GlobalHpkeKeypairResp {
+    impl From<GlobalHpkeKeypair> for GlobalHpkeConfigResp {
         fn from(value: GlobalHpkeKeypair) -> Self {
             Self {
                 config: value.hpke_keypair().config().clone(),
@@ -808,14 +808,14 @@ mod models {
     }
 
     #[derive(Serialize, Deserialize)]
-    pub(crate) struct PutGlobalHpkeKeypairReq {
+    pub(crate) struct PutGlobalHpkeConfigReq {
         pub(crate) kem_id: Option<HpkeKemId>,
         pub(crate) kdf_id: Option<HpkeKdfId>,
         pub(crate) aead_id: Option<HpkeAeadId>,
     }
 
     #[derive(Serialize, Deserialize)]
-    pub(crate) struct PatchGlobalHpkeKeypairReq {
+    pub(crate) struct PatchGlobalHpkeConfigReq {
         pub(crate) state: HpkeKeyState,
     }
 }
@@ -858,8 +858,8 @@ mod tests {
     use crate::{
         aggregator_api_handler,
         models::{
-            GetTaskIdsResp, GetTaskMetricsResp, GlobalHpkeKeypairResp, PatchGlobalHpkeKeypairReq,
-            PostTaskReq, PutGlobalHpkeKeypairReq, TaskResp,
+            GetTaskIdsResp, GetTaskMetricsResp, GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq,
+            PostTaskReq, PutGlobalHpkeConfigReq, TaskResp,
         },
         Config, CONTENT_TYPE,
     };
@@ -1690,7 +1690,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_global_hpke_keypairs() {
+    async fn get_global_hpke_configs() {
         let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
         let mut conn = get("/hpke_configs")
@@ -1700,7 +1700,7 @@ mod tests {
             .run_async(&handler)
             .await;
         assert_response!(conn, Status::Ok);
-        let resp: Vec<GlobalHpkeKeypairResp> = serde_json::from_slice(
+        let resp: Vec<GlobalHpkeConfigResp> = serde_json::from_slice(
             &conn
                 .take_response_body()
                 .unwrap()
@@ -1739,7 +1739,7 @@ mod tests {
             .run_async(&handler)
             .await;
         assert_response!(conn, Status::Ok);
-        let mut resp: Vec<GlobalHpkeKeypairResp> = serde_json::from_slice(
+        let mut resp: Vec<GlobalHpkeConfigResp> = serde_json::from_slice(
             &conn
                 .take_response_body()
                 .unwrap()
@@ -1751,11 +1751,11 @@ mod tests {
         resp.sort_by(|a, b| a.config.id().cmp(b.config.id()));
 
         let mut expected = vec![
-            GlobalHpkeKeypairResp {
+            GlobalHpkeConfigResp {
                 config: keypair1.config().clone(),
                 state: HpkeKeyState::Pending,
             },
-            GlobalHpkeKeypairResp {
+            GlobalHpkeConfigResp {
                 config: keypair2.config().clone(),
                 state: HpkeKeyState::Active,
             },
@@ -1776,7 +1776,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_global_hpke_keypair() {
+    async fn get_global_hpke_config() {
         let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
         // Verify: non-existent key.
@@ -1843,7 +1843,7 @@ mod tests {
                 .run_async(&handler)
                 .await;
             assert_response!(conn, Status::Ok);
-            let resp: GlobalHpkeKeypairResp = serde_json::from_slice(
+            let resp: GlobalHpkeConfigResp = serde_json::from_slice(
                 &conn
                     .take_response_body()
                     .unwrap()
@@ -1854,7 +1854,7 @@ mod tests {
             .unwrap();
             assert_eq!(
                 resp,
-                GlobalHpkeKeypairResp {
+                GlobalHpkeConfigResp {
                     config: key.config().clone(),
                     state,
                 },
@@ -1863,7 +1863,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn put_global_hpke_keypair() {
+    async fn put_global_hpke_config() {
         let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
         // No custom parameters.
@@ -1876,7 +1876,7 @@ mod tests {
             .await;
 
         assert_response!(key1_resp, Status::Created);
-        let key1: GlobalHpkeKeypairResp = serde_json::from_slice(
+        let key1: GlobalHpkeConfigResp = serde_json::from_slice(
             &key1_resp
                 .take_response_body()
                 .unwrap()
@@ -1887,7 +1887,7 @@ mod tests {
         .unwrap();
 
         // Choose some custom non-default ciphers.
-        let key2_req = PutGlobalHpkeKeypairReq {
+        let key2_req = PutGlobalHpkeConfigReq {
             kem_id: Some(HpkeKemId::X25519HkdfSha256),
             kdf_id: Some(HpkeKdfId::HkdfSha512),
             aead_id: Some(HpkeAeadId::ChaCha20Poly1305),
@@ -1901,7 +1901,7 @@ mod tests {
             .await;
 
         assert_response!(key1_resp, Status::Created);
-        let key2: GlobalHpkeKeypairResp = serde_json::from_slice(
+        let key2: GlobalHpkeConfigResp = serde_json::from_slice(
             &key2_resp
                 .take_response_body()
                 .unwrap()
@@ -1927,7 +1927,7 @@ mod tests {
 
         assert_eq!(
             key1,
-            GlobalHpkeKeypairResp {
+            GlobalHpkeConfigResp {
                 config: got_key1.unwrap().hpke_keypair().config().clone(),
                 state: HpkeKeyState::Pending,
             }
@@ -1935,7 +1935,7 @@ mod tests {
 
         assert_eq!(
             key2,
-            GlobalHpkeKeypairResp {
+            GlobalHpkeConfigResp {
                 config: got_key2.unwrap().hpke_keypair().config().clone(),
                 state: HpkeKeyState::Pending,
             }
@@ -1953,10 +1953,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn patch_global_hpke_keypair() {
+    async fn patch_global_hpke_config() {
         let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
-        let req = PatchGlobalHpkeKeypairReq {
+        let req = PatchGlobalHpkeConfigReq {
             state: HpkeKeyState::Active,
         };
 
@@ -2036,10 +2036,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_global_hpke_keypair() {
+    async fn delete_global_hpke_config() {
         let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
-        let req = PatchGlobalHpkeKeypairReq {
+        let req = PatchGlobalHpkeConfigReq {
             state: HpkeKeyState::Active,
         };
 
