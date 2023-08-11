@@ -23,7 +23,6 @@ use querystring::querify;
 use rand::random;
 use ring::digest::{digest, SHA256};
 use std::{str::FromStr, sync::Arc, unreachable};
-use tracing::{error, warn};
 use trillium::{Conn, Status};
 use trillium_api::{Json, State};
 
@@ -53,27 +52,20 @@ pub(super) async fn get_config(
 pub(super) async fn get_task_ids<C: Clock>(
     conn: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
-) -> Result<Json<GetTaskIdsResp>, Status> {
+) -> Result<Json<GetTaskIdsResp>, Error> {
     const PAGINATION_TOKEN_KEY: &str = "pagination_token";
     let lower_bound = querify(conn.querystring())
         .into_iter()
         .find(|&(k, _)| k == PAGINATION_TOKEN_KEY)
         .map(|(_, v)| TaskId::from_str(v))
         .transpose()
-        .map_err(|err| {
-            warn!(err = ?err, "Couldn't parse pagination_token");
-            Status::BadRequest
-        })?;
+        .map_err(|err| Error::BadRequest(format!("Couldn't parse pagination_token: {:?}", err)))?;
 
     let task_ids = ds
         .run_tx_with_name("get_task_ids", |tx| {
             Box::pin(async move { tx.get_task_ids(lower_bound).await })
         })
-        .await
-        .map_err(|err| {
-            error!(err = %err, "Database transaction error");
-            Status::InternalServerError
-        })?;
+        .await?;
     let pagination_token = task_ids.last().cloned();
 
     Ok(Json(GetTaskIdsResp {
@@ -92,10 +84,7 @@ pub(super) async fn post_task<C: Clock>(
     // https://github.com/divviup/janus/issues/1524
 
     if !matches!(req.role, Role::Leader | Role::Helper) {
-        return Err(Error::new(
-            format!("invalid role {}", req.role),
-            Status::BadRequest,
-        ));
+        return Err(Error::BadRequest(format!("invalid role {}", req.role)));
     }
 
     // struct `aggregator_core::task::Task` expects to get two aggregator endpoint URLs, but only
@@ -113,37 +102,30 @@ pub(super) async fn post_task<C: Clock>(
     let vdaf_verify_key_bytes = URL_SAFE_NO_PAD
         .decode(&req.vdaf_verify_key)
         .map_err(|err| {
-            Error::new(
-                format!("Invalid base64 value for vdaf_verify_key: {err}"),
-                Status::BadRequest,
-            )
+            Error::BadRequest(format!("Invalid base64 value for vdaf_verify_key: {err}"))
         })?;
     if vdaf_verify_key_bytes.len() != req.vdaf.verify_key_length() {
-        return Err(Error::new(
-            format!(
-                "Wrong VDAF verify key length, expected {}, got {}",
-                req.vdaf.verify_key_length(),
-                vdaf_verify_key_bytes.len()
-            ),
-            Status::BadRequest,
-        ));
+        return Err(Error::BadRequest(format!(
+            "Wrong VDAF verify key length, expected {}, got {}",
+            req.vdaf.verify_key_length(),
+            vdaf_verify_key_bytes.len()
+        )));
     }
 
     // DAP recommends deriving the task ID from the VDAF verify key. We deterministically obtain a
     // 32 byte task ID by taking SHA-256(VDAF verify key).
     // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-04#name-verification-key-requiremen
     let task_id = TaskId::try_from(digest(&SHA256, &vdaf_verify_key_bytes).as_ref())
-        .map_err(|err| Error::new(err.to_string(), Status::InternalServerError))?;
+        .map_err(|err| Error::Internal(err.to_string()))?;
 
     let vdaf_verify_keys = Vec::from([SecretBytes::new(vdaf_verify_key_bytes)]);
 
     let (aggregator_auth_tokens, collector_auth_tokens) = match req.role {
         Role::Leader => {
             let aggregator_auth_token = req.aggregator_auth_token.ok_or_else(|| {
-                Error::new(
+                Error::BadRequest(
                     "aggregator acting in leader role must be provided an aggregator auth token"
                         .to_string(),
-                    Status::BadRequest,
                 )
             })?;
             (Vec::from([aggregator_auth_token]), Vec::from([random()]))
@@ -151,10 +133,9 @@ pub(super) async fn post_task<C: Clock>(
 
         Role::Helper => {
             if req.aggregator_auth_token.is_some() {
-                return Err(Error::new(
+                return Err(Error::BadRequest(
                     "aggregator acting in helper role cannot be given an aggregator auth token"
                         .to_string(),
-                    Status::BadRequest,
                 ));
             }
 
@@ -192,12 +173,7 @@ pub(super) async fn post_task<C: Clock>(
             collector_auth_tokens,
             hpke_keys,
         )
-        .map_err(|err| {
-            Error::new(
-                format!("Error constructing task: {err}"),
-                Status::BadRequest,
-            )
-        })?,
+        .map_err(|err| Error::BadRequest(format!("Error constructing task: {err}")))?,
     );
 
     ds.run_tx_with_name("post_task", |tx| {
@@ -219,9 +195,9 @@ pub(super) async fn post_task<C: Clock>(
                     return Ok(())
                 }
 
-                let err = Error::new(
-                    "task with same VDAF verify key and task ID already exists with different parameters".to_string(),
+                let err = Error::Err(
                     Status::Conflict,
+                    "task with same VDAF verify key and task ID already exists with different parameters".to_string(),
                 );
                 return Err(datastore::Error::User(err.into()));
             }
@@ -229,89 +205,59 @@ pub(super) async fn post_task<C: Clock>(
             tx.put_task(&task).await
         })
     })
-    .await
-    .map_err(|err| {
-        match err {
-            datastore::Error::User(user_err) if user_err.is::<Error>() => {
-                // unwrap safety: we checked if the downcast is valid in the guard
-                *user_err.downcast::<Error>().unwrap()
-            }
-            _ => {
-                error!(err = %err, "Database transaction error");
-                Error::new(
-                    "Error storing task".to_string(),
-                    Status::InternalServerError,
-                )
-            }
-        }
+    .await?;
 
-    })?;
-
-    Ok(Json(TaskResp::try_from(task.as_ref()).map_err(|err| {
-        Error::new(err.to_string(), Status::InternalServerError)
-    })?))
+    Ok(Json(
+        TaskResp::try_from(task.as_ref()).map_err(|err| Error::Internal(err.to_string()))?,
+    ))
 }
 
 pub(super) async fn get_task<C: Clock>(
     conn: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
-) -> Result<Json<TaskResp>, Status> {
+) -> Result<Json<TaskResp>, Error> {
     let task_id = conn.task_id_param()?;
 
     let task = ds
         .run_tx_with_name("get_task", |tx| {
             Box::pin(async move { tx.get_task(&task_id).await })
         })
-        .await
-        .map_err(|err| {
-            error!(err = %err, "Database transaction error");
-            Status::InternalServerError
-        })?
-        .ok_or(Status::NotFound)?;
+        .await?
+        .ok_or(Error::NotFound)?;
 
-    Ok(Json(TaskResp::try_from(&task).map_err(|err| {
-        error!(err = %err, "Error converting task to TaskResp");
-        Status::InternalServerError
-    })?))
+    Ok(Json(
+        TaskResp::try_from(&task).map_err(|err| Error::Internal(err.to_string()))?,
+    ))
 }
 
 pub(super) async fn delete_task<C: Clock>(
     conn: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
-) -> Result<Status, Status> {
+) -> Result<Status, Error> {
     let task_id = conn.task_id_param()?;
-
-    ds.run_tx_with_name("delete_task", |tx| {
-        Box::pin(async move { tx.delete_task(&task_id).await })
-    })
-    .await
-    .map_err(|err| match err {
-        datastore::Error::MutationTargetNotFound => Status::NoContent,
-        _ => {
-            error!(err = %err, "Database transaction error");
-            Status::InternalServerError
-        }
-    })?;
-
-    Ok(Status::NoContent)
+    match ds
+        .run_tx_with_name("delete_task", |tx| {
+            Box::pin(async move { tx.delete_task(&task_id).await })
+        })
+        .await
+    {
+        Ok(_) | Err(datastore::Error::MutationTargetNotFound) => Ok(Status::NoContent),
+        Err(err) => Err(err.into()),
+    }
 }
 
 pub(super) async fn get_task_metrics<C: Clock>(
     conn: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
-) -> Result<Json<GetTaskMetricsResp>, Status> {
+) -> Result<Json<GetTaskMetricsResp>, Error> {
     let task_id = conn.task_id_param()?;
 
     let (reports, report_aggregations) = ds
         .run_tx_with_name("get_task_metrics", |tx| {
             Box::pin(async move { tx.get_task_metrics(&task_id).await })
         })
-        .await
-        .map_err(|err| {
-            error!(err = %err, "Database transaction error");
-            Status::InternalServerError
-        })?
-        .ok_or(Status::NotFound)?;
+        .await?
+        .ok_or(Error::NotFound)?;
 
     Ok(Json(GetTaskMetricsResp {
         reports,
@@ -322,16 +268,12 @@ pub(super) async fn get_task_metrics<C: Clock>(
 pub(super) async fn get_global_hpke_configs<C: Clock>(
     _: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
-) -> Result<Json<Vec<GlobalHpkeConfigResp>>, Status> {
+) -> Result<Json<Vec<GlobalHpkeConfigResp>>, Error> {
     Ok(Json(
         ds.run_tx_with_name("get_global_hpke_configs", |tx| {
             Box::pin(async move { tx.get_global_hpke_keypairs().await })
         })
-        .await
-        .map_err(|err| {
-            error!(err = %err, "Database transaction error");
-            Status::InternalServerError
-        })?
+        .await?
         .into_iter()
         .map(GlobalHpkeConfigResp::from)
         .collect::<Vec<_>>(),
@@ -341,34 +283,26 @@ pub(super) async fn get_global_hpke_configs<C: Clock>(
 pub(super) async fn get_global_hpke_config<C: Clock>(
     conn: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
-) -> Result<Json<GlobalHpkeConfigResp>, Status> {
+) -> Result<Json<GlobalHpkeConfigResp>, Error> {
     let config_id = conn.hpke_config_id_param()?;
     Ok(Json(GlobalHpkeConfigResp::from(
         ds.run_tx_with_name("get_global_hpke_config", |tx| {
             Box::pin(async move { tx.get_global_hpke_keypair(&config_id).await })
         })
-        .await
-        .map_err(|err| {
-            error!(err = %err, "Database transaction error");
-            Status::InternalServerError
-        })?
-        .ok_or(Status::NotFound)?,
+        .await?
+        .ok_or(Error::NotFound)?,
     )))
 }
 
 pub(super) async fn put_global_hpke_config<C: Clock>(
     _: &mut Conn,
     (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PutGlobalHpkeConfigReq>),
-) -> Result<(Status, Json<GlobalHpkeConfigResp>), Status> {
+) -> Result<(Status, Json<GlobalHpkeConfigResp>), Error> {
     let existing_keypairs = ds
         .run_tx_with_name("put_global_hpke_config_determine_id", |tx| {
             Box::pin(async move { tx.get_global_hpke_keypairs().await })
         })
-        .await
-        .map_err(|err| {
-            error!(err = %err, "Database transaction error");
-            Status::InternalServerError
-        })?
+        .await?
         .iter()
         .map(|keypair| u8::from(*keypair.hpke_keypair().config().id()))
         .collect::<Vec<_>>();
@@ -377,8 +311,10 @@ pub(super) async fn put_global_hpke_config<C: Clock>(
         (0..=u8::MAX)
             .find(|i| !existing_keypairs.contains(i))
             .ok_or_else(|| {
-                warn!("All possible IDs for global HPKE key have been taken");
-                Status::Conflict
+                Error::Err(
+                    Status::Conflict,
+                    "All possible IDs for global HPKE key have been taken".to_string(),
+                )
             })?,
     );
     let keypair = generate_hpke_config_and_private_key(
@@ -396,15 +332,8 @@ pub(super) async fn put_global_hpke_config<C: Clock>(
                 tx.get_global_hpke_keypair(&config_id).await
             })
         })
-        .await
-        .map_err(|err| {
-            error!(err = %err, "Database transaction error");
-            Status::InternalServerError
-        })?
-        .ok_or_else(|| {
-            error!(config_id = %config_id, "Newly inserted key disappeared");
-            Status::InternalServerError
-        })?;
+        .await?
+        .ok_or_else(|| Error::Internal("Newly inserted key disappeared".to_string()))?;
 
     Ok((
         Status::Created,
@@ -415,7 +344,7 @@ pub(super) async fn put_global_hpke_config<C: Clock>(
 pub(super) async fn patch_global_hpke_config<C: Clock>(
     conn: &mut Conn,
     (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PatchGlobalHpkeConfigReq>),
-) -> Result<Status, Status> {
+) -> Result<Status, Error> {
     let config_id = conn.hpke_config_id_param()?;
 
     ds.run_tx_with_name("patch_hpke_global_keypair", |tx| {
@@ -425,14 +354,7 @@ pub(super) async fn patch_global_hpke_config<C: Clock>(
                 .await
         })
     })
-    .await
-    .map_err(|err| match err {
-        datastore::Error::MutationTargetNotFound => Status::NotFound,
-        _ => {
-            error!(err = %err, "Database transaction error");
-            Status::InternalServerError
-        }
-    })?;
+    .await?;
 
     Ok(Status::Ok)
 }
@@ -440,18 +362,15 @@ pub(super) async fn patch_global_hpke_config<C: Clock>(
 pub(super) async fn delete_global_hpke_config<C: Clock>(
     conn: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
-) -> Result<Status, Status> {
+) -> Result<Status, Error> {
     let config_id = conn.hpke_config_id_param()?;
-    ds.run_tx_with_name("delete_global_hpke_config", |tx| {
-        Box::pin(async move { tx.delete_global_hpke_keypair(&config_id).await })
-    })
-    .await
-    .map_err(|err| match err {
-        datastore::Error::MutationTargetNotFound => Status::NoContent,
-        _ => {
-            error!(err = %err, "Database transaction error");
-            Status::InternalServerError
-        }
-    })?;
-    Ok(Status::NoContent)
+    match ds
+        .run_tx_with_name("delete_global_hpke_config", |tx| {
+            Box::pin(async move { tx.delete_global_hpke_keypair(&config_id).await })
+        })
+        .await
+    {
+        Ok(_) | Err(datastore::Error::MutationTargetNotFound) => Ok(Status::NoContent),
+        Err(err) => Err(err.into()),
+    }
 }
