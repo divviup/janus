@@ -144,7 +144,7 @@ impl InClusterJanusPair {
                 &account,
                 &NewHpkeConfigRequest {
                     name: "Integration test key".to_string(),
-                    contents: STANDARD.encode(task.collector_hpke_config().get_encoded()),
+                    contents: STANDARD.encode(task.collector_hpke_config().unwrap().get_encoded()),
                 },
             )
             .await;
