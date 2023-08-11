@@ -1,16 +1,16 @@
 use crate::{
     models::{
         AggregatorApiConfig, AggregatorRole, GetTaskIdsResp, GetTaskMetricsResp,
-        GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PostTaskReq, PutGlobalHpkeConfigReq,
-        SupportedVdaf, TaskResp,
+        GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PostTaskReq, PostTaskprovPeerAggregatorReq,
+        PutGlobalHpkeConfigReq, SupportedVdaf, TaskResp, TaskprovPeerAggregatorResp,
     },
     Config, ConnExt, Error,
 };
-
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
     datastore::{self, Datastore},
     task::Task,
+    taskprov::PeerAggregator,
     SecretBytes,
 };
 use janus_core::{hpke::generate_hpke_config_and_private_key, time::Clock};
@@ -25,7 +25,6 @@ use ring::digest::{digest, SHA256};
 use std::{str::FromStr, sync::Arc, unreachable};
 use trillium::{Conn, Status};
 use trillium_api::{Json, State};
-
 use url::Url;
 
 pub(super) async fn get_config(
@@ -123,20 +122,18 @@ pub(super) async fn post_task<C: Clock>(
     let (aggregator_auth_tokens, collector_auth_tokens) = match req.role {
         Role::Leader => {
             let aggregator_auth_token = req.aggregator_auth_token.ok_or_else(|| {
-                Error::BadRequest(
+                Error::BadRequest(format!(
                     "aggregator acting in leader role must be provided an aggregator auth token"
-                        .to_string(),
-                )
+                ))
             })?;
             (Vec::from([aggregator_auth_token]), Vec::from([random()]))
         }
 
         Role::Helper => {
             if req.aggregator_auth_token.is_some() {
-                return Err(Error::BadRequest(
+                return Err(Error::BadRequest(format!(
                     "aggregator acting in helper role cannot be given an aggregator auth token"
-                        .to_string(),
-                ));
+                )));
             }
 
             (Vec::from([random()]), Vec::new())
@@ -368,5 +365,131 @@ pub(super) async fn delete_global_hpke_config<C: Clock>(
     {
         Ok(_) | Err(datastore::Error::MutationTargetNotFound) => Ok(Status::NoContent),
         Err(err) => Err(err.into()),
+    }
+}
+
+pub(super) async fn get_taskprov_peer_aggregators<C: Clock>(
+    conn: &mut Conn,
+    State(ds): State<Arc<Datastore<C>>>,
+) -> Result<Json<Vec<TaskprovPeerAggregatorResp>>, Error> {
+    Ok(match get_endpoint_and_role(conn)? {
+        Some((endpoint, role)) => Json(Vec::from([ds
+            .run_tx_with_name("get_taskprov_peer_aggregator", |tx| {
+                let endpoint = endpoint.clone();
+                let role = role;
+                Box::pin(async move { tx.get_taskprov_peer_aggregator(&endpoint, &role).await })
+            })
+            .await?
+            .map(TaskprovPeerAggregatorResp::from)
+            .ok_or(Error::NotFound)?])),
+        None => Json(
+            ds.run_tx_with_name("get_taskprov_peer_aggregators", |tx| {
+                Box::pin(async move { tx.get_taskprov_peer_aggregators().await })
+            })
+            .await?
+            .into_iter()
+            .map(TaskprovPeerAggregatorResp::from)
+            .collect::<Vec<_>>(),
+        ),
+    })
+}
+
+/// Inserts a new peer aggregator. Insertion is only supported, attempting to modify an existing
+/// peer aggregator will fail.
+///
+/// TODO(1685): Requiring that we delete an existing peer aggregator before we can change it makes
+/// token rotation cumbersome and fragile. Since token rotation is the main use case for updating
+/// an existing peer aggregator, we will resolve peer aggregator updates in that issue.
+pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
+    conn: &mut Conn,
+    (State(ds), Json(req)): (
+        State<Arc<Datastore<C>>>,
+        Json<PostTaskprovPeerAggregatorReq>,
+    ),
+) -> Result<(Status, Json<TaskprovPeerAggregatorResp>), Error> {
+    let (endpoint, role) = get_endpoint_and_role(conn)?.ok_or(Error::BadRequest(
+        "Must supply endpoint and role parameters".to_string(),
+    ))?;
+
+    let to_insert = PeerAggregator::new(
+        endpoint.clone(),
+        role,
+        req.verify_key_init,
+        req.collector_hpke_config,
+        req.report_expiry_age,
+        req.tolerable_clock_skew,
+        req.aggregator_auth_tokens,
+        req.collector_auth_tokens,
+    );
+
+    let inserted = ds
+        .run_tx_with_name("post_taskprov_peer_aggregator", |tx| {
+            let endpoint = endpoint.clone();
+            let to_insert = to_insert.clone();
+            let role = role;
+            Box::pin(async move {
+                tx.put_taskprov_peer_aggregator(&to_insert).await?;
+                tx.get_taskprov_peer_aggregator(&endpoint, &role).await
+            })
+        })
+        .await?
+        .map(TaskprovPeerAggregatorResp::from)
+        .ok_or_else(|| Error::Internal("Newly inserted peer aggregator disappeared".to_string()))?;
+
+    Ok((Status::Created, Json(inserted)))
+}
+
+pub(super) async fn delete_taskprov_peer_aggregator<C: Clock>(
+    conn: &mut Conn,
+    State(ds): State<Arc<Datastore<C>>>,
+) -> Result<Status, Error> {
+    let (endpoint, role) = get_endpoint_and_role(conn)?.ok_or(Error::BadRequest(
+        "Must supply endpoint and role parameters".to_string(),
+    ))?;
+
+    match ds
+        .run_tx_with_name("delete_taskprov_peer_aggregator", |tx| {
+            let endpoint = endpoint.clone();
+            let role = role;
+            Box::pin(async move { tx.delete_taskprov_peer_aggregator(&endpoint, &role).await })
+        })
+        .await
+    {
+        Ok(_) | Err(datastore::Error::MutationTargetNotFound) => Ok(Status::NoContent),
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn get_endpoint_and_role(conn: &Conn) -> Result<Option<(Url, Role)>, Error> {
+    let params = serde_urlencoded::from_str::<Vec<(String, String)>>(conn.querystring())?;
+
+    let endpoint = params
+        .iter()
+        .find(|(k, _)| *k == "endpoint")
+        .map(|endpoint| Url::parse(&endpoint.1))
+        .transpose()?;
+
+    let role = params
+        .iter()
+        .find(|(k, _)| *k == "role")
+        .map(|role| {
+            let role = Role::from_str(&role.1)?;
+            if !role.is_aggregator() {
+                Err(Error::BadRequest(
+                    "Role must be leader or helper".to_string(),
+                ))
+            } else {
+                Ok(role)
+            }
+        })
+        .transpose()?;
+
+    match (endpoint, role) {
+        (Some(endpoint), Some(role)) => Ok(Some((endpoint, role))),
+        (None, None) => Ok(None),
+        // Partial queries are not supported.
+        (_, _) => Err(Error::BadRequest(format!(
+            "Must supply both 'endpoint' and 'role' parameters"
+        ))),
     }
 }

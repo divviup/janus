@@ -2,6 +2,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
     datastore::models::{GlobalHpkeKeypair, HpkeKeyState},
     task::{QueryType, Task},
+    taskprov::{PeerAggregator, VerifyKeyInit},
 };
 use janus_core::task::{AuthenticationToken, VdafInstance};
 use janus_messages::{
@@ -222,4 +223,36 @@ pub(crate) struct PutGlobalHpkeConfigReq {
 #[derive(Serialize, Deserialize)]
 pub(crate) struct PatchGlobalHpkeConfigReq {
     pub(crate) state: HpkeKeyState,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TaskprovPeerAggregatorResp {
+    pub(crate) endpoint: Url,
+    pub(crate) role: Role,
+    pub(crate) collector_hpke_config: HpkeConfig,
+    pub(crate) report_expiry_age: Option<Duration>,
+    pub(crate) tolerable_clock_skew: Duration,
+}
+
+impl From<PeerAggregator> for TaskprovPeerAggregatorResp {
+    fn from(value: PeerAggregator) -> Self {
+        // Exclude sensitive values.
+        Self {
+            endpoint: value.endpoint().clone(),
+            role: value.role().clone(),
+            collector_hpke_config: value.collector_hpke_config().clone(),
+            report_expiry_age: value.report_expiry_age().cloned(),
+            tolerable_clock_skew: value.tolerable_clock_skew().clone(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct PostTaskprovPeerAggregatorReq {
+    pub(crate) collector_hpke_config: HpkeConfig,
+    pub(crate) verify_key_init: VerifyKeyInit,
+    pub(crate) report_expiry_age: Option<Duration>,
+    pub(crate) tolerable_clock_skew: Duration,
+    pub(crate) aggregator_auth_tokens: Vec<AuthenticationToken>,
+    pub(crate) collector_auth_tokens: Vec<AuthenticationToken>,
 }

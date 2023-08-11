@@ -1917,6 +1917,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_test",
+ "serde_urlencoded",
  "thiserror",
  "tokio",
  "tracing",

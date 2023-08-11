@@ -2,7 +2,8 @@ use crate::{
     aggregator_api_handler,
     models::{
         GetTaskIdsResp, GetTaskMetricsResp, GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq,
-        PostTaskReq, PutGlobalHpkeConfigReq, TaskResp,
+        PostTaskReq, PostTaskprovPeerAggregatorReq, PutGlobalHpkeConfigReq, TaskResp,
+        TaskprovPeerAggregatorResp,
     },
     Config, CONTENT_TYPE,
 };
@@ -18,6 +19,7 @@ use janus_aggregator_core::{
         Datastore,
     },
     task::{test_util::TaskBuilder, QueryType, Task},
+    taskprov::test_util::PeerAggregatorBuilder,
     SecretBytes,
 };
 use janus_core::{
@@ -47,6 +49,7 @@ use trillium::{Handler, Status};
 use trillium_testing::{
     assert_response, assert_status,
     prelude::{delete, get, patch, post, put},
+    Url,
 };
 
 const AUTH_TOKEN: &str = "Y29sbGVjdG9yLWFiY2RlZjAw";
@@ -1241,6 +1244,331 @@ async fn delete_global_hpke_config() {
             .await
             .unwrap(),
         vec![]
+    );
+}
+
+#[tokio::test]
+async fn get_taskprov_peer_aggregator() {
+    let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
+
+    let leader = PeerAggregatorBuilder::new()
+        .with_endpoint(Url::parse("https://leader.example.com/").unwrap())
+        .with_role(Role::Leader)
+        .build();
+    let helper = PeerAggregatorBuilder::new()
+        .with_endpoint(Url::parse("https://helper.example.com/").unwrap())
+        .with_role(Role::Helper)
+        .build();
+
+    ds.run_tx(|tx| {
+        let leader = leader.clone();
+        let helper = helper.clone();
+        Box::pin(async move {
+            tx.put_taskprov_peer_aggregator(&leader).await?;
+            tx.put_taskprov_peer_aggregator(&helper).await?;
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
+
+    // List all.
+    let mut conn = get("/taskprov/peer_aggregators")
+        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+        .with_request_header("Accept", CONTENT_TYPE)
+        .with_request_header("Content-Type", CONTENT_TYPE)
+        .run_async(&handler)
+        .await;
+    assert_response!(conn, Status::Ok);
+    let mut resp: Vec<TaskprovPeerAggregatorResp> = serde_json::from_slice(
+        &conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    resp.sort_by(|a, b| a.endpoint.cmp(&b.endpoint));
+
+    let mut expected = vec![
+        TaskprovPeerAggregatorResp {
+            endpoint: leader.endpoint().clone(),
+            role: *leader.role(),
+            collector_hpke_config: leader.collector_hpke_config().clone(),
+            report_expiry_age: leader.report_expiry_age().cloned(),
+            tolerable_clock_skew: *leader.tolerable_clock_skew(),
+        },
+        TaskprovPeerAggregatorResp {
+            endpoint: helper.endpoint().clone(),
+            role: *helper.role(),
+            collector_hpke_config: helper.collector_hpke_config().clone(),
+            report_expiry_age: helper.report_expiry_age().cloned(),
+            tolerable_clock_skew: *helper.tolerable_clock_skew(),
+        },
+    ];
+    expected.sort_by(|a, b| a.endpoint.cmp(&b.endpoint));
+
+    assert_eq!(resp, expected);
+
+    let mut conn = get(format!(
+        "/taskprov/peer_aggregators?{}",
+        serde_urlencoded::to_string(vec![
+            ("endpoint", "https://helper.example.com/"),
+            ("role", "helper")
+        ])
+        .unwrap()
+    ))
+    .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+    .with_request_header("Accept", CONTENT_TYPE)
+    .with_request_header("Content-Type", CONTENT_TYPE)
+    .run_async(&handler)
+    .await;
+    assert_response!(conn, Status::Ok);
+    assert_eq!(
+        serde_json::from_slice::<Vec<TaskprovPeerAggregatorResp>>(
+            &conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap(),
+        vec![helper.into()]
+    );
+
+    // Non-existent peer.
+    assert_response!(
+        get(format!(
+            "/taskprov/peer_aggregators?{}",
+            serde_urlencoded::to_string(vec![
+                ("endpoint", "https://doesnt.exist.example.com/"),
+                ("role", "leader")
+            ])
+            .unwrap()
+        ))
+        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+        .with_request_header("Accept", CONTENT_TYPE)
+        .with_request_header("Content-Type", CONTENT_TYPE)
+        .run_async(&handler)
+        .await,
+        Status::NotFound
+    );
+
+    // Missing endpoint.
+    assert_response!(
+        get(format!(
+            "/taskprov/peer_aggregators?{}",
+            serde_urlencoded::to_string(vec![("role", "leader")]).unwrap()
+        ))
+        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+        .with_request_header("Accept", CONTENT_TYPE)
+        .with_request_header("Content-Type", CONTENT_TYPE)
+        .run_async(&handler)
+        .await,
+        Status::BadRequest
+    );
+
+    // Missing role.
+    assert_response!(
+        get(format!(
+            "/taskprov/peer_aggregators?{}",
+            serde_urlencoded::to_string(vec![("endpoint", "https://leader.example.com/")]).unwrap()
+        ))
+        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+        .with_request_header("Accept", CONTENT_TYPE)
+        .with_request_header("Content-Type", CONTENT_TYPE)
+        .run_async(&handler)
+        .await,
+        Status::BadRequest
+    );
+
+    // Missing authorization.
+    assert_response!(
+        get("/taskprov/peer_aggregators")
+            .with_request_header("Accept", CONTENT_TYPE)
+            .with_request_header("Content-Type", CONTENT_TYPE)
+            .run_async(&handler)
+            .await,
+        Status::Unauthorized
+    );
+}
+
+#[tokio::test]
+async fn post_taskprov_peer_aggregator() {
+    let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
+
+    let leader = PeerAggregatorBuilder::new()
+        .with_endpoint(Url::parse("https://leader.example.com/").unwrap())
+        .with_role(Role::Leader)
+        .build();
+
+    let req = PostTaskprovPeerAggregatorReq {
+        collector_hpke_config: leader.collector_hpke_config().clone(),
+        verify_key_init: leader.verify_key_init().clone(),
+        report_expiry_age: leader.report_expiry_age().cloned(),
+        tolerable_clock_skew: leader.tolerable_clock_skew().clone(),
+        aggregator_auth_tokens: Vec::from(leader.aggregator_auth_tokens()),
+        collector_auth_tokens: Vec::from(leader.collector_auth_tokens()),
+    };
+
+    let mut conn = post(format!(
+        "/taskprov/peer_aggregators?{}",
+        serde_urlencoded::to_string(vec![
+            ("endpoint", "https://leader.example.com/"),
+            ("role", "leader")
+        ])
+        .unwrap()
+    ))
+    .with_request_body(serde_json::to_vec(&req).unwrap())
+    .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+    .with_request_header("Accept", CONTENT_TYPE)
+    .with_request_header("Content-Type", CONTENT_TYPE)
+    .run_async(&handler)
+    .await;
+    assert_response!(conn, Status::Created);
+    assert_eq!(
+        serde_json::from_slice::<TaskprovPeerAggregatorResp>(
+            &conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap(),
+        leader.clone().into()
+    );
+
+    assert_eq!(
+        ds.run_tx(|tx| { Box::pin(async move { tx.get_taskprov_peer_aggregators().await }) })
+            .await
+            .unwrap(),
+        vec![leader]
+    );
+
+    // Can't insert the same aggregator.
+    assert_response!(
+        post(format!(
+            "/taskprov/peer_aggregators?{}",
+            serde_urlencoded::to_string(vec![
+                ("endpoint", "https://leader.example.com/"),
+                ("role", "leader")
+            ])
+            .unwrap()
+        ))
+        .with_request_body(serde_json::to_vec(&req).unwrap())
+        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+        .with_request_header("Accept", CONTENT_TYPE)
+        .with_request_header("Content-Type", CONTENT_TYPE)
+        .run_async(&handler)
+        .await,
+        Status::Conflict
+    );
+
+    // Missing parameters.
+    assert_response!(
+        post("/taskprov/peer_aggregators")
+            .with_request_body(serde_json::to_vec(&req).unwrap())
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .with_request_header("Content-Type", CONTENT_TYPE)
+            .run_async(&handler)
+            .await,
+        Status::BadRequest
+    );
+
+    // Missing authorization.
+    assert_response!(
+        post("/taskprov/peer_aggregators")
+            .with_request_body(serde_json::to_vec(&req).unwrap())
+            .with_request_header("Accept", CONTENT_TYPE)
+            .with_request_header("Content-Type", CONTENT_TYPE)
+            .run_async(&handler)
+            .await,
+        Status::Unauthorized
+    );
+}
+
+#[tokio::test]
+async fn delete_taskprov_peer_aggregator() {
+    let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
+
+    let leader = PeerAggregatorBuilder::new()
+        .with_endpoint(Url::parse("https://leader.example.com/").unwrap())
+        .with_role(Role::Leader)
+        .build();
+
+    ds.run_tx(|tx| {
+        let leader = leader.clone();
+        Box::pin(async move { tx.put_taskprov_peer_aggregator(&leader).await })
+    })
+    .await
+    .unwrap();
+
+    // Delete target.
+    assert_response!(
+        delete(format!(
+            "/taskprov/peer_aggregators?{}",
+            serde_urlencoded::to_string(vec![
+                ("endpoint", "https://leader.example.com/"),
+                ("role", "leader")
+            ])
+            .unwrap()
+        ))
+        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+        .with_request_header("Accept", CONTENT_TYPE)
+        .with_request_header("Content-Type", CONTENT_TYPE)
+        .run_async(&handler)
+        .await,
+        Status::NoContent
+    );
+
+    assert_eq!(
+        ds.run_tx(|tx| { Box::pin(async move { tx.get_taskprov_peer_aggregators().await }) })
+            .await
+            .unwrap(),
+        vec![]
+    );
+
+    // Non-existent target.
+    assert_response!(
+        delete(format!(
+            "/taskprov/peer_aggregators?{}",
+            serde_urlencoded::to_string(vec![
+                ("endpoint", "https://leader.example.com/"),
+                ("role", "leader")
+            ])
+            .unwrap()
+        ))
+        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+        .with_request_header("Accept", CONTENT_TYPE)
+        .with_request_header("Content-Type", CONTENT_TYPE)
+        .run_async(&handler)
+        .await,
+        Status::NoContent
+    );
+
+    // Missing parameters.
+    assert_response!(
+        delete("/taskprov/peer_aggregators?")
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .with_request_header("Content-Type", CONTENT_TYPE)
+            .run_async(&handler)
+            .await,
+        Status::BadRequest
+    );
+
+    // Missing authorization.
+    assert_response!(
+        delete("/taskprov/peer_aggregators")
+            .with_request_header("Accept", CONTENT_TYPE)
+            .with_request_header("Content-Type", CONTENT_TYPE)
+            .run_async(&handler)
+            .await,
+        Status::Unauthorized
     );
 }
 

@@ -1,15 +1,16 @@
+use crate::{
+    task::{self, Error, QueryType},
+    SecretBytes,
+};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use janus_core::task::{AuthenticationToken, VdafInstance};
 use janus_messages::{Duration, HpkeConfig, Role, TaskId, Time};
 use lazy_static::lazy_static;
 use rand::{distributions::Standard, prelude::Distribution};
 use ring::hkdf::{KeyType, Salt, HKDF_SHA256};
+use serde::{de::Error as DeserializeError, Deserialize, Deserializer, Serialize};
 use url::Url;
-
-use crate::{
-    task::{self, Error, QueryType},
-    SecretBytes,
-};
 
 #[derive(Derivative, Clone, Copy, PartialEq, Eq)]
 #[derivative(Debug)]
@@ -32,6 +33,29 @@ impl TryFrom<&[u8]> for VerifyKeyInit {
 impl AsRef<[u8; Self::LEN]> for VerifyKeyInit {
     fn as_ref(&self) -> &[u8; Self::LEN] {
         &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for VerifyKeyInit {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes = String::deserialize(deserializer).and_then(|s| {
+            URL_SAFE_NO_PAD
+                .decode(&s)
+                .map_err(|err| DeserializeError::custom(err.to_string()))
+        })?;
+        Self::try_from(bytes.as_ref()).map_err(|err| DeserializeError::custom(err.to_string()))
+    }
+}
+
+impl Serialize for VerifyKeyInit {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&URL_SAFE_NO_PAD.encode(&self.0))
     }
 }
 

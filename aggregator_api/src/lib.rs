@@ -5,13 +5,10 @@ mod routes;
 mod tests;
 
 use async_trait::async_trait;
-
 use janus_aggregator_core::datastore;
 use janus_aggregator_core::{datastore::Datastore, instrumented};
 use janus_core::{http::extract_bearer_token, task::AuthenticationToken, time::Clock};
-use janus_messages::HpkeConfigId;
-use janus_messages::TaskId;
-
+use janus_messages::{HpkeConfigId, RoleParseError, TaskId};
 use ring::constant_time;
 use routes::*;
 use std::{str::FromStr, sync::Arc};
@@ -110,6 +107,18 @@ pub fn aggregator_api_handler<C: Clock>(ds: Arc<Datastore<C>>, cfg: Config) -> i
             .delete(
                 "/hpke_configs/:config_id",
                 instrumented(api(delete_global_hpke_config::<C>)),
+            )
+            .get(
+                "/taskprov/peer_aggregators",
+                instrumented(api(get_taskprov_peer_aggregators::<C>)),
+            )
+            .post(
+                "/taskprov/peer_aggregators",
+                instrumented(api(post_taskprov_peer_aggregator::<C>)),
+            )
+            .delete(
+                "/taskprov/peer_aggregators",
+                instrumented(api(delete_taskprov_peer_aggregator::<C>)),
             ),
     )
 }
@@ -132,7 +141,6 @@ async fn auth_check(conn: &mut Conn, (): ()) -> impl Handler {
     }
 }
 
-/// A simple error type that holds a message and an HTTP status. This can be used as a [`Handler`].
 #[derive(Debug, thiserror::Error)]
 enum Error {
     /// Errors that should never happen under expected behavior.
@@ -141,15 +149,22 @@ enum Error {
     /// A datastore error. The related HTTP status code depends on the type of datastore error.
     #[error(transparent)]
     Db(#[from] datastore::Error),
-    /// Errors that should return HTTP 400.
-    #[error("{0}")]
-    BadRequest(String),
     /// Errors that should return HTTP 404.
     #[error("Target resource was not found")]
     NotFound,
     /// Errors that should return HTTP 409.
     #[error("{0}")]
     Conflict(String),
+
+    /// Errors that should return HTTP 400.
+    #[error("{0}")]
+    BadRequest(String),
+    #[error(transparent)]
+    Url(#[from] url::ParseError),
+    #[error(transparent)]
+    UrlEncoding(#[from] serde_urlencoded::de::Error),
+    #[error(transparent)]
+    Role(#[from] RoleParseError),
 }
 
 #[async_trait]
@@ -175,13 +190,22 @@ impl Handler for Error {
                     conn.with_status(Status::InternalServerError)
                 }
             },
-            Self::BadRequest(message) => conn
-                .with_status(Status::BadRequest)
-                .with_body(message.clone()),
             Self::NotFound => conn.with_status(Status::NotFound),
             Self::Conflict(message) => conn
                 .with_status(Status::Conflict)
                 .with_body(message.clone()),
+            Self::BadRequest(message) => conn
+                .with_status(Status::BadRequest)
+                .with_body(message.to_string()),
+            Self::Url(err) => conn
+                .with_status(Status::BadRequest)
+                .with_body(err.to_string()),
+            Self::UrlEncoding(err) => conn
+                .with_status(Status::BadRequest)
+                .with_body(err.to_string()),
+            Self::Role(err) => conn
+                .with_status(Status::BadRequest)
+                .with_body(err.to_string()),
         }
         .halt()
     }

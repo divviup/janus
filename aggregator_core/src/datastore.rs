@@ -4471,6 +4471,61 @@ impl<C: Clock> Transaction<'_, C> {
             .collect()
     }
 
+    #[tracing::instrument(skip(self), err)]
+    pub async fn get_taskprov_peer_aggregator(
+        &self,
+        aggregator_url: &Url,
+        role: &Role,
+    ) -> Result<Option<PeerAggregator>, Error> {
+        let aggregator_url = aggregator_url.as_str();
+        let role = AggregatorRole::from_role(*role)?;
+        let params: &[&(dyn ToSql + Sync)] = &[&aggregator_url, &role];
+
+        let stmt = self
+            .prepare_cached(
+                "SELECT id, endpoint, role, verify_key_init, collector_hpke_config,
+                        report_expiry_age, tolerable_clock_skew
+                    FROM taskprov_peer_aggregators WHERE endpoint = $1 AND role = $2",
+            )
+            .await?;
+        let peer_aggregator_row = self.query_opt(&stmt, params);
+
+        let stmt = self
+            .prepare_cached(
+                "SELECT ord, type, token FROM taskprov_aggregator_auth_tokens
+                    WHERE peer_aggregator_id = (SELECT id FROM taskprov_peer_aggregators
+                        WHERE endpoint = $1 AND role = $2)
+                    ORDER BY ord ASC",
+            )
+            .await?;
+        let aggregator_auth_token_rows = self.query(&stmt, params);
+
+        let stmt = self
+            .prepare_cached(
+                "SELECT ord, type, token FROM taskprov_collector_auth_tokens
+                    WHERE peer_aggregator_id = (SELECT id FROM taskprov_peer_aggregators
+                        WHERE endpoint = $1 AND role = $2)
+                    ORDER BY ord ASC",
+            )
+            .await?;
+        let collector_auth_token_rows = self.query(&stmt, params);
+
+        let (peer_aggregator_row, aggregator_auth_token_rows, collector_auth_token_rows) = try_join!(
+            peer_aggregator_row,
+            aggregator_auth_token_rows,
+            collector_auth_token_rows,
+        )?;
+        peer_aggregator_row
+            .map(|peer_aggregator_row| {
+                self.taskprov_peer_aggregator_from_rows(
+                    &peer_aggregator_row,
+                    &aggregator_auth_token_rows,
+                    &collector_auth_token_rows,
+                )
+            })
+            .transpose()
+    }
+
     fn taskprov_peer_aggregator_from_rows(
         &self,
         peer_aggregator_row: &Row,
@@ -4656,6 +4711,24 @@ impl<C: Clock> Transaction<'_, C> {
 
         try_join!(aggregator_auth_tokens_future, collector_auth_tokens_future)?;
         Ok(())
+    }
+
+    #[tracing::instrument(skip(self), err)]
+    pub async fn delete_taskprov_peer_aggregator(
+        &self,
+        aggregator_url: &Url,
+        role: &Role,
+    ) -> Result<(), Error> {
+        let aggregator_url = aggregator_url.as_str();
+        let role = AggregatorRole::from_role(*role)?;
+
+        // Deletion of other data implemented via ON DELETE CASCADE.
+        let stmt = self
+            .prepare_cached(
+                "DELETE FROM taskprov_peer_aggregators WHERE endpoint = $1 AND role = $2",
+            )
+            .await?;
+        check_single_row_mutation(self.execute(&stmt, &[&aggregator_url, &role]).await?)
     }
 }
 
