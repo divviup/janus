@@ -289,7 +289,7 @@ pub(super) async fn delete_task<C: Clock>(
     })
     .await
     .map_err(|err| match err {
-        datastore::Error::MutationTargetNotFound => Status::NotFound,
+        datastore::Error::MutationTargetNotFound => Status::NoContent,
         _ => {
             error!(err = %err, "Database transaction error");
             Status::InternalServerError
@@ -450,7 +450,7 @@ pub(super) async fn delete_global_hpke_config<C: Clock>(
     })
     .await
     .map_err(|err| match err {
-        datastore::Error::MutationTargetNotFound => Status::NotFound,
+        datastore::Error::MutationTargetNotFound => Status::NoContent,
         _ => {
             error!(err = %err, "Database transaction error");
             Status::InternalServerError
