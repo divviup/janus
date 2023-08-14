@@ -25,6 +25,7 @@ branch.
 | `release/0.1` | [`draft-ietf-ppm-dap-01`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/01/) | Yes | Unmaintained as of December 7, 2022 |
 | `release/0.2` | [`draft-ietf-ppm-dap-02`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/02/) | Yes | Unmaintained as of July 13, 2023 |
 | `release/0.3` | [`draft-ietf-ppm-dap-03`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/03/) | Yes | Unmaintained as of February 6, 2023 |
+| `release/0.subscriber-01` | [`draft-ietf-ppm-dap-02`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/02/) plus extensions | No | Supported |
 | `main` | [`draft-ietf-ppm-dap-04`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/04/) | Yes | Supported |
 
 ## Building
