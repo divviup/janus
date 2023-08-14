@@ -20,7 +20,8 @@ hex = "0.4"
 num_enum = "0.6.1"
 # We can't pull prio in from the workspace because that would enable default features, and we do not
 # want prio/crypto-dependencies
-prio = { version = "0.12.2", default-features = false }
+# prio = { version = "0.10", default-features = false }
+prio = { git = "https://github.com/divviup/libprio-rs", branch = "bran/dap-02-on-main-changes", default-features = false }  # XXX: remove this line & uncomment the above line
 rand = "0.8"
 serde.workspace = true
 thiserror.workspace = true

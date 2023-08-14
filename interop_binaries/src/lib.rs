@@ -6,7 +6,7 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::{FixedSize, QueryType as _, TimeInterval},
-    HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId, Time,
+    BatchId, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId, Time,
 };
 use prio::codec::Encode;
 use rand::random;
@@ -106,31 +106,9 @@ where
 #[serde(tag = "type")]
 pub enum VdafObject {
     Prio3Count,
-    Prio3CountVec {
-        length: NumberAsString<usize>,
-    },
-    Prio3Sum {
-        bits: NumberAsString<usize>,
-    },
-    Prio3SumVec {
-        bits: NumberAsString<usize>,
-        length: NumberAsString<usize>,
-    },
-    Prio3Histogram {
-        buckets: Vec<NumberAsString<u64>>,
-    },
-    #[cfg(feature = "fpvec_bounded_l2")]
-    Prio3FixedPoint16BitBoundedL2VecSum {
-        length: NumberAsString<usize>,
-    },
-    #[cfg(feature = "fpvec_bounded_l2")]
-    Prio3FixedPoint32BitBoundedL2VecSum {
-        length: NumberAsString<usize>,
-    },
-    #[cfg(feature = "fpvec_bounded_l2")]
-    Prio3FixedPoint64BitBoundedL2VecSum {
-        length: NumberAsString<usize>,
-    },
+    Prio3CountVec { length: NumberAsString<usize> },
+    Prio3Sum { bits: NumberAsString<u32> },
+    Prio3Histogram { buckets: Vec<NumberAsString<u64>> },
 }
 
 impl From<VdafInstance> for VdafObject {
@@ -146,35 +124,10 @@ impl From<VdafInstance> for VdafObject {
                 bits: NumberAsString(bits),
             },
 
-            VdafInstance::Prio3SumVec { bits, length } => VdafObject::Prio3SumVec {
-                bits: NumberAsString(bits),
-                length: NumberAsString(length),
-            },
-
             VdafInstance::Prio3Histogram { buckets } => VdafObject::Prio3Histogram {
                 buckets: buckets.iter().copied().map(NumberAsString).collect(),
             },
 
-            #[cfg(feature = "fpvec_bounded_l2")]
-            VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { length } => {
-                VdafObject::Prio3FixedPoint16BitBoundedL2VecSum {
-                    length: NumberAsString(length),
-                }
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { length } => {
-                VdafObject::Prio3FixedPoint32BitBoundedL2VecSum {
-                    length: NumberAsString(length),
-                }
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { length } => {
-                VdafObject::Prio3FixedPoint64BitBoundedL2VecSum {
-                    length: NumberAsString(length),
-                }
-            }
             _ => panic!("Unsupported VDAF: {vdaf:?}"),
         }
     }
@@ -191,29 +144,9 @@ impl From<VdafObject> for VdafInstance {
 
             VdafObject::Prio3Sum { bits } => VdafInstance::Prio3Sum { bits: bits.0 },
 
-            VdafObject::Prio3SumVec { bits, length } => VdafInstance::Prio3SumVec {
-                bits: bits.0,
-                length: length.0,
-            },
-
             VdafObject::Prio3Histogram { buckets } => VdafInstance::Prio3Histogram {
                 buckets: buckets.iter().map(|value| value.0).collect(),
             },
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            VdafObject::Prio3FixedPoint16BitBoundedL2VecSum { length } => {
-                VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { length: length.0 }
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            VdafObject::Prio3FixedPoint32BitBoundedL2VecSum { length } => {
-                VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { length: length.0 }
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            VdafObject::Prio3FixedPoint64BitBoundedL2VecSum { length } => {
-                VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { length: length.0 }
-            }
         }
     }
 }
@@ -260,7 +193,7 @@ pub struct AggregatorAddTaskRequest {
     #[serde(default)]
     pub collector_authentication_token: Option<String>,
     pub role: AggregatorRole,
-    pub vdaf_verify_key: String, // in unpadded base64url
+    pub verify_key: String, // in unpadded base64url
     pub max_batch_query_count: u64,
     pub query_type: u8,
     pub min_batch_size: u64,
@@ -303,8 +236,7 @@ impl From<Task> for AggregatorAddTaskRequest {
                 None
             },
             role: (*task.role()).try_into().unwrap(),
-            vdaf_verify_key: URL_SAFE_NO_PAD
-                .encode(task.vdaf_verify_keys().first().unwrap().as_ref()),
+            verify_key: URL_SAFE_NO_PAD.encode(task.vdaf_verify_keys().first().unwrap().as_ref()),
             max_batch_query_count: task.max_batch_query_count(),
             query_type,
             min_batch_size: task.min_batch_size(),
@@ -315,6 +247,20 @@ impl From<Task> for AggregatorAddTaskRequest {
             task_expiration: task.task_expiration().map(Time::as_seconds_since_epoch),
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FetchBatchIdsRequest {
+    pub task_id: TaskId,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FetchBatchIdsResponse {
+    pub status: String,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub batch_ids: Option<Vec<BatchId>>,
 }
 
 pub fn install_tracing_subscriber() -> anyhow::Result<()> {

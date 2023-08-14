@@ -169,11 +169,12 @@ pub trait ReportWriter<C: Clock>: Debug + Send + Sync {
 #[derive(Debug)]
 pub struct WritableReport<const SEED_SIZE: usize, Q, A>
 where
-    A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+    A: vdaf::Aggregator<SEED_SIZE> + Send + Sync + 'static,
     A::InputShare: PartialEq + Send + Sync,
     A::PublicShare: PartialEq + Send + Sync,
     A::AggregationParam: Send + Sync,
     A::AggregateShare: Send + Sync,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     Q: UploadableQueryType,
 {
     vdaf: Arc<A>,
@@ -183,11 +184,12 @@ where
 
 impl<const SEED_SIZE: usize, Q, A> WritableReport<SEED_SIZE, Q, A>
 where
-    A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+    A: vdaf::Aggregator<SEED_SIZE> + Send + Sync + 'static,
     A::InputShare: PartialEq + Send + Sync,
     A::PublicShare: PartialEq + Send + Sync,
     A::AggregationParam: Send + Sync,
     A::AggregateShare: Send + Sync,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     Q: UploadableQueryType,
 {
     pub fn new(vdaf: Arc<A>, report: LeaderStoredReport<SEED_SIZE, A>) -> Self {
@@ -202,16 +204,18 @@ where
 #[async_trait]
 impl<const SEED_SIZE: usize, C, Q, A> ReportWriter<C> for WritableReport<SEED_SIZE, Q, A>
 where
-    A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+    A: vdaf::Aggregator<SEED_SIZE> + Send + Sync + 'static,
     A::InputShare: PartialEq + Send + Sync,
     A::PublicShare: PartialEq + Send + Sync,
     A::AggregationParam: Send + Sync,
     A::AggregateShare: Send + Sync,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
     C: Clock,
     Q: UploadableQueryType,
 {
     async fn write_report(&self, tx: &Transaction<C>) -> Result<(), datastore::Error> {
-        Q::validate_uploaded_report(tx, self.vdaf.as_ref(), &self.report).await?;
+        Q::validate_uploaded_report(tx, &self.report).await?;
 
         // Store the report.
         match tx
@@ -223,7 +227,7 @@ where
             // Reject reports whose report IDs have been seen before.
             // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-4.3.2-16
             Err(datastore::Error::MutationTargetAlreadyExists) => Err(datastore::Error::User(
-                Error::ReportRejected(
+                Error::ReportTooLate(
                     *self.report.task_id(),
                     *self.report.metadata().id(),
                     *self.report.metadata().time(),

@@ -11,19 +11,21 @@ use janus_messages::{
     Role,
 };
 use prio::vdaf;
+use std::fmt::Debug;
 
 #[async_trait]
 pub trait UploadableQueryType: QueryType {
     async fn validate_uploaded_report<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync,
     >(
         tx: &Transaction<'_, C>,
-        vdaf: &A,
         report: &LeaderStoredReport<SEED_SIZE, A>,
     ) -> Result<(), datastore::Error>
     where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
         A::InputShare: Send + Sync,
         A::PublicShare: Send + Sync;
 }
@@ -33,13 +35,14 @@ impl UploadableQueryType for TimeInterval {
     async fn validate_uploaded_report<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync,
     >(
         tx: &Transaction<'_, C>,
-        vdaf: &A,
         report: &LeaderStoredReport<SEED_SIZE, A>,
     ) -> Result<(), datastore::Error>
     where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
         A::InputShare: Send + Sync,
         A::PublicShare: Send + Sync,
     {
@@ -48,14 +51,13 @@ impl UploadableQueryType for TimeInterval {
         // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-4.3.2-17
         let conflicting_collect_jobs = tx
             .get_collection_jobs_including_time::<SEED_SIZE, A>(
-                vdaf,
                 report.task_id(),
                 report.metadata().time(),
             )
             .await?;
         if !conflicting_collect_jobs.is_empty() {
             return Err(datastore::Error::User(
-                Error::ReportRejected(
+                Error::ReportTooLate(
                     *report.task_id(),
                     *report.metadata().id(),
                     *report.metadata().time(),
@@ -72,12 +74,14 @@ impl UploadableQueryType for FixedSize {
     async fn validate_uploaded_report<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync,
     >(
         _: &Transaction<'_, C>,
-        _: &A,
         _: &LeaderStoredReport<SEED_SIZE, A>,
-    ) -> Result<(), datastore::Error> {
+    ) -> Result<(), datastore::Error>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
         // Fixed-size tasks associate reports to batches at time of aggregation rather than at time
         // of upload, and there are no other relevant checks to apply here, so this method simply
         // returns Ok(()).
@@ -94,13 +98,15 @@ pub trait CollectableQueryType: CoreCollectableQueryType + AccumulableQueryType 
     async fn validate_query_count<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync,
     >(
         tx: &Transaction<'_, C>,
-        vdaf: &A,
         task: &Task,
         batch_identifier: &Self::BatchIdentifier,
-    ) -> Result<(), datastore::Error>;
+    ) -> Result<(), datastore::Error>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug;
 }
 
 #[async_trait]
@@ -108,20 +114,22 @@ impl CollectableQueryType for TimeInterval {
     async fn validate_query_count<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync,
     >(
         tx: &Transaction<'_, C>,
-        vdaf: &A,
         task: &Task,
         collect_interval: &Self::BatchIdentifier,
-    ) -> Result<(), datastore::Error> {
+    ) -> Result<(), datastore::Error>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
+    {
         // Check how many rows in the relevant table have an intersecting batch interval.
         // Each such row consumes one unit of query count.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
         let intersecting_intervals: Vec<_> = match task.role() {
             Role::Leader => tx
                 .get_collection_jobs_intersecting_interval::<SEED_SIZE, A>(
-                    vdaf,
                     task.id(),
                     collect_interval,
                 )
@@ -132,7 +140,6 @@ impl CollectableQueryType for TimeInterval {
 
             Role::Helper => tx
                 .get_aggregate_share_jobs_intersecting_interval::<SEED_SIZE, A>(
-                    vdaf,
                     task.id(),
                     collect_interval,
                 )
@@ -173,21 +180,24 @@ impl CollectableQueryType for FixedSize {
     async fn validate_query_count<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync,
     >(
         tx: &Transaction<'_, C>,
-        vdaf: &A,
         task: &Task,
         batch_id: &Self::BatchIdentifier,
-    ) -> Result<(), datastore::Error> {
+    ) -> Result<(), datastore::Error>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
+    {
         let query_count = match task.role() {
             Role::Leader => tx
-                .get_collection_jobs_by_batch_id::<SEED_SIZE, A>(vdaf, task.id(), batch_id)
+                .get_collection_jobs_by_batch_id::<SEED_SIZE, A>(task.id(), batch_id)
                 .await?
                 .len(),
 
             Role::Helper => tx
-                .get_aggregate_share_jobs_by_batch_id::<SEED_SIZE, A>(vdaf, task.id(), batch_id)
+                .get_aggregate_share_jobs_by_batch_id::<SEED_SIZE, A>(task.id(), batch_id)
                 .await?
                 .len(),
 

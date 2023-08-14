@@ -1,9 +1,4 @@
 use crate::aggregator::aggregation_job_writer::AggregationJobWriter;
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::{
-    types::extra::{U15, U31, U63},
-    FixedI16, FixedI32, FixedI64,
-};
 use janus_aggregator_core::{
     datastore::models::{
         AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
@@ -17,23 +12,24 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
-    AggregationJobRound, Duration as DurationMsg, Interval, Role, TaskId,
+    Duration as DurationMsg, Interval, Role, TaskId,
 };
 use opentelemetry::{
     metrics::{Histogram, Meter, Unit},
     Context, KeyValue,
 };
-#[cfg(feature = "fpvec_bounded_l2")]
-use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded;
 use prio::{
     codec::Encode,
     vdaf::{
         self,
-        prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVecMultithreaded},
+        prio3::{
+            Prio3Aes128Count, Prio3Aes128CountVecMultithreaded, Prio3Aes128Histogram,
+            Prio3Aes128Sum,
+        },
     },
 };
 use rand::{random, thread_rng, Rng};
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 use tokio::time::{self, sleep_until, Instant, MissedTickBehavior};
 use tracing::{debug, error, info};
 use trillium_tokio::{CloneCounterObserver, Stopper};
@@ -265,73 +261,24 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     ) -> anyhow::Result<bool> {
         match (task.query_type(), task.vdaf()) {
             (task::QueryType::TimeInterval, VdafInstance::Prio3Count) => {
-                let vdaf = Arc::new(Prio3::new_count(2)?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(task, vdaf)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task)
                     .await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3CountVec { length }) => {
-                let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(2, 1, *length)?);
+            (task::QueryType::TimeInterval, VdafInstance::Prio3CountVec { .. }) => {
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<
                     PRIO3_VERIFY_KEY_LENGTH,
-                    Prio3SumVecMultithreaded
-                >(task, vdaf).await
+                    Prio3Aes128CountVecMultithreaded
+                >(task).await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3Sum { bits }) => {
-                let vdaf = Arc::new(Prio3::new_sum(2, *bits)?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Sum>(task, vdaf)
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Sum { .. }) => {
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Sum>(task)
                     .await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3SumVec { bits, length }) => {
-                let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(2, *bits, *length)?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3SumVecMultithreaded>(task, vdaf)
-                    .await
-            }
-
-            (task::QueryType::TimeInterval, VdafInstance::Prio3Histogram { buckets }) => {
-                let vdaf = Arc::new(Prio3::new_histogram(2, buckets)?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Histogram>(task, vdaf)
-                    .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { length },
-            ) => {
-                let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>> =
-                    Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
-                        2, *length,
-                    )?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>>(task, vdaf)
-                    .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { length },
-            ) => {
-                let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>> =
-                    Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
-                        2, *length,
-                    )?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>>(task, vdaf)
-                    .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { length },
-            ) => {
-                let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>> =
-                    Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
-                        2, *length,
-                    )?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>>(task, vdaf)
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Histogram { .. }) => {
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Histogram>(task)
                     .await
             }
 
@@ -342,13 +289,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 },
                 VdafInstance::Prio3Count,
             ) => {
-                let vdaf = Arc::new(Prio3::new_count(2)?);
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
                     PRIO3_VERIFY_KEY_LENGTH,
-                    Prio3Count,
-                >(task, vdaf, max_batch_size, batch_time_window_size).await
+                    Prio3Aes128Count,
+                >(task, max_batch_size, batch_time_window_size).await
             }
 
             (
@@ -356,15 +302,14 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     max_batch_size,
                     batch_time_window_size,
                 },
-                VdafInstance::Prio3CountVec { length },
+                VdafInstance::Prio3CountVec { .. },
             ) => {
-                let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(2, 1, *length)?);
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
                     PRIO3_VERIFY_KEY_LENGTH,
-                    Prio3SumVecMultithreaded
-                >(task, vdaf, max_batch_size, batch_time_window_size).await
+                    Prio3Aes128CountVecMultithreaded
+                >(task, max_batch_size, batch_time_window_size).await
             }
 
             (
@@ -372,15 +317,14 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     max_batch_size,
                     batch_time_window_size,
                 },
-                VdafInstance::Prio3Sum { bits },
+                VdafInstance::Prio3Sum { .. },
             ) => {
-                let vdaf = Arc::new(Prio3::new_sum(2, *bits)?);
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
                     PRIO3_VERIFY_KEY_LENGTH,
-                    Prio3Sum,
-                >(task, vdaf, max_batch_size, batch_time_window_size).await
+                    Prio3Aes128Sum,
+                >(task, max_batch_size, batch_time_window_size).await
             }
 
             (
@@ -388,91 +332,14 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     max_batch_size,
                     batch_time_window_size,
                 },
-                VdafInstance::Prio3SumVec { bits, length },
+                VdafInstance::Prio3Histogram { .. },
             ) => {
-                let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(2, *bits, *length)?);
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
                     PRIO3_VERIFY_KEY_LENGTH,
-                    Prio3SumVecMultithreaded,
-                >(task, vdaf, max_batch_size, batch_time_window_size).await
-            }
-
-            (
-                task::QueryType::FixedSize {
-                    max_batch_size,
-                    batch_time_window_size,
-                },
-                VdafInstance::Prio3Histogram { buckets },
-            ) => {
-                let vdaf = Arc::new(Prio3::new_histogram(2, buckets)?);
-                let max_batch_size = *max_batch_size;
-                let batch_time_window_size = *batch_time_window_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<
-                    PRIO3_VERIFY_KEY_LENGTH,
-                    Prio3Histogram,
-                >(task, vdaf, max_batch_size, batch_time_window_size).await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize {
-                    max_batch_size,
-                    batch_time_window_size,
-                },
-                VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { length },
-            ) => {
-                let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>> =
-                    Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
-                        2, *length,
-                    )?);
-                let max_batch_size = *max_batch_size;
-                let batch_time_window_size = *batch_time_window_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<
-                    PRIO3_VERIFY_KEY_LENGTH,
-                    Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>,
-                >(task, vdaf, max_batch_size, batch_time_window_size).await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize {
-                    max_batch_size,
-                    batch_time_window_size,
-                },
-                VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { length },
-            ) => {
-                let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>> =
-                    Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
-                        2, *length,
-                    )?);
-                let max_batch_size = *max_batch_size;
-                let batch_time_window_size = *batch_time_window_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<
-                    PRIO3_VERIFY_KEY_LENGTH,
-                    Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>,
-                >(task, vdaf, max_batch_size, batch_time_window_size).await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize {
-                    max_batch_size,
-                    batch_time_window_size,
-                },
-                VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { length },
-            ) => {
-                let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>> =
-                    Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
-                        2, *length,
-                    )?);
-                let max_batch_size = *max_batch_size;
-                let batch_time_window_size = *batch_time_window_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<
-                    PRIO3_VERIFY_KEY_LENGTH,
-                    Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>,
-                >(task, vdaf, max_batch_size, batch_time_window_size).await
+                    Prio3Aes128Histogram,
+                >(task, max_batch_size, batch_time_window_size).await
             }
 
             _ => {
@@ -484,15 +351,16 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
     async fn create_aggregation_jobs_for_time_interval_task_no_param<
         const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()>,
+        A: vdaf::Aggregator<SEED_SIZE, AggregationParam = ()>,
     >(
         self: Arc<Self>,
         task: Arc<Task>,
-        vdaf: Arc<A>,
     ) -> anyhow::Result<bool>
     where
         A: Send + Sync + 'static,
         A::AggregateShare: Send + Sync,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
         A::PrepareMessage: Send + Sync,
         A::PrepareShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
@@ -503,7 +371,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .run_tx_with_name("aggregation_job_creator_time_no_param", |tx| {
                 let this = Arc::clone(&self);
                 let task = Arc::clone(&task);
-                let vdaf = Arc::clone(&vdaf);
 
                 Box::pin(async move {
                     // Find some unaggregated client reports.
@@ -553,7 +420,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             (),
                             client_timestamp_interval,
                             AggregationJobState::InProgress,
-                            AggregationJobRound::from(0),
                         );
 
                         let report_aggregations = agg_job_reports
@@ -566,7 +432,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                     *report_id,
                                     *time,
                                     ord.try_into()?,
-                                    None,
                                     ReportAggregationState::Start,
                                 ))
                             })
@@ -576,7 +441,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     }
 
                     // Write the aggregation jobs & report aggregations we created.
-                    aggregation_job_writer.write(tx, vdaf).await?;
+                    aggregation_job_writer.write(tx).await?;
                     Ok(!aggregation_job_writer.is_empty())
                 })
             })
@@ -585,17 +450,18 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
     async fn create_aggregation_jobs_for_fixed_size_task_no_param<
         const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()>,
+        A: vdaf::Aggregator<SEED_SIZE, AggregationParam = ()>,
     >(
         self: Arc<Self>,
         task: Arc<Task>,
-        vdaf: Arc<A>,
         task_max_batch_size: u64,
         task_batch_time_window_size: Option<janus_messages::Duration>,
     ) -> anyhow::Result<bool>
     where
         A: Send + Sync + 'static,
         A::AggregateShare: Send + Sync,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
         A::PrepareMessage: Send + Sync,
         A::PrepareShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
@@ -610,7 +476,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .run_tx_with_name("aggregation_job_creator_fixed_no_param", |tx| {
                 let this = Arc::clone(&self);
                 let task = Arc::clone(&task);
-                let vdaf = Arc::clone(&vdaf);
 
                 Box::pin(async move {
                     // Find unaggregated client reports.
@@ -635,7 +500,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             .add_report(tx, &report_id, &client_timestamp)
                             .await?;
                     }
-                    batch_creator.finish(tx, vdaf).await?;
+                    batch_creator.finish(tx).await?;
 
                     Ok(!aggregation_job_writer.is_empty())
                 })
@@ -668,9 +533,15 @@ mod tests {
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
-        AggregationJobRound, Interval, ReportId, Role, TaskId, Time,
+        Interval, ReportId, Role, TaskId, Time,
     };
-    use prio::vdaf::{self, prio3::Prio3Count};
+    use prio::{
+        codec::ParameterizedDecode,
+        vdaf::{
+            self,
+            prio3::{Prio3, Prio3Aes128Count},
+        },
+    };
     use std::{collections::HashSet, iter, sync::Arc, time::Duration};
     use tokio::{task, time, try_join};
     use trillium_tokio::Stopper;
@@ -686,6 +557,7 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
+        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
 
         // TODO(#234): consider using tokio::time::pause() to make time deterministic, and allow
         // this test to run without the need for a (racy, wallclock-consuming) real sleep.
@@ -750,23 +622,26 @@ mod tests {
             job_creator
                 .datastore
                 .run_tx(|tx| {
-                    let (leader_task, helper_task) = (leader_task.clone(), helper_task.clone());
+                    let vdaf = Arc::clone(&vdaf);
+                    let leader_task = leader_task.clone();
+                    let helper_task = helper_task.clone();
+
                     Box::pin(async move {
                         let (leader_aggregations, leader_batches) =
                             read_aggregate_info_for_task::<
                                 PRIO3_VERIFY_KEY_LENGTH,
                                 TimeInterval,
-                                Prio3Count,
+                                Prio3Aes128Count,
                                 _,
-                            >(tx, leader_task.id())
+                            >(tx, &vdaf, leader_task.id())
                             .await;
                         let (helper_aggregations, helper_batches) =
                             read_aggregate_info_for_task::<
                                 PRIO3_VERIFY_KEY_LENGTH,
                                 TimeInterval,
-                                Prio3Count,
+                                Prio3Aes128Count,
                                 _,
-                            >(tx, helper_task.id())
+                            >(tx, &vdaf, helper_task.id())
                             .await;
                         Ok((
                             leader_aggregations,
@@ -782,7 +657,6 @@ mod tests {
         assert_eq!(leader_aggregations.len(), 1);
         let leader_aggregation = leader_aggregations.into_iter().next().unwrap();
         assert_eq!(leader_aggregation.0.partial_batch_identifier(), &());
-        assert_eq!(leader_aggregation.0.round(), AggregationJobRound::from(0));
         assert_eq!(
             leader_aggregation.1,
             Vec::from([*leader_report.metadata().id()])
@@ -811,6 +685,8 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
+        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
+
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
 
@@ -868,24 +744,22 @@ mod tests {
         let (agg_jobs, batches) = job_creator
             .datastore
             .run_tx(|tx| {
+                let vdaf = Arc::clone(&vdaf);
                 let task = task.clone();
                 Box::pin(async move {
                     Ok(read_aggregate_info_for_task::<
                         PRIO3_VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Prio3Count,
+                        Prio3Aes128Count,
                         _,
-                    >(tx, task.id())
+                    >(tx, &vdaf, task.id())
                     .await)
                 })
             })
             .await
             .unwrap();
         let mut seen_report_ids = HashSet::new();
-        for (agg_job, report_ids) in &agg_jobs {
-            // Jobs are created in round 0
-            assert_eq!(agg_job.round(), AggregationJobRound::from(0));
-
+        for (_, report_ids) in &agg_jobs {
             // The batch is at most MAX_AGGREGATION_JOB_SIZE in size.
             assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
 
@@ -923,6 +797,8 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
+        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
+
         let task = Arc::new(
             TaskBuilder::new(
                 TaskQueryType::TimeInterval,
@@ -965,14 +841,16 @@ mod tests {
         let (agg_jobs, batches) = job_creator
             .datastore
             .run_tx(|tx| {
+                let vdaf = Arc::clone(&vdaf);
                 let task = Arc::clone(&task);
+
                 Box::pin(async move {
                     Ok(read_aggregate_info_for_task::<
                         PRIO3_VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Prio3Count,
+                        Prio3Aes128Count,
                         _,
-                    >(tx, task.id())
+                    >(tx, &vdaf, task.id())
                     .await)
                 })
             })
@@ -1004,14 +882,16 @@ mod tests {
         let (agg_jobs, batches) = job_creator
             .datastore
             .run_tx(|tx| {
+                let vdaf = Arc::clone(&vdaf);
                 let task = Arc::clone(&task);
+
                 Box::pin(async move {
                     Ok(read_aggregate_info_for_task::<
                         PRIO3_VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Prio3Count,
+                        Prio3Aes128Count,
                         _,
-                    >(tx, task.id())
+                    >(tx, &vdaf, task.id())
                     .await)
                 })
             })
@@ -1047,6 +927,8 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
+        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
+
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
 
@@ -1079,16 +961,18 @@ mod tests {
                     tx.put_client_report(&dummy_vdaf::Vdaf::new(), report)
                         .await?;
                 }
-                tx.put_batch(
-                    &Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
-                        *task.id(),
-                        batch_identifier,
-                        (),
-                        BatchState::Closed,
-                        0,
-                        Interval::from_time(&report_time).unwrap(),
-                    ),
-                )
+                tx.put_batch(&Batch::<
+                    PRIO3_VERIFY_KEY_LENGTH,
+                    TimeInterval,
+                    Prio3Aes128Count,
+                >::new(
+                    *task.id(),
+                    batch_identifier,
+                    (),
+                    BatchState::Closed,
+                    0,
+                    Interval::from_time(&report_time).unwrap(),
+                ))
                 .await?;
                 Ok(())
             })
@@ -1114,14 +998,16 @@ mod tests {
         let (agg_jobs, batches) = job_creator
             .datastore
             .run_tx(|tx| {
+                let vdaf = Arc::clone(&vdaf);
                 let task = task.clone();
+
                 Box::pin(async move {
                     Ok(read_aggregate_info_for_task::<
                         PRIO3_VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Prio3Count,
+                        Prio3Aes128Count,
                         _,
-                    >(tx, task.id())
+                    >(tx, &vdaf, task.id())
                     .await)
                 })
             })
@@ -1131,9 +1017,6 @@ mod tests {
         for (agg_job, report_ids) in &agg_jobs {
             // Job immediately finished since all reports are in a closed batch.
             assert_eq!(agg_job.state(), &AggregationJobState::Finished);
-
-            // Jobs are created in round 0.
-            assert_eq!(agg_job.round(), AggregationJobRound::from(0));
 
             // The batch is at most MAX_AGGREGATION_JOB_SIZE in size.
             assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
@@ -1172,6 +1055,7 @@ mod tests {
         let clock: MockClock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
+        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
 
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
@@ -1236,16 +1120,18 @@ mod tests {
         let (outstanding_batches, (agg_jobs, batches)) = job_creator
             .datastore
             .run_tx(|tx| {
+                let vdaf = Arc::clone(&vdaf);
                 let task = Arc::clone(&task);
+
                 Box::pin(async move {
                     Ok((
                         tx.get_outstanding_batches(task.id(), &None).await?,
                         read_aggregate_info_for_task::<
                             PRIO3_VERIFY_KEY_LENGTH,
                             FixedSize,
-                            Prio3Count,
+                            Prio3Aes128Count,
                             _,
-                        >(tx, task.id())
+                        >(tx, &vdaf, task.id())
                         .await,
                     ))
                 })
@@ -1280,9 +1166,6 @@ mod tests {
         let mut seen_report_ids = HashSet::new();
         let mut batches_with_small_agg_jobs = HashSet::new();
         for (agg_job, report_ids) in agg_jobs {
-            // Aggregation jobs are created in round 0.
-            assert_eq!(agg_job.round(), AggregationJobRound::from(0));
-
             // Every batch corresponds to one of the outstanding batches.
             assert!(batch_ids.contains(agg_job.batch_id()));
 
@@ -1337,6 +1220,7 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let meter = noop_meter();
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
+        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
 
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
@@ -1396,16 +1280,18 @@ mod tests {
         let (outstanding_batches, (agg_jobs, batches)) = job_creator
             .datastore
             .run_tx(|tx| {
+                let vdaf = Arc::clone(&vdaf);
                 let task = Arc::clone(&task);
+
                 Box::pin(async move {
                     Ok((
                         tx.get_outstanding_batches(task.id(), &None).await?,
                         read_aggregate_info_for_task::<
                             PRIO3_VERIFY_KEY_LENGTH,
                             FixedSize,
-                            Prio3Count,
+                            Prio3Aes128Count,
                             _,
-                        >(tx, task.id())
+                        >(tx, &vdaf, task.id())
                         .await,
                     ))
                 })
@@ -1447,6 +1333,7 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let meter = noop_meter();
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
+        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
 
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
@@ -1511,16 +1398,18 @@ mod tests {
         let (outstanding_batches, (agg_jobs, _batches)) = job_creator
             .datastore
             .run_tx(|tx| {
+                let vdaf = Arc::clone(&vdaf);
                 let task = Arc::clone(&task);
+
                 Box::pin(async move {
                     Ok((
                         tx.get_outstanding_batches(task.id(), &None).await?,
                         read_aggregate_info_for_task::<
                             PRIO3_VERIFY_KEY_LENGTH,
                             FixedSize,
-                            Prio3Count,
+                            Prio3Aes128Count,
                             _,
-                        >(tx, task.id())
+                        >(tx, &vdaf, task.id())
                         .await,
                     ))
                 })
@@ -1567,16 +1456,18 @@ mod tests {
         let (outstanding_batches, (agg_jobs, _batches)) = job_creator
             .datastore
             .run_tx(|tx| {
+                let vdaf = Arc::clone(&vdaf);
                 let task = Arc::clone(&task);
+
                 Box::pin(async move {
                     Ok((
                         tx.get_outstanding_batches(task.id(), &None).await?,
                         read_aggregate_info_for_task::<
                             PRIO3_VERIFY_KEY_LENGTH,
                             FixedSize,
-                            Prio3Count,
+                            Prio3Aes128Count,
                             _,
-                        >(tx, task.id())
+                        >(tx, &vdaf, task.id())
                         .await,
                     ))
                 })
@@ -1605,7 +1496,6 @@ mod tests {
         // Verify consistency of batches and aggregation jobs.
         let mut seen_report_ids = HashSet::new();
         for (agg_job, report_ids) in agg_jobs {
-            assert_eq!(agg_job.round(), AggregationJobRound::from(0));
             assert!(batch_ids.contains(agg_job.batch_id()));
             assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
 
@@ -1626,6 +1516,7 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let meter = noop_meter();
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
+        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
 
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
@@ -1690,16 +1581,18 @@ mod tests {
         let (outstanding_batches, (agg_jobs, _batches)) = job_creator
             .datastore
             .run_tx(|tx| {
+                let vdaf = Arc::clone(&vdaf);
                 let task = Arc::clone(&task);
+
                 Box::pin(async move {
                     Ok((
                         tx.get_outstanding_batches(task.id(), &None).await?,
                         read_aggregate_info_for_task::<
                             PRIO3_VERIFY_KEY_LENGTH,
                             FixedSize,
-                            Prio3Count,
+                            Prio3Aes128Count,
                             _,
-                        >(tx, task.id())
+                        >(tx, &vdaf, task.id())
                         .await,
                     ))
                 })
@@ -1753,16 +1646,18 @@ mod tests {
         let (outstanding_batches, (agg_jobs, _batches)) = job_creator
             .datastore
             .run_tx(|tx| {
+                let vdaf = Arc::clone(&vdaf);
                 let task = Arc::clone(&task);
+
                 Box::pin(async move {
                     Ok((
                         tx.get_outstanding_batches(task.id(), &None).await?,
                         read_aggregate_info_for_task::<
                             PRIO3_VERIFY_KEY_LENGTH,
                             FixedSize,
-                            Prio3Count,
+                            Prio3Aes128Count,
                             _,
-                        >(tx, task.id())
+                        >(tx, &vdaf, task.id())
                         .await,
                     ))
                 })
@@ -1791,7 +1686,6 @@ mod tests {
         // Verify consistency of batches and aggregation jobs.
         let mut seen_report_ids = HashSet::new();
         for (agg_job, report_ids) in agg_jobs {
-            assert_eq!(agg_job.round(), AggregationJobRound::from(0));
             assert!(batch_ids.contains(agg_job.batch_id()));
             assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
 
@@ -1812,6 +1706,7 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let meter = noop_meter();
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
+        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
 
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
@@ -1889,7 +1784,9 @@ mod tests {
             job_creator
                 .datastore
                 .run_tx(|tx| {
+                    let vdaf = Arc::clone(&vdaf);
                     let task = Arc::clone(&task);
+
                     Box::pin(async move {
                         Ok((
                             tx.get_outstanding_batches(task.id(), &Some(time_bucket_start_1))
@@ -1899,9 +1796,9 @@ mod tests {
                             read_aggregate_info_for_task::<
                                 PRIO3_VERIFY_KEY_LENGTH,
                                 FixedSize,
-                                Prio3Count,
+                                Prio3Aes128Count,
                                 _,
-                            >(tx, task.id())
+                            >(tx, &vdaf, task.id())
                             .await,
                         ))
                     })
@@ -1945,7 +1842,6 @@ mod tests {
         let mut seen_report_ids = HashSet::new();
         let mut batches_with_small_agg_jobs = HashSet::new();
         for (agg_job, report_ids) in agg_jobs {
-            assert_eq!(agg_job.round(), AggregationJobRound::from(0));
             assert!(batch_ids.contains(agg_job.batch_id()));
             assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
 
@@ -2032,15 +1928,20 @@ mod tests {
     async fn read_aggregate_info_for_task<
         const SEED_SIZE: usize,
         Q: AccumulableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: vdaf::Aggregator<SEED_SIZE>,
         C: Clock,
     >(
         tx: &Transaction<'_, C>,
+        vdaf: &A,
         task_id: &TaskId,
     ) -> (
         Vec<(AggregationJob<SEED_SIZE, Q, A>, Vec<ReportId>)>,
         Vec<Batch<SEED_SIZE, Q, A>>,
-    ) {
+    )
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
+    {
         try_join!(
             try_join_all(
                 tx.get_aggregation_jobs_for_task(task_id)
@@ -2050,7 +1951,7 @@ mod tests {
                     .map(|agg_job| async {
                         let agg_job_id = *agg_job.id();
                         tx.get_report_aggregations_for_aggregation_job(
-                            &dummy_vdaf::Vdaf::new(),
+                            vdaf,
                             &Role::Leader,
                             task_id,
                             &agg_job_id,

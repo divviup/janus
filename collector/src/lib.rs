@@ -35,7 +35,7 @@
 //! );
 //!
 //! // Supply a VDAF implementation, corresponding to this task.
-//! let vdaf = Prio3::new_count(2).unwrap();
+//! let vdaf = Prio3::new_aes128_count(2).unwrap();
 //! // Use the default HTTP client as-is.
 //! let http_client = default_http_client().unwrap();
 //! let collector = Collector::new(parameters, vdaf, http_client);
@@ -54,7 +54,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 use backoff::{backoff::Backoff, ExponentialBackoff};
-use chrono::{DateTime, Duration, Utc};
 use derivative::Derivative;
 use http_api_problem::HttpApiProblem;
 pub use janus_core::task::AuthenticationToken;
@@ -63,21 +62,18 @@ use janus_core::{
     http::response_to_problem_details,
     retries::{http_request_exponential_backoff, retry_http_request},
     task::url_ensure_trailing_slash,
-    time::{DurationExt, TimeExt},
 };
 use janus_messages::{
     problem_type::DapProblemType,
     query_type::{QueryType, TimeInterval},
-    AggregateShareAad, BatchSelector, Collection as CollectionMessage, CollectionJobId,
-    CollectionReq, HpkeConfig, PartialBatchSelector, Query, Role, TaskId,
+    BatchSelector, CollectReq, CollectResp, HpkeConfig, PartialBatchSelector, Query, Role, TaskId,
 };
 use prio::{
-    codec::{Decode, Encode, ParameterizedDecode},
+    codec::{Decode, Encode},
     vdaf,
 };
-use rand::random;
 use reqwest::{
-    header::{HeaderValue, ToStrError, CONTENT_TYPE, RETRY_AFTER},
+    header::{HeaderValue, ToStrError, CONTENT_TYPE, LOCATION, RETRY_AFTER},
     Response, StatusCode,
 };
 use retry_after::FromHeaderValueError;
@@ -217,12 +213,15 @@ impl CollectorParameters {
         self
     }
 
-    /// Construct a URI for a collection.
-    fn collection_job_uri(&self, collection_job_id: CollectionJobId) -> Result<Url, Error> {
-        Ok(self.leader_endpoint.join(&format!(
-            "tasks/{}/collection_jobs/{collection_job_id}",
-            self.task_id
-        ))?)
+    /// Construct a URI to start a collection.
+    fn collect_uri(&self) -> Result<Url, Error> {
+        Ok(self.leader_endpoint.join("collect")?)
+    }
+
+    /// Construct a URI to poll for collection completion, given the value of the Location header in
+    /// the response to collection creation.
+    fn collect_poll_uri(&self, collection_location: &str) -> Result<Url, Error> {
+        Ok(self.leader_endpoint.join(collection_location)?)
     }
 }
 
@@ -244,7 +243,7 @@ where
     /// The URL provided by the leader aggregator, where the collect response will be available
     /// upon completion.
     #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
-    collection_job_url: Url,
+    collect_poll_url: Url,
     /// The collect request's query.
     query: Query<Q>,
     /// The aggregation parameter used in this collect request.
@@ -254,12 +253,12 @@ where
 
 impl<P, Q: QueryType> CollectionJob<P, Q> {
     fn new(
-        collection_job_url: Url,
+        collect_poll_url: Url,
         query: Query<Q>,
         aggregation_parameter: P,
     ) -> CollectionJob<P, Q> {
         CollectionJob {
-            collection_job_url,
+            collect_poll_url,
             query,
             aggregation_parameter,
         }
@@ -289,7 +288,6 @@ where
 {
     partial_batch_selector: PartialBatchSelector<Q>,
     report_count: u64,
-    interval: (DateTime<Utc>, Duration),
     aggregate_result: T,
 }
 
@@ -305,11 +303,6 @@ where
     /// Retrieves the number of client reports included in this collection.
     pub fn report_count(&self) -> u64 {
         self.report_count
-    }
-
-    /// Retrieves the interval of time spanned by the reports included in this collection.
-    pub fn interval(&self) -> &(DateTime<Utc>, Duration) {
-        &self.interval
     }
 
     /// Retrieves the aggregated result of the client reports included in this collection.
@@ -328,13 +321,11 @@ where
     pub fn new(
         partial_batch_selector: PartialBatchSelector<Q>,
         report_count: u64,
-        interval: (DateTime<Utc>, Duration),
         aggregate_result: T,
     ) -> Self {
         Self {
             partial_batch_selector,
             report_count,
-            interval,
             aggregate_result,
         }
     }
@@ -348,7 +339,6 @@ where
     fn eq(&self, other: &Self) -> bool {
         self.partial_batch_selector == other.partial_batch_selector
             && self.report_count == other.report_count
-            && self.interval == other.interval
             && self.aggregate_result == other.aggregate_result
     }
 }
@@ -363,14 +353,20 @@ where
 /// A DAP collector.
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub struct Collector<V: vdaf::Collector> {
+pub struct Collector<V: vdaf::Collector>
+where
+    for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+{
     parameters: CollectorParameters,
     vdaf_collector: V,
     #[derivative(Debug = "ignore")]
     http_client: reqwest::Client,
 }
 
-impl<V: vdaf::Collector> Collector<V> {
+impl<V: vdaf::Collector> Collector<V>
+where
+    for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+{
     /// Construct a new collector. This requires certain DAP task parameters, an implementation of
     /// the task's VDAF, and a [`reqwest::Client`], configured to never follow redirects, that will
     /// be used to communicate with the leader aggregator.
@@ -393,9 +389,12 @@ impl<V: vdaf::Collector> Collector<V> {
         query: Query<Q>,
         aggregation_parameter: &V::AggregationParam,
     ) -> Result<CollectionJob<V::AggregationParam, Q>, Error> {
-        let collect_request =
-            CollectionReq::new(query.clone(), aggregation_parameter.get_encoded());
-        let collection_job_url = self.parameters.collection_job_uri(random())?;
+        let collect_request = CollectReq::new(
+            self.parameters.task_id,
+            query.clone(),
+            aggregation_parameter.get_encoded(),
+        );
+        let collection_job_url = self.parameters.collect_uri()?;
 
         let response_res = retry_http_request(
             self.parameters.http_request_retry_parameters.clone(),
@@ -403,8 +402,8 @@ impl<V: vdaf::Collector> Collector<V> {
                 let (auth_header, auth_value) =
                     self.parameters.authentication.request_authentication();
                 self.http_client
-                    .put(collection_job_url.clone())
-                    .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
+                    .post(collection_job_url.clone())
+                    .header(CONTENT_TYPE, CollectReq::<TimeInterval>::MEDIA_TYPE)
                     .body(collect_request.get_encoded())
                     .header(auth_header, auth_value)
                     .send()
@@ -413,19 +412,26 @@ impl<V: vdaf::Collector> Collector<V> {
         )
         .await;
 
-        match response_res {
+        let collect_poll_url = match response_res {
             // Successful response or unretryable error status code:
             Ok(response) => {
                 let status = response.status();
                 if status.is_client_error() || status.is_server_error() {
                     return Err(Error::from_http_response(response).await);
-                } else if status != StatusCode::CREATED {
+                } else if status != StatusCode::SEE_OTHER {
                     // Incorrect success/redirect status code:
                     return Err(Error::Http {
                         problem_details: Box::new(HttpApiProblem::new(status)),
                         dap_problem_type: None,
                     });
                 }
+
+                let collection_location = response
+                    .headers()
+                    .get(LOCATION)
+                    .ok_or_else(|| Error::MissingLocationHeader)?
+                    .to_str()?;
+                self.parameters.collect_poll_uri(collection_location)?
             }
             // Retryable error status code, but ran out of retries:
             Err(Ok(response)) => return Err(Error::from_http_response(response).await),
@@ -434,7 +440,7 @@ impl<V: vdaf::Collector> Collector<V> {
         };
 
         Ok(CollectionJob::new(
-            collection_job_url,
+            collect_poll_url,
             query,
             aggregation_parameter.clone(),
         ))
@@ -453,7 +459,7 @@ impl<V: vdaf::Collector> Collector<V> {
                 let (auth_header, auth_value) =
                     self.parameters.authentication.request_authentication();
                 self.http_client
-                    .post(job.collection_job_url.clone())
+                    .get(job.collect_poll_url.clone())
                     .header(auth_header, auth_value)
                     .send()
                     .await
@@ -496,16 +502,26 @@ impl<V: vdaf::Collector> Collector<V> {
             .headers()
             .get(CONTENT_TYPE)
             .ok_or(Error::BadContentType(None))?;
-        if content_type != CollectionMessage::<TimeInterval>::MEDIA_TYPE {
+        if content_type != CollectResp::<TimeInterval>::MEDIA_TYPE {
             return Err(Error::BadContentType(Some(content_type.clone())));
         }
 
-        let collect_response = CollectionMessage::<Q>::get_decoded(&response.bytes().await?)?;
+        let collect_response = CollectResp::<Q>::get_decoded(&response.bytes().await?)?;
         if collect_response.encrypted_aggregate_shares().len() != 2 {
             return Err(Error::AggregateShareCount(
                 collect_response.encrypted_aggregate_shares().len(),
             ));
         }
+
+        let mut aad = Vec::new();
+        aad.extend(self.parameters.task_id.as_ref());
+        aad.extend(
+            &BatchSelector::<Q>::new(Q::batch_identifier_for_collection(
+                &job.query,
+                &collect_response,
+            ))
+            .get_encoded(),
+        );
 
         let aggregate_shares_bytes = collect_response
             .encrypted_aggregate_shares()
@@ -517,23 +533,12 @@ impl<V: vdaf::Collector> Collector<V> {
                     &self.parameters.hpke_private_key,
                     &HpkeApplicationInfo::new(&hpke::Label::AggregateShare, role, &Role::Collector),
                     encrypted_aggregate_share,
-                    &AggregateShareAad::new(
-                        self.parameters.task_id,
-                        BatchSelector::<Q>::new(Q::batch_identifier_for_collection(
-                            &job.query,
-                            &collect_response,
-                        )),
-                    )
-                    .get_encoded(),
+                    &aad,
                 )
             });
         let aggregate_shares = aggregate_shares_bytes
             .map(|bytes| {
-                V::AggregateShare::get_decoded_with_param(
-                    &(&self.vdaf_collector, &job.aggregation_parameter),
-                    &bytes?,
-                )
-                .map_err(|_err| Error::AggregateShareDecode)
+                V::AggregateShare::try_from(&bytes?).map_err(|_err| Error::AggregateShareDecode)
             })
             .collect::<Result<Vec<_>, Error>>()?;
 
@@ -550,16 +555,6 @@ impl<V: vdaf::Collector> Collector<V> {
         Ok(PollResult::CollectionResult(Collection {
             partial_batch_selector: collect_response.partial_batch_selector().clone(),
             report_count: collect_response.report_count(),
-            interval: (
-                DateTime::<Utc>::from_utc(
-                    collect_response.interval().start().as_naive_date_time()?,
-                    Utc,
-                ),
-                collect_response
-                    .interval()
-                    .duration()
-                    .as_chrono_duration()?,
-            ),
             aggregate_result,
         }))
     }
@@ -647,12 +642,15 @@ pub mod test_util {
         aggregation_parameter: &V::AggregationParam,
         host: &str,
         port: u16,
-    ) -> Result<Collection<V::AggregateResult, Q>, Error> {
+    ) -> Result<Collection<V::AggregateResult, Q>, Error>
+    where
+        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+    {
         let mut job = collector
             .start_collection(query, aggregation_parameter)
             .await?;
-        job.collection_job_url.set_host(Some(host))?;
-        job.collection_job_url.set_port(Some(port)).unwrap();
+        job.collect_poll_url.set_host(Some(host))?;
+        job.collect_poll_url.set_port(Some(port)).unwrap();
         collector.poll_until_complete(&job).await
     }
 }
@@ -664,9 +662,7 @@ mod tests {
         PollResult,
     };
     use assert_matches::assert_matches;
-    use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
-    #[cfg(feature = "fpvec_bounded_l2")]
-    use fixed_macro::fixed;
+    use chrono::{TimeZone, Utc};
     use janus_core::{
         hpke::{
             self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
@@ -678,19 +674,17 @@ mod tests {
     use janus_messages::{
         problem_type::DapProblemType,
         query_type::{FixedSize, TimeInterval},
-        AggregateShareAad, BatchId, BatchSelector, Collection as CollectionMessage,
-        CollectionJobId, CollectionReq, Duration, FixedSizeQuery, HpkeCiphertext, Interval,
-        PartialBatchSelector, Query, Role, TaskId, Time,
+        BatchId, BatchSelector, CollectReq, CollectResp, CollectionJobId, Duration, HpkeCiphertext,
+        Interval, PartialBatchSelector, Query, Role, Time,
     };
-    use mockito::Matcher;
     use prio::{
         codec::Encode,
         field::Field64,
-        vdaf::{self, prio3::Prio3, AggregateShare, OutputShare},
+        vdaf::{self, prio3::Prio3, AggregateShare, OutputShare, VdafError},
     };
     use rand::random;
     use reqwest::{
-        header::{AUTHORIZATION, CONTENT_TYPE},
+        header::{AUTHORIZATION, CONTENT_TYPE, LOCATION},
         StatusCode, Url,
     };
     use retry_after::RetryAfter;
@@ -698,7 +692,10 @@ mod tests {
     fn setup_collector<V: vdaf::Collector>(
         server: &mut mockito::Server,
         vdaf_collector: V,
-    ) -> Collector<V> {
+    ) -> Collector<V>
+    where
+        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+    {
         let server_url = Url::parse(&server.url()).unwrap();
         let hpke_keypair = generate_test_hpke_config_and_private_key();
         let parameters = CollectorParameters::new(
@@ -713,27 +710,21 @@ mod tests {
         Collector::new(parameters, vdaf_collector, default_http_client().unwrap())
     }
 
-    fn collection_uri_regex_matcher(task_id: &TaskId) -> Matcher {
-        // Matches on the relative path for a collection job resource. The Base64 URL-safe encoding
-        // of a collection ID is always 22 characters.
-        Matcher::Regex(format!(
-            "^/tasks/{task_id}/collection_jobs/[A-Za-z0-9-_]{{22}}$"
-        ))
-    }
-
-    fn build_collect_response_time<const SEED_SIZE: usize, V: vdaf::Aggregator<SEED_SIZE, 16>>(
+    fn build_collect_response_time<const SEED_SIZE: usize, V: vdaf::Aggregator<SEED_SIZE>>(
         transcript: &VdafTranscript<SEED_SIZE, V>,
         parameters: &CollectorParameters,
         batch_interval: Interval,
-    ) -> CollectionMessage<TimeInterval> {
-        let associated_data = AggregateShareAad::new(
-            parameters.task_id,
-            BatchSelector::new_time_interval(batch_interval),
-        );
-        CollectionMessage::new(
+    ) -> CollectResp<TimeInterval>
+    where
+        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+    {
+        let mut aad = Vec::new();
+        aad.extend(parameters.task_id.as_ref());
+        aad.extend(&BatchSelector::new_time_interval(batch_interval).get_encoded());
+
+        CollectResp::new(
             PartialBatchSelector::new_time_interval(),
             1,
-            batch_interval,
             Vec::<HpkeCiphertext>::from([
                 hpke::seal(
                     &parameters.hpke_config,
@@ -742,8 +733,8 @@ mod tests {
                         &Role::Leader,
                         &Role::Collector,
                     ),
-                    &transcript.aggregate_shares[0].get_encoded(),
-                    &associated_data.get_encoded(),
+                    &(&transcript.aggregate_shares[0]).into(),
+                    &aad,
                 )
                 .unwrap(),
                 hpke::seal(
@@ -753,25 +744,29 @@ mod tests {
                         &Role::Helper,
                         &Role::Collector,
                     ),
-                    &transcript.aggregate_shares[1].get_encoded(),
-                    &associated_data.get_encoded(),
+                    &(&transcript.aggregate_shares[1]).into(),
+                    &aad,
                 )
                 .unwrap(),
             ]),
         )
     }
 
-    fn build_collect_response_fixed<const SEED_SIZE: usize, V: vdaf::Aggregator<SEED_SIZE, 16>>(
+    fn build_collect_response_fixed<const SEED_SIZE: usize, V: vdaf::Aggregator<SEED_SIZE>>(
         transcript: &VdafTranscript<SEED_SIZE, V>,
         parameters: &CollectorParameters,
         batch_id: BatchId,
-    ) -> CollectionMessage<FixedSize> {
-        let associated_data =
-            AggregateShareAad::new(parameters.task_id, BatchSelector::new_fixed_size(batch_id));
-        CollectionMessage::new(
+    ) -> CollectResp<FixedSize>
+    where
+        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+    {
+        let mut aad = Vec::new();
+        aad.extend(parameters.task_id.as_ref());
+        aad.extend(&BatchSelector::new_fixed_size(batch_id).get_encoded());
+
+        CollectResp::new(
             PartialBatchSelector::new_fixed_size(batch_id),
             1,
-            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
             Vec::<HpkeCiphertext>::from([
                 hpke::seal(
                     &parameters.hpke_config,
@@ -780,8 +775,8 @@ mod tests {
                         &Role::Leader,
                         &Role::Collector,
                     ),
-                    &transcript.aggregate_shares[0].get_encoded(),
-                    &associated_data.get_encoded(),
+                    &(&transcript.aggregate_shares[0]).into(),
+                    &aad,
                 )
                 .unwrap(),
                 hpke::seal(
@@ -791,8 +786,8 @@ mod tests {
                         &Role::Helper,
                         &Role::Collector,
                     ),
-                    &transcript.aggregate_shares[1].get_encoded(),
-                    &associated_data.get_encoded(),
+                    &(&transcript.aggregate_shares[1]).into(),
+                    &aad,
                 )
                 .unwrap(),
             ]),
@@ -833,7 +828,7 @@ mod tests {
     async fn successful_collect_prio3_count() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_count(2).unwrap();
+        let vdaf = Prio3::new_aes128_count(2).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &1);
         let collector = setup_collector(&mut server, vdaf);
         let (auth_header, auth_value) =
@@ -846,26 +841,33 @@ mod tests {
         .unwrap();
         let collect_resp =
             build_collect_response_time(&transcript, &collector.parameters, batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
 
         let mocked_collect_start_error = server
-            .mock("PUT", matcher.clone())
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
-                CollectionReq::<TimeInterval>::MEDIA_TYPE,
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
             )
             .with_status(500)
             .expect(1)
             .create_async()
             .await;
         let mocked_collect_start_success = server
-            .mock("PUT", matcher)
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
-                CollectionReq::<TimeInterval>::MEDIA_TYPE,
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
             )
             .match_header(auth_header, auth_value.as_str())
-            .with_status(201)
+            .with_status(303)
+            .with_header(
+                LOCATION.as_str(),
+                &format!(
+                    "/collect/{}/{}",
+                    collector.parameters.task_id,
+                    random::<CollectionJobId>()
+                ),
+            )
             .expect(1)
             .create_async()
             .await;
@@ -881,24 +883,24 @@ mod tests {
         assert_eq!(job.query.batch_interval(), &batch_interval);
 
         let mocked_collect_error = server
-            .mock("POST", job.collection_job_url.path())
+            .mock("GET", job.collect_poll_url.path())
             .with_status(500)
             .expect(1)
             .create_async()
             .await;
         let mocked_collect_accepted = server
-            .mock("POST", job.collection_job_url.path())
+            .mock("GET", job.collect_poll_url.path())
             .with_status(202)
             .expect(2)
             .create_async()
             .await;
         let mocked_collect_complete = server
-            .mock("POST", job.collection_job_url.path())
+            .mock("GET", job.collect_poll_url.path())
             .match_header(auth_header, auth_value.as_str())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
-                CollectionMessage::<TimeInterval>::MEDIA_TYPE,
+                CollectResp::<TimeInterval>::MEDIA_TYPE,
             )
             .with_body(collect_resp.get_encoded())
             .expect(1)
@@ -911,18 +913,7 @@ mod tests {
         let collection = collector.poll_until_complete(&job).await.unwrap();
         assert_eq!(
             collection,
-            Collection::new(
-                PartialBatchSelector::new_time_interval(),
-                1,
-                (
-                    DateTime::<Utc>::from_utc(
-                        NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
-                        Utc
-                    ),
-                    chrono::Duration::seconds(3600),
-                ),
-                1,
-            ),
+            Collection::new(PartialBatchSelector::new_time_interval(), 1, 1,),
         );
 
         mocked_collect_error.assert_async().await;
@@ -934,7 +925,7 @@ mod tests {
     async fn successful_collect_prio3_sum() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_sum(2, 8).unwrap();
+        let vdaf = Prio3::new_aes128_sum(2, 8).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &144);
         let collector = setup_collector(&mut server, vdaf);
 
@@ -945,15 +936,22 @@ mod tests {
         .unwrap();
         let collect_resp =
             build_collect_response_time(&transcript, &collector.parameters, batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
 
         let mocked_collect_start_success = server
-            .mock("PUT", matcher)
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
-                CollectionReq::<TimeInterval>::MEDIA_TYPE,
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_status(201)
+            .with_status(303)
+            .with_header(
+                LOCATION.as_str(),
+                &format!(
+                    "/collect/{}/{}",
+                    collector.parameters.task_id,
+                    random::<CollectionJobId>()
+                ),
+            )
             .expect(1)
             .create_async()
             .await;
@@ -965,12 +963,12 @@ mod tests {
         assert_eq!(job.query.batch_interval(), &batch_interval);
         mocked_collect_start_success.assert_async().await;
 
-        let mocked_collect_complete = server
-            .mock("POST", job.collection_job_url.path())
+        let mocked_collect_complete: mockito::Mock = server
+            .mock("GET", job.collect_poll_url.path())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
-                CollectionMessage::<TimeInterval>::MEDIA_TYPE,
+                CollectResp::<TimeInterval>::MEDIA_TYPE,
             )
             .with_body(collect_resp.get_encoded())
             .expect(1)
@@ -980,18 +978,7 @@ mod tests {
         let collection = collector.poll_until_complete(&job).await.unwrap();
         assert_eq!(
             collection,
-            Collection::new(
-                PartialBatchSelector::new_time_interval(),
-                1,
-                (
-                    DateTime::<Utc>::from_utc(
-                        NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
-                        Utc
-                    ),
-                    chrono::Duration::seconds(3600),
-                ),
-                144
-            )
+            Collection::new(PartialBatchSelector::new_time_interval(), 1, 144)
         );
 
         mocked_collect_complete.assert_async().await;
@@ -1001,7 +988,7 @@ mod tests {
     async fn successful_collect_prio3_histogram() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_histogram(2, &[25, 50, 75, 100]).unwrap();
+        let vdaf = Prio3::new_aes128_histogram(2, &[25, 50, 75, 100]).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &80);
         let collector = setup_collector(&mut server, vdaf);
 
@@ -1012,15 +999,22 @@ mod tests {
         .unwrap();
         let collect_resp =
             build_collect_response_time(&transcript, &collector.parameters, batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
 
         let mocked_collect_start_success = server
-            .mock("PUT", matcher)
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
-                CollectionReq::<TimeInterval>::MEDIA_TYPE,
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_status(201)
+            .with_status(303)
+            .with_header(
+                LOCATION.as_str(),
+                &format!(
+                    "/collect/{}/{}",
+                    collector.parameters.task_id,
+                    random::<CollectionJobId>()
+                ),
+            )
             .expect(1)
             .create_async()
             .await;
@@ -1034,11 +1028,11 @@ mod tests {
         mocked_collect_start_success.assert_async().await;
 
         let mocked_collect_complete = server
-            .mock("POST", job.collection_job_url.path())
+            .mock("GET", job.collect_poll_url.path())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
-                CollectionMessage::<TimeInterval>::MEDIA_TYPE,
+                CollectResp::<TimeInterval>::MEDIA_TYPE,
             )
             .with_body(collect_resp.get_encoded())
             .expect(1)
@@ -1051,91 +1045,7 @@ mod tests {
             Collection::new(
                 PartialBatchSelector::new_time_interval(),
                 1,
-                (
-                    DateTime::<Utc>::from_utc(
-                        NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
-                        Utc
-                    ),
-                    chrono::Duration::seconds(3600),
-                ),
                 Vec::from([0, 0, 0, 1, 0])
-            )
-        );
-
-        mocked_collect_complete.assert_async().await;
-    }
-
-    #[tokio::test]
-    async fn successful_collect_prio3_fixedpoint_boundedl2_vec_sum() {
-        install_test_trace_subscriber();
-        let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, 3).unwrap();
-        let fp32_4_inv = fixed!(0.25: I1F31);
-        let fp32_8_inv = fixed!(0.125: I1F31);
-        let fp32_16_inv = fixed!(0.0625: I1F31);
-        let transcript = run_vdaf(
-            &vdaf,
-            &random(),
-            &(),
-            &random(),
-            &vec![fp32_16_inv, fp32_8_inv, fp32_4_inv],
-        );
-        let collector = setup_collector(&mut server, vdaf);
-
-        let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(1_000_000),
-            Duration::from_seconds(3600),
-        )
-        .unwrap();
-        let collect_resp =
-            build_collect_response_time(&transcript, &collector.parameters, batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
-
-        let mocked_collect_start_success = server
-            .mock("PUT", matcher)
-            .match_header(
-                CONTENT_TYPE.as_str(),
-                CollectionReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_status(201)
-            .expect(1)
-            .create_async()
-            .await;
-
-        let job = collector
-            .start_collection(Query::new_time_interval(batch_interval), &())
-            .await
-            .unwrap();
-        assert_eq!(job.query.batch_interval(), &batch_interval);
-
-        mocked_collect_start_success.assert_async().await;
-
-        let mocked_collect_complete = server
-            .mock("POST", job.collection_job_url.path())
-            .with_status(200)
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionMessage::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_body(collect_resp.get_encoded())
-            .expect(1)
-            .create_async()
-            .await;
-
-        let agg_result = collector.poll_until_complete(&job).await.unwrap();
-        assert_eq!(
-            agg_result,
-            Collection::new(
-                PartialBatchSelector::new_time_interval(),
-                1,
-                (
-                    DateTime::<Utc>::from_utc(
-                        NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
-                        Utc
-                    ),
-                    chrono::Duration::seconds(3600),
-                ),
-                Vec::from([0.0625, 0.125, 0.25])
             )
         );
 
@@ -1146,47 +1056,42 @@ mod tests {
     async fn successful_collect_fixed_size() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_count(2).unwrap();
+        let vdaf = Prio3::new_aes128_count(2).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &1);
         let collector = setup_collector(&mut server, vdaf);
 
         let batch_id = random();
         let collect_resp =
             build_collect_response_fixed(&transcript, &collector.parameters, batch_id);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
 
         let mocked_collect_start_success = server
-            .mock("PUT", matcher)
-            .match_header(
-                CONTENT_TYPE.as_str(),
-                CollectionReq::<FixedSize>::MEDIA_TYPE,
+            .mock("POST", "/collect")
+            .match_header(CONTENT_TYPE.as_str(), CollectReq::<FixedSize>::MEDIA_TYPE)
+            .with_status(303)
+            .with_header(
+                LOCATION.as_str(),
+                &format!(
+                    "/collect/{}/{}",
+                    collector.parameters.task_id,
+                    random::<CollectionJobId>()
+                ),
             )
-            .with_status(201)
             .expect(1)
             .create_async()
             .await;
 
         let job = collector
-            .start_collection(
-                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
-                &(),
-            )
+            .start_collection(Query::new_fixed_size(batch_id), &())
             .await
             .unwrap();
-        assert_eq!(
-            job.query.fixed_size_query(),
-            &FixedSizeQuery::ByBatchId { batch_id }
-        );
+        assert_eq!(job.query.batch_id(), &batch_id);
 
         mocked_collect_start_success.assert_async().await;
 
         let mocked_collect_complete = server
-            .mock("POST", job.collection_job_url.path())
+            .mock("GET", job.collect_poll_url.path())
             .with_status(200)
-            .with_header(
-                CONTENT_TYPE.as_str(),
-                CollectionMessage::<FixedSize>::MEDIA_TYPE,
-            )
+            .with_header(CONTENT_TYPE.as_str(), CollectResp::<FixedSize>::MEDIA_TYPE)
             .with_body(collect_resp.get_encoded())
             .expect(1)
             .create_async()
@@ -1195,18 +1100,7 @@ mod tests {
         let collection = collector.poll_until_complete(&job).await.unwrap();
         assert_eq!(
             collection,
-            Collection::new(
-                PartialBatchSelector::new_fixed_size(batch_id),
-                1,
-                (
-                    DateTime::<Utc>::from_utc(
-                        NaiveDateTime::from_timestamp_opt(0, 0).unwrap(),
-                        Utc
-                    ),
-                    chrono::Duration::seconds(1),
-                ),
-                1
-            )
+            Collection::new(PartialBatchSelector::new_fixed_size(batch_id), 1, 1)
         );
 
         mocked_collect_complete.assert_async().await;
@@ -1216,7 +1110,7 @@ mod tests {
     async fn successful_collect_authentication_bearer() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_count(2).unwrap();
+        let vdaf = Prio3::new_aes128_count(2).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &1);
         let server_url = Url::parse(&server.url()).unwrap();
         let hpke_keypair = generate_test_hpke_config_and_private_key();
@@ -1238,16 +1132,23 @@ mod tests {
         .unwrap();
         let collect_resp =
             build_collect_response_time(&transcript, &collector.parameters, batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
 
         let mocked_collect_start_success = server
-            .mock("PUT", matcher)
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
-                CollectionReq::<TimeInterval>::MEDIA_TYPE,
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
             )
             .match_header(AUTHORIZATION.as_str(), "Bearer AAAAAAAAAAAAAAAA")
-            .with_status(201)
+            .with_status(303)
+            .with_header(
+                LOCATION.as_str(),
+                &format!(
+                    "/collect/{}/{}",
+                    collector.parameters.task_id,
+                    random::<CollectionJobId>()
+                ),
+            )
             .expect(1)
             .create_async()
             .await;
@@ -1261,12 +1162,12 @@ mod tests {
         assert_eq!(job.query.batch_interval(), &batch_interval);
 
         let mocked_collect_complete = server
-            .mock("POST", job.collection_job_url.path())
+            .mock("GET", job.collect_poll_url.path())
             .match_header(AUTHORIZATION.as_str(), "Bearer AAAAAAAAAAAAAAAA")
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
-                CollectionMessage::<TimeInterval>::MEDIA_TYPE,
+                CollectResp::<TimeInterval>::MEDIA_TYPE,
             )
             .with_body(collect_resp.get_encoded())
             .expect(1)
@@ -1276,18 +1177,7 @@ mod tests {
         let agg_result = collector.poll_until_complete(&job).await.unwrap();
         assert_eq!(
             agg_result,
-            Collection::new(
-                PartialBatchSelector::new_time_interval(),
-                1,
-                (
-                    DateTime::<Utc>::from_utc(
-                        NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
-                        Utc
-                    ),
-                    chrono::Duration::seconds(3600),
-                ),
-                1,
-            )
+            Collection::new(PartialBatchSelector::new_time_interval(), 1, 1,)
         );
 
         mocked_collect_complete.assert_async().await;
@@ -1297,15 +1187,14 @@ mod tests {
     async fn failed_collect_start() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_count(2).unwrap();
+        let vdaf = Prio3::new_aes128_count(2).unwrap();
         let collector = setup_collector(&mut server, vdaf);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
 
         let mock_server_error = server
-            .mock("PUT", matcher.clone())
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
-                CollectionReq::<TimeInterval>::MEDIA_TYPE,
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
             )
             .with_status(500)
             .expect_at_least(1)
@@ -1329,10 +1218,10 @@ mod tests {
         mock_server_error.assert_async().await;
 
         let mock_server_error_details = server
-            .mock("PUT", matcher.clone())
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
-                CollectionReq::<TimeInterval>::MEDIA_TYPE,
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
             )
             .with_status(500)
             .with_header("Content-Type", "application/problem+json")
@@ -1354,10 +1243,10 @@ mod tests {
         mock_server_error_details.assert_async().await;
 
         let mock_bad_request = server
-            .mock("PUT", matcher)
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
-                CollectionReq::<TimeInterval>::MEDIA_TYPE,
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
             )
             .with_status(400)
             .with_header("Content-Type", "application/problem+json")
@@ -1388,24 +1277,25 @@ mod tests {
     async fn failed_collect_poll() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_count(2).unwrap();
+        let vdaf = Prio3::new_aes128_count(2).unwrap();
         let collector = setup_collector(&mut server, vdaf);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
 
         let mock_collect_start = server
-            .mock("PUT", matcher.clone())
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
-                CollectionReq::<TimeInterval>::MEDIA_TYPE,
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_status(201)
+            .with_status(303)
+            .with_header(
+                LOCATION.as_str(),
+                &format!(
+                    "/collect/{}/{}",
+                    collector.parameters.task_id,
+                    random::<CollectionJobId>()
+                ),
+            )
             .expect(1)
-            .create_async()
-            .await;
-        let mock_collection_job_server_error = server
-            .mock("POST", matcher)
-            .with_status(500)
-            .expect_at_least(1)
             .create_async()
             .await;
 
@@ -1418,6 +1308,14 @@ mod tests {
             .start_collection(Query::new_time_interval(batch_interval), &())
             .await
             .unwrap();
+
+        let mock_collection_job_server_error = server
+            .mock("GET", job.collect_poll_url.path())
+            .with_status(500)
+            .expect_at_least(1)
+            .create_async()
+            .await;
+
         let error = collector.poll_once(&job).await.unwrap_err();
         assert_matches!(error, Error::Http { problem_details, dap_problem_type } => {
             assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
@@ -1428,7 +1326,7 @@ mod tests {
         mock_collection_job_server_error.assert_async().await;
 
         let mock_collection_job_server_error_details = server
-            .mock("POST", job.collection_job_url.path())
+            .mock("GET", job.collect_poll_url.path())
             .with_status(500)
             .with_header("Content-Type", "application/problem+json")
             .with_body("{\"type\": \"http://example.com/test_server_error\"}")
@@ -1448,7 +1346,7 @@ mod tests {
             .await;
 
         let mock_collection_job_bad_request = server
-            .mock("POST", job.collection_job_url.path())
+            .mock("GET", job.collect_poll_url.path())
             .with_status(400)
             .with_header("Content-Type", "application/problem+json")
             .with_body(concat!(
@@ -1471,11 +1369,11 @@ mod tests {
         mock_collection_job_bad_request.assert_async().await;
 
         let mock_collection_job_bad_message_bytes = server
-            .mock("POST", job.collection_job_url.path())
+            .mock("GET", job.collect_poll_url.path())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
-                CollectionMessage::<TimeInterval>::MEDIA_TYPE,
+                CollectResp::<TimeInterval>::MEDIA_TYPE,
             )
             .with_body(b"")
             .expect_at_least(1)
@@ -1488,20 +1386,15 @@ mod tests {
         mock_collection_job_bad_message_bytes.assert_async().await;
 
         let mock_collection_job_bad_share_count = server
-            .mock("POST", job.collection_job_url.path())
+            .mock("GET", job.collect_poll_url.path())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
-                CollectionMessage::<TimeInterval>::MEDIA_TYPE,
+                CollectResp::<TimeInterval>::MEDIA_TYPE,
             )
             .with_body(
-                CollectionMessage::new(
-                    PartialBatchSelector::new_time_interval(),
-                    0,
-                    batch_interval,
-                    Vec::new(),
-                )
-                .get_encoded(),
+                CollectResp::new(PartialBatchSelector::new_time_interval(), 0, Vec::new())
+                    .get_encoded(),
             )
             .expect_at_least(1)
             .create_async()
@@ -1513,17 +1406,16 @@ mod tests {
         mock_collection_job_bad_share_count.assert_async().await;
 
         let mock_collection_job_bad_ciphertext = server
-            .mock("POST", job.collection_job_url.path())
+            .mock("GET", job.collect_poll_url.path())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
-                CollectionMessage::<TimeInterval>::MEDIA_TYPE,
+                CollectResp::<TimeInterval>::MEDIA_TYPE,
             )
             .with_body(
-                CollectionMessage::new(
+                CollectResp::new(
                     PartialBatchSelector::new_time_interval(),
                     1,
-                    batch_interval,
                     Vec::from([
                         HpkeCiphertext::new(
                             *collector.parameters.hpke_config.id(),
@@ -1548,14 +1440,13 @@ mod tests {
 
         mock_collection_job_bad_ciphertext.assert_async().await;
 
-        let associated_data = AggregateShareAad::new(
-            collector.parameters.task_id,
-            BatchSelector::new_time_interval(batch_interval),
-        );
-        let collect_resp = CollectionMessage::new(
+        let mut aad = Vec::new();
+        aad.extend(collector.parameters.task_id.as_ref());
+        aad.extend(&BatchSelector::new_time_interval(batch_interval).get_encoded());
+
+        let collect_resp = CollectResp::new(
             PartialBatchSelector::new_time_interval(),
             1,
-            batch_interval,
             Vec::from([
                 hpke::seal(
                     &collector.parameters.hpke_config,
@@ -1565,7 +1456,7 @@ mod tests {
                         &Role::Collector,
                     ),
                     b"bad",
-                    &associated_data.get_encoded(),
+                    &aad,
                 )
                 .unwrap(),
                 hpke::seal(
@@ -1576,17 +1467,17 @@ mod tests {
                         &Role::Collector,
                     ),
                     b"bad",
-                    &associated_data.get_encoded(),
+                    &aad,
                 )
                 .unwrap(),
             ]),
         );
         let mock_collection_job_bad_shares = server
-            .mock("POST", job.collection_job_url.path())
+            .mock("GET", job.collect_poll_url.path())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
-                CollectionMessage::<TimeInterval>::MEDIA_TYPE,
+                CollectResp::<TimeInterval>::MEDIA_TYPE,
             )
             .with_body(collect_resp.get_encoded())
             .expect_at_least(1)
@@ -1598,10 +1489,9 @@ mod tests {
 
         mock_collection_job_bad_shares.assert_async().await;
 
-        let collect_resp = CollectionMessage::new(
+        let collect_resp = CollectResp::new(
             PartialBatchSelector::new_time_interval(),
             1,
-            batch_interval,
             Vec::from([
                 hpke::seal(
                     &collector.parameters.hpke_config,
@@ -1610,9 +1500,10 @@ mod tests {
                         &Role::Leader,
                         &Role::Collector,
                     ),
-                    &AggregateShare::from(OutputShare::from(Vec::from([Field64::from(0)])))
-                        .get_encoded(),
-                    &associated_data.get_encoded(),
+                    &Vec::<u8>::from(&AggregateShare::from(OutputShare::from(Vec::from([
+                        Field64::from(0),
+                    ])))),
+                    &aad,
                 )
                 .unwrap(),
                 hpke::seal(
@@ -1622,22 +1513,21 @@ mod tests {
                         &Role::Helper,
                         &Role::Collector,
                     ),
-                    &AggregateShare::from(OutputShare::from(Vec::from([
+                    &Vec::<u8>::from(&AggregateShare::from(OutputShare::from(Vec::from([
                         Field64::from(0),
                         Field64::from(0),
-                    ])))
-                    .get_encoded(),
-                    &associated_data.get_encoded(),
+                    ])))),
+                    &aad,
                 )
                 .unwrap(),
             ]),
         );
         let mock_collection_job_wrong_length = server
-            .mock("POST", job.collection_job_url.path())
+            .mock("GET", job.collect_poll_url.path())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
-                CollectionMessage::<TimeInterval>::MEDIA_TYPE,
+                CollectResp::<TimeInterval>::MEDIA_TYPE,
             )
             .with_body(collect_resp.get_encoded())
             .expect_at_least(1)
@@ -1645,12 +1535,12 @@ mod tests {
             .await;
 
         let error = collector.poll_once(&job).await.unwrap_err();
-        assert_matches!(error, Error::AggregateShareDecode);
+        assert_matches!(error, Error::Vdaf(VdafError::Uncategorized(_)));
 
         mock_collection_job_wrong_length.assert_async().await;
 
         let mock_collection_job_always_fail = server
-            .mock("POST", job.collection_job_url.path())
+            .mock("GET", job.collect_poll_url.path())
             .with_status(500)
             .expect_at_least(3)
             .create_async()
@@ -1667,17 +1557,24 @@ mod tests {
     async fn collect_poll_retry_after() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_count(2).unwrap();
+        let vdaf = Prio3::new_aes128_count(2).unwrap();
         let collector = setup_collector(&mut server, vdaf);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
 
         let mock_collect_start = server
-            .mock("PUT", matcher.clone())
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
-                CollectionReq::<TimeInterval>::MEDIA_TYPE,
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_status(201)
+            .with_status(303)
+            .with_header(
+                LOCATION.as_str(),
+                &format!(
+                    "/collect/{}/{}",
+                    collector.parameters.task_id,
+                    random::<CollectionJobId>()
+                ),
+            )
             .expect(1)
             .create_async()
             .await;
@@ -1693,7 +1590,7 @@ mod tests {
         mock_collect_start.assert_async().await;
 
         let mock_collect_poll_no_retry_after = server
-            .mock("POST", job.collection_job_url.path())
+            .mock("GET", job.collect_poll_url.path())
             .with_status(202)
             .expect(1)
             .create_async()
@@ -1705,7 +1602,7 @@ mod tests {
         mock_collect_poll_no_retry_after.assert_async().await;
 
         let mock_collect_poll_retry_after_60s = server
-            .mock("POST", job.collection_job_url.path())
+            .mock("GET", job.collect_poll_url.path())
             .with_status(202)
             .with_header("Retry-After", "60")
             .expect(1)
@@ -1718,7 +1615,7 @@ mod tests {
         mock_collect_poll_retry_after_60s.assert_async().await;
 
         let mock_collect_poll_retry_after_date_time = server
-            .mock("POST", job.collection_job_url.path())
+            .mock("GET", job.collect_poll_url.path())
             .with_status(202)
             .with_header("Retry-After", "Wed, 21 Oct 2015 07:28:00 GMT")
             .expect(1)
@@ -1739,7 +1636,7 @@ mod tests {
         // used for this because hyper uses `tokio::time::Interval` internally, see issue #234.
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_count(2).unwrap();
+        let vdaf = Prio3::new_aes128_count(2).unwrap();
         let mut collector = setup_collector(&mut server, vdaf);
         collector
             .parameters
@@ -1765,14 +1662,14 @@ mod tests {
         );
 
         let mock_collect_poll_retry_after_1s = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(202)
             .with_header("Retry-After", "1")
             .expect(1)
             .create_async()
             .await;
         let mock_collect_poll_retry_after_10s = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(202)
             .with_header("Retry-After", "10")
             .expect(1)
@@ -1789,21 +1686,21 @@ mod tests {
             Utc::now() + chrono::Duration::from_std(std::time::Duration::from_secs(1)).unwrap();
         let near_future_formatted = near_future.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
         let mock_collect_poll_retry_after_near_future = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(202)
             .with_header("Retry-After", &near_future_formatted)
             .expect(1)
             .create_async()
             .await;
         let mock_collect_poll_retry_after_past = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(202)
             .with_header("Retry-After", "Mon, 01 Jan 1900 00:00:00 GMT")
             .expect(1)
             .create_async()
             .await;
         let mock_collect_poll_retry_after_far_future = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(202)
             .with_header("Retry-After", "Wed, 01 Jan 3000 00:00:00 GMT")
             .expect(1)
@@ -1831,7 +1728,7 @@ mod tests {
             .collect_poll_wait_parameters
             .initial_interval = std::time::Duration::from_millis(10);
         let mock_collect_poll_no_retry_after = server
-            .mock("POST", collection_job_path.as_str())
+            .mock("GET", collection_job_path.as_str())
             .with_status(202)
             .expect_at_least(1)
             .create_async()

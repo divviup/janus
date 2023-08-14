@@ -99,8 +99,8 @@ mod tests {
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
-        AggregationJobRound, Duration, HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum,
-        ReportMetadata, ReportShare, Role, Time,
+        Duration, HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum, ReportMetadata,
+        ReportShare, Role, Time,
     };
     use rand::random;
     use std::sync::Arc;
@@ -153,7 +153,6 @@ mod tests {
                             (),
                             Interval::from_time(&client_timestamp).unwrap(),
                             AggregationJobState::InProgress,
-                            AggregationJobRound::from(0),
                         ),
                     )
                     .await
@@ -165,7 +164,6 @@ mod tests {
                         *report.metadata().id(),
                         client_timestamp,
                         0,
-                        None,
                         ReportAggregationState::Start,
                     ))
                     .await
@@ -266,19 +264,16 @@ mod tests {
                     .await
                     .unwrap()
                     .is_empty());
-                assert!(tx
-                    .get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        &vdaf,
+                assert!(
+                    tx.get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         task.id(),
                     )
                     .await
                     .unwrap()
-                    .is_empty());
+                    .is_empty()
+                );
                 assert!(tx
-                    .get_collection_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        &vdaf,
-                        task.id(),
-                    )
+                    .get_collection_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(task.id(),)
                     .await
                     .unwrap()
                     .is_empty());
@@ -322,7 +317,7 @@ mod tests {
                     )
                     .unwrap();
                     let report_share = ReportShare::new(
-                        ReportMetadata::new(random(), client_timestamp),
+                        ReportMetadata::new(random(), client_timestamp, Vec::new()),
                         Vec::new(),
                         HpkeCiphertext::new(
                             HpkeConfigId::from(13),
@@ -342,7 +337,6 @@ mod tests {
                             (),
                             Interval::from_time(&client_timestamp).unwrap(),
                             AggregationJobState::InProgress,
-                            AggregationJobRound::from(0),
                         ),
                     )
                     .await
@@ -354,7 +348,6 @@ mod tests {
                         *report_share.metadata().id(),
                         client_timestamp,
                         0,
-                        None,
                         ReportAggregationState::Start,
                     ))
                     .await
@@ -455,17 +448,16 @@ mod tests {
                     .await
                     .unwrap()
                     .is_empty());
-                assert!(tx
-                    .get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        &vdaf,
+                assert!(
+                    tx.get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         task.id(),
                     )
                     .await
                     .unwrap()
-                    .is_empty());
+                    .is_empty()
+                );
                 assert!(tx
                     .get_aggregate_share_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        &vdaf,
                         task.id()
                     )
                     .await
@@ -523,7 +515,6 @@ mod tests {
                         batch_id,
                         Interval::from_time(&client_timestamp).unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
                     );
                     tx.put_aggregation_job(&aggregation_job).await.unwrap();
 
@@ -533,7 +524,6 @@ mod tests {
                         *report.metadata().id(),
                         client_timestamp,
                         0,
-                        None,
                         ReportAggregationState::Start,
                     );
                     tx.put_report_aggregation(&report_aggregation)
@@ -640,18 +630,12 @@ mod tests {
                     .unwrap()
                     .is_empty());
                 assert!(tx
-                    .get_batch_aggregations_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
-                        &vdaf,
-                        task.id(),
-                    )
+                    .get_batch_aggregations_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(task.id(),)
                     .await
                     .unwrap()
                     .is_empty());
                 assert!(tx
-                    .get_collection_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
-                        &vdaf,
-                        task.id(),
-                    )
+                    .get_collection_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(task.id(),)
                     .await
                     .unwrap()
                     .is_empty());
@@ -696,7 +680,7 @@ mod tests {
                         .sub(&Duration::from_seconds(2))
                         .unwrap();
                     let report_share = ReportShare::new(
-                        ReportMetadata::new(random(), client_timestamp),
+                        ReportMetadata::new(random(), client_timestamp, Vec::new()),
                         Vec::new(),
                         HpkeCiphertext::new(
                             HpkeConfigId::from(13),
@@ -715,7 +699,6 @@ mod tests {
                         batch_id,
                         Interval::from_time(&client_timestamp).unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
                     );
                     tx.put_aggregation_job(&aggregation_job).await.unwrap();
 
@@ -725,7 +708,6 @@ mod tests {
                         *report_share.metadata().id(),
                         client_timestamp,
                         0,
-                        None,
                         ReportAggregationState::Start,
                     );
                     tx.put_report_aggregation(&report_aggregation)
@@ -833,18 +815,12 @@ mod tests {
                     .unwrap()
                     .is_empty());
                 assert!(tx
-                    .get_batch_aggregations_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
-                        &vdaf,
-                        task.id(),
-                    )
+                    .get_batch_aggregations_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(task.id(),)
                     .await
                     .unwrap()
                     .is_empty());
                 assert!(tx
-                    .get_aggregate_share_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
-                        &vdaf,
-                        task.id(),
-                    )
+                    .get_aggregate_share_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(task.id(),)
                     .await
                     .unwrap()
                     .is_empty());

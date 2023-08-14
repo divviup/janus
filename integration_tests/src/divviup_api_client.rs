@@ -24,7 +24,7 @@ pub enum ApiVdaf {
         buckets: Vec<u64>,
     },
     Sum {
-        bits: usize,
+        bits: u32,
     },
 }
 

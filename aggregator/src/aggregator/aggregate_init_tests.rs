@@ -15,14 +15,14 @@ use janus_core::{
     time::{Clock, MockClock, TimeExt as _},
 };
 use janus_messages::{
-    query_type::TimeInterval, AggregationJobId, AggregationJobInitializeReq, PartialBatchSelector,
-    ReportMetadata, ReportShare, Role,
+    query_type::TimeInterval, AggregateInitializeReq, PartialBatchSelector, ReportMetadata,
+    ReportShare, Role,
 };
 use prio::codec::Encode;
 use rand::random;
 use std::sync::Arc;
 use trillium::{Handler, KnownHeaderName, Status};
-use trillium_testing::{prelude::put, TestConn};
+use trillium_testing::{prelude::post, TestConn};
 
 pub(super) struct ReportShareGenerator {
     clock: MockClock,
@@ -57,6 +57,7 @@ impl ReportShareGenerator {
                 .now()
                 .to_batch_interval_start(self.task.time_precision())
                 .unwrap(),
+            Vec::new(),
         ))
     }
 
@@ -76,7 +77,6 @@ impl ReportShareGenerator {
             report_metadata,
             self.task.current_hpke_key().config(),
             &transcript.public_share,
-            Vec::new(),
             &transcript.input_shares[1],
         );
 
@@ -89,8 +89,7 @@ pub(super) struct AggregationJobInitTestCase {
     pub(super) task: Task,
     pub(super) report_share_generator: ReportShareGenerator,
     pub(super) report_shares: Vec<ReportShare>,
-    pub(super) aggregation_job_id: AggregationJobId,
-    aggregation_job_init_req: AggregationJobInitializeReq<TimeInterval>,
+    aggregation_job_init_req: AggregateInitializeReq<TimeInterval>,
     pub(super) aggregation_param: dummy_vdaf::AggregationParam,
     pub(super) handler: Box<dyn Handler>,
     pub(super) datastore: Arc<Datastore<MockClock>>,
@@ -100,9 +99,8 @@ pub(super) struct AggregationJobInitTestCase {
 pub(super) async fn setup_aggregate_init_test() -> AggregationJobInitTestCase {
     let test_case = setup_aggregate_init_test_without_sending_request().await;
 
-    let response = put_aggregation_job(
+    let response = post_aggregation_job(
         &test_case.task,
-        &test_case.aggregation_job_id,
         &test_case.aggregation_job_init_req,
         &test_case.handler,
     )
@@ -141,8 +139,9 @@ async fn setup_aggregate_init_test_without_sending_request() -> AggregationJobIn
         report_share_generator.next().0,
     ]);
 
-    let aggregation_job_id = random();
-    let aggregation_job_init_req = AggregationJobInitializeReq::new(
+    let aggregation_job_init_req = AggregateInitializeReq::new(
+        *task.id(),
+        random(),
         aggregation_param.get_encoded(),
         PartialBatchSelector::new_time_interval(),
         report_shares.clone(),
@@ -153,7 +152,6 @@ async fn setup_aggregate_init_test_without_sending_request() -> AggregationJobIn
         task,
         report_shares,
         report_share_generator,
-        aggregation_job_id,
         aggregation_job_init_req,
         aggregation_param,
         handler: Box::new(handler),
@@ -162,20 +160,19 @@ async fn setup_aggregate_init_test_without_sending_request() -> AggregationJobIn
     }
 }
 
-pub(crate) async fn put_aggregation_job(
+pub(crate) async fn post_aggregation_job(
     task: &Task,
-    aggregation_job_id: &AggregationJobId,
-    aggregation_job: &AggregationJobInitializeReq<TimeInterval>,
+    aggregation_job: &AggregateInitializeReq<TimeInterval>,
     handler: &impl Handler,
 ) -> TestConn {
-    put(task.aggregation_job_uri(aggregation_job_id).unwrap().path())
+    post(task.aggregation_job_uri().unwrap().path())
         .with_request_header(
             DAP_AUTH_HEADER,
             task.primary_aggregator_auth_token().as_ref().to_owned(),
         )
         .with_request_header(
             KnownHeaderName::ContentType,
-            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE,
         )
         .with_request_body(aggregation_job.get_encoded())
         .run_async(handler)
@@ -185,6 +182,7 @@ pub(crate) async fn put_aggregation_job(
 #[tokio::test]
 async fn aggregation_job_init_authorization_dap_auth_token() {
     let test_case = setup_aggregate_init_test_without_sending_request().await;
+
     // Find a DapAuthToken among the task's aggregator auth tokens
     let (auth_header, auth_value) = test_case
         .task
@@ -194,19 +192,15 @@ async fn aggregation_job_init_authorization_dap_auth_token() {
         .unwrap()
         .request_authentication();
 
-    let response = put(test_case
-        .task
-        .aggregation_job_uri(&test_case.aggregation_job_id)
-        .unwrap()
-        .path())
-    .with_request_header(auth_header, auth_value)
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-    )
-    .with_request_body(test_case.aggregation_job_init_req.get_encoded())
-    .run_async(&test_case.handler)
-    .await;
+    let response = post(test_case.task.aggregation_job_uri().unwrap().path())
+        .with_request_header(auth_header, auth_value)
+        .with_request_header(
+            KnownHeaderName::ContentType,
+            AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE,
+        )
+        .with_request_body(test_case.aggregation_job_init_req.get_encoded())
+        .run_async(&test_case.handler)
+        .await;
 
     assert_eq!(response.status(), Some(Status::Ok));
 }
@@ -218,30 +212,26 @@ async fn aggregation_job_init_authorization_dap_auth_token() {
 async fn aggregation_job_init_malformed_authorization_header(#[case] header_value: &'static str) {
     let test_case = setup_aggregate_init_test_without_sending_request().await;
 
-    let response = put(test_case
-        .task
-        .aggregation_job_uri(&test_case.aggregation_job_id)
-        .unwrap()
-        .path())
-    // Authenticate using a malformed "Authorization: Bearer <token>" header and a `DAP-Auth-Token`
-    // header. The presence of the former should cause an error despite the latter being present and
-    // well formed.
-    .with_request_header(KnownHeaderName::Authorization, header_value.to_string())
-    .with_request_header(
-        DAP_AUTH_HEADER,
-        test_case
-            .task
-            .primary_aggregator_auth_token()
-            .as_ref()
-            .to_owned(),
-    )
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-    )
-    .with_request_body(test_case.aggregation_job_init_req.get_encoded())
-    .run_async(&test_case.handler)
-    .await;
+    let response = post(test_case.task.aggregation_job_uri().unwrap().path())
+        // Authenticate using a malformed "Authorization: Bearer <token>" header and a `DAP-Auth-Token`
+        // header. The presence of the former should cause an error despite the latter being present and
+        // well formed.
+        .with_request_header(KnownHeaderName::Authorization, header_value.to_string())
+        .with_request_header(
+            DAP_AUTH_HEADER,
+            test_case
+                .task
+                .primary_aggregator_auth_token()
+                .as_ref()
+                .to_owned(),
+        )
+        .with_request_header(
+            KnownHeaderName::ContentType,
+            AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE,
+        )
+        .with_request_body(test_case.aggregation_job_init_req.get_encoded())
+        .run_async(&test_case.handler)
+        .await;
 
     assert_eq!(response.status(), Some(Status::BadRequest));
 }
@@ -251,20 +241,21 @@ async fn aggregation_job_mutation_aggregation_job() {
     let test_case = setup_aggregate_init_test().await;
 
     // Put the aggregation job again, but with a different aggregation parameter.
-    let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
+    let mutated_aggregation_job_init_req = AggregateInitializeReq::new(
+        *test_case.task.id(),
+        *test_case.aggregation_job_init_req.job_id(),
         dummy_vdaf::AggregationParam(1).get_encoded(),
         PartialBatchSelector::new_time_interval(),
         test_case.report_shares,
     );
 
-    let response = put_aggregation_job(
+    let response = post_aggregation_job(
         &test_case.task,
-        &test_case.aggregation_job_id,
         &mutated_aggregation_job_init_req,
         &test_case.handler,
     )
     .await;
-    assert_eq!(response.status(), Some(Status::Conflict));
+    assert_eq!(response.status(), Some(Status::InternalServerError));
 }
 
 #[tokio::test]
@@ -291,19 +282,20 @@ async fn aggregation_job_mutation_report_shares() {
         // Reverse the order of the reports
         test_case.report_shares.into_iter().rev().collect(),
     ] {
-        let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
+        let mutated_aggregation_job_init_req = AggregateInitializeReq::new(
+            *test_case.task.id(),
+            *test_case.aggregation_job_init_req.job_id(),
             test_case.aggregation_param.get_encoded(),
             PartialBatchSelector::new_time_interval(),
             mutated_report_shares,
         );
-        let response = put_aggregation_job(
+        let response = post_aggregation_job(
             &test_case.task,
-            &test_case.aggregation_job_id,
             &mutated_aggregation_job_init_req,
             &test_case.handler,
         )
         .await;
-        assert_eq!(response.status(), Some(Status::Conflict));
+        assert_eq!(response.status(), Some(Status::InternalServerError));
     }
 }
 
@@ -327,17 +319,18 @@ async fn aggregation_job_mutation_report_aggregations() {
         })
         .collect();
 
-    let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
+    let mutated_aggregation_job_init_req = AggregateInitializeReq::new(
+        *test_case.task.id(),
+        *test_case.aggregation_job_init_req.job_id(),
         test_case.aggregation_param.get_encoded(),
         PartialBatchSelector::new_time_interval(),
         mutated_report_shares,
     );
-    let response = put_aggregation_job(
+    let response = post_aggregation_job(
         &test_case.task,
-        &test_case.aggregation_job_id,
         &mutated_aggregation_job_init_req,
         &test_case.handler,
     )
     .await;
-    assert_eq!(response.status(), Some(Status::Conflict));
+    assert_eq!(response.status(), Some(Status::InternalServerError));
 }

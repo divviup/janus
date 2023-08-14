@@ -12,18 +12,14 @@ use janus_core::{
     time::{Clock, TimeExt},
 };
 use janus_messages::{
-    Duration, HpkeCiphertext, HpkeConfig, HpkeConfigList, InputShareAad, PlaintextInputShare,
-    Report, ReportId, ReportMetadata, Role, TaskId,
+    Duration, HpkeCiphertext, HpkeConfig, Report, ReportId, ReportMetadata, Role, TaskId,
 };
 use prio::{
     codec::{Decode, Encode},
     vdaf,
 };
 use rand::random;
-use std::{
-    fmt::{self, Formatter},
-    io::Cursor,
-};
+use std::fmt::{self, Formatter};
 use url::Url;
 
 #[derive(Debug, thiserror::Error)]
@@ -119,10 +115,8 @@ impl ClientParameters {
     }
 
     // URI to which reports may be uploaded for the provided task.
-    fn reports_resource_uri(&self, task_id: &TaskId) -> Result<Url, Error> {
-        Ok(self
-            .aggregator_endpoint(&Role::Leader)?
-            .join(&format!("tasks/{task_id}/reports"))?)
+    fn reports_resource_uri(&self) -> Result<Url, Error> {
+        Ok(self.aggregator_endpoint(&Role::Leader)?.join("upload")?)
     }
 }
 
@@ -158,21 +152,9 @@ pub async fn aggregator_hpke_config(
         )));
     }
 
-    let hpke_configs = HpkeConfigList::decode(&mut Cursor::new(
-        hpke_config_response.bytes().await?.as_ref(),
-    ))?;
-
-    // TODO(#857): Pick one of the advertised HPKE configs. For now, just take the first one, since
-    // we support any HpkeConfig we can decode, and it should be the server's preferred one.
-    let hpke_config = hpke_configs
-        .hpke_configs()
-        .get(0)
-        .ok_or(Error::UnexpectedServerResponse(
-            "aggregator provided empty HpkeConfigList",
-        ))?
-        .clone();
-
-    Ok(hpke_config)
+    Ok(HpkeConfig::get_decoded(
+        &hpke_config_response.bytes().await?,
+    )?)
 }
 
 /// Construct a [`reqwest::Client`] suitable for use in a DAP [`Client`].
@@ -184,7 +166,10 @@ pub fn default_http_client() -> Result<reqwest::Client, Error> {
 
 /// A DAP client.
 #[derive(Debug)]
-pub struct Client<V: vdaf::Client<16>, C> {
+pub struct Client<V: vdaf::Client, C>
+where
+    for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+{
     parameters: ClientParameters,
     vdaf_client: V,
     clock: C,
@@ -193,7 +178,10 @@ pub struct Client<V: vdaf::Client<16>, C> {
     helper_hpke_config: HpkeConfig,
 }
 
-impl<V: vdaf::Client<16>, C: Clock> Client<V, C> {
+impl<V: vdaf::Client, C: Clock> Client<V, C>
+where
+    for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+{
     pub fn new(
         parameters: ClientParameters,
         vdaf_client: V,
@@ -214,10 +202,12 @@ impl<V: vdaf::Client<16>, C: Clock> Client<V, C> {
 
     /// Shard a measurement, encrypt its shares, and construct a [`janus_core::message::Report`]
     /// to be uploaded.
-    fn prepare_report(&self, measurement: &V::Measurement) -> Result<Report, Error> {
+    fn prepare_report(&self, measurement: &V::Measurement) -> Result<Report, Error>
+    where
+        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+    {
         let report_id: ReportId = random();
-        let (public_share, input_shares) =
-            self.vdaf_client.shard(measurement, report_id.as_ref())?;
+        let (public_share, input_shares) = self.vdaf_client.shard(measurement)?;
         assert_eq!(input_shares.len(), 2); // DAP only supports VDAFs using two aggregators.
 
         let time = self
@@ -225,8 +215,13 @@ impl<V: vdaf::Client<16>, C: Clock> Client<V, C> {
             .now()
             .to_batch_interval_start(&self.parameters.time_precision)
             .map_err(|_| Error::InvalidParameter("couldn't round time down to time_precision"))?;
-        let report_metadata = ReportMetadata::new(report_id, time);
+        let report_metadata = ReportMetadata::new(report_id, time, Vec::new());
         let encoded_public_share = public_share.get_encoded();
+
+        let mut aad = Vec::new();
+        aad.extend(self.parameters.task_id.as_ref());
+        aad.extend(&report_metadata.get_encoded());
+        aad.extend(&public_share.get_encoded());
 
         let encrypted_input_shares: Vec<HpkeCiphertext> = [
             (&self.leader_hpke_config, &Role::Leader),
@@ -238,22 +233,14 @@ impl<V: vdaf::Client<16>, C: Clock> Client<V, C> {
             Ok(hpke::seal(
                 hpke_config,
                 &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, receiver_role),
-                &PlaintextInputShare::new(
-                    Vec::new(), // No extensions supported yet.
-                    input_share.get_encoded(),
-                )
-                .get_encoded(),
-                &InputShareAad::new(
-                    self.parameters.task_id,
-                    report_metadata.clone(),
-                    encoded_public_share.clone(),
-                )
-                .get_encoded(),
+                &input_share.get_encoded(),
+                &aad,
             )?)
         })
         .collect::<Result<_, Error>>()?;
 
         Ok(Report::new(
+            self.parameters.task_id,
             report_metadata,
             encoded_public_share,
             encrypted_input_shares,
@@ -264,16 +251,17 @@ impl<V: vdaf::Client<16>, C: Clock> Client<V, C> {
     /// The provided measurement is sharded into one input share plus one proof share for each
     /// aggregator and then uploaded to the leader.
     #[tracing::instrument(skip(measurement), err)]
-    pub async fn upload(&self, measurement: &V::Measurement) -> Result<(), Error> {
+    pub async fn upload(&self, measurement: &V::Measurement) -> Result<(), Error>
+    where
+        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+    {
         let report = self.prepare_report(measurement)?;
-        let upload_endpoint = self
-            .parameters
-            .reports_resource_uri(&self.parameters.task_id)?;
+        let upload_endpoint = self.parameters.reports_resource_uri()?;
         let upload_response = retry_http_request(
             self.parameters.http_request_retry_parameters.clone(),
             || async {
                 self.http_client
-                    .put(upload_endpoint.clone())
+                    .post(upload_endpoint.clone())
                     .header(CONTENT_TYPE, Report::MEDIA_TYPE)
                     .body(report.get_encoded())
                     .send()
@@ -308,10 +296,13 @@ mod tests {
     use rand::random;
     use url::Url;
 
-    fn setup_client<V: vdaf::Client<16>>(
+    fn setup_client<V: vdaf::Client>(
         server: &mut mockito::Server,
         vdaf_client: V,
-    ) -> Client<V, MockClock> {
+    ) -> Client<V, MockClock>
+    where
+        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+    {
         let server_url = Url::parse(&server.url()).unwrap();
         Client::new(
             ClientParameters::new_with_backoff(
@@ -352,13 +343,10 @@ mod tests {
     async fn upload_prio3_count() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let client = setup_client(&mut server, Prio3::new_count(2).unwrap());
+        let client = setup_client(&mut server, Prio3::new_aes128_count(2).unwrap());
 
         let mocked_upload = server
-            .mock(
-                "PUT",
-                format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
-            )
+            .mock("POST", "/upload")
             .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
             .with_status(200)
             .expect(1)
@@ -374,7 +362,7 @@ mod tests {
     async fn upload_prio3_invalid_measurement() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_sum(2, 16).unwrap();
+        let vdaf = Prio3::new_aes128_sum(2, 16).unwrap();
         let client = setup_client(&mut server, vdaf);
 
         // 65536 is too big for a 16 bit sum and will be rejected by the VDAF.
@@ -387,13 +375,10 @@ mod tests {
     async fn upload_prio3_http_status_code() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let client = setup_client(&mut server, Prio3::new_count(2).unwrap());
+        let client = setup_client(&mut server, Prio3::new_aes128_count(2).unwrap());
 
         let mocked_upload = server
-            .mock(
-                "PUT",
-                format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
-            )
+            .mock("POST", "/upload")
             .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
             .with_status(501)
             .expect(1)
@@ -414,13 +399,10 @@ mod tests {
     async fn upload_problem_details() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let client = setup_client(&mut server, Prio3::new_count(2).unwrap());
+        let client = setup_client(&mut server, Prio3::new_aes128_count(2).unwrap());
 
         let mocked_upload = server
-            .mock(
-                "PUT",
-                format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
-            )
+            .mock("POST", "/upload")
             .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
             .with_status(400)
             .with_header("Content-Type", "application/problem+json")
@@ -459,7 +441,7 @@ mod tests {
             ClientParameters::new(random(), Vec::new(), Duration::from_seconds(0));
         let client = Client::new(
             client_parameters,
-            Prio3::new_count(2).unwrap(),
+            Prio3::new_aes128_count(2).unwrap(),
             MockClock::default(),
             &default_http_client().unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
@@ -473,7 +455,7 @@ mod tests {
     fn report_timestamp() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new();
-        let vdaf = Prio3::new_count(2).unwrap();
+        let vdaf = Prio3::new_aes128_count(2).unwrap();
         let mut client = setup_client(&mut server, vdaf);
 
         client.parameters.time_precision = Duration::from_seconds(100);

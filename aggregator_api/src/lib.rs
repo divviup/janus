@@ -677,8 +677,8 @@ mod tests {
         time::MockClock,
     };
     use janus_messages::{
-        query_type::TimeInterval, AggregationJobRound, Duration, HpkeAeadId, HpkeConfig,
-        HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Interval, Role, TaskId, Time,
+        query_type::TimeInterval, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId,
+        HpkeKemId, HpkePublicKey, Interval, Role, TaskId, Time,
     };
     use rand::{distributions::Standard, random, thread_rng, Rng};
     use serde_test::{assert_ser_tokens, assert_tokens, Token};
@@ -1406,7 +1406,6 @@ mod tests {
                             )
                             .unwrap(),
                             AggregationJobState::InProgress,
-                            AggregationJobRound::from(0),
                         ),
                     )
                     .await?;
@@ -1424,7 +1423,6 @@ mod tests {
                                         *report.metadata().id(),
                                         *report.metadata().time(),
                                         ord.try_into().unwrap(),
-                                        None,
                                         ReportAggregationState::Start,
                                     ),
                                 )

@@ -14,11 +14,14 @@ use prio::vdaf::{self, Aggregatable};
 pub(crate) async fn compute_aggregate_share<
     const SEED_SIZE: usize,
     Q: QueryType,
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
+    A: vdaf::Aggregator<SEED_SIZE>,
 >(
     task: &Task,
     batch_aggregations: &[BatchAggregation<SEED_SIZE, Q, A>],
-) -> Result<(A::AggregateShare, u64, ReportIdChecksum), Error> {
+) -> Result<(A::AggregateShare, u64, ReportIdChecksum), Error>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+{
     // At the moment we construct an aggregate share (either handling AggregateShareReq in the
     // helper or driving a collection job in the leader), there could be some incomplete aggregation
     // jobs whose results not been accumulated into the batch aggregations we just queried from the

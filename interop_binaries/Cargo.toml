@@ -9,7 +9,6 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-fpvec_bounded_l2 = ["dep:fixed", "dep:fixed-macro", "janus_core/fpvec_bounded_l2", "janus_aggregator/fpvec_bounded_l2", "prio/experimental"]
 test-util = [
     "dep:hex",
     "dep:futures",
@@ -28,8 +27,6 @@ backoff = { version = "0.4", features = ["tokio"] }
 base64 = "0.21.2"
 clap = "4.3.19"
 futures = { version = "0.3.28", optional = true }
-fixed = { version = "1.23", optional = true }
-fixed-macro = { version = "1.1.1", optional = true }
 hex = { version = "0.4", optional = true }
 lazy_static = { version = "1", optional = true }
 janus_aggregator_core.workspace = true
@@ -60,8 +57,8 @@ url = { version = "2.4.0", features = ["serde"] }
 zstd = { version = "0.12", optional = true }
 
 [dev-dependencies]
-janus_interop_binaries = { path = ".", features = ["fpvec_bounded_l2", "testcontainer", "test-util"] }
-janus_core = { workspace = true, features = ["test-util", "fpvec_bounded_l2"] }
+janus_interop_binaries = { path = ".", features = ["testcontainer", "test-util"] }
+janus_core = { workspace = true, features = ["test-util"] }
 reqwest = { version = "0.11.18", default-features = false, features = ["json"] }
 
 [build-dependencies]

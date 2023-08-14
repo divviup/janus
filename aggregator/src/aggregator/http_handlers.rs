@@ -8,21 +8,21 @@ use janus_core::{
     time::Clock,
 };
 use janus_messages::{
-    problem_type::DapProblemType, query_type::TimeInterval, AggregateShare, AggregateShareReq,
-    AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
-    Collection, CollectionJobId, CollectionReq, HpkeConfigList, Report, TaskId,
+    problem_type::DapProblemType, query_type::TimeInterval, AggregateContinueReq,
+    AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp, AggregateShareReq,
+    AggregateShareResp, CollectReq, CollectResp, CollectionJobId, HpkeConfig, Report, TaskId,
 };
 use opentelemetry::{
     metrics::{Counter, Meter},
     Context, KeyValue,
 };
-use prio::codec::Encode;
+use prio::codec::{Decode, Encode};
 use routefinder::Captures;
 use serde::Deserialize;
-use std::sync::Arc;
 use std::time::Duration as StdDuration;
+use std::{io::Cursor, sync::Arc};
 use tracing::warn;
-use trillium::{Conn, Handler, KnownHeaderName, Status};
+use trillium::{Conn, Handler, HeaderValue, KnownHeaderName, Status};
 use trillium_api::{api, State};
 use trillium_caching_headers::CacheControlDirective;
 use trillium_opentelemetry::metrics;
@@ -42,14 +42,11 @@ impl Handler for Error {
             Error::MessageDecode(_) => {
                 conn.with_problem_details(DapProblemType::UnrecognizedMessage, None)
             }
-            Error::ReportRejected(task_id, _, _) => {
-                conn.with_problem_details(DapProblemType::ReportRejected, Some(task_id))
+            Error::ReportTooLate(task_id, _, _) => {
+                conn.with_problem_details(DapProblemType::ReportTooLate, Some(task_id))
             }
             Error::UnrecognizedMessage(task_id, _) => {
                 conn.with_problem_details(DapProblemType::UnrecognizedMessage, task_id.as_ref())
-            }
-            Error::RoundMismatch { task_id, .. } => {
-                conn.with_problem_details(DapProblemType::RoundMismatch, Some(task_id))
             }
             Error::UnrecognizedTask(task_id) => {
                 conn.with_problem_details(DapProblemType::UnrecognizedTask, Some(task_id))
@@ -138,6 +135,27 @@ where
     }
 }
 
+/// Wrapper around a set of bytes. It acts as a Trillium handler, writing the bytes as the response
+/// body, setting the Content-Type header to the provided media type, and setting the status to 200.
+struct BytesBody {
+    body: Vec<u8>,
+    media_type: &'static str,
+}
+
+impl BytesBody {
+    fn new(body: Vec<u8>, media_type: &'static str) -> Self {
+        Self { body, media_type }
+    }
+}
+
+#[async_trait]
+impl Handler for BytesBody {
+    async fn run(&self, conn: Conn) -> Conn {
+        conn.with_header(KnownHeaderName::ContentType, self.media_type)
+            .ok(self.body.clone())
+    }
+}
+
 /// A Trillium handler that checks for state set when sending an error response, and updates an
 /// OpenTelemetry counter accordingly.
 struct StatusCounter(Counter<u64>);
@@ -195,11 +213,6 @@ impl Handler for StatusCounter {
     }
 }
 
-pub(crate) static AGGREGATION_JOB_ROUTE: &str =
-    "tasks/:task_id/aggregation_jobs/:aggregation_job_id";
-pub(crate) static COLLECTION_JOB_ROUTE: &str = "tasks/:task_id/collection_jobs/:collection_job_id";
-pub(crate) static AGGREGATE_SHARES_ROUTE: &str = "tasks/:task_id/aggregate_shares";
-
 /// Constructs a Trillium handler for the aggregator.
 pub async fn aggregator_handler<C: Clock>(
     datastore: Arc<Datastore<C>>,
@@ -226,36 +239,19 @@ async fn aggregator_handler_with_aggregator<C: Clock>(
                 "hpke_config",
                 hpke_config_cors_preflight,
             )
-            .put("tasks/:task_id/reports", instrumented(api(upload::<C>)))
-            .with_route(
-                trillium::Method::Options,
-                "tasks/:task_id/reports",
-                upload_cors_preflight,
-            )
-            .put(
-                AGGREGATION_JOB_ROUTE,
-                instrumented(api(aggregation_jobs_put::<C>)),
-            )
-            .post(
-                AGGREGATION_JOB_ROUTE,
-                instrumented(api(aggregation_jobs_post::<C>)),
-            )
-            .put(
-                COLLECTION_JOB_ROUTE,
-                instrumented(api(collection_jobs_put::<C>)),
-            )
-            .post(
-                COLLECTION_JOB_ROUTE,
-                instrumented(api(collection_jobs_post::<C>)),
+            .post("upload", instrumented(api(upload::<C>)))
+            .with_route(trillium::Method::Options, "upload", upload_cors_preflight)
+            .post("aggregate", instrumented(api(aggregate::<C>)))
+            .post("collect", instrumented(api(collect_post::<C>)))
+            .get(
+                "collect/:task_id/:collection_job_id",
+                instrumented(api(collect_get::<C>)),
             )
             .delete(
-                COLLECTION_JOB_ROUTE,
-                instrumented(api(collection_jobs_delete::<C>)),
+                "collect/:task_id/:collection_job_id",
+                instrumented(api(collect_delete::<C>)),
             )
-            .post(
-                AGGREGATE_SHARES_ROUTE,
-                instrumented(api(aggregate_shares::<C>)),
-            ),
+            .post("aggregate_share", instrumented(api(aggregate_share::<C>))),
         StatusCounter::new(meter),
     ))
 }
@@ -272,10 +268,10 @@ struct HpkeConfigQuery {
 async fn hpke_config<C: Clock>(
     conn: &mut Conn,
     State(aggregator): State<Arc<Aggregator<C>>>,
-) -> Result<(CacheControlDirective, EncodedBody<HpkeConfigList>), Error> {
+) -> Result<(CacheControlDirective, EncodedBody<HpkeConfig>), Error> {
     let query = serde_urlencoded::from_str::<HpkeConfigQuery>(conn.querystring())
         .map_err(|err| Error::BadRequest(format!("couldn't parse query string: {err}")))?;
-    let hpke_config_list = aggregator
+    let hpke_config = aggregator
         .handle_hpke_config(query.task_id.as_ref().map(AsRef::as_ref))
         .await?;
 
@@ -289,7 +285,7 @@ async fn hpke_config<C: Clock>(
 
     Ok((
         CacheControlDirective::MaxAge(StdDuration::from_secs(86400)),
-        EncodedBody::new(hpke_config_list, HpkeConfigList::MEDIA_TYPE),
+        EncodedBody::new(hpke_config, HpkeConfig::MEDIA_TYPE),
     ))
 }
 
@@ -310,19 +306,14 @@ async fn hpke_config_cors_preflight(mut conn: Conn) -> Conn {
     conn
 }
 
-/// API handler for the "/tasks/.../reports" PUT endpoint.
+/// API handler for the "/upload" POST endpoint.
 async fn upload<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures), body): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-        Vec<u8>,
-    ),
+    (State(aggregator), body): (State<Arc<Aggregator<C>>>, Vec<u8>),
 ) -> Result<Status, Arc<Error>> {
     validate_content_type(conn, Report::MEDIA_TYPE).map_err(Arc::new)?;
 
-    let task_id = parse_task_id(&captures).map_err(Arc::new)?;
-    aggregator.handle_upload(&task_id, &body).await?;
+    aggregator.handle_upload(&body).await?;
 
     // Handle CORS, if the request header is present.
     if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
@@ -353,74 +344,78 @@ async fn upload_cors_preflight(mut conn: Conn) -> Conn {
     conn
 }
 
-/// API handler for the "/tasks/.../aggregation_jobs/..." PUT endpoint.
-async fn aggregation_jobs_put<C: Clock>(
+/// API handler for the "/aggregate" POST endpoint.
+async fn aggregate<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures), body): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-        Vec<u8>,
-    ),
-) -> Result<EncodedBody<AggregationJobResp>, Error> {
-    validate_content_type(
-        conn,
-        AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-    )?;
+    (State(aggregator), body): (State<Arc<Aggregator<C>>>, Vec<u8>),
+) -> Result<BytesBody, Error> {
+    let content_type = conn
+        .request_headers()
+        .get(KnownHeaderName::ContentType)
+        .and_then(HeaderValue::as_str);
 
-    let task_id = parse_task_id(&captures)?;
-    let aggregation_job_id = parse_aggregation_job_id(&captures)?;
-    let auth_token = parse_auth_token(&task_id, conn)?;
-    let response = aggregator
-        .handle_aggregate_init(&task_id, &aggregation_job_id, &body, auth_token)
-        .await?;
+    match content_type {
+        Some(AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE) => {
+            // Parse task ID early to avoid parsing the entire message before performing
+            // authentication. This assuems that the task ID is at the start of the message content.
+            let task_id = TaskId::decode(&mut Cursor::new(&body))?;
+            let auth_token = parse_auth_token(&task_id, conn)?;
 
-    Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))
+            let response = aggregator
+                .handle_aggregate_init(&task_id, &body, auth_token)
+                .await?;
+            Ok(BytesBody::new(
+                response.get_encoded(),
+                AggregateInitializeResp::MEDIA_TYPE,
+            ))
+        }
+
+        Some(AggregateContinueReq::MEDIA_TYPE) => {
+            // Parse task ID early to avoid parsing the entire message before performing
+            // authentication. This assuems that the task ID is at the start of the message content.
+            let task_id = TaskId::decode(&mut Cursor::new(&body))?;
+            let auth_token = parse_auth_token(&task_id, conn)?;
+
+            let response = aggregator
+                .handle_aggregate_continue(&task_id, &body, auth_token)
+                .await?;
+            Ok(BytesBody::new(
+                response.get_encoded(),
+                AggregateContinueResp::MEDIA_TYPE,
+            ))
+        }
+
+        _ => Err(Error::BadRequest(format!(
+            "wrong or missing Content-Type header: {content_type:?}"
+        ))),
+    }
 }
 
-/// API handler for the "/tasks/.../aggregation_jobs/..." POST endpoint.
-async fn aggregation_jobs_post<C: Clock>(
+/// API handler for the "/collect" POST endpoint.
+async fn collect_post<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures), body): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-        Vec<u8>,
-    ),
-) -> Result<EncodedBody<AggregationJobResp>, Error> {
-    validate_content_type(conn, AggregationJobContinueReq::MEDIA_TYPE)?;
-
-    let task_id = parse_task_id(&captures)?;
-    let aggregation_job_id = parse_aggregation_job_id(&captures)?;
-    let auth_token = parse_auth_token(&task_id, conn)?;
-    let response = aggregator
-        .handle_aggregate_continue(&task_id, &aggregation_job_id, &body, auth_token)
-        .await?;
-
-    Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))
-}
-
-/// API handler for the "/tasks/.../collection_jobs/..." PUT endpoint.
-async fn collection_jobs_put<C: Clock>(
-    conn: &mut Conn,
-    (State(aggregator), State(captures), body): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-        Vec<u8>,
-    ),
+    (State(aggregator), body): (State<Arc<Aggregator<C>>>, Vec<u8>),
 ) -> Result<Status, Error> {
-    validate_content_type(conn, CollectionReq::<TimeInterval>::MEDIA_TYPE)?;
+    validate_content_type(conn, CollectReq::<TimeInterval>::MEDIA_TYPE)?;
 
-    let task_id = parse_task_id(&captures)?;
-    let collection_job_id = parse_collection_job_id(&captures)?;
+    // Parse task ID early to avoid parsing the entire message before performing
+    // authentication. This assuems that the task ID is at the start of the message content.
+    let task_id = TaskId::decode(&mut Cursor::new(&body))?;
     let auth_token = parse_auth_token(&task_id, conn)?;
-    aggregator
-        .handle_create_collection_job(&task_id, &collection_job_id, &body, auth_token)
+
+    let collection_job_id = aggregator
+        .handle_create_collection_job(&task_id, &body, auth_token)
         .await?;
 
-    Ok(Status::Created)
+    conn.headers_mut().insert(
+        KnownHeaderName::Location,
+        format!("collect/{}/{}", task_id, collection_job_id),
+    );
+    Ok(Status::SeeOther)
 }
 
-/// API handler for the "/tasks/.../collection_jobs/..." POST endpoint.
-async fn collection_jobs_post<C: Clock>(
+/// API handler for the "/collect/:task_id/:collection_job_id" GET endpoint.
+async fn collect_get<C: Clock>(
     conn: &mut Conn,
     (State(aggregator), State(captures)): (
         State<Arc<Aggregator<C>>>,
@@ -437,7 +432,7 @@ async fn collection_jobs_post<C: Clock>(
         Some(response_bytes) => {
             conn.headers_mut().insert(
                 KnownHeaderName::ContentType,
-                Collection::<TimeInterval>::MEDIA_TYPE,
+                CollectResp::<TimeInterval>::MEDIA_TYPE,
             );
             conn.set_status(Status::Ok);
             conn.set_body(response_bytes);
@@ -447,8 +442,8 @@ async fn collection_jobs_post<C: Clock>(
     Ok(())
 }
 
-/// API handler for the "/tasks/.../collection_jobs/..." DELETE endpoint.
-async fn collection_jobs_delete<C: Clock>(
+/// API handler for the "/collect/:task_id/:collection_job_id" DELETE endpoint.
+async fn collect_delete<C: Clock>(
     conn: &mut Conn,
     (State(aggregator), State(captures)): (
         State<Arc<Aggregator<C>>>,
@@ -464,24 +459,23 @@ async fn collection_jobs_delete<C: Clock>(
     Ok(Status::NoContent)
 }
 
-/// API handler for the "/tasks/.../aggregate_shares" POST endpoint.
-async fn aggregate_shares<C: Clock>(
+/// API handler for the "/aggregate_share" POST endpoint.
+async fn aggregate_share<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures), body): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-        Vec<u8>,
-    ),
-) -> Result<EncodedBody<AggregateShare>, Error> {
+    (State(aggregator), body): (State<Arc<Aggregator<C>>>, Vec<u8>),
+) -> Result<EncodedBody<AggregateShareResp>, Error> {
     validate_content_type(conn, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)?;
 
-    let task_id = parse_task_id(&captures)?;
+    // Parse task ID early to avoid parsing the entire message before performing
+    // authentication. This assuems that the task ID is at the start of the message content.
+    let task_id = TaskId::decode(&mut Cursor::new(&body))?;
     let auth_token = parse_auth_token(&task_id, conn)?;
+
     let share = aggregator
         .handle_aggregate_share(&task_id, &body, auth_token)
         .await?;
 
-    Ok(EncodedBody::new(share, AggregateShare::MEDIA_TYPE))
+    Ok(EncodedBody::new(share, AggregateShareResp::MEDIA_TYPE))
 }
 
 /// Check the request's Content-Type header, and return an error if it is missing or not equal to
@@ -508,17 +502,6 @@ fn parse_task_id(captures: &Captures) -> Result<TaskId, Error> {
     encoded
         .parse()
         .map_err(|_| Error::BadRequest("invalid TaskId".to_owned()))
-}
-
-/// Parse an [`AggregationJobId`] from the "aggregation_job_id" parameter in a set of path parameter
-/// [`Captures`].
-fn parse_aggregation_job_id(captures: &Captures) -> Result<AggregationJobId, Error> {
-    let encoded = captures.get("aggregation_job_id").ok_or_else(|| {
-        Error::Internal("aggregation_job_id parameter is missing from captures".to_string())
-    })?;
-    encoded
-        .parse()
-        .map_err(|_| Error::BadRequest("invalid AggregationJobId".to_owned()))
 }
 
 /// Parse an [`CollectionJobId`] from the "collection_job_id" parameter in a set of path parameter
@@ -553,7 +536,7 @@ fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<Authenticati
 #[cfg(test)]
 mod tests {
     use crate::aggregator::{
-        aggregate_init_tests::{put_aggregation_job, setup_aggregate_init_test},
+        aggregate_init_tests::{post_aggregation_job, setup_aggregate_init_test},
         aggregation_job_continue::test_util::{
             post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
         },
@@ -597,11 +580,10 @@ mod tests {
         time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
     };
     use janus_messages::{
-        query_type::TimeInterval, AggregateShare as AggregateShareMessage, AggregateShareAad,
-        AggregateShareReq, AggregationJobContinueReq, AggregationJobId,
-        AggregationJobInitializeReq, AggregationJobResp, AggregationJobRound, BatchSelector,
-        Collection, CollectionJobId, CollectionReq, Duration, Extension, ExtensionType,
-        HpkeCiphertext, HpkeConfigId, HpkeConfigList, InputShareAad, Interval,
+        query_type::TimeInterval, AggregateContinueReq, AggregateContinueResp,
+        AggregateInitializeReq, AggregateInitializeResp, AggregateShareReq,
+        AggregateShareResp as AggregateShareMessage, AggregationJobId, BatchSelector, CollectReq,
+        CollectResp, CollectionJobId, Duration, HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval,
         PartialBatchSelector, PrepareStep, PrepareStepResult, Query, Report, ReportId,
         ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
     };
@@ -609,19 +591,17 @@ mod tests {
         codec::{Decode, Encode},
         field::Field64,
         vdaf::{
-            prio3::{Prio3, Prio3Count},
+            prio3::{Prio3, Prio3Aes128Count},
             AggregateShare, Aggregator, OutputShare,
         },
     };
     use rand::random;
     use serde_json::json;
-    use std::{
-        borrow::Cow, collections::HashMap, io::Cursor, sync::Arc, time::Duration as StdDuration,
-    };
+    use std::{borrow::Cow, sync::Arc, time::Duration as StdDuration};
     use trillium::{KnownHeaderName, Status};
     use trillium_testing::{
         assert_headers,
-        prelude::{delete, get, post, put},
+        prelude::{delete, get, post},
         TestConn,
     };
 
@@ -691,16 +671,13 @@ mod tests {
         assert_headers!(
             &test_conn,
             "cache-control" => "max-age=86400",
-            "content-type" => (HpkeConfigList::MEDIA_TYPE),
+            "content-type" => (HpkeConfig::MEDIA_TYPE),
         );
 
         let bytes = take_response_body(&mut test_conn).await;
-        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
-        assert_eq!(
-            hpke_config_list.hpke_configs(),
-            &[want_hpke_key.config().clone()]
-        );
-        check_hpke_config_is_usable(&hpke_config_list, &want_hpke_key);
+        let hpke_config = HpkeConfig::get_decoded(&bytes).unwrap();
+        assert_eq!(&hpke_config, want_hpke_key.config());
+        check_hpke_config_is_usable(&hpke_config, &want_hpke_key);
     }
 
     #[tokio::test]
@@ -751,15 +728,12 @@ mod tests {
         assert_headers!(
             &test_conn,
             "cache-control" => "max-age=86400",
-            "content-type" => (HpkeConfigList::MEDIA_TYPE),
+            "content-type" => (HpkeConfig::MEDIA_TYPE),
         );
         let bytes = take_response_body(&mut test_conn).await;
-        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
-        assert_eq!(
-            hpke_config_list.hpke_configs(),
-            &[first_hpke_keypair.config().clone()]
-        );
-        check_hpke_config_is_usable(&hpke_config_list, &first_hpke_keypair);
+        let hpke_config = HpkeConfig::get_decoded(&bytes).unwrap();
+        assert_eq!(&hpke_config, first_hpke_keypair.config());
+        check_hpke_config_is_usable(&hpke_config, &first_hpke_keypair);
 
         // Insert an inactive HPKE config.
         let second_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(2);
@@ -774,11 +748,8 @@ mod tests {
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         let bytes = take_response_body(&mut test_conn).await;
-        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
-        assert_eq!(
-            hpke_config_list.hpke_configs(),
-            &[first_hpke_keypair.config().clone()]
-        );
+        let hpke_config = HpkeConfig::get_decoded(&bytes).unwrap();
+        assert_eq!(&hpke_config, first_hpke_keypair.config());
 
         // Set key active.
         datastore
@@ -795,26 +766,8 @@ mod tests {
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         let bytes = take_response_body(&mut test_conn).await;
-        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
-        // Unordered comparison.
-        assert_eq!(
-            HashMap::from_iter(
-                hpke_config_list
-                    .hpke_configs()
-                    .iter()
-                    .map(|config| (config.id(), config))
-            ),
-            HashMap::from([
-                (
-                    first_hpke_keypair.config().id(),
-                    &first_hpke_keypair.config().clone()
-                ),
-                (
-                    second_hpke_keypair.config().id(),
-                    &second_hpke_keypair.config().clone()
-                ),
-            ]),
-        );
+        let hpke_config = HpkeConfig::get_decoded(&bytes).unwrap();
+        assert_eq!(&hpke_config, second_hpke_keypair.config());
 
         // Expire a key.
         datastore
@@ -831,11 +784,8 @@ mod tests {
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         let bytes = take_response_body(&mut test_conn).await;
-        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
-        assert_eq!(
-            hpke_config_list.hpke_configs(),
-            &[first_hpke_keypair.config().clone()]
-        );
+        let hpke_config = HpkeConfig::get_decoded(&bytes).unwrap();
+        assert_eq!(&hpke_config, first_hpke_keypair.config());
 
         // Delete a key, no keys left.
         datastore
@@ -850,19 +800,14 @@ mod tests {
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
     }
 
-    fn check_hpke_config_is_usable(hpke_config_list: &HpkeConfigList, hpke_keypair: &HpkeKeypair) {
+    fn check_hpke_config_is_usable(hpke_config: &HpkeConfig, hpke_keypair: &HpkeKeypair) {
         let application_info =
             HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
         let message = b"this is a message";
         let associated_data = b"some associated data";
 
-        let ciphertext = hpke::seal(
-            &hpke_config_list.hpke_configs()[0],
-            &application_info,
-            message,
-            associated_data,
-        )
-        .unwrap();
+        let ciphertext =
+            hpke::seal(hpke_config, &application_info, message, associated_data).unwrap();
         let plaintext = hpke::open(
             hpke_keypair.config(),
             hpke_keypair.private_key(),
@@ -976,27 +921,25 @@ mod tests {
         .unwrap();
 
         // Upload a report. Do this twice to prove that PUT is idempotent.
-        for _ in 0..2 {
-            let mut test_conn = put(task.report_upload_uri().unwrap().path())
-                .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-                .with_request_body(report.get_encoded())
-                .run_async(&handler)
-                .await;
+        let mut test_conn = post(task.report_upload_uri().unwrap().path())
+            .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
+            .with_request_body(report.get_encoded())
+            .run_async(&handler)
+            .await;
 
-            assert_eq!(test_conn.status(), Some(Status::Ok));
-            assert!(test_conn.take_response_body().is_none());
-        }
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert!(test_conn.take_response_body().is_none());
 
         let accepted_report_id = report.metadata().id();
 
-        // Verify that new reports using an existing report ID are rejected with reportRejected
+        // Verify that new reports using an existing report ID are rejected with reportTooLate
         let duplicate_id_report = create_report_custom(
             &task,
             clock.now(),
             *accepted_report_id,
             task.current_hpke_key(),
         );
-        let mut test_conn = put(task.report_upload_uri().unwrap().path())
+        let mut test_conn = post(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
             .with_request_body(duplicate_id_report.get_encoded())
             .run_async(&handler)
@@ -1004,8 +947,8 @@ mod tests {
         check_response(
             &mut test_conn,
             Status::BadRequest,
-            "reportRejected",
-            "Report could not be processed.",
+            "reportTooLate",
+            "Report could not be processed because it arrived too late.",
             task.id(),
         )
         .await;
@@ -1013,17 +956,19 @@ mod tests {
         // Verify that reports older than the report expiry age are rejected with the reportRejected
         // error type.
         let gc_eligible_report = Report::new(
+            *report.task_id(),
             ReportMetadata::new(
                 random(),
                 clock
                     .now()
                     .sub(&Duration::from_seconds(REPORT_EXPIRY_AGE + 30000))
                     .unwrap(),
+                Vec::new(),
             ),
             report.public_share().to_vec(),
             report.encrypted_input_shares().to_vec(),
         );
-        let mut test_conn = put(task.report_upload_uri().unwrap().path())
+        let mut test_conn = post(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
             .with_request_body(gc_eligible_report.get_encoded())
             .run_async(&handler)
@@ -1031,19 +976,20 @@ mod tests {
         check_response(
             &mut test_conn,
             Status::BadRequest,
-            "reportRejected",
-            "Report could not be processed.",
+            "reportTooLate",
+            "Report could not be processed because it arrived too late.",
             task.id(),
         )
         .await;
 
         // should reject a report with only one share with the unrecognizedMessage type.
         let bad_report = Report::new(
+            *report.task_id(),
             report.metadata().clone(),
             report.public_share().to_vec(),
             Vec::from([report.encrypted_input_shares()[0].clone()]),
         );
-        let mut test_conn = put(task.report_upload_uri().unwrap().path())
+        let mut test_conn = post(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
             .with_request_body(bad_report.get_encoded())
             .run_async(&handler)
@@ -1064,6 +1010,7 @@ mod tests {
             .find(|id| !task.hpke_keys().contains_key(id))
             .unwrap();
         let bad_report = Report::new(
+            *report.task_id(),
             report.metadata().clone(),
             report.public_share().to_vec(),
             Vec::from([
@@ -1077,7 +1024,7 @@ mod tests {
                 report.encrypted_input_shares()[1].clone(),
             ]),
         );
-        let mut test_conn = put(task.report_upload_uri().unwrap().path())
+        let mut test_conn = post(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
             .with_request_body(bad_report.get_encoded())
             .run_async(&handler)
@@ -1099,11 +1046,12 @@ mod tests {
             .add(&Duration::from_seconds(1))
             .unwrap();
         let bad_report = Report::new(
-            ReportMetadata::new(*report.metadata().id(), bad_report_time),
+            *report.task_id(),
+            ReportMetadata::new(*report.metadata().id(), bad_report_time, Vec::new()),
             report.public_share().to_vec(),
             report.encrypted_input_shares().to_vec(),
         );
-        let mut test_conn = put(task.report_upload_uri().unwrap().path())
+        let mut test_conn = post(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
             .with_request_body(bad_report.get_encoded())
             .run_async(&handler)
@@ -1130,7 +1078,7 @@ mod tests {
             &task_expire_soon,
             clock.now().add(&Duration::from_seconds(120)).unwrap(),
         );
-        let mut test_conn = put(task_expire_soon.report_upload_uri().unwrap().path())
+        let mut test_conn = post(task_expire_soon.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
             .with_request_body(report_2.get_encoded())
             .run_async(&handler)
@@ -1138,8 +1086,8 @@ mod tests {
         check_response(
             &mut test_conn,
             Status::BadRequest,
-            "reportRejected",
-            "Report could not be processed.",
+            "reportTooLate",
+            "Report could not be processed because it arrived too late.",
             task_expire_soon.id(),
         )
         .await;
@@ -1165,17 +1113,19 @@ mod tests {
         );
 
         // Check for appropriate CORS headers in response to the main request.
-        let test_conn = put(task.report_upload_uri().unwrap().path())
+        let test_conn = post(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::Origin, "https://example.com/")
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
             .with_request_body(
                 Report::new(
+                    *report.task_id(),
                     ReportMetadata::new(
                         random(),
                         clock
                             .now()
                             .to_batch_interval_start(task.time_precision())
                             .unwrap(),
+                        Vec::new(),
                     ),
                     report.public_share().to_vec(),
                     report.encrypted_input_shares().to_vec(),
@@ -1218,7 +1168,7 @@ mod tests {
         .await
         .unwrap();
 
-        let mut test_conn = put(task.report_upload_uri().unwrap().path())
+        let mut test_conn = post(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
             .with_request_body(report.get_encoded())
             .run_async(&handler)
@@ -1263,7 +1213,10 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let request = AggregationJobInitializeReq::new(
+        let aggregation_job_id: AggregationJobId = random();
+        let request = AggregateInitializeReq::new(
+            *task.id(),
+            aggregation_job_id,
             Vec::new(),
             PartialBatchSelector::new_time_interval(),
             Vec::new(),
@@ -1277,10 +1230,8 @@ mod tests {
         )
         .await
         .unwrap();
-        let aggregation_job_id: AggregationJobId = random();
 
-        let mut test_conn =
-            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        let mut test_conn = post_aggregation_job(&task, &request, &handler).await;
         assert!(!test_conn.status().unwrap().is_success());
 
         let problem_details = take_problem_details(&mut test_conn).await;
@@ -1320,9 +1271,7 @@ mod tests {
 
         let test_conn = TestConn::build(
             trillium::Method::Options,
-            task.aggregation_job_uri(&aggregation_job_id)
-                .unwrap()
-                .path(),
+            task.aggregation_job_uri().unwrap().path(),
             (),
         )
         .with_request_header(KnownHeaderName::Origin, "https://example.com/")
@@ -1351,7 +1300,10 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let request = AggregationJobInitializeReq::new(
+        let aggregation_job_id: AggregationJobId = random();
+        let request = AggregateInitializeReq::new(
+            *task.id(),
+            aggregation_job_id,
             Vec::new(),
             PartialBatchSelector::new_time_interval(),
             Vec::new(),
@@ -1365,7 +1317,6 @@ mod tests {
         )
         .await
         .unwrap();
-        let aggregation_job_id: AggregationJobId = random();
 
         let wrong_token_value = random();
 
@@ -1379,15 +1330,12 @@ mod tests {
             .unwrap();
 
         for auth_token in [Some(wrong_token_value), Some(wrong_token_format), None] {
-            let mut test_conn = put(task
-                .aggregation_job_uri(&aggregation_job_id)
-                .unwrap()
-                .path())
-            .with_request_header(
-                KnownHeaderName::ContentType,
-                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_request_body(request.get_encoded());
+            let mut test_conn = post(task.aggregation_job_uri().unwrap().path())
+                .with_request_header(
+                    KnownHeaderName::ContentType,
+                    AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE,
+                )
+                .with_request_body(request.get_encoded());
 
             if let Some(auth_token) = auth_token {
                 let (auth_header, auth_value) = auth_token.request_authentication();
@@ -1435,6 +1383,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript = run_vdaf(
             &vdaf,
@@ -1448,7 +1397,6 @@ mod tests {
             report_metadata_0,
             hpke_key.config(),
             &transcript.public_share,
-            Vec::new(),
             &transcript.input_shares[1],
         );
 
@@ -1459,6 +1407,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript = run_vdaf(
             &vdaf,
@@ -1472,7 +1421,6 @@ mod tests {
             report_metadata_1.clone(),
             hpke_key.config(),
             &transcript.public_share,
-            Vec::new(),
             &transcript.input_shares[1],
         );
         let encrypted_input_share = report_share_1.encrypted_input_share();
@@ -1497,6 +1445,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript = run_vdaf(
             &vdaf,
@@ -1506,13 +1455,17 @@ mod tests {
             &(),
         );
         let mut input_share_bytes = transcript.input_shares[1].get_encoded();
+        let mut aad = Vec::new();
+        aad.extend(task.id().as_ref());
+        aad.extend(&report_metadata_2.get_encoded());
+        aad.extend(&encoded_public_share);
         input_share_bytes.push(0); // can no longer be decoded.
         let report_share_2 = generate_helper_report_share_for_plaintext(
             report_metadata_2.clone(),
             hpke_key.config(),
             encoded_public_share.clone(),
             &input_share_bytes,
-            &InputShareAad::new(*task.id(), report_metadata_2, encoded_public_share).get_encoded(),
+            &aad,
         );
 
         // report_share_3 has an unknown HPKE config ID.
@@ -1522,6 +1475,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript = run_vdaf(
             &vdaf,
@@ -1542,7 +1496,6 @@ mod tests {
             report_metadata_3,
             &wrong_hpke_config,
             &transcript.public_share,
-            Vec::new(),
             &transcript.input_shares[1],
         );
 
@@ -1554,6 +1507,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript = run_vdaf(
             &vdaf,
@@ -1567,7 +1521,6 @@ mod tests {
             report_metadata_4,
             hpke_key.config(),
             &transcript.public_share,
-            Vec::new(),
             &transcript.input_shares[1],
         );
 
@@ -1581,6 +1534,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript = run_vdaf(
             &vdaf,
@@ -1594,7 +1548,6 @@ mod tests {
             report_metadata_5,
             hpke_key.config(),
             &transcript.public_share,
-            Vec::new(),
             &transcript.input_shares[1],
         );
 
@@ -1606,6 +1559,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript = run_vdaf(
             &vdaf,
@@ -1614,26 +1568,32 @@ mod tests {
             report_metadata_6.id(),
             &(),
         );
+        let mut aad = Vec::new();
+        aad.extend(task.id().as_ref());
+        aad.extend(&report_metadata_6.get_encoded());
+        aad.extend(&public_share_6);
         let report_share_6 = generate_helper_report_share_for_plaintext(
             report_metadata_6.clone(),
             hpke_key.config(),
             public_share_6.clone(),
             &transcript.input_shares[1].get_encoded(),
-            &InputShareAad::new(*task.id(), report_metadata_6, public_share_6).get_encoded(),
+            &aad,
         );
 
-        // report_share_7 fails due to having repeated extensions.
+        // report_share_7 has already been aggregated in another aggregation job, with a different
+        // aggregation parameter.
         let report_metadata_7 = ReportMetadata::new(
             random(),
             clock
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript = run_vdaf(
             &vdaf,
             verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(0),
+            &dummy_vdaf::AggregationParam(1),
             report_metadata_7.id(),
             &(),
         );
@@ -1642,35 +1602,6 @@ mod tests {
             report_metadata_7,
             hpke_key.config(),
             &transcript.public_share,
-            Vec::from([
-                Extension::new(ExtensionType::Tbd, Vec::new()),
-                Extension::new(ExtensionType::Tbd, Vec::new()),
-            ]),
-            &transcript.input_shares[0],
-        );
-
-        // report_share_8 has already been aggregated in another aggregation job, with a different
-        // aggregation parameter.
-        let report_metadata_8 = ReportMetadata::new(
-            random(),
-            clock
-                .now()
-                .to_batch_interval_start(task.time_precision())
-                .unwrap(),
-        );
-        let transcript = run_vdaf(
-            &vdaf,
-            verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(1),
-            report_metadata_8.id(),
-            &(),
-        );
-        let report_share_8 = generate_helper_report_share::<dummy_vdaf::Vdaf>(
-            *task.id(),
-            report_metadata_8,
-            hpke_key.config(),
-            &transcript.public_share,
-            Vec::new(),
             &transcript.input_shares[1],
         );
 
@@ -1679,14 +1610,14 @@ mod tests {
                 let task = task.clone();
                 let report_share_4 = report_share_4.clone();
                 let report_share_5 = report_share_5.clone();
-                let report_share_8 = report_share_8.clone();
+                let report_share_7 = report_share_7.clone();
                 Box::pin(async move {
                     tx.put_task(&task).await?;
 
-                    // report_share_4 and report_share_8 are already in the datastore as they were
+                    // report_share_4 and report_share_7 are already in the datastore as they were
                     // referenced by existing aggregation jobs.
                     tx.put_report_share(task.id(), &report_share_4).await?;
-                    tx.put_report_share(task.id(), &report_share_8).await?;
+                    tx.put_report_share(task.id(), &report_share_7).await?;
 
                     // Put in an aggregation job and report aggregation for report_share_4. It uses
                     // the same aggregation parameter as the aggregation job this test will later
@@ -1699,7 +1630,6 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
                     );
                     tx.put_aggregation_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &conflicting_aggregation_job,
@@ -1712,15 +1642,14 @@ mod tests {
                         *report_share_4.metadata().id(),
                         *report_share_4.metadata().time(),
                         0,
-                        None,
                         ReportAggregationState::Start,
                     ))
                     .await
                     .unwrap();
 
-                    // Put in an aggregation job and report aggregation for report_share_8, using a
+                    // Put in an aggregation job and report aggregation for report_share_7, using a
                     // a different aggregation parameter. As the aggregation parameter differs,
-                    // report_share_8 should prepare successfully in the aggregation job we'll PUT
+                    // report_share_7 should prepare successfully in the aggregation job we'll PUT
                     // later.
                     let non_conflicting_aggregation_job = AggregationJob::new(
                         *task.id(),
@@ -1730,7 +1659,6 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
                     );
                     tx.put_aggregation_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &non_conflicting_aggregation_job,
@@ -1740,10 +1668,9 @@ mod tests {
                     tx.put_report_aggregation::<0, dummy_vdaf::Vdaf>(&ReportAggregation::new(
                         *task.id(),
                         *non_conflicting_aggregation_job.id(),
-                        *report_share_8.metadata().id(),
-                        *report_share_8.metadata().time(),
+                        *report_share_7.metadata().id(),
+                        *report_share_7.metadata().time(),
                         0,
-                        None,
                         ReportAggregationState::Start,
                     ))
                     .await
@@ -1773,7 +1700,10 @@ mod tests {
             .await
             .unwrap();
 
-        let request = AggregationJobInitializeReq::new(
+        let aggregation_job_id = random();
+        let request = AggregateInitializeReq::new(
+            *task.id(),
+            aggregation_job_id,
             dummy_vdaf::AggregationParam(0).get_encoded(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([
@@ -1785,7 +1715,6 @@ mod tests {
                 report_share_5.clone(),
                 report_share_6.clone(),
                 report_share_7.clone(),
-                report_share_8.clone(),
             ]),
         );
 
@@ -1799,116 +1728,103 @@ mod tests {
         )
         .await
         .unwrap();
-        let aggregation_job_id: AggregationJobId = random();
 
-        for _ in 0..2 {
-            let mut test_conn =
-                put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
-            assert_eq!(test_conn.status(), Some(Status::Ok));
-            assert_headers!(
-                &test_conn,
-                "content-type" => (AggregationJobResp::MEDIA_TYPE)
-            );
-            let body_bytes = take_response_body(&mut test_conn).await;
-            let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
+        let mut test_conn = post_aggregation_job(&task, &request, &handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert_headers!(
+            &test_conn,
+            "content-type" => (AggregateInitializeResp::MEDIA_TYPE)
+        );
+        let body_bytes = take_response_body(&mut test_conn).await;
+        let aggregate_resp = AggregateInitializeResp::get_decoded(&body_bytes).unwrap();
 
-            // Validate response.
-            assert_eq!(aggregate_resp.prepare_steps().len(), 9);
+        // Validate response.
+        assert_eq!(aggregate_resp.prepare_steps().len(), 8);
 
-            let prepare_step_0 = aggregate_resp.prepare_steps().get(0).unwrap();
-            assert_eq!(prepare_step_0.report_id(), report_share_0.metadata().id());
-            assert_matches!(prepare_step_0.result(), &PrepareStepResult::Continued(..));
+        let prepare_step_0 = aggregate_resp.prepare_steps().get(0).unwrap();
+        assert_eq!(prepare_step_0.report_id(), report_share_0.metadata().id());
+        assert_matches!(prepare_step_0.result(), &PrepareStepResult::Continued(..));
 
-            let prepare_step_1 = aggregate_resp.prepare_steps().get(1).unwrap();
-            assert_eq!(prepare_step_1.report_id(), report_share_1.metadata().id());
-            assert_matches!(
-                prepare_step_1.result(),
-                &PrepareStepResult::Failed(ReportShareError::HpkeDecryptError)
-            );
+        let prepare_step_1 = aggregate_resp.prepare_steps().get(1).unwrap();
+        assert_eq!(prepare_step_1.report_id(), report_share_1.metadata().id());
+        assert_matches!(
+            prepare_step_1.result(),
+            &PrepareStepResult::Failed(ReportShareError::HpkeDecryptError)
+        );
 
-            let prepare_step_2 = aggregate_resp.prepare_steps().get(2).unwrap();
-            assert_eq!(prepare_step_2.report_id(), report_share_2.metadata().id());
-            assert_matches!(
-                prepare_step_2.result(),
-                &PrepareStepResult::Failed(ReportShareError::UnrecognizedMessage)
-            );
+        let prepare_step_2 = aggregate_resp.prepare_steps().get(2).unwrap();
+        assert_eq!(prepare_step_2.report_id(), report_share_2.metadata().id());
+        assert_matches!(
+            prepare_step_2.result(),
+            &PrepareStepResult::Failed(ReportShareError::VdafPrepError)
+        );
 
-            let prepare_step_3 = aggregate_resp.prepare_steps().get(3).unwrap();
-            assert_eq!(prepare_step_3.report_id(), report_share_3.metadata().id());
-            assert_matches!(
-                prepare_step_3.result(),
-                &PrepareStepResult::Failed(ReportShareError::HpkeUnknownConfigId)
-            );
+        let prepare_step_3 = aggregate_resp.prepare_steps().get(3).unwrap();
+        assert_eq!(prepare_step_3.report_id(), report_share_3.metadata().id());
+        assert_matches!(
+            prepare_step_3.result(),
+            &PrepareStepResult::Failed(ReportShareError::HpkeUnknownConfigId)
+        );
 
-            let prepare_step_4 = aggregate_resp.prepare_steps().get(4).unwrap();
-            assert_eq!(prepare_step_4.report_id(), report_share_4.metadata().id());
-            assert_eq!(
-                prepare_step_4.result(),
-                &PrepareStepResult::Failed(ReportShareError::ReportReplayed)
-            );
+        let prepare_step_4 = aggregate_resp.prepare_steps().get(4).unwrap();
+        assert_eq!(prepare_step_4.report_id(), report_share_4.metadata().id());
+        assert_eq!(
+            prepare_step_4.result(),
+            &PrepareStepResult::Failed(ReportShareError::ReportReplayed)
+        );
 
-            let prepare_step_5 = aggregate_resp.prepare_steps().get(5).unwrap();
-            assert_eq!(prepare_step_5.report_id(), report_share_5.metadata().id());
-            assert_eq!(
-                prepare_step_5.result(),
-                &PrepareStepResult::Failed(ReportShareError::BatchCollected)
-            );
+        let prepare_step_5 = aggregate_resp.prepare_steps().get(5).unwrap();
+        assert_eq!(prepare_step_5.report_id(), report_share_5.metadata().id());
+        assert_eq!(
+            prepare_step_5.result(),
+            &PrepareStepResult::Failed(ReportShareError::BatchCollected)
+        );
 
-            let prepare_step_6 = aggregate_resp.prepare_steps().get(6).unwrap();
-            assert_eq!(prepare_step_6.report_id(), report_share_6.metadata().id());
-            assert_eq!(
-                prepare_step_6.result(),
-                &PrepareStepResult::Failed(ReportShareError::UnrecognizedMessage),
-            );
+        let prepare_step_6 = aggregate_resp.prepare_steps().get(6).unwrap();
+        assert_eq!(prepare_step_6.report_id(), report_share_6.metadata().id());
+        assert_eq!(
+            prepare_step_6.result(),
+            &PrepareStepResult::Failed(ReportShareError::VdafPrepError),
+        );
 
-            let prepare_step_7 = aggregate_resp.prepare_steps().get(7).unwrap();
-            assert_eq!(prepare_step_7.report_id(), report_share_7.metadata().id());
-            assert_eq!(
-                prepare_step_7.result(),
-                &PrepareStepResult::Failed(ReportShareError::UnrecognizedMessage),
-            );
+        let prepare_step_7 = aggregate_resp.prepare_steps().get(7).unwrap();
+        assert_eq!(prepare_step_7.report_id(), report_share_7.metadata().id());
+        assert_matches!(prepare_step_7.result(), &PrepareStepResult::Continued(..));
 
-            let prepare_step_8 = aggregate_resp.prepare_steps().get(8).unwrap();
-            assert_eq!(prepare_step_8.report_id(), report_share_8.metadata().id());
-            assert_matches!(prepare_step_8.result(), &PrepareStepResult::Continued(..));
-
-            // Check aggregation job in datastore.
-            let aggregation_jobs = datastore
-                .run_tx(|tx| {
-                    let task = task.clone();
-                    Box::pin(async move {
-                        tx.get_aggregation_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                            task.id(),
-                        )
+        // Check aggregation job in datastore.
+        let aggregation_jobs = datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move {
+                    tx.get_aggregation_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(task.id())
                         .await
-                    })
                 })
-                .await
-                .unwrap();
+            })
+            .await
+            .unwrap();
 
-            assert_eq!(aggregation_jobs.len(), 3);
+        assert_eq!(aggregation_jobs.len(), 3);
 
-            let mut saw_conflicting_aggregation_job = false;
-            let mut saw_non_conflicting_aggregation_job = false;
-            let mut saw_new_aggregation_job = false;
-            for aggregation_job in aggregation_jobs {
-                if aggregation_job.eq(&conflicting_aggregation_job) {
-                    saw_conflicting_aggregation_job = true;
-                } else if aggregation_job.eq(&non_conflicting_aggregation_job) {
-                    saw_non_conflicting_aggregation_job = true;
-                } else if aggregation_job.task_id().eq(task.id())
-                    && aggregation_job.id().eq(&aggregation_job_id)
-                    && aggregation_job.partial_batch_identifier().eq(&())
-                    && aggregation_job.state().eq(&AggregationJobState::InProgress)
-                {
-                    saw_new_aggregation_job = true;
-                }
+        let mut saw_conflicting_aggregation_job = false;
+        let mut saw_non_conflicting_aggregation_job = false;
+        let mut saw_new_aggregation_job = false;
+        for aggregation_job in aggregation_jobs {
+            if aggregation_job.eq(&conflicting_aggregation_job) {
+                saw_conflicting_aggregation_job = true;
+            } else if aggregation_job.eq(&non_conflicting_aggregation_job) {
+                saw_non_conflicting_aggregation_job = true;
+            } else if aggregation_job.task_id().eq(task.id())
+                && aggregation_job.id().eq(&aggregation_job_id)
+                && aggregation_job.partial_batch_identifier().eq(&())
+                && aggregation_job.state().eq(&AggregationJobState::InProgress)
+            {
+                saw_new_aggregation_job = true;
             }
-
-            assert!(saw_conflicting_aggregation_job);
-            assert!(saw_non_conflicting_aggregation_job);
-            assert!(saw_new_aggregation_job);
         }
+
+        assert!(saw_conflicting_aggregation_job);
+        assert!(saw_non_conflicting_aggregation_job);
+        assert!(saw_new_aggregation_job);
     }
 
     #[tokio::test]
@@ -1964,6 +1880,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript = run_vdaf(
             &vdaf,
@@ -1977,7 +1894,6 @@ mod tests {
             report_metadata_same_id,
             global_hpke_keypair_same_id.config(),
             &transcript.public_share,
-            Vec::new(),
             &transcript.input_shares[1],
         );
 
@@ -1989,6 +1905,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript = run_vdaf(
             &vdaf,
@@ -2002,7 +1919,6 @@ mod tests {
             report_metadata_same_id_corrupted.clone(),
             global_hpke_keypair_same_id.config(),
             &transcript.public_share,
-            Vec::new(),
             &transcript.input_shares[1],
         );
         let encrypted_input_share = report_share_same_id_corrupted.encrypted_input_share();
@@ -2028,6 +1944,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript = run_vdaf(
             &vdaf,
@@ -2041,7 +1958,6 @@ mod tests {
             report_metadata_different_id,
             global_hpke_keypair_different_id.config(),
             &transcript.public_share,
-            Vec::new(),
             &transcript.input_shares[1],
         );
 
@@ -2053,6 +1969,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript = run_vdaf(
             &vdaf,
@@ -2066,7 +1983,6 @@ mod tests {
             report_metadata_different_id_corrupted.clone(),
             global_hpke_keypair_different_id.config(),
             &transcript.public_share,
-            Vec::new(),
             &transcript.input_shares[1],
         );
         let encrypted_input_share = report_share_different_id_corrupted.encrypted_input_share();
@@ -2092,9 +2008,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let aggregation_job_id: AggregationJobId = random();
 
-        let request = AggregationJobInitializeReq::new(
+        let aggregation_job_id: AggregationJobId = random();
+        let request = AggregateInitializeReq::new(
+            *task.id(),
+            aggregation_job_id,
             dummy_vdaf::AggregationParam(0).get_encoded(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([
@@ -2105,11 +2023,10 @@ mod tests {
             ]),
         );
 
-        let mut test_conn =
-            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        let mut test_conn = post_aggregation_job(&task, &request, &handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         let body_bytes = take_response_body(&mut test_conn).await;
-        let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
+        let aggregate_resp = AggregateInitializeResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
         assert_eq!(aggregate_resp.prepare_steps().len(), 4);
@@ -2171,6 +2088,7 @@ mod tests {
                 .now()
                 .add(test_case.task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let mutated_timestamp_report_share = test_case
             .report_share_generator
@@ -2179,17 +2097,19 @@ mod tests {
 
         // Send another aggregate job re-using the same report ID but with a different timestamp. It
         // should be flagged as a replay.
-        let request = AggregationJobInitializeReq::new(
+        let request = AggregateInitializeReq::new(
+            *test_case.task.id(),
+            random(),
             other_aggregation_parameter.get_encoded(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([mutated_timestamp_report_share.clone()]),
         );
 
         let mut test_conn =
-            put_aggregation_job(&test_case.task, &random(), &request, &test_case.handler).await;
+            post_aggregation_job(&test_case.task, &request, &test_case.handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         let body_bytes = take_response_body(&mut test_conn).await;
-        let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
+        let aggregate_resp = AggregateInitializeResp::get_decoded(&body_bytes).unwrap();
 
         assert_eq!(aggregate_resp.prepare_steps().len(), 1);
 
@@ -2248,13 +2168,17 @@ mod tests {
                     .now()
                     .to_batch_interval_start(task.time_precision())
                     .unwrap(),
+                Vec::new(),
             ),
             hpke_key.config(),
             &(),
-            Vec::new(),
             &dummy_vdaf::InputShare::default(),
         );
-        let request = AggregationJobInitializeReq::new(
+
+        let aggregation_job_id: AggregationJobId = random();
+        let request = AggregateInitializeReq::new(
+            *task.id(),
+            aggregation_job_id,
             dummy_vdaf::AggregationParam(0).get_encoded(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([report_share.clone()]),
@@ -2269,17 +2193,15 @@ mod tests {
         )
         .await
         .unwrap();
-        let aggregation_job_id: AggregationJobId = random();
 
-        let mut test_conn =
-            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        let mut test_conn = post_aggregation_job(&task, &request, &handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_headers!(
             &test_conn,
-            "content-type" => (AggregationJobResp::MEDIA_TYPE)
+            "content-type" => (AggregateInitializeResp::MEDIA_TYPE)
         );
         let body_bytes = take_response_body(&mut test_conn).await;
-        let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
+        let aggregate_resp = AggregateInitializeResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
         assert_eq!(aggregate_resp.prepare_steps().len(), 1);
@@ -2318,13 +2240,17 @@ mod tests {
                     .now()
                     .to_batch_interval_start(task.time_precision())
                     .unwrap(),
+                Vec::new(),
             ),
             hpke_key.config(),
             &(),
-            Vec::new(),
             &dummy_vdaf::InputShare::default(),
         );
-        let request = AggregationJobInitializeReq::new(
+
+        let aggregation_job_id: AggregationJobId = random();
+        let request = AggregateInitializeReq::new(
+            *task.id(),
+            aggregation_job_id,
             dummy_vdaf::AggregationParam(0).get_encoded(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([report_share.clone()]),
@@ -2339,17 +2265,15 @@ mod tests {
         )
         .await
         .unwrap();
-        let aggregation_job_id: AggregationJobId = random();
 
-        let mut test_conn =
-            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        let mut test_conn = post_aggregation_job(&task, &request, &handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_headers!(
             &test_conn,
-            "content-type" => (AggregationJobResp::MEDIA_TYPE)
+            "content-type" => (AggregateInitializeResp::MEDIA_TYPE)
         );
         let body_bytes = take_response_body(&mut test_conn).await;
-        let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
+        let aggregate_resp = AggregateInitializeResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
         assert_eq!(aggregate_resp.prepare_steps().len(), 1);
@@ -2382,6 +2306,7 @@ mod tests {
             ReportMetadata::new(
                 ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 Time::from_seconds_since_epoch(54321),
+                Vec::new(),
             ),
             Vec::from("PUBLIC"),
             HpkeCiphertext::new(
@@ -2392,7 +2317,10 @@ mod tests {
             ),
         );
 
-        let request = AggregationJobInitializeReq::new(
+        let aggregation_job_id: AggregationJobId = random();
+        let request = AggregateInitializeReq::new(
+            *task.id(),
+            aggregation_job_id,
             dummy_vdaf::AggregationParam(0).get_encoded(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([report_share.clone(), report_share]),
@@ -2406,10 +2334,8 @@ mod tests {
         )
         .await
         .unwrap();
-        let aggregation_job_id: AggregationJobId = random();
 
-        let mut test_conn =
-            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        let mut test_conn = post_aggregation_job(&task, &request, &handler).await;
 
         let want_status = 400;
         assert_eq!(
@@ -2440,7 +2366,7 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
-        let vdaf = Arc::new(Prio3::new_count(2).unwrap());
+        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
         let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
         let hpke_key = task.current_hpke_key();
@@ -2452,6 +2378,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript_0 = run_vdaf(
             vdaf.as_ref(),
@@ -2462,12 +2389,11 @@ mod tests {
         );
         let (prep_state_0, _) = transcript_0.helper_prep_state(0);
         let prep_msg_0 = transcript_0.prepare_messages[0].clone();
-        let report_share_0 = generate_helper_report_share::<Prio3Count>(
+        let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
             *task.id(),
             report_metadata_0.clone(),
             hpke_key.config(),
             &transcript_0.public_share,
-            Vec::new(),
             &transcript_0.input_shares[1],
         );
 
@@ -2478,6 +2404,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript_1 = run_vdaf(
             vdaf.as_ref(),
@@ -2488,12 +2415,11 @@ mod tests {
         );
 
         let (prep_state_1, _) = transcript_1.helper_prep_state(0);
-        let report_share_1 = generate_helper_report_share::<Prio3Count>(
+        let report_share_1 = generate_helper_report_share::<Prio3Aes128Count>(
             *task.id(),
             report_metadata_1.clone(),
             hpke_key.config(),
             &transcript_1.public_share,
-            Vec::new(),
             &transcript_1.input_shares[1],
         );
 
@@ -2507,6 +2433,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript_2 = run_vdaf(
             vdaf.as_ref(),
@@ -2517,12 +2444,11 @@ mod tests {
         );
         let (prep_state_2, _) = transcript_2.helper_prep_state(0);
         let prep_msg_2 = transcript_2.prepare_messages[0].clone();
-        let report_share_2 = generate_helper_report_share::<Prio3Count>(
+        let report_share_2 = generate_helper_report_share::<Prio3Aes128Count>(
             *task.id(),
             report_metadata_2.clone(),
             hpke_key.config(),
             &transcript_2.public_share,
-            Vec::new(),
             &transcript_2.input_shares[1],
         );
 
@@ -2555,7 +2481,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Prio3Count,
+                        Prio3Aes128Count,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
@@ -2564,48 +2490,44 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
                     ))
                     .await?;
 
-                    tx.put_report_aggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(
+                    tx.put_report_aggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
                         &ReportAggregation::new(
                             *task.id(),
                             aggregation_job_id,
                             *report_metadata_0.id(),
                             *report_metadata_0.time(),
                             0,
-                            None,
                             ReportAggregationState::Waiting(prep_state_0, None),
                         ),
                     )
                     .await?;
-                    tx.put_report_aggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(
+                    tx.put_report_aggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
                         &ReportAggregation::new(
                             *task.id(),
                             aggregation_job_id,
                             *report_metadata_1.id(),
                             *report_metadata_1.time(),
                             1,
-                            None,
                             ReportAggregationState::Waiting(prep_state_1, None),
                         ),
                     )
                     .await?;
-                    tx.put_report_aggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(
+                    tx.put_report_aggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
                         &ReportAggregation::new(
                             *task.id(),
                             aggregation_job_id,
                             *report_metadata_2.id(),
                             *report_metadata_2.time(),
                             2,
-                            None,
                             ReportAggregationState::Waiting(prep_state_2, None),
                         ),
                     )
                     .await?;
 
-                    tx.put_aggregate_share_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                    tx.put_aggregate_share_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                         &AggregateShareJob::new(
                             *task.id(),
                             Interval::new(
@@ -2625,8 +2547,9 @@ mod tests {
             .await
             .unwrap();
 
-        let request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+        let request = AggregateContinueReq::new(
+            *task.id(),
+            aggregation_job_id,
             Vec::from([
                 PrepareStep::new(
                     *report_metadata_0.id(),
@@ -2649,13 +2572,12 @@ mod tests {
         .await
         .unwrap();
 
-        let aggregate_resp =
-            post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
+        let aggregate_resp = post_aggregation_job_and_decode(&task, &request, &handler).await;
 
         // Validate response.
         assert_eq!(
             aggregate_resp,
-            AggregationJobResp::new(Vec::from([
+            AggregateContinueResp::new(Vec::from([
                 PrepareStep::new(*report_metadata_0.id(), PrepareStepResult::Finished),
                 PrepareStep::new(
                     *report_metadata_2.id(),
@@ -2671,7 +2593,7 @@ mod tests {
                     let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
                     Box::pin(async move {
                         let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                        .get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -2701,9 +2623,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
-                AggregationJobRound::from(1),
             )
-            .with_last_continue_request_hash(aggregation_job.last_continue_request_hash().unwrap())
         );
         assert_eq!(
             report_aggregations,
@@ -2714,10 +2634,6 @@ mod tests {
                     *report_metadata_0.id(),
                     *report_metadata_0.time(),
                     0,
-                    Some(PrepareStep::new(
-                        *report_metadata_0.id(),
-                        PrepareStepResult::Finished
-                    )),
                     ReportAggregationState::Finished,
                 ),
                 ReportAggregation::new(
@@ -2726,7 +2642,6 @@ mod tests {
                     *report_metadata_1.id(),
                     *report_metadata_1.time(),
                     1,
-                    None,
                     ReportAggregationState::Failed(ReportShareError::ReportDropped),
                 ),
                 ReportAggregation::new(
@@ -2735,10 +2650,6 @@ mod tests {
                     *report_metadata_2.id(),
                     *report_metadata_2.time(),
                     2,
-                    Some(PrepareStep::new(
-                        *report_metadata_2.id(),
-                        PrepareStepResult::Failed(ReportShareError::BatchCollected)
-                    )),
                     ReportAggregationState::Failed(ReportShareError::BatchCollected),
                 )
             ])
@@ -2767,7 +2678,7 @@ mod tests {
                 .unwrap(),
         );
 
-        let vdaf = Prio3::new_count(2).unwrap();
+        let vdaf = Prio3::new_aes128_count(2).unwrap();
         let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
         let hpke_key = task.current_hpke_key();
@@ -2779,6 +2690,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript_0 = run_vdaf(
             &vdaf,
@@ -2790,12 +2702,11 @@ mod tests {
         let (prep_state_0, _) = transcript_0.helper_prep_state(0);
         let out_share_0 = transcript_0.output_share(Role::Helper);
         let prep_msg_0 = transcript_0.prepare_messages[0].clone();
-        let report_share_0 = generate_helper_report_share::<Prio3Count>(
+        let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
             *task.id(),
             report_metadata_0.clone(),
             hpke_key.config(),
             &transcript_0.public_share,
-            Vec::new(),
             &transcript_0.input_shares[1],
         );
 
@@ -2807,6 +2718,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript_1 = run_vdaf(
             &vdaf,
@@ -2818,12 +2730,11 @@ mod tests {
         let (prep_state_1, _) = transcript_1.helper_prep_state(0);
         let out_share_1 = transcript_1.output_share(Role::Helper);
         let prep_msg_1 = transcript_1.prepare_messages[0].clone();
-        let report_share_1 = generate_helper_report_share::<Prio3Count>(
+        let report_share_1 = generate_helper_report_share::<Prio3Aes128Count>(
             *task.id(),
             report_metadata_1.clone(),
             hpke_key.config(),
             &transcript_1.public_share,
-            Vec::new(),
             &transcript_1.input_shares[1],
         );
 
@@ -2835,6 +2746,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript_2 = run_vdaf(
             &vdaf,
@@ -2845,12 +2757,11 @@ mod tests {
         );
         let (prep_state_2, _) = transcript_2.helper_prep_state(0);
         let prep_msg_2 = transcript_2.prepare_messages[0].clone();
-        let report_share_2 = generate_helper_report_share::<Prio3Count>(
+        let report_share_2 = generate_helper_report_share::<Prio3Aes128Count>(
             *task.id(),
             report_metadata_2.clone(),
             hpke_key.config(),
             &transcript_2.public_share,
-            Vec::new(),
             &transcript_2.input_shares[1],
         );
 
@@ -2871,7 +2782,7 @@ mod tests {
         )
         .unwrap();
         let second_batch_want_batch_aggregations =
-            empty_batch_aggregations::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+            empty_batch_aggregations::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                 &task,
                 BATCH_AGGREGATION_SHARD_COUNT,
                 &second_batch_identifier,
@@ -2910,7 +2821,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Prio3Count,
+                        Prio3Aes128Count,
                     >::new(
                         *task.id(),
                         aggregation_job_id_0,
@@ -2919,61 +2830,59 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
                     ))
                     .await?;
 
                     tx.put_report_aggregation(&ReportAggregation::<
                         PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
+                        Prio3Aes128Count,
                     >::new(
                         *task.id(),
                         aggregation_job_id_0,
                         *report_metadata_0.id(),
                         *report_metadata_0.time(),
                         0,
-                        None,
                         ReportAggregationState::Waiting(prep_state_0, None),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
                         PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
+                        Prio3Aes128Count,
                     >::new(
                         *task.id(),
                         aggregation_job_id_0,
                         *report_metadata_1.id(),
                         *report_metadata_1.time(),
                         1,
-                        None,
                         ReportAggregationState::Waiting(prep_state_1, None),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
                         PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
+                        Prio3Aes128Count,
                     >::new(
                         *task.id(),
                         aggregation_job_id_0,
                         *report_metadata_2.id(),
                         *report_metadata_2.time(),
                         2,
-                        None,
                         ReportAggregationState::Waiting(prep_state_2, None),
                     ))
                     .await?;
 
                     for batch_identifier in [first_batch_identifier, second_batch_identifier] {
-                        tx.put_batch(
-                            &Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
-                                *task.id(),
-                                batch_identifier,
-                                (),
-                                BatchState::Closed,
-                                0,
-                                batch_identifier,
-                            ),
-                        )
+                        tx.put_batch(&Batch::<
+                            PRIO3_VERIFY_KEY_LENGTH,
+                            TimeInterval,
+                            Prio3Aes128Count,
+                        >::new(
+                            *task.id(),
+                            batch_identifier,
+                            (),
+                            BatchState::Closed,
+                            0,
+                            batch_identifier,
+                        ))
                         .await
                         .unwrap()
                     }
@@ -2992,8 +2901,9 @@ mod tests {
             .await
             .unwrap();
 
-        let request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+        let request = AggregateContinueReq::new(
+            *task.id(),
+            aggregation_job_id_0,
             Vec::from([
                 PrepareStep::new(
                     *report_metadata_0.id(),
@@ -3020,23 +2930,20 @@ mod tests {
         .await
         .unwrap();
 
-        let _ =
-            post_aggregation_job_and_decode(&task, &aggregation_job_id_0, &request, &handler).await;
+        let _ = post_aggregation_job_and_decode(&task, &request, &handler).await;
 
         // Map the batch aggregation ordinal value to 0, as it may vary due to sharding.
         let first_batch_got_batch_aggregations: Vec<_> = datastore
             .run_tx(|tx| {
-                let (task, vdaf, report_metadata_0) =
-                    (task.clone(), vdaf.clone(), report_metadata_0.clone());
+                let (task, report_metadata_0) = (task.clone(), report_metadata_0.clone());
                 Box::pin(async move {
                     TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
+                        Prio3Aes128Count,
                         _,
                     >(
                         tx,
                         &task,
-                        &vdaf,
                         &Interval::new(
                             report_metadata_0
                                 .time()
@@ -3054,7 +2961,7 @@ mod tests {
             .unwrap()
             .into_iter()
             .map(|agg| {
-                BatchAggregation::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                BatchAggregation::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                     *agg.task_id(),
                     *agg.batch_identifier(),
                     (),
@@ -3098,17 +3005,15 @@ mod tests {
 
         let second_batch_got_batch_aggregations = datastore
             .run_tx(|tx| {
-                let (task, vdaf, report_metadata_2) =
-                    (task.clone(), vdaf.clone(), report_metadata_2.clone());
+                let (task, report_metadata_2) = (task.clone(), report_metadata_2.clone());
                 Box::pin(async move {
                     TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
+                        Prio3Aes128Count,
                         _,
                     >(
                         tx,
                         &task,
-                        &vdaf,
                         &Interval::new(
                             report_metadata_2
                                 .time()
@@ -3138,6 +3043,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript_3 = run_vdaf(
             &vdaf,
@@ -3149,12 +3055,11 @@ mod tests {
         let (prep_state_3, _) = transcript_3.helper_prep_state(0);
         let out_share_3 = transcript_3.output_share(Role::Helper);
         let prep_msg_3 = transcript_3.prepare_messages[0].clone();
-        let report_share_3 = generate_helper_report_share::<Prio3Count>(
+        let report_share_3 = generate_helper_report_share::<Prio3Aes128Count>(
             *task.id(),
             report_metadata_3.clone(),
             hpke_key.config(),
             &transcript_3.public_share,
-            Vec::new(),
             &transcript_3.input_shares[1],
         );
 
@@ -3166,6 +3071,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript_4 = run_vdaf(
             &vdaf,
@@ -3176,12 +3082,11 @@ mod tests {
         );
         let (prep_state_4, _) = transcript_4.helper_prep_state(0);
         let prep_msg_4 = transcript_4.prepare_messages[0].clone();
-        let report_share_4 = generate_helper_report_share::<Prio3Count>(
+        let report_share_4 = generate_helper_report_share::<Prio3Aes128Count>(
             *task.id(),
             report_metadata_4.clone(),
             hpke_key.config(),
             &transcript_4.public_share,
-            Vec::new(),
             &transcript_4.input_shares[1],
         );
 
@@ -3193,6 +3098,7 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
+            Vec::new(),
         );
         let transcript_5 = run_vdaf(
             &vdaf,
@@ -3203,12 +3109,11 @@ mod tests {
         );
         let (prep_state_5, _) = transcript_5.helper_prep_state(0);
         let prep_msg_5 = transcript_5.prepare_messages[0].clone();
-        let report_share_5 = generate_helper_report_share::<Prio3Count>(
+        let report_share_5 = generate_helper_report_share::<Prio3Aes128Count>(
             *task.id(),
             report_metadata_5.clone(),
             hpke_key.config(),
             &transcript_5.public_share,
-            Vec::new(),
             &transcript_5.input_shares[1],
         );
 
@@ -3239,7 +3144,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Prio3Count,
+                        Prio3Aes128Count,
                     >::new(
                         *task.id(),
                         aggregation_job_id_1,
@@ -3248,46 +3153,42 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
                     ))
                     .await?;
 
                     tx.put_report_aggregation(&ReportAggregation::<
                         PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
+                        Prio3Aes128Count,
                     >::new(
                         *task.id(),
                         aggregation_job_id_1,
                         *report_metadata_3.id(),
                         *report_metadata_3.time(),
                         3,
-                        None,
                         ReportAggregationState::Waiting(prep_state_3, None),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
                         PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
+                        Prio3Aes128Count,
                     >::new(
                         *task.id(),
                         aggregation_job_id_1,
                         *report_metadata_4.id(),
                         *report_metadata_4.time(),
                         4,
-                        None,
                         ReportAggregationState::Waiting(prep_state_4, None),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
                         PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
+                        Prio3Aes128Count,
                     >::new(
                         *task.id(),
                         aggregation_job_id_1,
                         *report_metadata_5.id(),
                         *report_metadata_5.time(),
                         5,
-                        None,
                         ReportAggregationState::Waiting(prep_state_5, None),
                     ))
                     .await?;
@@ -3298,8 +3199,9 @@ mod tests {
             .await
             .unwrap();
 
-        let request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+        let request = AggregateContinueReq::new(
+            *task.id(),
+            aggregation_job_id_1,
             Vec::from([
                 PrepareStep::new(
                     *report_metadata_3.id(),
@@ -3326,25 +3228,22 @@ mod tests {
         .await
         .unwrap();
 
-        let _ =
-            post_aggregation_job_and_decode(&task, &aggregation_job_id_1, &request, &handler).await;
+        let _ = post_aggregation_job_and_decode(&task, &request, &handler).await;
 
         // Map the batch aggregation ordinal value to 0, as it may vary due to sharding, and merge
         // batch aggregations over the same interval. (the task & aggregation parameter will always
         // be the same)
         let merged_first_batch_aggregation = datastore
             .run_tx(|tx| {
-                let (task, vdaf, report_metadata_0) =
-                    (task.clone(), vdaf.clone(), report_metadata_0.clone());
+                let (task, report_metadata_0) = (task.clone(), report_metadata_0.clone());
                 Box::pin(async move {
                     TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
+                        Prio3Aes128Count,
                         _,
                     >(
                         tx,
                         &task,
-                        &vdaf,
                         &Interval::new(
                             report_metadata_0
                                 .time()
@@ -3362,7 +3261,7 @@ mod tests {
             .unwrap()
             .into_iter()
             .map(|agg| {
-                BatchAggregation::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                BatchAggregation::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                     *agg.task_id(),
                     *agg.batch_identifier(),
                     (),
@@ -3411,17 +3310,15 @@ mod tests {
 
         let second_batch_got_batch_aggregations = datastore
             .run_tx(|tx| {
-                let (task, vdaf, report_metadata_2) =
-                    (task.clone(), vdaf.clone(), report_metadata_2.clone());
+                let (task, report_metadata_2) = (task.clone(), report_metadata_2.clone());
                 Box::pin(async move {
                     TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
+                        Prio3Aes128Count,
                         _,
                     >(
                         tx,
                         &task,
-                        &vdaf,
                         &Interval::new(
                             report_metadata_2
                                 .time()
@@ -3455,6 +3352,7 @@ mod tests {
         let report_metadata = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             Time::from_seconds_since_epoch(54321),
+            Vec::new(),
         );
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -3492,7 +3390,6 @@ mod tests {
                             )
                             .unwrap(),
                             AggregationJobState::InProgress,
-                            AggregationJobRound::from(0),
                         ),
                     )
                     .await?;
@@ -3502,7 +3399,6 @@ mod tests {
                         *report_metadata.id(),
                         *report_metadata.time(),
                         0,
-                        None,
                         ReportAggregationState::Waiting(dummy_vdaf::PrepareState::default(), None),
                     ))
                     .await
@@ -3512,8 +3408,9 @@ mod tests {
             .unwrap();
 
         // Make request.
-        let request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+        let request = AggregateContinueReq::new(
+            *task.id(),
+            aggregation_job_id,
             Vec::from([PrepareStep::new(
                 *report_metadata.id(),
                 PrepareStepResult::Finished,
@@ -3531,7 +3428,6 @@ mod tests {
 
         post_aggregation_job_expecting_error(
             &task,
-            &aggregation_job_id,
             &request,
             &handler,
             Status::BadRequest,
@@ -3557,6 +3453,7 @@ mod tests {
         let report_metadata = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             Time::from_seconds_since_epoch(54321),
+            Vec::new(),
         );
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -3594,7 +3491,6 @@ mod tests {
                             )
                             .unwrap(),
                             AggregationJobState::InProgress,
-                            AggregationJobRound::from(0),
                         ),
                     )
                     .await?;
@@ -3604,7 +3500,6 @@ mod tests {
                         *report_metadata.id(),
                         *report_metadata.time(),
                         0,
-                        None,
                         ReportAggregationState::Waiting(dummy_vdaf::PrepareState::default(), None),
                     ))
                     .await
@@ -3614,8 +3509,9 @@ mod tests {
             .unwrap();
 
         // Make request.
-        let request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+        let request = AggregateContinueReq::new(
+            *task.id(),
+            aggregation_job_id,
             Vec::from([PrepareStep::new(
                 *report_metadata.id(),
                 PrepareStepResult::Continued(Vec::new()),
@@ -3631,11 +3527,10 @@ mod tests {
         .await
         .unwrap();
 
-        let aggregate_resp =
-            post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
+        let aggregate_resp = post_aggregation_job_and_decode(&task, &request, &handler).await;
         assert_eq!(
             aggregate_resp,
-            AggregationJobResp::new(Vec::from([PrepareStep::new(
+            AggregateContinueResp::new(Vec::from([PrepareStep::new(
                 *report_metadata.id(),
                 PrepareStepResult::Failed(ReportShareError::VdafPrepError),
             )]),)
@@ -3681,9 +3576,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
-                AggregationJobRound::from(1),
             )
-            .with_last_continue_request_hash(aggregation_job.last_continue_request_hash().unwrap())
         );
         assert_eq!(
             report_aggregation,
@@ -3693,10 +3586,6 @@ mod tests {
                 *report_metadata.id(),
                 *report_metadata.time(),
                 0,
-                Some(PrepareStep::new(
-                    *report_metadata.id(),
-                    PrepareStepResult::Failed(ReportShareError::VdafPrepError)
-                )),
                 ReportAggregationState::Failed(ReportShareError::VdafPrepError),
             )
         );
@@ -3714,6 +3603,7 @@ mod tests {
         let report_metadata = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             Time::from_seconds_since_epoch(54321),
+            Vec::new(),
         );
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -3751,7 +3641,6 @@ mod tests {
                             )
                             .unwrap(),
                             AggregationJobState::InProgress,
-                            AggregationJobRound::from(0),
                         ),
                     )
                     .await?;
@@ -3761,7 +3650,6 @@ mod tests {
                         *report_metadata.id(),
                         *report_metadata.time(),
                         0,
-                        None,
                         ReportAggregationState::Waiting(dummy_vdaf::PrepareState::default(), None),
                     ))
                     .await
@@ -3771,8 +3659,9 @@ mod tests {
             .unwrap();
 
         // Make request.
-        let request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+        let request = AggregateContinueReq::new(
+            *task.id(),
+            aggregation_job_id,
             Vec::from([PrepareStep::new(
                 ReportId::from(
                     [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1], // not the same as above
@@ -3792,7 +3681,6 @@ mod tests {
 
         post_aggregation_job_expecting_error(
             &task,
-            &aggregation_job_id,
             &request,
             &handler,
             Status::BadRequest,
@@ -3814,10 +3702,12 @@ mod tests {
         let report_metadata_0 = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             Time::from_seconds_since_epoch(54321),
+            Vec::new(),
         );
         let report_metadata_1 = ReportMetadata::new(
             ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
             Time::from_seconds_since_epoch(54321),
+            Vec::new(),
         );
 
         let clock = MockClock::default();
@@ -3875,7 +3765,6 @@ mod tests {
                             )
                             .unwrap(),
                             AggregationJobState::InProgress,
-                            AggregationJobRound::from(0),
                         ),
                     )
                     .await?;
@@ -3886,7 +3775,6 @@ mod tests {
                         *report_metadata_0.id(),
                         *report_metadata_0.time(),
                         0,
-                        None,
                         ReportAggregationState::Waiting(dummy_vdaf::PrepareState::default(), None),
                     ))
                     .await?;
@@ -3896,7 +3784,6 @@ mod tests {
                         *report_metadata_1.id(),
                         *report_metadata_1.time(),
                         1,
-                        None,
                         ReportAggregationState::Waiting(dummy_vdaf::PrepareState::default(), None),
                     ))
                     .await
@@ -3906,8 +3793,9 @@ mod tests {
             .unwrap();
 
         // Make request.
-        let request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+        let request = AggregateContinueReq::new(
+            *task.id(),
+            aggregation_job_id,
             Vec::from([
                 // Report IDs are in opposite order to what was stored in the datastore.
                 PrepareStep::new(
@@ -3932,7 +3820,6 @@ mod tests {
 
         post_aggregation_job_expecting_error(
             &task,
-            &aggregation_job_id,
             &request,
             &handler,
             Status::BadRequest,
@@ -3954,6 +3841,7 @@ mod tests {
         let report_metadata = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             Time::from_seconds_since_epoch(54321),
+            Vec::new(),
         );
 
         let clock = MockClock::default();
@@ -3991,7 +3879,6 @@ mod tests {
                             )
                             .unwrap(),
                             AggregationJobState::InProgress,
-                            AggregationJobRound::from(0),
                         ),
                     )
                     .await?;
@@ -4001,7 +3888,6 @@ mod tests {
                         *report_metadata.id(),
                         *report_metadata.time(),
                         0,
-                        None,
                         ReportAggregationState::Failed(ReportShareError::VdafPrepError),
                     ))
                     .await
@@ -4011,8 +3897,9 @@ mod tests {
             .unwrap();
 
         // Make request.
-        let request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+        let request = AggregateContinueReq::new(
+            *task.id(),
+            aggregation_job_id,
             Vec::from([PrepareStep::new(
                 ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 PrepareStepResult::Continued(Vec::new()),
@@ -4030,7 +3917,6 @@ mod tests {
 
         post_aggregation_job_expecting_error(
             &task,
-            &aggregation_job_id,
             &request,
             &handler,
             Status::BadRequest,
@@ -4044,8 +3930,8 @@ mod tests {
     async fn collection_job_put_request_to_helper() {
         let test_case = setup_collection_job_test_case(Role::Helper, QueryType::TimeInterval).await;
 
-        let collection_job_id: CollectionJobId = random();
-        let request = CollectionReq::new(
+        let request = CollectReq::new(
+            *test_case.task.id(),
             Query::new_time_interval(
                 Interval::new(
                     Time::from_seconds_since_epoch(0),
@@ -4057,7 +3943,7 @@ mod tests {
         );
 
         let mut test_conn = test_case
-            .put_collection_job_with_auth_token(&collection_job_id, &request, Some(&random()))
+            .post_collection_job_with_auth_token(&request, Some(&random()))
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
@@ -4076,8 +3962,8 @@ mod tests {
     async fn collection_job_put_request_invalid_batch_interval() {
         let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
 
-        let collection_job_id: CollectionJobId = random();
-        let request = CollectionReq::new(
+        let request = CollectReq::new(
+            *test_case.task.id(),
             Query::new_time_interval(
                 Interval::new(
                     Time::from_seconds_since_epoch(0),
@@ -4089,9 +3975,7 @@ mod tests {
             dummy_vdaf::AggregationParam::default().get_encoded(),
         );
 
-        let mut test_conn = test_case
-            .put_collection_job(&collection_job_id, &request)
-            .await;
+        let mut test_conn = test_case.post_collection_job(&request).await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
         assert_eq!(
@@ -4109,8 +3993,8 @@ mod tests {
     async fn collection_job_put_request_invalid_aggregation_parameter() {
         let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
 
-        let collection_job_id: CollectionJobId = random();
-        let request = CollectionReq::new(
+        let request = CollectReq::new(
+            *test_case.task.id(),
             Query::new_time_interval(
                 Interval::new(
                     Time::from_seconds_since_epoch(0),
@@ -4123,9 +4007,7 @@ mod tests {
             Vec::from([0u8, 0u8]),
         );
 
-        let mut test_conn = test_case
-            .put_collection_job(&collection_job_id, &request)
-            .await;
+        let mut test_conn = test_case.post_collection_job(&request).await;
 
         // Collect request will be rejected because the aggregation parameter can't be decoded
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
@@ -4162,8 +4044,8 @@ mod tests {
         .await
         .unwrap();
 
-        let collection_job_id: CollectionJobId = random();
-        let request = CollectionReq::new(
+        let request = CollectReq::new(
+            *task.id(),
             Query::new_time_interval(
                 Interval::new(
                     Time::from_seconds_since_epoch(0),
@@ -4174,14 +4056,14 @@ mod tests {
             dummy_vdaf::AggregationParam::default().get_encoded(),
         );
 
-        let mut test_conn = put(task.collection_job_uri(&collection_job_id).unwrap().path())
+        let mut test_conn = post(task.collect_uri().unwrap().path())
             .with_request_header(
                 "DAP-Auth-Token",
                 task.primary_collector_auth_token().as_ref().to_owned(),
             )
             .with_request_header(
                 KnownHeaderName::ContentType,
-                CollectionReq::<TimeInterval>::MEDIA_TYPE,
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
             )
             .with_request_body(request.get_encoded())
             .run_async(&handler)
@@ -4209,15 +4091,15 @@ mod tests {
             *test_case.task.time_precision(),
         )
         .unwrap();
-        let collection_job_id: CollectionJobId = random();
-        let req = CollectionReq::new(
+        let req = CollectReq::new(
+            *test_case.task.id(),
             Query::new_time_interval(batch_interval),
             dummy_vdaf::AggregationParam::default().get_encoded(),
         );
 
         // Incorrect authentication token.
         let mut test_conn = test_case
-            .put_collection_job_with_auth_token(&collection_job_id, &req, Some(&random()))
+            .post_collection_job_with_auth_token(&req, Some(&random()))
             .await;
 
         let want_status = Status::BadRequest;
@@ -4234,8 +4116,7 @@ mod tests {
 
         // Aggregator authentication token.
         let mut test_conn = test_case
-            .put_collection_job_with_auth_token(
-                &collection_job_id,
+            .post_collection_job_with_auth_token(
                 &req,
                 Some(test_case.task.primary_aggregator_auth_token()),
             )
@@ -4255,7 +4136,7 @@ mod tests {
 
         // Missing authentication token.
         let mut test_conn = test_case
-            .put_collection_job_with_auth_token(&collection_job_id, &req, None)
+            .post_collection_job_with_auth_token(&req, None)
             .await;
 
         let want_status = Status::BadRequest;
@@ -4281,21 +4162,22 @@ mod tests {
         )
         .unwrap();
 
-        let collection_job_id: CollectionJobId = random();
-        let request = CollectionReq::new(
+        let request = CollectReq::new(
+            *test_case.task.id(),
             Query::new_time_interval(batch_interval),
             dummy_vdaf::AggregationParam::default().get_encoded(),
         );
 
-        let test_conn = test_case
-            .put_collection_job(&collection_job_id, &request)
-            .await;
-
-        assert_eq!(test_conn.status().unwrap(), Status::Created);
+        let test_conn = test_case.post_collection_job(&request).await;
+        assert_eq!(test_conn.status().unwrap(), Status::SeeOther);
+        let collection_location = test_conn
+            .response_headers()
+            .get_str(KnownHeaderName::Location)
+            .unwrap();
 
         // Incorrect authentication token.
         let mut test_conn = test_case
-            .post_collection_job_with_auth_token(&collection_job_id, Some(&random()))
+            .get_collection_job_with_auth_token(collection_location, Some(&random()))
             .await;
 
         let want_status = Status::BadRequest;
@@ -4312,8 +4194,8 @@ mod tests {
 
         // Aggregator authentication token.
         let mut test_conn = test_case
-            .post_collection_job_with_auth_token(
-                &collection_job_id,
+            .get_collection_job_with_auth_token(
+                collection_location,
                 Some(test_case.task.primary_aggregator_auth_token()),
             )
             .await;
@@ -4332,7 +4214,7 @@ mod tests {
 
         // Missing authentication token.
         let mut test_conn = test_case
-            .post_collection_job_with_auth_token(&collection_job_id, None)
+            .get_collection_job_with_auth_token(collection_location, None)
             .await;
 
         let want_status = Status::BadRequest;
@@ -4363,8 +4245,8 @@ mod tests {
         let leader_aggregate_share = dummy_vdaf::AggregateShare(0);
         let helper_aggregate_share = dummy_vdaf::AggregateShare(1);
 
-        let collection_job_id: CollectionJobId = random();
-        let request = CollectionReq::new(
+        let request = CollectReq::new(
+            *test_case.task.id(),
             Query::new_time_interval(batch_interval),
             aggregation_param.get_encoded(),
         );
@@ -4390,9 +4272,30 @@ mod tests {
             .await
             .unwrap();
 
-        let test_conn = test_case
-            .put_collection_job(&collection_job_id, &request)
-            .await;
+        let test_conn = test_case.post_collection_job(&request).await;
+        assert_eq!(test_conn.status(), Some(Status::SeeOther));
+        let collection_location = test_conn
+            .response_headers()
+            .get_str(KnownHeaderName::Location)
+            .unwrap();
+
+        let collection_job_id = test_case
+            .datastore
+            .run_tx(|tx| {
+                let task_id = *test_case.task.id();
+
+                Box::pin(async move {
+                    tx.get_collection_job_id::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &task_id,
+                        &batch_interval,
+                        &aggregation_param,
+                    )
+                    .await
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
 
         let want_collection_job = CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
             *test_case.task.id(),
@@ -4417,7 +4320,7 @@ mod tests {
 
                 Box::pin(async move {
                     let got_collection_job = tx
-                        .get_collection_job(&dummy_vdaf::Vdaf::new(), &collection_job_id)
+                        .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&collection_job_id)
                         .await?
                         .unwrap();
                     let got_batches = tx.get_batches_for_task(&task_id).await?;
@@ -4430,9 +4333,9 @@ mod tests {
         assert_eq!(want_collection_job, got_collection_job);
         assert_eq!(want_batches, got_batches);
 
-        assert_eq!(test_conn.status(), Some(Status::Created));
+        assert_eq!(test_conn.status(), Some(Status::SeeOther));
 
-        let test_conn = test_case.post_collection_job(&collection_job_id).await;
+        let test_conn = test_case.get_collection_job(collection_location).await;
         assert_eq!(test_conn.status(), Some(Status::Accepted));
 
         // Update the collection job with the aggregate shares and some aggregation jobs. collection
@@ -4443,6 +4346,10 @@ mod tests {
                 let task = test_case.task.clone();
                 let helper_aggregate_share_bytes = helper_aggregate_share.get_encoded();
                 Box::pin(async move {
+                    let mut aad = Vec::new();
+                    aad.extend(task.id().as_ref());
+                    aad.extend(&BatchSelector::new_time_interval(batch_interval).get_encoded());
+
                     let encrypted_helper_aggregate_share = hpke::seal(
                         task.collector_hpke_config(),
                         &HpkeApplicationInfo::new(
@@ -4451,19 +4358,12 @@ mod tests {
                             &Role::Collector,
                         ),
                         &helper_aggregate_share_bytes,
-                        &AggregateShareAad::new(
-                            *task.id(),
-                            BatchSelector::new_time_interval(batch_interval),
-                        )
-                        .get_encoded(),
+                        &aad,
                     )
                     .unwrap();
 
                     let collection_job = tx
-                        .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                            &dummy_vdaf::Vdaf::new(),
-                            &collection_job_id,
-                        )
+                        .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&collection_job_id)
                         .await
                         .unwrap()
                         .unwrap()
@@ -4482,30 +4382,29 @@ mod tests {
             .await
             .unwrap();
 
-        let mut test_conn = test_case.post_collection_job(&collection_job_id).await;
+        let mut test_conn = test_case.get_collection_job(collection_location).await;
 
         assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_headers!(
             &test_conn,
-            "content-type" => (Collection::<TimeInterval>::MEDIA_TYPE)
+            "content-type" => (CollectResp::<TimeInterval>::MEDIA_TYPE)
         );
         let body_bytes = take_response_body(&mut test_conn).await;
-        let collect_resp = Collection::<TimeInterval>::get_decoded(body_bytes.as_ref()).unwrap();
+        let collect_resp = CollectResp::<TimeInterval>::get_decoded(body_bytes.as_ref()).unwrap();
 
         assert_eq!(collect_resp.report_count(), 12);
-        assert_eq!(collect_resp.interval(), &batch_interval);
         assert_eq!(collect_resp.encrypted_aggregate_shares().len(), 2);
+
+        let mut aad = Vec::new();
+        aad.extend(test_case.task.id().as_ref());
+        aad.extend(&BatchSelector::new_time_interval(batch_interval).get_encoded());
 
         let decrypted_leader_aggregate_share = hpke::open(
             test_case.task.collector_hpke_config(),
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
             &collect_resp.encrypted_aggregate_shares()[0],
-            &AggregateShareAad::new(
-                *test_case.task.id(),
-                BatchSelector::new_time_interval(batch_interval),
-            )
-            .get_encoded(),
+            &aad,
         )
         .unwrap();
         assert_eq!(
@@ -4519,11 +4418,7 @@ mod tests {
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
             &collect_resp.encrypted_aggregate_shares()[1],
-            &AggregateShareAad::new(
-                *test_case.task.id(),
-                BatchSelector::new_time_interval(batch_interval),
-            )
-            .get_encoded(),
+            &aad,
         )
         .unwrap();
         assert_eq!(
@@ -4534,13 +4429,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn collection_job_post_request_no_such_collection_job() {
+    async fn collection_job_get_request_no_such_collection_job() {
         let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
 
         let no_such_collection_job_id: CollectionJobId = random();
 
-        let test_conn = post(&format!(
-            "/tasks/{}/collection_jobs/{no_such_collection_job_id}",
+        let test_conn = get(&format!(
+            "/collect/{}/{no_such_collection_job_id}",
             test_case.task.id()
         ))
         .with_request_header(
@@ -4594,24 +4489,24 @@ mod tests {
             .unwrap();
 
         // Sending this request will consume a query for [0, time_precision).
-        let request = CollectionReq::new(
+        let request = CollectReq::new(
+            *test_case.task.id(),
             Query::new_time_interval(interval),
             dummy_vdaf::AggregationParam(0).get_encoded(),
         );
 
-        let test_conn = test_case.put_collection_job(&random(), &request).await;
+        let test_conn = test_case.post_collection_job(&request).await;
 
-        assert_eq!(test_conn.status(), Some(Status::Created));
+        assert_eq!(test_conn.status(), Some(Status::SeeOther));
 
         // This request will not be allowed due to the query count already being consumed.
-        let invalid_request = CollectionReq::new(
+        let invalid_request = CollectReq::new(
+            *test_case.task.id(),
             Query::new_time_interval(interval),
             dummy_vdaf::AggregationParam(1).get_encoded(),
         );
 
-        let mut test_conn = test_case
-            .put_collection_job(&random(), &invalid_request)
-            .await;
+        let mut test_conn = test_case.post_collection_job(&invalid_request).await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
         assert_eq!(
             take_problem_details(&mut test_conn).await,
@@ -4658,7 +4553,8 @@ mod tests {
             .unwrap();
 
         // Sending this request will consume a query for [0, 2 * time_precision).
-        let request = CollectionReq::new(
+        let request = CollectReq::new(
+            *test_case.task.id(),
             Query::new_time_interval(
                 Interval::new(
                     Time::from_seconds_since_epoch(0),
@@ -4671,19 +4567,18 @@ mod tests {
             dummy_vdaf::AggregationParam(0).get_encoded(),
         );
 
-        let test_conn = test_case.put_collection_job(&random(), &request).await;
+        let test_conn = test_case.post_collection_job(&request).await;
 
-        assert_eq!(test_conn.status(), Some(Status::Created));
+        assert_eq!(test_conn.status(), Some(Status::SeeOther));
 
         // This request will not be allowed due to overlapping with the previous request.
-        let invalid_request = CollectionReq::new(
+        let invalid_request = CollectReq::new(
+            *test_case.task.id(),
             Query::new_time_interval(interval),
             dummy_vdaf::AggregationParam(1).get_encoded(),
         );
 
-        let mut test_conn = test_case
-            .put_collection_job(&random(), &invalid_request)
-            .await;
+        let mut test_conn = test_case.post_collection_job(&invalid_request).await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
         assert_eq!(
             take_problem_details(&mut test_conn).await,
@@ -4705,45 +4600,25 @@ mod tests {
         )
         .unwrap();
 
-        let collection_job_id: CollectionJobId = random();
-
-        // Try to delete a collection job that doesn't exist
-        let test_conn = delete(
-            test_case
-                .task
-                .collection_job_uri(&collection_job_id)
-                .unwrap()
-                .path(),
-        )
-        .with_request_header(
-            "DAP-Auth-Token",
-            test_case
-                .task
-                .primary_collector_auth_token()
-                .as_ref()
-                .to_owned(),
-        )
-        .run_async(&test_case.handler)
-        .await;
-        assert_eq!(test_conn.status(), Some(Status::NotFound));
-
         // Create a collection job
-        let request = CollectionReq::new(
+        let request = CollectReq::new(
+            *test_case.task.id(),
             Query::new_time_interval(batch_interval),
             dummy_vdaf::AggregationParam::default().get_encoded(),
         );
 
-        let test_conn = test_case
-            .put_collection_job(&collection_job_id, &request)
-            .await;
+        let test_conn = test_case.post_collection_job(&request).await;
+        assert_eq!(test_conn.status(), Some(Status::SeeOther));
+        let collection_location = test_conn
+            .response_headers()
+            .get_str(KnownHeaderName::Location)
+            .unwrap();
 
-        assert_eq!(test_conn.status(), Some(Status::Created));
-
-        // Cancel the job
+        // Delete the job
         let test_conn = delete(
             test_case
                 .task
-                .collection_job_uri(&collection_job_id)
+                .collection_job_uri(collection_location)
                 .unwrap()
                 .path(),
         )
@@ -4760,7 +4635,27 @@ mod tests {
         assert_eq!(test_conn.status(), Some(Status::NoContent));
 
         // Get the job again
-        let test_conn = test_case.post_collection_job(&collection_job_id).await;
+        let test_conn = test_case.get_collection_job(collection_location).await;
+        assert_eq!(test_conn.status(), Some(Status::NoContent));
+
+        // Try to delete a collection job that doesn't exist
+        let test_conn = delete(
+            test_case
+                .task
+                .collection_job_uri(collection_location)
+                .unwrap()
+                .path(),
+        )
+        .with_request_header(
+            "DAP-Auth-Token",
+            test_case
+                .task
+                .primary_collector_auth_token()
+                .as_ref()
+                .to_owned(),
+        )
+        .run_async(&test_case.handler)
+        .await;
         assert_eq!(test_conn.status(), Some(Status::NoContent));
     }
 
@@ -4787,6 +4682,7 @@ mod tests {
         .unwrap();
 
         let request = AggregateShareReq::new(
+            *task.id(),
             BatchSelector::new_time_interval(
                 Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap(),
             ),
@@ -4845,6 +4741,7 @@ mod tests {
         .unwrap();
 
         let request = AggregateShareReq::new(
+            *task.id(),
             BatchSelector::new_time_interval(
                 Interval::new(
                     clock.now(),
@@ -4896,6 +4793,7 @@ mod tests {
             )
             .with_request_body(
                 AggregateShareReq::new(
+                    *task.id(),
                     BatchSelector::new_time_interval(
                         Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision())
                             .unwrap(),
@@ -4941,6 +4839,7 @@ mod tests {
 
         // There are no batch aggregations in the datastore yet
         let request = AggregateShareReq::new(
+            *task.id(),
             BatchSelector::new_time_interval(
                 Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap(),
             ),
@@ -5123,6 +5022,7 @@ mod tests {
 
         // Specified interval includes too few reports.
         let request = AggregateShareReq::new(
+            *task.id(),
             BatchSelector::new_time_interval(
                 Interval::new(
                     Time::from_seconds_since_epoch(0),
@@ -5162,6 +5062,7 @@ mod tests {
         for misaligned_request in [
             // Interval is big enough, but checksum doesn't match.
             AggregateShareReq::new(
+                *task.id(),
                 BatchSelector::new_time_interval(
                     Interval::new(
                         Time::from_seconds_since_epoch(0),
@@ -5175,6 +5076,7 @@ mod tests {
             ),
             // Interval is big enough, but report count doesn't match.
             AggregateShareReq::new(
+                *task.id(),
                 BatchSelector::new_time_interval(
                     Interval::new(
                         Time::from_seconds_since_epoch(2000),
@@ -5218,6 +5120,7 @@ mod tests {
             (
                 "first and second batchess",
                 AggregateShareReq::new(
+                    *task.id(),
                     BatchSelector::new_time_interval(
                         Interval::new(
                             Time::from_seconds_since_epoch(0),
@@ -5234,6 +5137,7 @@ mod tests {
             (
                 "third and fourth batches",
                 AggregateShareReq::new(
+                    *task.id(),
                     BatchSelector::new_time_interval(
                         Interval::new(
                             Time::from_seconds_since_epoch(2000),
@@ -5277,6 +5181,10 @@ mod tests {
                 let body_bytes = take_response_body(&mut test_conn).await;
                 let aggregate_share_resp = AggregateShareMessage::get_decoded(&body_bytes).unwrap();
 
+                let mut aad = Vec::new();
+                aad.extend(task.id().as_ref());
+                aad.extend(&request.batch_selector().get_encoded());
+
                 let aggregate_share = hpke::open(
                     collector_hpke_keypair.config(),
                     collector_hpke_keypair.private_key(),
@@ -5286,8 +5194,7 @@ mod tests {
                         &Role::Collector,
                     ),
                     aggregate_share_resp.encrypted_aggregate_share(),
-                    &AggregateShareAad::new(*task.id(), request.batch_selector().clone())
-                        .get_encoded(),
+                    &aad,
                 )
                 .unwrap();
 
@@ -5304,6 +5211,7 @@ mod tests {
         // Requests for collection intervals that overlap with but are not identical to previous
         // collection intervals fail.
         let all_batch_request = AggregateShareReq::new(
+            *task.id(),
             BatchSelector::new_time_interval(
                 Interval::new(
                     Time::from_seconds_since_epoch(0),
@@ -5342,6 +5250,7 @@ mod tests {
         // for all the batches. Further requests for any batches will cause query count violations.
         for query_count_violation_request in [
             AggregateShareReq::new(
+                *task.id(),
                 BatchSelector::new_time_interval(
                     Interval::new(
                         Time::from_seconds_since_epoch(0),
@@ -5354,6 +5263,7 @@ mod tests {
                 ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
             ),
             AggregateShareReq::new(
+                *task.id(),
                 BatchSelector::new_time_interval(
                     Interval::new(
                         Time::from_seconds_since_epoch(2000),

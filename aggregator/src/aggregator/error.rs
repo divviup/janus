@@ -1,8 +1,8 @@
 use http_api_problem::HttpApiProblem;
 use janus_aggregator_core::{datastore, task};
 use janus_messages::{
-    problem_type::DapProblemType, AggregationJobId, AggregationJobRound, CollectionJobId,
-    HpkeConfigId, Interval, ReportId, ReportIdChecksum, TaskId, Time,
+    problem_type::DapProblemType, AggregationJobId, CollectionJobId, HpkeConfigId, Interval,
+    ReportId, ReportIdChecksum, TaskId, Time,
 };
 use prio::vdaf::VdafError;
 use std::{
@@ -22,9 +22,9 @@ pub enum Error {
     /// Error handling a message.
     #[error("invalid message: {0}")]
     Message(#[from] janus_messages::Error),
-    /// Corresponds to `reportRejected`, §3.2
+    /// Corresponds to `reportTooLate`, §3.2
     #[error("task {0}: report {1} rejected: {2}")]
-    ReportRejected(TaskId, ReportId, Time),
+    ReportTooLate(TaskId, ReportId, Time),
     /// Corresponds to `reportTooEarly`, §3.2. A report was rejected becuase the timestamp is too
     /// far in the future, §4.3.2.
     #[error("task {0}: report {1} too early: {2}")]
@@ -32,17 +32,6 @@ pub enum Error {
     /// Corresponds to `unrecognizedMessage`, §3.2
     #[error("task {0:?}: unrecognized message: {1}")]
     UnrecognizedMessage(Option<TaskId>, &'static str),
-    /// Corresponds to `roundMismatch`
-    #[error(
-        "task {task_id}: unexpected round in aggregation job {aggregation_job_id} (expected \
-         {expected_round}, got {got_round})"
-    )]
-    RoundMismatch {
-        task_id: TaskId,
-        aggregation_job_id: AggregationJobId,
-        expected_round: AggregationJobRound,
-        got_round: AggregationJobRound,
-    },
     /// Corresponds to `unrecognizedTask`, §3.2
     #[error("task {0}: unrecognized task")]
     UnrecognizedTask(TaskId),
@@ -134,10 +123,9 @@ impl Error {
             Error::InvalidConfiguration(_) => "invalid_configuration",
             Error::MessageDecode(_) => "message_decode",
             Error::Message(_) => "message",
-            Error::ReportRejected(_, _, _) => "report_rejected",
+            Error::ReportTooLate(_, _, _) => "report_too_late",
             Error::ReportTooEarly(_, _, _) => "report_too_early",
             Error::UnrecognizedMessage(_, _) => "unrecognized_message",
-            Error::RoundMismatch { .. } => "round_mismatch",
             Error::UnrecognizedTask(_) => "unrecognized_task",
             Error::MissingTaskId => "missing_task_id",
             Error::UnrecognizedAggregationJob(_, _) => "unrecognized_aggregation_job",

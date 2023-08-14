@@ -19,6 +19,7 @@ use prio::{codec::Encode, vdaf};
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
+    fmt::Debug,
     sync::{Arc, Mutex},
 };
 use tokio::try_join;
@@ -28,8 +29,10 @@ use tokio::try_join;
 pub struct AggregationJobWriter<
     const SEED_SIZE: usize,
     Q: CollectableQueryType,
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-> {
+    A: vdaf::Aggregator<SEED_SIZE>,
+> where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+{
     task: Arc<Task>,
     aggregation_jobs: HashMap<AggregationJobId, AggregationJobInfo<SEED_SIZE, Q, A>>,
 
@@ -41,15 +44,19 @@ pub struct AggregationJobWriter<
 struct AggregationJobInfo<
     const SEED_SIZE: usize,
     Q: CollectableQueryType,
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-> {
+    A: vdaf::Aggregator<SEED_SIZE>,
+> where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+{
     operation: Operation,
     aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
     report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
 }
 
-impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
+impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_SIZE>>
     AggregationJobWriter<SEED_SIZE, Q, A>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     /// Creates a new, empty aggregation job writer.
     pub fn new(task: Arc<Task>) -> Self {
@@ -153,16 +160,13 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
     /// A call to write, successful or not, does not change the internal state of the aggregation
     /// job writer; calling write again will cause the same set of aggregation jobs to be written.
     #[tracing::instrument(skip(self, tx), err)]
-    pub async fn write<C>(
-        &self,
-        tx: &Transaction<'_, C>,
-        vdaf: Arc<A>,
-    ) -> Result<HashSet<ReportId>, Error>
+    pub async fn write<C>(&self, tx: &Transaction<'_, C>) -> Result<HashSet<ReportId>, Error>
     where
         C: Clock,
         A: Send + Sync,
         A::AggregationParam: PartialEq + Eq,
         A::PrepareState: Encode,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
     {
         // Create a copy-on-write instance of our state to allow efficient imperative updates.
         // (Copy-on-write is used here as modifying state requires cloning it, but most pieces of
@@ -447,12 +451,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
             // Read any collection jobs associated with a batch which just transitioned to CLOSED
             // state.
             try_join_all(newly_closed_batches.into_iter().map(|batch_identifier| {
-                Q::get_collection_jobs_including(
-                    tx,
-                    vdaf.as_ref(),
-                    self.task.id(),
-                    batch_identifier,
-                )
+                Q::get_collection_jobs_including(tx, self.task.id(), batch_identifier)
             }))
             .map_ok(|collection_jobs| {
                 collection_jobs
@@ -550,7 +549,8 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                         }
                         if is_collectable {
                             tx.update_collection_job(
-                                &collection_job.with_state(CollectionJobState::Collectable),
+                                &collection_job
+                                    .with_state(CollectionJobState::<SEED_SIZE, A>::Collectable),
                             )
                             .await?;
                         }

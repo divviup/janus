@@ -2,10 +2,6 @@ use anyhow::{anyhow, Context};
 use backoff::ExponentialBackoffBuilder;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::{value_parser, Arg, Command};
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::types::extra::{U15, U31, U63};
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::{FixedI16, FixedI32, FixedI64};
 use janus_collector::{Collector, CollectorParameters};
 use janus_core::{
     hpke::HpkeKeypair,
@@ -18,11 +14,9 @@ use janus_interop_binaries::{
     ErrorHandler, HpkeConfigRegistry, NumberAsString, VdafObject,
 };
 use janus_messages::{
-    query_type::QueryType, BatchId, Duration, FixedSizeQuery, HpkeConfig, Interval,
-    PartialBatchSelector, Query, TaskId, Time,
+    query_type::QueryType, BatchId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query,
+    TaskId, Time,
 };
-#[cfg(feature = "fpvec_bounded_l2")]
-use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded;
 use prio::{
     codec::{Decode, Encode},
     vdaf::{self, prio3::Prio3},
@@ -64,7 +58,6 @@ struct RequestQuery {
     query_type: u8,
     batch_interval_start: Option<u64>,
     batch_interval_duration: Option<u64>,
-    subtype: Option<u8>,
     batch_id: Option<String>,
 }
 
@@ -93,8 +86,6 @@ struct CollectPollRequest {
 struct CollectResult {
     partial_batch_selector: Option<BatchId>,
     report_count: u64,
-    interval_start: i64,
-    interval_duration: i64,
     aggregation_result: AggregationResult,
 }
 
@@ -103,8 +94,6 @@ struct CollectResult {
 enum AggregationResult {
     Number(NumberAsString<u128>),
     NumberVec(Vec<NumberAsString<u128>>),
-    #[cfg(feature = "fpvec_bounded_l2")]
-    FloatVec(Vec<NumberAsString<f64>>),
 }
 
 #[derive(Debug, Serialize)]
@@ -116,10 +105,6 @@ struct CollectPollResponse {
     batch_id: Option<String>,
     #[serde(default)]
     report_count: Option<u64>,
-    #[serde(default)]
-    interval_start: Option<i64>,
-    #[serde(default)]
-    interval_duration: Option<i64>,
     #[serde(default)]
     result: Option<AggregationResult>,
 }
@@ -191,6 +176,7 @@ async fn handle_collect_generic<V, Q>(
 ) -> anyhow::Result<JoinHandle<anyhow::Result<CollectResult>>>
 where
     V: vdaf::Collector + Send + Sync + 'static,
+    for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
     V::AggregationParam: Send + Sync + 'static,
     Q: QueryType,
 {
@@ -198,12 +184,9 @@ where
     let agg_param = V::AggregationParam::get_decoded(agg_param_encoded)?;
     let handle = tokio::spawn(async move {
         let collect_result = collector.collect(query, &agg_param).await?;
-        let (interval_start, interval_duration) = collect_result.interval();
         Ok(CollectResult {
             partial_batch_selector: batch_convert_fn(collect_result.partial_batch_selector()),
             report_count: collect_result.report_count(),
-            interval_start: interval_start.timestamp(),
-            interval_duration: interval_duration.num_seconds(),
             aggregation_result: result_convert_fn(collect_result.aggregate_result()),
         })
     });
@@ -212,10 +195,10 @@ where
 
 enum ParsedQuery {
     TimeInterval(Interval),
-    FixedSize(FixedSizeQuery),
+    FixedSize(BatchId),
 }
 
-async fn handle_collection_start(
+async fn handle_collect_start(
     http_client: &reqwest::Client,
     tasks: &Mutex<HashMap<TaskId, TaskState>>,
     collection_jobs: &Mutex<HashMap<Handle, CollectionJobState>>,
@@ -275,18 +258,13 @@ async fn handle_collection_start(
                 Interval::new(start, duration).context("invalid batch interval specification")?;
             ParsedQuery::TimeInterval(interval)
         }
-        2 => match request.query.subtype {
-            Some(0) => {
-                let batch_id_bytes = URL_SAFE_NO_PAD
-                    .decode(request.query.batch_id.context("\"batch_id\" was missing")?)?;
-                let batch_id =
-                    BatchId::get_decoded(&batch_id_bytes).context("invalid length of BatchId")?;
-                ParsedQuery::FixedSize(FixedSizeQuery::ByBatchId { batch_id })
-            }
-            Some(1) => ParsedQuery::FixedSize(FixedSizeQuery::CurrentBatch),
-            None => return Err(anyhow::anyhow!("\"subtype\" was missing")),
-            _ => return Err(anyhow::anyhow!("unrecognized \"subtype\" in query")),
-        },
+        2 => {
+            let batch_id_bytes = URL_SAFE_NO_PAD
+                .decode(request.query.batch_id.context("\"batch_id\" was missing")?)?;
+            let batch_id =
+                BatchId::get_decoded(&batch_id_bytes).context("invalid length of BatchId")?;
+            ParsedQuery::FixedSize(batch_id)
+        }
         _ => {
             return Err(anyhow::anyhow!(
                 "unsupported query type: {}",
@@ -298,7 +276,7 @@ async fn handle_collection_start(
     let vdaf_instance = task_state.vdaf.clone().into();
     let task_handle = match (query, vdaf_instance) {
         (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3Count {}) => {
-            let vdaf = Prio3::new_count(2).context("failed to construct Prio3Count VDAF")?;
+            let vdaf = Prio3::new_aes128_count(2).context("failed to construct Prio3Count VDAF")?;
             handle_collect_generic(
                 http_client,
                 collector_params,
@@ -312,7 +290,7 @@ async fn handle_collection_start(
         }
 
         (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3CountVec { length }) => {
-            let vdaf = Prio3::new_sum_vec_multithreaded(2, 1, length)
+            let vdaf = Prio3::new_aes128_count_vec_multithreaded(2, length)
                 .context("failed to construct Prio3CountVec VDAF")?;
             handle_collect_generic(
                 http_client,
@@ -330,7 +308,8 @@ async fn handle_collection_start(
         }
 
         (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3Sum { bits }) => {
-            let vdaf = Prio3::new_sum(2, bits).context("failed to construct Prio3Sum VDAF")?;
+            let vdaf =
+                Prio3::new_aes128_sum(2, bits).context("failed to construct Prio3Sum VDAF")?;
             handle_collect_generic(
                 http_client,
                 collector_params,
@@ -343,26 +322,8 @@ async fn handle_collection_start(
             .await?
         }
 
-        (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3SumVec { bits, length }) => {
-            let vdaf = Prio3::new_sum_vec_multithreaded(2, bits, length)
-                .context("failed to construct Prio3SumVec VDAF")?;
-            handle_collect_generic(
-                http_client,
-                collector_params,
-                Query::new_time_interval(batch_interval),
-                vdaf,
-                &agg_param,
-                |_| None,
-                |result| {
-                    let converted = result.iter().cloned().map(NumberAsString).collect();
-                    AggregationResult::NumberVec(converted)
-                },
-            )
-            .await?
-        }
-
         (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3Histogram { buckets }) => {
-            let vdaf = Prio3::new_histogram(2, &buckets)
+            let vdaf = Prio3::new_aes128_histogram(2, &buckets)
                 .context("failed to construct Prio3Histogram VDAF")?;
             handle_collect_generic(
                 http_client,
@@ -379,77 +340,8 @@ async fn handle_collection_start(
             .await?
         }
 
-        #[cfg(feature = "fpvec_bounded_l2")]
-        (
-            ParsedQuery::TimeInterval(batch_interval),
-            janus_core::task::VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { length },
-        ) => {
-            let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>> =
-                Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
-                    .context("failed to construct Prio3FixedPoint16BitBoundedL2VecSum VDAF")?;
-            handle_collect_generic(
-                http_client,
-                collector_params,
-                Query::new_time_interval(batch_interval),
-                vdaf,
-                &agg_param,
-                |_| None,
-                |result| {
-                    let converted = result.iter().cloned().map(NumberAsString).collect();
-                    AggregationResult::FloatVec(converted)
-                },
-            )
-            .await?
-        }
-
-        #[cfg(feature = "fpvec_bounded_l2")]
-        (
-            ParsedQuery::TimeInterval(batch_interval),
-            janus_core::task::VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { length },
-        ) => {
-            let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>> =
-                Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
-                    .context("failed to construct Prio3FixedPoint32BitBoundedL2VecSum VDAF")?;
-            handle_collect_generic(
-                http_client,
-                collector_params,
-                Query::new_time_interval(batch_interval),
-                vdaf,
-                &agg_param,
-                |_| None,
-                |result| {
-                    let converted = result.iter().cloned().map(NumberAsString).collect();
-                    AggregationResult::FloatVec(converted)
-                },
-            )
-            .await?
-        }
-
-        #[cfg(feature = "fpvec_bounded_l2")]
-        (
-            ParsedQuery::TimeInterval(batch_interval),
-            janus_core::task::VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { length },
-        ) => {
-            let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>> =
-                Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
-                    .context("failed to construct Prio3FixedPoint64BitBoundedL2VecSum VDAF")?;
-            handle_collect_generic(
-                http_client,
-                collector_params,
-                Query::new_time_interval(batch_interval),
-                vdaf,
-                &agg_param,
-                |_| None,
-                |result| {
-                    let converted = result.iter().cloned().map(NumberAsString).collect();
-                    AggregationResult::FloatVec(converted)
-                },
-            )
-            .await?
-        }
-
         (ParsedQuery::FixedSize(fixed_size_query), VdafInstance::Prio3Count {}) => {
-            let vdaf = Prio3::new_count(2).context("failed to construct Prio3Count VDAF")?;
+            let vdaf = Prio3::new_aes128_count(2).context("failed to construct Prio3Count VDAF")?;
             handle_collect_generic(
                 http_client,
                 collector_params,
@@ -463,7 +355,7 @@ async fn handle_collection_start(
         }
 
         (ParsedQuery::FixedSize(fixed_size_query), VdafInstance::Prio3CountVec { length }) => {
-            let vdaf = Prio3::new_sum_vec_multithreaded(2, 1, length)
+            let vdaf = Prio3::new_aes128_count_vec_multithreaded(2, length)
                 .context("failed to construct Prio3CountVec VDAF")?;
             handle_collect_generic(
                 http_client,
@@ -480,77 +372,9 @@ async fn handle_collection_start(
             .await?
         }
 
-        #[cfg(feature = "fpvec_bounded_l2")]
-        (
-            ParsedQuery::FixedSize(fixed_size_query),
-            janus_core::task::VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { length },
-        ) => {
-            let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>> =
-                Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
-                    .context("failed to construct Prio3FixedPoint16BitBoundedL2VecSum VDAF")?;
-            handle_collect_generic(
-                http_client,
-                collector_params,
-                Query::new_fixed_size(fixed_size_query),
-                vdaf,
-                &agg_param,
-                |selector| Some(*selector.batch_id()),
-                |result| {
-                    let converted = result.iter().cloned().map(NumberAsString).collect();
-                    AggregationResult::FloatVec(converted)
-                },
-            )
-            .await?
-        }
-
-        #[cfg(feature = "fpvec_bounded_l2")]
-        (
-            ParsedQuery::FixedSize(fixed_size_query),
-            janus_core::task::VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { length },
-        ) => {
-            let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>> =
-                Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
-                    .context("failed to construct Prio3FixedPoint32BitBoundedL2VecSum VDAF")?;
-            handle_collect_generic(
-                http_client,
-                collector_params,
-                Query::new_fixed_size(fixed_size_query),
-                vdaf,
-                &agg_param,
-                |selector| Some(*selector.batch_id()),
-                |result| {
-                    let converted = result.iter().cloned().map(NumberAsString).collect();
-                    AggregationResult::FloatVec(converted)
-                },
-            )
-            .await?
-        }
-
-        #[cfg(feature = "fpvec_bounded_l2")]
-        (
-            ParsedQuery::FixedSize(fixed_size_query),
-            janus_core::task::VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { length },
-        ) => {
-            let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>> =
-                Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
-                    .context("failed to construct Prio3FixedPoint64BitBoundedL2VecSum VDAF")?;
-            handle_collect_generic(
-                http_client,
-                collector_params,
-                Query::new_fixed_size(fixed_size_query),
-                vdaf,
-                &agg_param,
-                |selector| Some(*selector.batch_id()),
-                |result| {
-                    let converted = result.iter().cloned().map(NumberAsString).collect();
-                    AggregationResult::FloatVec(converted)
-                },
-            )
-            .await?
-        }
-
         (ParsedQuery::FixedSize(fixed_size_query), VdafInstance::Prio3Sum { bits }) => {
-            let vdaf = Prio3::new_sum(2, bits).context("failed to construct Prio3Sum VDAF")?;
+            let vdaf =
+                Prio3::new_aes128_sum(2, bits).context("failed to construct Prio3Sum VDAF")?;
             handle_collect_generic(
                 http_client,
                 collector_params,
@@ -563,26 +387,8 @@ async fn handle_collection_start(
             .await?
         }
 
-        (ParsedQuery::FixedSize(fixed_size_query), VdafInstance::Prio3SumVec { bits, length }) => {
-            let vdaf = Prio3::new_sum_vec_multithreaded(2, bits, length)
-                .context("failed to construct Prio3SumVec VDAF")?;
-            handle_collect_generic(
-                http_client,
-                collector_params,
-                Query::new_fixed_size(fixed_size_query),
-                vdaf,
-                &agg_param,
-                |selector| Some(*selector.batch_id()),
-                |result| {
-                    let converted = result.iter().cloned().map(NumberAsString).collect();
-                    AggregationResult::NumberVec(converted)
-                },
-            )
-            .await?
-        }
-
         (ParsedQuery::FixedSize(fixed_size_query), VdafInstance::Prio3Histogram { buckets }) => {
-            let vdaf = Prio3::new_histogram(2, &buckets)
+            let vdaf = Prio3::new_aes128_histogram(2, &buckets)
                 .context("failed to construct Prio3Histogram VDAF")?;
             handle_collect_generic(
                 http_client,
@@ -617,7 +423,7 @@ async fn handle_collection_start(
     })
 }
 
-async fn handle_collection_poll(
+async fn handle_collect_poll(
     collection_jobs: &Mutex<HashMap<Handle, CollectionJobState>>,
     request: CollectPollRequest,
 ) -> anyhow::Result<Option<CollectResult>> {
@@ -660,7 +466,7 @@ async fn handle_collection_poll(
             )),
         },
         Entry::Vacant(_) => Err(anyhow::anyhow!(
-            "did not recognize handle in collection_poll request"
+            "did not recognize handle in collect_poll request"
         )),
     }
 }
@@ -718,7 +524,7 @@ fn handler() -> anyhow::Result<impl Handler> {
             ),
         )
         .post(
-            "/internal/test/collection_start",
+            "/internal/test/collect_start",
             api(
                 |_conn: &mut Conn,
                  (State(http_client), State(tasks), State(collection_jobs), Json(request)): (
@@ -727,13 +533,8 @@ fn handler() -> anyhow::Result<impl Handler> {
                     State<CollectionJobStateMap>,
                     Json<CollectStartRequest>,
                 )| async move {
-                    match handle_collection_start(
-                        &http_client,
-                        &tasks.0,
-                        &collection_jobs.0,
-                        request,
-                    )
-                    .await
+                    match handle_collect_start(&http_client, &tasks.0, &collection_jobs.0, request)
+                        .await
                     {
                         Ok(handle) => Json(CollectStartResponse {
                             status: SUCCESS,
@@ -750,14 +551,14 @@ fn handler() -> anyhow::Result<impl Handler> {
             ),
         )
         .post(
-            "/internal/test/collection_poll",
+            "/internal/test/collect_poll",
             api(
                 |_conn: &mut Conn,
                  (State(collection_jobs), Json(request)): (
                     State<CollectionJobStateMap>,
                     Json<CollectPollRequest>,
                 )| async move {
-                    match handle_collection_poll(&collection_jobs.0, request).await {
+                    match handle_collect_poll(&collection_jobs.0, request).await {
                         Ok(Some(collect_result)) => Json(CollectPollResponse {
                             status: COMPLETE,
                             error: None,
@@ -765,8 +566,6 @@ fn handler() -> anyhow::Result<impl Handler> {
                                 .partial_batch_selector
                                 .map(|batch_id| URL_SAFE_NO_PAD.encode(batch_id.as_ref())),
                             report_count: Some(collect_result.report_count),
-                            interval_start: Some(collect_result.interval_start),
-                            interval_duration: Some(collect_result.interval_duration),
                             result: Some(collect_result.aggregation_result),
                         }),
                         Ok(None) => Json(CollectPollResponse {
@@ -774,8 +573,6 @@ fn handler() -> anyhow::Result<impl Handler> {
                             error: None,
                             batch_id: None,
                             report_count: None,
-                            interval_start: None,
-                            interval_duration: None,
                             result: None,
                         }),
                         Err(e) => Json(CollectPollResponse {
@@ -783,8 +580,6 @@ fn handler() -> anyhow::Result<impl Handler> {
                             error: Some(format!("{e:?}")),
                             batch_id: None,
                             report_count: None,
-                            interval_start: None,
-                            interval_duration: None,
                             result: None,
                         }),
                     }

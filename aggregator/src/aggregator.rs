@@ -14,11 +14,6 @@ use crate::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::{
-    types::extra::{U15, U31, U63},
-    FixedI16, FixedI32, FixedI64,
-};
 use futures::future::try_join_all;
 use http::{header::CONTENT_TYPE, Method};
 use itertools::iproduct;
@@ -30,7 +25,7 @@ use janus_aggregator_core::{
             BatchAggregationState, BatchState, CollectionJob, CollectionJobState,
             LeaderStoredReport, ReportAggregation, ReportAggregationState,
         },
-        Datastore, Transaction,
+        Datastore,
     },
     query_type::AccumulableQueryType,
     task::{self, Task, VerifyKey},
@@ -46,32 +41,30 @@ use janus_core::{
 use janus_messages::{
     problem_type::DapProblemType,
     query_type::{FixedSize, TimeInterval},
-    AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
-    AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobRound,
-    BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, HpkeCiphertext,
-    HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
-    PrepareStep, PrepareStepResult, Report, ReportIdChecksum, ReportShare, ReportShareError, Role,
-    TaskId,
+    AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
+    AggregateShareReq, AggregateShareResp, BatchSelector, CollectReq, CollectResp, CollectionJobId,
+    Duration, HpkeCiphertext, HpkeConfig, Interval, PartialBatchSelector, PrepareStep,
+    PrepareStepResult, Report, ReportIdChecksum, ReportShare, ReportShareError, Role, TaskId,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter},
     Context, KeyValue,
 };
-#[cfg(feature = "fpvec_bounded_l2")]
-use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded;
 #[cfg(feature = "test-util")]
 use prio::vdaf::{PrepareTransition, VdafError};
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     vdaf::{
         self,
-        prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVecMultithreaded},
+        prio3::{
+            Prio3, Prio3Aes128Count, Prio3Aes128CountVecMultithreaded, Prio3Aes128Histogram,
+            Prio3Aes128Sum,
+        },
     },
 };
+use rand::random;
 use reqwest::Client;
-use ring::digest::{digest, SHA256};
 use std::{
-    borrow::Borrow,
     collections::{hash_map::Entry, HashMap, HashSet},
     fmt::Debug,
     panic,
@@ -250,10 +243,7 @@ impl<C: Clock> Aggregator<C> {
         })
     }
 
-    async fn handle_hpke_config(
-        &self,
-        task_id_base64: Option<&[u8]>,
-    ) -> Result<HpkeConfigList, Error> {
+    async fn handle_hpke_config(&self, task_id_base64: Option<&[u8]>) -> Result<HpkeConfig, Error> {
         match task_id_base64 {
             Some(task_id_base64) => {
                 let task_id_bytes = URL_SAFE_NO_PAD
@@ -265,30 +255,30 @@ impl<C: Clock> Aggregator<C> {
                 Ok(task_aggregator.handle_hpke_config())
             }
             None => {
-                let configs = self.global_hpke_keypairs.configs();
-                if configs.is_empty() {
-                    if self.cfg.taskprov_config.enabled {
-                        // A global HPKE configuration is only _required_ when taskprov
-                        // is enabled.
-                        Err(Error::Internal(
-                            "this server is missing its global HPKE config".into(),
-                        ))
-                    } else {
-                        Err(Error::MissingTaskId)
-                    }
-                } else {
-                    Ok(HpkeConfigList::new(configs.to_vec()))
-                }
+                self.global_hpke_keypairs
+                    .configs()
+                    .iter()
+                    .max_by_key(|cfg| cfg.id())
+                    .ok_or_else(|| {
+                        if self.cfg.taskprov_config.enabled {
+                            // A global HPKE configuration is only _required_ when taskprov
+                            // is enabled.
+                            Error::Internal("this server is missing its global HPKE config".into())
+                        } else {
+                            Error::MissingTaskId
+                        }
+                    })
+                    .cloned()
             }
         }
     }
 
-    async fn handle_upload(&self, task_id: &TaskId, report_bytes: &[u8]) -> Result<(), Arc<Error>> {
+    async fn handle_upload(&self, report_bytes: &[u8]) -> Result<(), Arc<Error>> {
         let report = Report::get_decoded(report_bytes).map_err(|err| Arc::new(Error::from(err)))?;
 
-        let task_aggregator = self.task_aggregator_for(task_id).await?;
+        let task_aggregator = self.task_aggregator_for(report.task_id()).await?;
         if task_aggregator.task.role() != &Role::Leader {
-            return Err(Arc::new(Error::UnrecognizedTask(*task_id)));
+            return Err(Arc::new(Error::UnrecognizedTask(*report.task_id())));
         }
         task_aggregator
             .handle_upload(
@@ -304,10 +294,9 @@ impl<C: Clock> Aggregator<C> {
     async fn handle_aggregate_init(
         &self,
         task_id: &TaskId,
-        aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
-    ) -> Result<AggregationJobResp, Error> {
+    ) -> Result<AggregateInitializeResp, Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
@@ -324,7 +313,6 @@ impl<C: Clock> Aggregator<C> {
                 &self.datastore,
                 &self.global_hpke_keypairs,
                 &self.aggregate_step_failure_counter,
-                aggregation_job_id,
                 req_bytes,
             )
             .await
@@ -333,10 +321,9 @@ impl<C: Clock> Aggregator<C> {
     async fn handle_aggregate_continue(
         &self,
         task_id: &TaskId,
-        aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
-    ) -> Result<AggregationJobResp, Error> {
+    ) -> Result<AggregateContinueResp, Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
@@ -348,18 +335,15 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnauthorizedRequest(*task_id));
         }
 
-        let req = AggregationJobContinueReq::get_decoded(req_bytes)?;
-        // unwrap safety: SHA-256 computed by ring should always be 32 bytes
-        let request_hash = digest(&SHA256, req_bytes).as_ref().try_into().unwrap();
+        let req = AggregateContinueReq::get_decoded(req_bytes)?;
+        assert_eq!(task_id, req.task_id()); // sanity check, must be guaranteed by caller
 
         task_aggregator
             .handle_aggregate_continue(
                 &self.datastore,
                 &self.aggregate_step_failure_counter,
                 self.cfg.batch_aggregation_shard_count,
-                aggregation_job_id,
                 req,
-                request_hash,
             )
             .await
     }
@@ -369,10 +353,9 @@ impl<C: Clock> Aggregator<C> {
     async fn handle_create_collection_job(
         &self,
         task_id: &TaskId,
-        collection_job_id: &CollectionJobId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
-    ) -> Result<(), Error> {
+    ) -> Result<CollectionJobId, Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Error::UnrecognizedTask(*task_id));
@@ -385,14 +368,14 @@ impl<C: Clock> Aggregator<C> {
         }
 
         task_aggregator
-            .handle_create_collection_job(&self.datastore, collection_job_id, req_bytes)
+            .handle_create_collection_job(&self.datastore, req_bytes)
             .await
     }
 
-    /// Handle a GET request for a collection job. `collection_job_id` is the unique identifier for the
-    /// collection job parsed out of the request URI. Returns an encoded [`Collection`] if the collect
-    /// job has been run to completion, `None` if the collection job has not yet run, or an error
-    /// otherwise.
+    /// Handle a GET request for a collection job. `collection_job_id` is the unique identifier for
+    /// the collection job parsed out of the request URI. Returns an encoded [`CollectResp`] if the
+    /// collect job has been run to completion, `None` if the collection job has not yet run, or an
+    /// error otherwise.
     async fn handle_get_collection_job(
         &self,
         task_id: &TaskId,
@@ -447,7 +430,7 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
-    ) -> Result<AggregateShare, Error> {
+    ) -> Result<AggregateShareResp, Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
@@ -522,57 +505,27 @@ impl<C: Clock> TaskAggregator<C> {
     fn new(task: Task, report_writer: Arc<ReportWriteBatcher<C>>) -> Result<Self, Error> {
         let vdaf_ops = match task.vdaf() {
             VdafInstance::Prio3Count => {
-                let vdaf = Prio3::new_count(2)?;
+                let vdaf = Prio3::new_aes128_count(2)?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3Count(Arc::new(vdaf), verify_key)
             }
 
             VdafInstance::Prio3CountVec { length } => {
-                let vdaf = Prio3::new_sum_vec_multithreaded(2, 1, *length)?;
+                let vdaf = Prio3::new_aes128_count_vec_multithreaded(2, *length)?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3CountVec(Arc::new(vdaf), verify_key)
             }
 
             VdafInstance::Prio3Sum { bits } => {
-                let vdaf = Prio3::new_sum(2, *bits)?;
+                let vdaf = Prio3::new_aes128_sum(2, *bits)?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3Sum(Arc::new(vdaf), verify_key)
             }
 
-            VdafInstance::Prio3SumVec { bits, length } => {
-                let vdaf = Prio3::new_sum_vec_multithreaded(2, *bits, *length)?;
-                let verify_key = task.primary_vdaf_verify_key()?;
-                VdafOps::Prio3SumVec(Arc::new(vdaf), verify_key)
-            }
-
             VdafInstance::Prio3Histogram { buckets } => {
-                let vdaf = Prio3::new_histogram(2, buckets)?;
+                let vdaf = Prio3::new_aes128_histogram(2, buckets)?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3Histogram(Arc::new(vdaf), verify_key)
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { length } => {
-                let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>> =
-                    Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, *length)?;
-                let verify_key = task.primary_vdaf_verify_key()?;
-                VdafOps::Prio3FixedPoint16BitBoundedL2VecSum(Arc::new(vdaf), verify_key)
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { length } => {
-                let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>> =
-                    Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, *length)?;
-                let verify_key = task.primary_vdaf_verify_key()?;
-                VdafOps::Prio3FixedPoint32BitBoundedL2VecSum(Arc::new(vdaf), verify_key)
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { length } => {
-                let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>> =
-                    Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, *length)?;
-                let verify_key = task.primary_vdaf_verify_key()?;
-                VdafOps::Prio3FixedPoint64BitBoundedL2VecSum(Arc::new(vdaf), verify_key)
             }
 
             #[cfg(feature = "test-util")]
@@ -590,7 +543,7 @@ impl<C: Clock> TaskAggregator<C> {
             #[cfg(feature = "test-util")]
             VdafInstance::FakeFailsPrepStep => {
                 VdafOps::Fake(Arc::new(dummy_vdaf::Vdaf::new().with_prep_step_fn(
-                    || -> Result<PrepareTransition<dummy_vdaf::Vdaf, 0, 16>, VdafError> {
+                    || -> Result<PrepareTransition<dummy_vdaf::Vdaf, 0>, VdafError> {
                         Err(VdafError::Uncategorized(
                             "FakeFailsPrepStep failed at prep_step".to_string(),
                         ))
@@ -608,19 +561,18 @@ impl<C: Clock> TaskAggregator<C> {
         })
     }
 
-    fn handle_hpke_config(&self) -> HpkeConfigList {
+    fn handle_hpke_config(&self) -> HpkeConfig {
         // TODO(#239): consider deciding a better way to determine "primary" (e.g. most-recent) HPKE
         // config/key -- right now it's the one with the maximal config ID, but that will run into
         // trouble if we ever need to wrap-around, which we may since config IDs are effectively a u8.
-        HpkeConfigList::new(Vec::from([self
-            .task
+        self.task
             .hpke_keys()
             .iter()
             .max_by_key(|(&id, _)| id)
             .unwrap()
             .1
             .config()
-            .clone()]))
+            .clone()
     }
 
     async fn handle_upload(
@@ -649,16 +601,14 @@ impl<C: Clock> TaskAggregator<C> {
         datastore: &Datastore<C>,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
         aggregate_step_failure_counter: &Counter<u64>,
-        aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
-    ) -> Result<AggregationJobResp, Error> {
+    ) -> Result<AggregateInitializeResp, Error> {
         self.vdaf_ops
             .handle_aggregate_init(
                 datastore,
                 global_hpke_keypairs,
                 aggregate_step_failure_counter,
                 Arc::clone(&self.task),
-                aggregation_job_id,
                 req_bytes,
             )
             .await
@@ -669,19 +619,15 @@ impl<C: Clock> TaskAggregator<C> {
         datastore: &Datastore<C>,
         aggregate_step_failure_counter: &Counter<u64>,
         batch_aggregation_shard_count: u64,
-        aggregation_job_id: &AggregationJobId,
-        req: AggregationJobContinueReq,
-        request_hash: [u8; 32],
-    ) -> Result<AggregationJobResp, Error> {
+        req: AggregateContinueReq,
+    ) -> Result<AggregateContinueResp, Error> {
         self.vdaf_ops
             .handle_aggregate_continue(
                 datastore,
                 aggregate_step_failure_counter,
                 Arc::clone(&self.task),
                 batch_aggregation_shard_count,
-                aggregation_job_id,
                 Arc::new(req),
-                request_hash,
             )
             .await
     }
@@ -689,16 +635,10 @@ impl<C: Clock> TaskAggregator<C> {
     async fn handle_create_collection_job(
         &self,
         datastore: &Datastore<C>,
-        collection_job_id: &CollectionJobId,
         req_bytes: &[u8],
-    ) -> Result<(), Error> {
+    ) -> Result<CollectionJobId, Error> {
         self.vdaf_ops
-            .handle_create_collection_job(
-                datastore,
-                Arc::clone(&self.task),
-                collection_job_id,
-                req_bytes,
-            )
+            .handle_create_collection_job(datastore, Arc::clone(&self.task), req_bytes)
             .await
     }
 
@@ -728,7 +668,7 @@ impl<C: Clock> TaskAggregator<C> {
         clock: &C,
         batch_aggregation_shard_count: u64,
         req_bytes: &[u8],
-    ) -> Result<AggregateShare, Error> {
+    ) -> Result<AggregateShareResp, Error> {
         self.vdaf_ops
             .handle_aggregate_share(
                 datastore,
@@ -744,30 +684,14 @@ impl<C: Clock> TaskAggregator<C> {
 /// VdafOps stores VDAF-specific operations for a TaskAggregator in a non-generic way.
 #[allow(clippy::enum_variant_names)]
 enum VdafOps {
-    Prio3Count(Arc<Prio3Count>, VerifyKey<PRIO3_VERIFY_KEY_LENGTH>),
+    Prio3Count(Arc<Prio3Aes128Count>, VerifyKey<PRIO3_VERIFY_KEY_LENGTH>),
     Prio3CountVec(
-        Arc<Prio3SumVecMultithreaded>,
+        Arc<Prio3Aes128CountVecMultithreaded>,
         VerifyKey<PRIO3_VERIFY_KEY_LENGTH>,
     ),
-    Prio3Sum(Arc<Prio3Sum>, VerifyKey<PRIO3_VERIFY_KEY_LENGTH>),
-    Prio3SumVec(
-        Arc<Prio3SumVecMultithreaded>,
-        VerifyKey<PRIO3_VERIFY_KEY_LENGTH>,
-    ),
-    Prio3Histogram(Arc<Prio3Histogram>, VerifyKey<PRIO3_VERIFY_KEY_LENGTH>),
-    #[cfg(feature = "fpvec_bounded_l2")]
-    Prio3FixedPoint16BitBoundedL2VecSum(
-        Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>>,
-        VerifyKey<PRIO3_VERIFY_KEY_LENGTH>,
-    ),
-    #[cfg(feature = "fpvec_bounded_l2")]
-    Prio3FixedPoint32BitBoundedL2VecSum(
-        Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>>,
-        VerifyKey<PRIO3_VERIFY_KEY_LENGTH>,
-    ),
-    #[cfg(feature = "fpvec_bounded_l2")]
-    Prio3FixedPoint64BitBoundedL2VecSum(
-        Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>>,
+    Prio3Sum(Arc<Prio3Aes128Sum>, VerifyKey<PRIO3_VERIFY_KEY_LENGTH>),
+    Prio3Histogram(
+        Arc<Prio3Aes128Histogram>,
         VerifyKey<PRIO3_VERIFY_KEY_LENGTH>,
     ),
 
@@ -786,7 +710,7 @@ macro_rules! vdaf_ops_dispatch {
             crate::aggregator::VdafOps::Prio3Count(vdaf, verify_key) => {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
-                type $Vdaf = ::prio::vdaf::prio3::Prio3Count;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Count;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
@@ -794,7 +718,7 @@ macro_rules! vdaf_ops_dispatch {
             crate::aggregator::VdafOps::Prio3CountVec(vdaf, verify_key) => {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
-                type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128CountVecMultithreaded;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
@@ -802,15 +726,7 @@ macro_rules! vdaf_ops_dispatch {
             crate::aggregator::VdafOps::Prio3Sum(vdaf, verify_key) => {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
-                type $Vdaf = ::prio::vdaf::prio3::Prio3Sum;
-                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
-                $body
-            }
-
-            crate::aggregator::VdafOps::Prio3SumVec(vdaf, verify_key) => {
-                let $vdaf = vdaf;
-                let $verify_key = verify_key;
-                type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Sum;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
@@ -818,37 +734,7 @@ macro_rules! vdaf_ops_dispatch {
             crate::aggregator::VdafOps::Prio3Histogram(vdaf, verify_key) => {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
-                type $Vdaf = ::prio::vdaf::prio3::Prio3Histogram;
-                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
-                $body
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            crate::aggregator::VdafOps::Prio3FixedPoint16BitBoundedL2VecSum(vdaf, verify_key) => {
-                let $vdaf = vdaf;
-                let $verify_key = verify_key;
-                type $Vdaf =
-                    ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>;
-                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
-                $body
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            crate::aggregator::VdafOps::Prio3FixedPoint32BitBoundedL2VecSum(vdaf, verify_key) => {
-                let $vdaf = vdaf;
-                let $verify_key = verify_key;
-                type $Vdaf =
-                    ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>;
-                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
-                $body
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            crate::aggregator::VdafOps::Prio3FixedPoint64BitBoundedL2VecSum(vdaf, verify_key) => {
-                let $vdaf = vdaf;
-                let $verify_key = verify_key;
-                type $Vdaf =
-                    ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Histogram;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
@@ -936,9 +822,8 @@ impl VdafOps {
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<Task>,
-        aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
-    ) -> Result<AggregationJobResp, Error> {
+    ) -> Result<AggregateInitializeResp, Error> {
         match task.query_type() {
             task::QueryType::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, verify_key, VdafType, VERIFY_KEY_LENGTH) => {
@@ -948,7 +833,6 @@ impl VdafOps {
                         vdaf,
                         aggregate_step_failure_counter,
                         task,
-                        aggregation_job_id,
                         verify_key,
                         req_bytes,
                     )
@@ -963,7 +847,6 @@ impl VdafOps {
                         vdaf,
                         aggregate_step_failure_counter,
                         task,
-                        aggregation_job_id,
                         verify_key,
                         req_bytes,
                     )
@@ -974,7 +857,7 @@ impl VdafOps {
     }
 
     #[tracing::instrument(
-        skip(self, datastore, aggregate_step_failure_counter, task, req, request_hash),
+        skip(self, datastore, aggregate_step_failure_counter, task, req),
         fields(task_id = ?task.id()),
         err
     )]
@@ -984,10 +867,8 @@ impl VdafOps {
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<Task>,
         batch_aggregation_shard_count: u64,
-        aggregation_job_id: &AggregationJobId,
-        req: Arc<AggregationJobContinueReq>,
-        request_hash: [u8; 32],
-    ) -> Result<AggregationJobResp, Error> {
+        req: Arc<AggregateContinueReq>,
+    ) -> Result<AggregateContinueResp, Error> {
         match task.query_type() {
             task::QueryType::TimeInterval => {
                 vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
@@ -997,9 +878,7 @@ impl VdafOps {
                         aggregate_step_failure_counter,
                         task,
                         batch_aggregation_shard_count,
-                        aggregation_job_id,
                         req,
-                        request_hash,
                     )
                     .await
                 })
@@ -1012,9 +891,7 @@ impl VdafOps {
                         aggregate_step_failure_counter,
                         task,
                         batch_aggregation_shard_count,
-                        aggregation_job_id,
                         req,
-                        request_hash,
                     )
                     .await
                 })
@@ -1033,7 +910,9 @@ impl VdafOps {
         report: Report,
     ) -> Result<(), Arc<Error>>
     where
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync + 'static,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
         A::InputShare: PartialEq + Send + Sync,
         A::PublicShare: PartialEq + Send + Sync,
         A::AggregationParam: Send + Sync,
@@ -1071,7 +950,7 @@ impl VdafOps {
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
         if let Some(task_expiration) = task.task_expiration() {
             if report.metadata().time().is_after(task_expiration) {
-                return Err(Arc::new(Error::ReportRejected(
+                return Err(Arc::new(Error::ReportTooLate(
                     *task.id(),
                     *report.metadata().id(),
                     *report.metadata().time(),
@@ -1087,7 +966,7 @@ impl VdafOps {
                 .add(report_expiry_age)
                 .map_err(|err| Arc::new(Error::from(err)))?;
             if clock.now().is_after(&report_expiry_time) {
-                return Err(Arc::new(Error::ReportRejected(
+                return Err(Arc::new(Error::ReportTooLate(
                     *task.id(),
                     *report.metadata().id(),
                     *report.metadata().time(),
@@ -1101,7 +980,7 @@ impl VdafOps {
         // reports we can't use, and lets the aggregation job handler assume the values it reads
         // from the datastore are valid. We don't inform the client if this fails.
         let public_share =
-            match A::PublicShare::get_decoded_with_param(vdaf.as_ref(), report.public_share()) {
+            match A::PublicShare::get_decoded_with_param(&vdaf.as_ref(), report.public_share()) {
                 Ok(public_share) => public_share,
                 Err(err) => {
                     warn!(
@@ -1115,18 +994,18 @@ impl VdafOps {
                 }
             };
 
+        let mut aad = Vec::new();
+        aad.extend(task.id().as_ref());
+        aad.extend(&report.metadata().get_encoded());
+        aad.extend(report.public_share());
+
         let try_hpke_open = |hpke_keypair: &HpkeKeypair| {
             hpke::open(
                 hpke_keypair.config(),
                 hpke_keypair.private_key(),
                 &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, task.role()),
                 leader_encrypted_input_share,
-                &InputShareAad::new(
-                    *task.id(),
-                    report.metadata().clone(),
-                    report.public_share().to_vec(),
-                )
-                .get_encoded(),
+                &aad,
             )
         };
 
@@ -1172,13 +1051,9 @@ impl VdafOps {
             }
         };
 
-        let leader_plaintext_input_share =
-            PlaintextInputShare::get_decoded(&encoded_leader_plaintext_input_share)
-                .map_err(|err| Arc::new(Error::from(err)))?;
-
         let leader_input_share = match A::InputShare::get_decoded_with_param(
             &(&vdaf, Role::Leader.index().unwrap()),
-            leader_plaintext_input_share.payload(),
+            &encoded_leader_plaintext_input_share,
         ) {
             Ok(leader_input_share) => leader_input_share,
             Err(err) => {
@@ -1200,7 +1075,6 @@ impl VdafOps {
             *task.id(),
             report.metadata().clone(),
             public_share,
-            Vec::from(leader_plaintext_input_share.extensions()),
             leader_input_share,
             helper_encrypted_input_share.clone(),
         );
@@ -1216,99 +1090,33 @@ impl VdafOps {
 #[derive(Clone, Debug)]
 struct ReportShareData<const SEED_SIZE: usize, A>
 where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
+    A: vdaf::Aggregator<SEED_SIZE>,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     report_share: ReportShare,
     report_aggregation: ReportAggregation<SEED_SIZE, A>,
+    prep_step: Option<PrepareStep>,
 }
 
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> ReportShareData<SEED_SIZE, A>
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE>> ReportShareData<SEED_SIZE, A>
 where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
+    A: vdaf::Aggregator<SEED_SIZE>,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
-    fn new(report_share: ReportShare, report_aggregation: ReportAggregation<SEED_SIZE, A>) -> Self {
+    fn new(
+        report_share: ReportShare,
+        report_aggregation: ReportAggregation<SEED_SIZE, A>,
+        prep_step: Option<PrepareStep>,
+    ) -> Self {
         Self {
             report_share,
             report_aggregation,
+            prep_step,
         }
     }
 }
 
 impl VdafOps {
-    /// Returns true if the incoming aggregation job matches existing contents of the datastore, in
-    /// the sense that no new rows would need to be written to service the job.
-    async fn check_aggregation_job_idempotence<'b, const SEED_SIZE: usize, Q, A, C>(
-        tx: &Transaction<'b, C>,
-        vdaf: &A,
-        task: &Task,
-        incoming_aggregation_job: &AggregationJob<SEED_SIZE, Q, A>,
-        incoming_report_share_data: &[ReportShareData<SEED_SIZE, A>],
-    ) -> Result<bool, Error>
-    where
-        Q: AccumulableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
-        C: Clock,
-        A::AggregationParam: Send + Sync + PartialEq,
-        A::AggregateShare: Send + Sync,
-        A::PrepareMessage: Send + Sync + PartialEq,
-        A::PrepareShare: Send + Sync + PartialEq,
-        for<'a> A::PrepareState:
-            Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)> + PartialEq,
-        A::OutputShare: Send + Sync + PartialEq,
-    {
-        let existing_aggregation_job = tx
-            .get_aggregation_job(task.id(), incoming_aggregation_job.id())
-            .await?
-            .unwrap_or_else(|| {
-                panic!(
-                    "found no existing aggregation job for task ID {} and aggregation job ID {}",
-                    task.id(),
-                    incoming_aggregation_job.id()
-                )
-            });
-
-        if !existing_aggregation_job.eq(incoming_aggregation_job) {
-            return Ok(false);
-        }
-
-        // Check the existing report aggregations for this job against the ones in the incoming
-        // message.
-        let existing_report_aggregations = tx
-            .get_report_aggregations_for_aggregation_job(
-                vdaf,
-                &Role::Helper,
-                task.id(),
-                incoming_aggregation_job.id(),
-            )
-            .await?;
-
-        if existing_report_aggregations.len() != incoming_report_share_data.len() {
-            return Ok(false);
-        }
-
-        // Check each report share in the incoming aggregation job against the already recorded
-        // report aggregations. `existing_report_aggregations` preserves the order in which the
-        // report shares were seen in the previous `AggregationJobInitReq`, and that order should be
-        // preserved in the repeated message, so it's OK to just zip the iterators together.
-        if incoming_report_share_data
-            .iter()
-            .zip(existing_report_aggregations)
-            .any(
-                |(incoming_report_share_data, existing_report_aggregation)| {
-                    !existing_report_aggregation
-                        .report_metadata()
-                        .eq(incoming_report_share_data.report_share.metadata())
-                        || !existing_report_aggregation
-                            .eq(&incoming_report_share_data.report_aggregation)
-                },
-            )
-        {
-            return Ok(false);
-        }
-
-        Ok(true)
-    }
-
     /// Implements the aggregate initialization request portion of the `/aggregate` endpoint for the
     /// helper, described in §4.4.4.1 of draft-gpew-priv-ppm.
     async fn handle_aggregate_init_generic<const SEED_SIZE: usize, Q, A, C>(
@@ -1317,14 +1125,15 @@ impl VdafOps {
         vdaf: &A,
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<Task>,
-        aggregation_job_id: &AggregationJobId,
         verify_key: &VerifyKey<SEED_SIZE>,
         req_bytes: &[u8],
-    ) -> Result<AggregationJobResp, Error>
+    ) -> Result<AggregateInitializeResp, Error>
     where
         Q: AccumulableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE> + 'static + Send + Sync,
         C: Clock,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
         A::AggregationParam: Send + Sync + PartialEq,
         A::AggregateShare: Send + Sync,
         A::PrepareMessage: Send + Sync + PartialEq,
@@ -1333,7 +1142,8 @@ impl VdafOps {
             Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)> + PartialEq,
         A::OutputShare: Send + Sync + PartialEq,
     {
-        let req = AggregationJobInitializeReq::<Q>::get_decoded(req_bytes)?;
+        let req = AggregateInitializeReq::<Q>::get_decoded(req_bytes)?;
+        assert_eq!(req.task_id(), task.id()); // sanity check, must be guaranteed by caller
 
         // If two ReportShare messages have the same report ID, then the helper MUST abort with
         // error "unrecognizedMessage". (§4.4.4.1)
@@ -1377,18 +1187,18 @@ impl VdafOps {
                 global_hpke_keypairs.keypair(report_share.encrypted_input_share().config_id());
 
             // If decryption fails, then the aggregator MUST fail with error `hpke-decrypt-error`. (§4.4.2.2)
+            let mut aad = Vec::new();
+            aad.extend(task.id().as_ref());
+            aad.extend(&report_share.metadata().get_encoded());
+            aad.extend(report_share.public_share());
+
             let try_hpke_open = |hpke_keypair: &HpkeKeypair| {
                 hpke::open(
                     hpke_keypair.config(),
                     hpke_keypair.private_key(),
                     &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
                     report_share.encrypted_input_share(),
-                    &InputShareAad::new(
-                        *task.id(),
-                        report_share.metadata().clone(),
-                        report_share.public_share().to_vec(),
-                    )
-                    .get_encoded(),
+                    &aad,
                 )
             };
 
@@ -1407,7 +1217,7 @@ impl VdafOps {
                 Ok(())
             };
 
-            let plaintext = check_keypairs.and_then(|_| {
+            let plaintext_input_share = check_keypairs.and_then(|_| {
                 match (task_hpke_keypair, global_hpke_keypair) {
                     (None, None) => unreachable!("already checked this condition"),
                     (None, Some(global_hpke_keypair)) => try_hpke_open(&global_hpke_keypair),
@@ -1437,38 +1247,19 @@ impl VdafOps {
                 })
             });
 
-            let plaintext_input_share = plaintext.and_then(|plaintext| {
-                let plaintext_input_share = PlaintextInputShare::get_decoded(&plaintext).map_err(|error| {
-                    info!(task_id = %task.id(), metadata = ?report_share.metadata(), ?error, "Couldn't decode helper's plaintext input share");
-                    aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "plaintext_input_share_decode_failure")]);
-                    ReportShareError::UnrecognizedMessage
-                })?;
-                // Check for repeated extensions.
-                let mut extension_types = HashSet::new();
-                if !plaintext_input_share
-                    .extensions()
-                    .iter()
-                    .all(|extension| extension_types.insert(extension.extension_type())) {
-                        info!(task_id = %task.id(), metadata = ?report_share.metadata(), "Received report share with duplicate extensions");
-                        aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "duplicate_extension")]);
-                        return Err(ReportShareError::UnrecognizedMessage)
-                }
-                Ok(plaintext_input_share)
-            });
-
             let input_share = plaintext_input_share.and_then(|plaintext_input_share| {
-                A::InputShare::get_decoded_with_param(&(vdaf, Role::Helper.index().unwrap()), plaintext_input_share.payload())
+                A::InputShare::get_decoded_with_param(&(vdaf, Role::Helper.index().unwrap()), &plaintext_input_share)
                     .map_err(|error| {
                         info!(task_id = %task.id(), metadata = ?report_share.metadata(), ?error, "Couldn't decode helper's input share");
                         aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "input_share_decode_failure")]);
-                        ReportShareError::UnrecognizedMessage
+                        ReportShareError::VdafPrepError
                     })
             });
 
-            let public_share = A::PublicShare::get_decoded_with_param(vdaf, report_share.public_share()).map_err(|error|{
+            let public_share = A::PublicShare::get_decoded_with_param(&vdaf, report_share.public_share()).map_err(|error|{
                 info!(task_id = %task.id(), metadata = ?report_share.metadata(), ?error, "Couldn't decode public share");
                 aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "public_share_decode_failure")]);
-                ReportShareError::UnrecognizedMessage
+                ReportShareError::VdafPrepError
             });
 
             let shares = input_share.and_then(|input_share| Ok((public_share?, input_share)));
@@ -1513,16 +1304,16 @@ impl VdafOps {
                         report_share.clone(),
                         ReportAggregation::<SEED_SIZE, A>::new(
                             *task.id(),
-                            *aggregation_job_id,
+                            *req.job_id(),
                             *report_share.metadata().id(),
                             *report_share.metadata().time(),
                             ord.try_into()?,
-                            Some(PrepareStep::new(
-                                *report_share.metadata().id(),
-                                PrepareStepResult::Continued(encoded_prep_share),
-                            )),
                             ReportAggregationState::<SEED_SIZE, A>::Waiting(prep_state, None),
                         ),
+                        Some(PrepareStep::new(
+                            *report_share.metadata().id(),
+                            PrepareStepResult::Continued(encoded_prep_share),
+                        )),
                     )
                 }
 
@@ -1530,16 +1321,16 @@ impl VdafOps {
                     report_share.clone(),
                     ReportAggregation::<SEED_SIZE, A>::new(
                         *task.id(),
-                        *aggregation_job_id,
+                        *req.job_id(),
                         *report_share.metadata().id(),
                         *report_share.metadata().time(),
                         ord.try_into()?,
-                        Some(PrepareStep::new(
-                            *report_share.metadata().id(),
-                            PrepareStepResult::Failed(err),
-                        )),
                         ReportAggregationState::<SEED_SIZE, A>::Failed(err),
                     ),
+                    Some(PrepareStep::new(
+                        *report_share.metadata().id(),
+                        PrepareStepResult::Failed(err),
+                    )),
                 ),
             });
         }
@@ -1566,7 +1357,7 @@ impl VdafOps {
         )?;
         let aggregation_job = Arc::new(AggregationJob::<SEED_SIZE, Q, A>::new(
             *task.id(),
-            *aggregation_job_id,
+            *req.job_id(),
             agg_param,
             req.batch_selector().batch_identifier().clone(),
             client_timestamp_interval,
@@ -1575,13 +1366,11 @@ impl VdafOps {
             } else {
                 AggregationJobState::Finished
             },
-            AggregationJobRound::from(0),
         ));
         let interval_per_batch_identifier = Arc::new(interval_per_batch_identifier);
 
         Ok(datastore
             .run_tx_with_name("aggregate_init", |tx| {
-                let vdaf = vdaf.clone();
                 let task = Arc::clone(&task);
                 let req = Arc::clone(&req);
                 let aggregation_job = Arc::clone(&aggregation_job);
@@ -1589,6 +1378,9 @@ impl VdafOps {
                 let interval_per_batch_identifier = Arc::clone(&interval_per_batch_identifier);
 
                 Box::pin(async move {
+                    // Write aggregation job.
+                    tx.put_aggregation_job(&aggregation_job).await?;
+
                     for report_share_data in &mut report_share_data {
                         // Verify that we haven't seen this report ID and aggregation parameter
                         // before in another aggregation job, and that the report isn't for a batch
@@ -1605,7 +1397,6 @@ impl VdafOps {
                             ),
                             Q::get_conflicting_aggregate_share_jobs::<SEED_SIZE, C, A>(
                                 tx,
-                                &vdaf,
                                 task.id(),
                                 req.batch_selector().batch_identifier(),
                                 report_share_data.report_share.metadata()
@@ -1618,115 +1409,81 @@ impl VdafOps {
                                 .clone()
                                 .with_state(ReportAggregationState::Failed(
                                     ReportShareError::ReportReplayed,
-                                ))
-                                .with_last_prep_step(Some(PrepareStep::new(
+                                ));
+                                report_share_data.prep_step = Some(PrepareStep::new(
                                     *report_share_data.report_share.metadata().id(),
                                     PrepareStepResult::Failed(ReportShareError::ReportReplayed),
-                                )));
+                                ));
                         } else if !conflicting_aggregate_share_jobs.is_empty() {
                             report_share_data.report_aggregation = report_share_data
                                 .report_aggregation
                                 .clone()
                                 .with_state(ReportAggregationState::Failed(
                                     ReportShareError::BatchCollected,
-                                ))
-                                .with_last_prep_step(Some(PrepareStep::new(
-                                    *report_share_data.report_share.metadata().id(),
-                                    PrepareStepResult::Failed(ReportShareError::BatchCollected),
-                                )));
-                        }
-                    }
-
-                    // Write aggregation job.
-                    let replayed_request = match tx.put_aggregation_job(&aggregation_job).await {
-                        Ok(_) => false,
-                        Err(datastore::Error::MutationTargetAlreadyExists) => {
-                            // Slow path: this request is writing an aggregation job that already
-                            // exists in the datastore. PUT to an aggregation job is idempotent, so
-                            // that's OK, provided the current request is equivalent to what's in
-                            // the datastore, which we must now check.
-                            if !Self::check_aggregation_job_idempotence(
-                                tx,
-                                &vdaf,
-                                task.borrow(),
-                                aggregation_job.borrow(),
-                                &report_share_data,
-                            )
-                            .await
-                            .map_err(|e| datastore::Error::User(e.into()))?
-                            {
-                                return Err(datastore::Error::User(
-                                    Error::ForbiddenMutation {
-                                        resource_type: "aggregation job",
-                                        identifier: aggregation_job.id().to_string(),
-                                    }
-                                    .into(),
                                 ));
-                            }
-
-                            true
+                            report_share_data.prep_step = Some(PrepareStep::new(
+                                *report_share_data.report_share.metadata().id(),
+                                PrepareStepResult::Failed(ReportShareError::BatchCollected),
+                            ));
                         }
-                        Err(e) => return Err(e),
-                    };
-
-                    if !replayed_request {
-                        // Write report shares, aggregations, and batches.
-                        (report_share_data, _) = try_join!(
-                            try_join_all(report_share_data.into_iter().map(|mut rsd| {
-                                let task = Arc::clone(&task);
-                                async move {
-                                    if let Err(err) =
-                                        tx.put_report_share(task.id(), &rsd.report_share).await
-                                    {
-                                        match err {
-                                            datastore::Error::MutationTargetAlreadyExists => {
-                                                rsd.report_aggregation = rsd
-                                                    .report_aggregation
-                                                    .clone()
-                                                    .with_state(ReportAggregationState::Failed(
-                                                        ReportShareError::ReportReplayed,
-                                                    ))
-                                                    .with_last_prep_step(Some(PrepareStep::new(
-                                                        *rsd.report_share.metadata().id(),
-                                                        PrepareStepResult::Failed(
-                                                            ReportShareError::ReportReplayed,
-                                                        ),
-                                                    )));
-                                            }
-                                            err => return Err(err),
-                                        }
-                                    }
-                                    tx.put_report_aggregation(&rsd.report_aggregation).await?;
-                                    Ok(rsd)
-                                }
-                            })),
-                            try_join_all(interval_per_batch_identifier.iter().map(|(batch_identifier, interval)| {
-                                let task = Arc::clone(&task);
-                                let aggregation_job = Arc::clone(&aggregation_job);
-                                async move {
-                                match tx.get_batch::<SEED_SIZE, Q, A>(task.id(), batch_identifier, aggregation_job.aggregation_parameter()).await? {
-                                    Some(batch) => {
-                                        let interval = batch.client_timestamp_interval().merge(interval)?;
-                                        tx.update_batch(&batch.with_client_timestamp_interval(interval)).await?;
-                                    },
-                                    None => tx.put_batch(&Batch::<SEED_SIZE, Q, A>::new(
-                                        *task.id(),
-                                        batch_identifier.clone(),
-                                        aggregation_job.aggregation_parameter().clone(),
-                                        BatchState::Open,
-                                        0,
-                                        *interval,
-                                    )).await?
-                                }
-                                Ok(())
-                            }}))
-                        )?;
                     }
 
-                    Ok(Self::aggregation_job_resp_for(
+                    // Write report shares, aggregations, and batches.
+                    (report_share_data, _) = try_join!(
+                        try_join_all(report_share_data.into_iter().map(|mut rsd| {
+                            let task = Arc::clone(&task);
+                            async move {
+                                if let Err(err) =
+                                    tx.put_report_share(task.id(), &rsd.report_share).await
+                                {
+                                    match err {
+                                        datastore::Error::MutationTargetAlreadyExists => {
+                                            rsd.report_aggregation = rsd
+                                                .report_aggregation
+                                                .clone()
+                                                .with_state(ReportAggregationState::Failed(
+                                                    ReportShareError::ReportReplayed,
+                                                ));
+                                            rsd.prep_step = Some(PrepareStep::new(
+                                                    *rsd.report_share.metadata().id(),
+                                                    PrepareStepResult::Failed(
+                                                        ReportShareError::ReportReplayed,
+                                                    ),
+                                                ));
+                                        }
+                                        err => return Err(err),
+                                    }
+                                }
+                                tx.put_report_aggregation(&rsd.report_aggregation).await?;
+                                Ok(rsd)
+                            }
+                        })),
+                        try_join_all(interval_per_batch_identifier.iter().map(|(batch_identifier, interval)| {
+                            let task = Arc::clone(&task);
+                            let aggregation_job = Arc::clone(&aggregation_job);
+                            async move {
+                            match tx.get_batch::<SEED_SIZE, Q, A>(task.id(), batch_identifier, aggregation_job.aggregation_parameter()).await? {
+                                Some(batch) => {
+                                    let interval = batch.client_timestamp_interval().merge(interval)?;
+                                    tx.update_batch(&batch.with_client_timestamp_interval(interval)).await?;
+                                },
+                                None => tx.put_batch(&Batch::<SEED_SIZE, Q, A>::new(
+                                    *task.id(),
+                                    batch_identifier.clone(),
+                                    aggregation_job.aggregation_parameter().clone(),
+                                    BatchState::Open,
+                                    0,
+                                    *interval,
+                                )).await?
+                            }
+                            Ok(())
+                        }}))
+                    )?;
+
+                    Ok(Self::aggregate_initialize_resp_for(
                         report_share_data
                             .into_iter()
-                            .map(|data| data.report_aggregation),
+                            .map(|data| data.prep_step),
                     ))
                 })
             })
@@ -1736,7 +1493,7 @@ impl VdafOps {
     async fn handle_aggregate_continue_generic<
         const SEED_SIZE: usize,
         Q: AccumulableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A: vdaf::Aggregator<SEED_SIZE>,
         C: Clock,
     >(
         datastore: &Datastore<C>,
@@ -1744,12 +1501,12 @@ impl VdafOps {
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<Task>,
         batch_aggregation_shard_count: u64,
-        aggregation_job_id: &AggregationJobId,
-        leader_aggregation_job: Arc<AggregationJobContinueReq>,
-        request_hash: [u8; 32],
-    ) -> Result<AggregationJobResp, Error>
+        req: Arc<AggregateContinueReq>,
+    ) -> Result<AggregateContinueResp, Error>
     where
         A: 'static + Send + Sync,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
@@ -1757,94 +1514,34 @@ impl VdafOps {
         A::PrepareMessage: Send + Sync,
         A::OutputShare: Send + Sync,
     {
-        if leader_aggregation_job.round() == AggregationJobRound::from(0) {
-            return Err(Error::UnrecognizedMessage(
-                Some(*task.id()),
-                "aggregation job cannot be advanced to round 0",
-            ));
-        }
-
         // TODO(#224): don't hold DB transaction open while computing VDAF updates?
         // TODO(#224): don't do O(n) network round-trips (where n is the number of prepare steps)
         Ok(datastore
             .run_tx_with_name("aggregate_continue", |tx| {
-                let (
-                    vdaf,
-                    aggregate_step_failure_counter,
-                    task,
-                    aggregation_job_id,
-                    leader_aggregation_job,
-                ) = (
+                let (vdaf, aggregate_step_failure_counter, task, req) = (
                     Arc::clone(&vdaf),
                     aggregate_step_failure_counter.clone(),
                     Arc::clone(&task),
-                    *aggregation_job_id,
-                    Arc::clone(&leader_aggregation_job),
+                    Arc::clone(&req),
                 );
 
                 Box::pin(async move {
                     // Read existing state.
                     let (helper_aggregation_job, report_aggregations) = try_join!(
-                        tx.get_aggregation_job::<SEED_SIZE, Q, A>(task.id(), &aggregation_job_id),
+                        tx.get_aggregation_job::<SEED_SIZE, Q, A>(task.id(), req.job_id()),
                         tx.get_report_aggregations_for_aggregation_job(
                             vdaf.as_ref(),
                             &Role::Helper,
                             task.id(),
-                            &aggregation_job_id,
+                            req.job_id(),
                         ),
                     )?;
 
                     let helper_aggregation_job = helper_aggregation_job.ok_or_else(|| {
                         datastore::Error::User(
-                            Error::UnrecognizedAggregationJob(*task.id(), aggregation_job_id)
-                                .into(),
+                            Error::UnrecognizedAggregationJob(*task.id(), *req.job_id()).into(),
                         )
                     })?;
-
-                    // If the leader's request is on the same round as our stored aggregation job,
-                    // then we probably have already received this message and computed this round,
-                    // but the leader never got our response and so retried stepping the job.
-                    // TODO(issue #1087): measure how often this happens with a Prometheus metric
-                    if helper_aggregation_job.round() == leader_aggregation_job.round() {
-                        match helper_aggregation_job.last_continue_request_hash() {
-                            None => {
-                                return Err(datastore::Error::User(
-                                    Error::Internal(format!(
-                                        "aggregation job {aggregation_job_id} is in round {} but \
-                                         has no last request hash",
-                                        helper_aggregation_job.round(),
-                                    ))
-                                    .into(),
-                                ));
-                            }
-                            Some(previous_hash) => {
-                                if request_hash != previous_hash {
-                                    return Err(datastore::Error::User(
-                                        Error::ForbiddenMutation {
-                                            resource_type: "aggregation job continuation",
-                                            identifier: aggregation_job_id.to_string(),
-                                        }
-                                        .into(),
-                                    ));
-                                }
-                            }
-                        }
-                        return Ok(Self::aggregation_job_resp_for(report_aggregations));
-                    } else if helper_aggregation_job.round().increment()
-                        != leader_aggregation_job.round()
-                    {
-                        // If this is not a replay, the leader should be advancing our state to the next
-                        // round and no further.
-                        return Err(datastore::Error::User(
-                            Error::RoundMismatch {
-                                task_id: *task.id(),
-                                aggregation_job_id,
-                                expected_round: helper_aggregation_job.round().increment(),
-                                got_round: leader_aggregation_job.round(),
-                            }
-                            .into(),
-                        ));
-                    }
 
                     // The leader is advancing us to the next round. Step the aggregation job to
                     // compute the next round of prepare messages and state.
@@ -1855,8 +1552,7 @@ impl VdafOps {
                         batch_aggregation_shard_count,
                         helper_aggregation_job,
                         report_aggregations,
-                        leader_aggregation_job,
-                        request_hash,
+                        req,
                         aggregate_step_failure_counter,
                     )
                     .await
@@ -1875,29 +1571,28 @@ impl VdafOps {
         &self,
         datastore: &Datastore<C>,
         task: Arc<Task>,
-        collection_job_id: &CollectionJobId,
         collection_req_bytes: &[u8],
-    ) -> Result<(), Error> {
+    ) -> Result<CollectionJobId, Error> {
         match task.query_type() {
             task::QueryType::TimeInterval => {
-                vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_create_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
                         VdafType,
                         _,
-                    >(datastore, task, Arc::clone(vdaf), collection_job_id, collection_req_bytes)
+                    >(datastore, task, collection_req_bytes)
                     .await
                 })
             }
             task::QueryType::FixedSize { .. } => {
-                vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_create_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
                         FixedSize,
                         VdafType,
                         _,
-                    >(datastore, task, Arc::clone(vdaf), collection_job_id, collection_req_bytes)
+                    >(datastore, task, collection_req_bytes)
                     .await
                 })
             }
@@ -1907,30 +1602,30 @@ impl VdafOps {
     async fn handle_create_collection_job_generic<
         const SEED_SIZE: usize,
         Q: CollectableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync + 'static,
         C: Clock,
     >(
         datastore: &Datastore<C>,
         task: Arc<Task>,
-        vdaf: Arc<A>,
-        collection_job_id: &CollectionJobId,
         req_bytes: &[u8],
-    ) -> Result<(), Error>
+    ) -> Result<CollectionJobId, Error>
     where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
         A::AggregationParam: 'static + Send + Sync + PartialEq + Eq,
         A::AggregateShare: Send + Sync,
     {
-        let req = Arc::new(CollectionReq::<Q>::get_decoded(req_bytes)?);
+        let req = Arc::new(CollectReq::<Q>::get_decoded(req_bytes)?);
+        assert_eq!(req.task_id(), task.id()); // sanity check, must be guaranteed by caller
+
         let aggregation_param = Arc::new(A::AggregationParam::get_decoded(
             req.aggregation_parameter(),
         )?);
 
         Ok(datastore
             .run_tx_with_name("collect", move |tx| {
-                let (task, vdaf, collection_job_id, req, aggregation_param) = (
+                let (task, req, aggregation_param) = (
                     Arc::clone(&task),
-                    Arc::clone(&vdaf),
-                    *collection_job_id,
                     Arc::clone(&req),
                     Arc::clone(&aggregation_param),
                 );
@@ -1948,8 +1643,21 @@ impl VdafOps {
                                 )
                             })?;
 
+                    if let Some(collection_job_id) = tx
+                        .get_collection_job_id::<SEED_SIZE, Q, A>(
+                            task.id(),
+                            &collection_identifier,
+                            &aggregation_param,
+                        )
+                        .await?
+                    {
+                        debug!(collect_request = ?req, ?collection_job_id, "Serving existing collection job");
+                        return Ok(collection_job_id);
+                    }
+
                     // Check that the batch interval is valid for the task
                     // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
+                    debug!(collect_request = ?req, "Cache miss, creating new collection job");
                     if !Q::validate_collection_identifier(&task, &collection_identifier) {
                         return Err(datastore::Error::User(
                             Error::BatchInvalid(*task.id(), format!("{collection_identifier}"))
@@ -1957,36 +1665,9 @@ impl VdafOps {
                         ));
                     }
 
-                    // Check if this collection job already exists, ensuring that all parameters match.
-                    if let Some(collection_job) = tx
-                        .get_collection_job::<SEED_SIZE, Q, A>(&vdaf, &collection_job_id)
-                        .await?
-                    {
-                        if collection_job.batch_identifier() == &collection_identifier
-                            && collection_job.aggregation_parameter() == aggregation_param.as_ref()
-                        {
-                            debug!(
-                                collection_job_id = %collection_job_id,
-                                collect_request = ?req,
-                                "collection job already exists"
-                            );
-                            return Ok(());
-                        } else {
-                            return Err(datastore::Error::User(
-                                Error::ForbiddenMutation {
-                                    resource_type: "collection job",
-                                    identifier: collection_job_id.to_string(),
-                                }
-                                .into(),
-                            ));
-                        }
-                    }
-
-                    debug!(collect_request = ?req, "Cache miss, creating new collection job");
                     let (_, report_count, batches, batches_with_reports) = try_join!(
                         Q::validate_query_count::<SEED_SIZE, C, A>(
                             tx,
-                            &vdaf,
                             &task,
                             &collection_identifier
                         ),
@@ -2111,6 +1792,7 @@ impl VdafOps {
                         })
                         .collect();
 
+                    let collection_job_id = random();
                     let collection_job = CollectionJob::<SEED_SIZE, Q, A>::new(
                         *task.id(),
                         collection_job_id,
@@ -2163,7 +1845,7 @@ impl VdafOps {
                             }
                         }))
                     )?;
-                    Ok(())
+                    Ok(collection_job_id)
                 })
             })
             .await?)
@@ -2181,24 +1863,24 @@ impl VdafOps {
     ) -> Result<Option<Vec<u8>>, Error> {
         match task.query_type() {
             task::QueryType::TimeInterval => {
-                vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_get_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
                         VdafType,
                         _,
-                    >(datastore, task, Arc::clone(vdaf), collection_job_id)
+                    >(datastore, task, collection_job_id)
                     .await
                 })
             }
             task::QueryType::FixedSize { .. } => {
-                vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_get_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
                         FixedSize,
                         VdafType,
                         _,
-                    >(datastore, task, Arc::clone(vdaf), collection_job_id)
+                    >(datastore, task, collection_job_id)
                     .await
                 })
             }
@@ -2209,25 +1891,25 @@ impl VdafOps {
     async fn handle_get_collection_job_generic<
         const SEED_SIZE: usize,
         Q: CollectableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync + 'static,
         C: Clock,
     >(
         datastore: &Datastore<C>,
         task: Arc<Task>,
-        vdaf: Arc<A>,
         collection_job_id: &CollectionJobId,
     ) -> Result<Option<Vec<u8>>, Error>
     where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
     {
-        let (collection_job, spanned_interval) = datastore
+        let collection_job = datastore
             .run_tx_with_name("get_collection_job", |tx| {
-                let (task, vdaf, collection_job_id) =
-                    (Arc::clone(&task), Arc::clone(&vdaf), *collection_job_id);
+                let (task, collection_job_id) = (Arc::clone(&task), *collection_job_id);
                 Box::pin(async move {
                     let collection_job = tx
-                        .get_collection_job::<SEED_SIZE, Q, A>(&vdaf, &collection_job_id)
+                        .get_collection_job::<SEED_SIZE, Q, A>(&collection_job_id)
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -2235,30 +1917,10 @@ impl VdafOps {
                             )
                         })?;
 
-                    let (batches, _) = try_join!(
-                        Q::get_batches_for_collection_identifier(
-                            tx,
-                            &task,
-                            collection_job.batch_identifier(),
-                            collection_job.aggregation_parameter()
-                        ),
-                        Q::acknowledge_collection(tx, task.id(), collection_job.batch_identifier()),
-                    )?;
+                    Q::acknowledge_collection(tx, task.id(), collection_job.batch_identifier())
+                        .await?;
 
-                    // Merge the intervals spanned by the constituent batch aggregations into the
-                    // interval spanned by the collection.
-                    let mut spanned_interval: Option<Interval> = None;
-                    for interval in batches
-                        .iter()
-                        .map(Batch::<SEED_SIZE, Q, A>::client_timestamp_interval)
-                    {
-                        match spanned_interval {
-                            Some(m) => spanned_interval = Some(m.merge(interval)?),
-                            None => spanned_interval = Some(*interval),
-                        }
-                    }
-
-                    Ok((collection_job, spanned_interval))
+                    Ok(collection_job)
                 })
             })
             .await?;
@@ -2274,18 +1936,6 @@ impl VdafOps {
                 encrypted_helper_aggregate_share,
                 leader_aggregate_share,
             } => {
-                let spanned_interval = spanned_interval
-                    .ok_or_else(|| {
-                        datastore::Error::User(
-                            Error::Internal(format!(
-                                "collection job {collection_job_id} is finished but spans no time \
-                                 interval"
-                            ))
-                            .into(),
-                        )
-                    })?
-                    .align_to_time_precision(task.time_precision())?;
-
                 // §4.4.4.3: HPKE encrypt aggregate share to the collector. We store the leader
                 // aggregate share *unencrypted* in the datastore so that we can encrypt cached
                 // results to the collector HPKE config valid when the current collection job request
@@ -2301,6 +1951,12 @@ impl VdafOps {
                     task_id = %task.id(),
                     "Serving cached collection job response"
                 );
+                let mut aad = Vec::new();
+                aad.extend(collection_job.task_id().as_ref());
+                aad.extend(
+                    BatchSelector::<Q>::new(collection_job.batch_identifier().clone())
+                        .get_encoded(),
+                );
                 let encrypted_leader_aggregate_share = hpke::seal(
                     task.collector_hpke_config(),
                     &HpkeApplicationInfo::new(
@@ -2308,21 +1964,16 @@ impl VdafOps {
                         &Role::Leader,
                         &Role::Collector,
                     ),
-                    &leader_aggregate_share.get_encoded(),
-                    &AggregateShareAad::new(
-                        *collection_job.task_id(),
-                        BatchSelector::<Q>::new(collection_job.batch_identifier().clone()),
-                    )
-                    .get_encoded(),
+                    &leader_aggregate_share.into(),
+                    &aad,
                 )?;
 
                 Ok(Some(
-                    Collection::<Q>::new(
+                    CollectResp::<Q>::new(
                         PartialBatchSelector::new(
                             Q::partial_batch_identifier(collection_job.batch_identifier()).clone(),
                         ),
                         *report_count,
-                        spanned_interval,
                         Vec::<HpkeCiphertext>::from([
                             encrypted_leader_aggregate_share,
                             encrypted_helper_aggregate_share.clone(),
@@ -2355,24 +2006,24 @@ impl VdafOps {
     ) -> Result<(), Error> {
         match task.query_type() {
             task::QueryType::TimeInterval => {
-                vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_delete_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
                         VdafType,
                         _,
-                    >(datastore, task, Arc::clone(vdaf), collection_job_id)
+                    >(datastore, task, collection_job_id)
                     .await
                 })
             }
             task::QueryType::FixedSize { .. } => {
-                vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_delete_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
                         FixedSize,
                         VdafType,
                         _,
-                    >(datastore, task, Arc::clone(vdaf), collection_job_id)
+                    >(datastore, task, collection_job_id)
                     .await
                 })
             }
@@ -2382,25 +2033,25 @@ impl VdafOps {
     async fn handle_delete_collection_job_generic<
         const SEED_SIZE: usize,
         Q: CollectableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync + 'static,
         C: Clock,
     >(
         datastore: &Datastore<C>,
         task: Arc<Task>,
-        vdaf: Arc<A>,
         collection_job_id: &CollectionJobId,
     ) -> Result<(), Error>
     where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync + PartialEq + Eq,
     {
         datastore
             .run_tx_with_name("delete_collection_job", move |tx| {
-                let (task, vdaf, collection_job_id) =
-                    (Arc::clone(&task), Arc::clone(&vdaf), *collection_job_id);
+                let (task, collection_job_id) = (Arc::clone(&task), *collection_job_id);
                 Box::pin(async move {
                     let collection_job = tx
-                        .get_collection_job::<SEED_SIZE, Q, A>(vdaf.as_ref(), &collection_job_id)
+                        .get_collection_job::<SEED_SIZE, Q, A>(&collection_job_id)
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -2435,27 +2086,27 @@ impl VdafOps {
         task: Arc<Task>,
         batch_aggregation_shard_count: u64,
         req_bytes: &[u8],
-    ) -> Result<AggregateShare, Error> {
+    ) -> Result<AggregateShareResp, Error> {
         match task.query_type() {
             task::QueryType::TimeInterval => {
-                vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_aggregate_share_generic::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
                         VdafType,
                         _,
-                    >(datastore, clock, task, Arc::clone(vdaf), req_bytes, batch_aggregation_shard_count)
+                    >(datastore, clock, task, req_bytes, batch_aggregation_shard_count)
                     .await
                 })
             }
             task::QueryType::FixedSize { .. } => {
-                vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_aggregate_share_generic::<
                         VERIFY_KEY_LENGTH,
                         FixedSize,
                         VdafType,
                         _,
-                    >(datastore, clock, task, Arc::clone(vdaf), req_bytes, batch_aggregation_shard_count)
+                    >(datastore, clock, task, req_bytes, batch_aggregation_shard_count)
                     .await
                 })
             }
@@ -2465,23 +2116,25 @@ impl VdafOps {
     async fn handle_aggregate_share_generic<
         const SEED_SIZE: usize,
         Q: CollectableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync + 'static,
         C: Clock,
     >(
         datastore: &Datastore<C>,
         clock: &C,
         task: Arc<Task>,
-        vdaf: Arc<A>,
         req_bytes: &[u8],
         batch_aggregation_shard_count: u64,
-    ) -> Result<AggregateShare, Error>
+    ) -> Result<AggregateShareResp, Error>
     where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
     {
         // Decode request, and verify that it is for the current task. We use an assert to check
         // that the task IDs match as this should be guaranteed by the caller.
         let aggregate_share_req = Arc::new(AggregateShareReq::<Q>::get_decoded(req_bytes)?);
+        assert_eq!(aggregate_share_req.task_id(), task.id()); // sanity check, must be guaranteed by caller
 
         // §4.4.4.3: check that the batch interval meets the requirements from §4.6
         if !Q::validate_collection_identifier(
@@ -2515,11 +2168,8 @@ impl VdafOps {
 
         let aggregate_share_job = datastore
             .run_tx_with_name("aggregate_share", |tx| {
-                let (task, vdaf, aggregate_share_req) = (
-                    Arc::clone(&task),
-                    Arc::clone(&vdaf),
-                    Arc::clone(&aggregate_share_req),
-                );
+                let (task, aggregate_share_req) =
+                    (Arc::clone(&task), Arc::clone(&aggregate_share_req));
                 Box::pin(async move {
                     // Check if we have already serviced an aggregate share request with these
                     // parameters and serve the cached results if so.
@@ -2528,7 +2178,6 @@ impl VdafOps {
                     )?;
                     let aggregate_share_job = match tx
                         .get_aggregate_share_job(
-                            vdaf.as_ref(),
                             task.id(),
                             aggregate_share_req.batch_selector().batch_identifier(),
                             &aggregation_param,
@@ -2554,13 +2203,11 @@ impl VdafOps {
                                 Q::get_batch_aggregations_for_collection_identifier(
                                     tx,
                                     &task,
-                                    vdaf.as_ref(),
                                     aggregate_share_req.batch_selector().batch_identifier(),
                                     &aggregation_param
                                 ),
                                 Q::validate_query_count::<SEED_SIZE, C, A>(
                                     tx,
-                                    vdaf.as_ref(),
                                     &task,
                                     aggregate_share_req.batch_selector().batch_identifier(),
                                 )
@@ -2643,29 +2290,35 @@ impl VdafOps {
         // shares in the datastore so that we can encrypt cached results to the collector HPKE
         // config valid when the current AggregateShareReq was made, and not whatever was valid at
         // the time the aggregate share was first computed.
+        let mut aad = Vec::new();
+        aad.extend(task.id().as_ref());
+        aad.extend(&aggregate_share_req.batch_selector().get_encoded());
+
         let encrypted_aggregate_share = hpke::seal(
             task.collector_hpke_config(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
-            &aggregate_share_job.helper_aggregate_share().get_encoded(),
-            &AggregateShareAad::new(*task.id(), aggregate_share_req.batch_selector().clone())
-                .get_encoded(),
+            &aggregate_share_job.helper_aggregate_share().into(),
+            &aad,
         )?;
 
-        Ok(AggregateShare::new(encrypted_aggregate_share))
+        Ok(AggregateShareResp::new(encrypted_aggregate_share))
     }
 }
 
 fn empty_batch_aggregations<
     const SEED_SIZE: usize,
     Q: CollectableQueryType,
-    A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+    A: vdaf::Aggregator<SEED_SIZE> + Send + Sync + 'static,
 >(
     task: &Task,
     batch_aggregation_shard_count: u64,
     batch_identifier: &Q::BatchIdentifier,
     aggregation_param: &A::AggregationParam,
     batch_aggregations: &[BatchAggregation<SEED_SIZE, Q, A>],
-) -> Vec<BatchAggregation<SEED_SIZE, Q, A>> {
+) -> Vec<BatchAggregation<SEED_SIZE, Q, A>>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+{
     let existing_batch_aggregations: HashSet<_> = batch_aggregations
         .iter()
         .map(|ba| (ba.batch_identifier(), ba.ord()))
@@ -2819,13 +2472,16 @@ mod tests {
         time::{Clock, MockClock, TimeExt},
     };
     use janus_messages::{
-        query_type::TimeInterval, Duration, Extension, HpkeCiphertext, HpkeConfig, HpkeConfigId,
-        InputShareAad, Interval, PlaintextInputShare, Report, ReportId, ReportMetadata,
-        ReportShare, Role, TaskId, Time,
+        query_type::TimeInterval, Duration, HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval,
+        Report, ReportId, ReportMetadata, ReportShare, Role, TaskId, Time,
     };
     use prio::{
         codec::Encode,
-        vdaf::{self, prio3::Prio3Count, Client as _},
+        vdaf::{
+            self,
+            prio3::{Prio3, Prio3Aes128Count},
+            Client as _,
+        },
     };
     use rand::random;
     use std::{collections::HashSet, iter, sync::Arc, time::Duration as StdDuration};
@@ -2851,33 +2507,33 @@ mod tests {
     ) -> Report {
         assert_eq!(task.vdaf(), &VdafInstance::Prio3Count);
 
-        let vdaf = Prio3Count::new_count(2).unwrap();
-        let report_metadata = ReportMetadata::new(id, report_timestamp);
+        let vdaf = Prio3::new_aes128_count(2).unwrap();
+        let report_metadata = ReportMetadata::new(id, report_timestamp, Vec::new());
 
-        let (public_share, measurements) = vdaf.shard(&1, id.as_ref()).unwrap();
+        let (public_share, input_shares) = vdaf.shard(&1).unwrap();
 
-        let associated_data = InputShareAad::new(
-            *task.id(),
-            report_metadata.clone(),
-            public_share.get_encoded(),
-        );
+        let mut aad = Vec::new();
+        aad.extend(task.id().as_ref());
+        aad.extend(&report_metadata.get_encoded());
+        aad.extend(&public_share.get_encoded());
 
         let leader_ciphertext = hpke::seal(
             hpke_key.config(),
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader),
-            &PlaintextInputShare::new(Vec::new(), measurements[0].get_encoded()).get_encoded(),
-            &associated_data.get_encoded(),
+            &input_shares[0].get_encoded(),
+            &aad,
         )
         .unwrap();
         let helper_ciphertext = hpke::seal(
             hpke_key.config(),
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
-            &PlaintextInputShare::new(Vec::new(), measurements[1].get_encoded()).get_encoded(),
-            &associated_data.get_encoded(),
+            &input_shares[1].get_encoded(),
+            &aad,
         )
         .unwrap();
 
         Report::new(
+            *task.id(),
             report_metadata,
             public_share.get_encoded(),
             Vec::from([leader_ciphertext, helper_ciphertext]),
@@ -2891,7 +2547,7 @@ mod tests {
     async fn setup_upload_test(
         cfg: Config,
     ) -> (
-        Prio3Count,
+        Prio3Aes128Count,
         Aggregator<MockClock>,
         MockClock,
         Task,
@@ -2899,7 +2555,7 @@ mod tests {
         EphemeralDatastore,
     ) {
         let clock = MockClock::default();
-        let vdaf = Prio3Count::new_count(2).unwrap();
+        let vdaf = Prio3::new_aes128_count(2).unwrap();
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
             VdafInstance::Prio3Count,
@@ -2940,7 +2596,7 @@ mod tests {
         let report = create_report(&task, clock.now());
 
         aggregator
-            .handle_upload(task.id(), &report.get_encoded())
+            .handle_upload(&report.get_encoded())
             .await
             .unwrap();
 
@@ -2957,26 +2613,14 @@ mod tests {
         assert_eq!(report.metadata(), got_report.metadata());
 
         // Report uploads are idempotent
-        aggregator
-            .handle_upload(task.id(), &report.get_encoded())
-            .await
-            .unwrap();
-
-        // Reports may not be mutated
-        let mutated_report = create_report_custom(
-            &task,
-            clock.now(),
-            *report.metadata().id(),
-            task.current_hpke_key(),
-        );
         let error = aggregator
-            .handle_upload(task.id(), &mutated_report.get_encoded())
+            .handle_upload(&report.get_encoded())
             .await
             .unwrap_err();
-        assert_matches!(error.as_ref(), Error::ReportRejected(task_id, report_id, timestamp) => {
+        assert_matches!(error.as_ref(), Error::ReportTooLate(task_id, report_id, timestamp) => {
             assert_eq!(task.id(), task_id);
-            assert_eq!(mutated_report.metadata().id(), report_id);
-            assert_eq!(mutated_report.metadata().time(), timestamp);
+            assert_eq!(report.metadata().id(), report_id);
+            assert_eq!(report.metadata().time(), timestamp);
         });
     }
 
@@ -3002,8 +2646,7 @@ mod tests {
         try_join_all(reports.iter().map(|r| {
             let aggregator = Arc::clone(&aggregator);
             let enc = r.get_encoded();
-            let task_id = task.id();
-            async move { aggregator.handle_upload(task_id, &enc).await }
+            async move { aggregator.handle_upload(&enc).await }
         }))
         .await
         .unwrap();
@@ -3031,6 +2674,7 @@ mod tests {
             setup_upload_test(default_aggregator_config()).await;
         let report = create_report(&task, clock.now());
         let report = Report::new(
+            *report.task_id(),
             report.metadata().clone(),
             report.public_share().to_vec(),
             Vec::from([report.encrypted_input_shares()[0].clone()]),
@@ -3038,7 +2682,7 @@ mod tests {
 
         assert_matches!(
             aggregator
-                .handle_upload(task.id(), &report.get_encoded())
+                .handle_upload(&report.get_encoded())
                 .await
                 .unwrap_err()
                 .as_ref(),
@@ -3060,6 +2704,7 @@ mod tests {
             .unwrap();
 
         let report = Report::new(
+            *report.task_id(),
             report.metadata().clone(),
             report.public_share().to_vec(),
             Vec::from([
@@ -3074,7 +2719,7 @@ mod tests {
             ]),
         );
 
-        assert_matches!(aggregator.handle_upload(task.id(), &report.get_encoded()).await.unwrap_err().as_ref(), Error::OutdatedHpkeConfig(task_id, config_id) => {
+        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await.unwrap_err().as_ref(), Error::OutdatedHpkeConfig(task_id, config_id) => {
             assert_eq!(task.id(), task_id);
             assert_eq!(config_id, &unused_hpke_config_id);
         });
@@ -3089,7 +2734,7 @@ mod tests {
         let report = create_report(&task, clock.now().add(task.tolerable_clock_skew()).unwrap());
 
         aggregator
-            .handle_upload(task.id(), &report.get_encoded())
+            .handle_upload(&report.get_encoded())
             .await
             .unwrap();
 
@@ -3123,7 +2768,7 @@ mod tests {
         );
 
         let upload_error = aggregator
-            .handle_upload(task.id(), &report.get_encoded())
+            .handle_upload(&report.get_encoded())
             .await
             .unwrap_err();
 
@@ -3159,7 +2804,7 @@ mod tests {
                     tx.put_collection_job(&CollectionJob::<
                         PRIO3_VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Prio3Count,
+                        Prio3Aes128Count,
                     >::new(
                         *task.id(),
                         random(),
@@ -3174,7 +2819,7 @@ mod tests {
             .unwrap();
 
         // Try to upload the report, verify that we get the expected error.
-        assert_matches!(aggregator.handle_upload(task.id(), &report.get_encoded()).await.unwrap_err().as_ref(), Error::ReportRejected(err_task_id, err_report_id, err_time) => {
+        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await.unwrap_err().as_ref(), Error::ReportTooLate(err_task_id, err_report_id, err_time) => {
             assert_eq!(task.id(), err_task_id);
             assert_eq!(report.metadata().id(), err_report_id);
             assert_eq!(report.metadata().time(), err_time);
@@ -3235,7 +2880,7 @@ mod tests {
             ),
         ] {
             aggregator
-                .handle_upload(task.id(), &report.get_encoded())
+                .handle_upload(&report.get_encoded())
                 .await
                 .unwrap();
 
@@ -3253,20 +2898,27 @@ mod tests {
         }
     }
 
-    pub(crate) fn generate_helper_report_share<V: vdaf::Client<16>>(
+    pub(crate) fn generate_helper_report_share<V: vdaf::Client>(
         task_id: TaskId,
         report_metadata: ReportMetadata,
         cfg: &HpkeConfig,
         public_share: &V::PublicShare,
-        extensions: Vec<Extension>,
         input_share: &V::InputShare,
-    ) -> ReportShare {
+    ) -> ReportShare
+    where
+        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+    {
+        let mut aad = Vec::new();
+        aad.extend(task_id.as_ref());
+        aad.extend(&report_metadata.get_encoded());
+        aad.extend(&public_share.get_encoded());
+
         generate_helper_report_share_for_plaintext(
             report_metadata.clone(),
             cfg,
             public_share.get_encoded(),
-            &PlaintextInputShare::new(extensions, input_share.get_encoded()).get_encoded(),
-            &InputShareAad::new(task_id, report_metadata, public_share.get_encoded()).get_encoded(),
+            &input_share.get_encoded(),
+            &aad,
         )
     }
 

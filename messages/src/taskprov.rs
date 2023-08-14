@@ -84,20 +84,6 @@ impl Encode for TaskConfig {
         self.task_expiration.encode(bytes);
         self.vdaf_config.encode(bytes);
     }
-
-    fn encoded_len(&self) -> Option<usize> {
-        Some(
-            (1 + self.task_info.len())
-                + (2 + self
-                    .aggregator_endpoints
-                    .iter()
-                    // Unwrap safety: url.encoded_len() always returns Some.
-                    .fold(0, |acc, url| acc + url.encoded_len().unwrap()))
-                + self.query_config.encoded_len()?
-                + self.task_expiration.encoded_len()?
-                + self.vdaf_config.encoded_len()?,
-        )
-    }
 }
 
 impl Decode for TaskConfig {
@@ -189,18 +175,6 @@ impl Encode for QueryConfig {
             max_batch_size.encode(bytes)
         }
     }
-
-    fn encoded_len(&self) -> Option<usize> {
-        Some(
-            1 + self.time_precision.encoded_len()?
-                + self.max_batch_query_count.encoded_len()?
-                + self.min_batch_size.encoded_len()?
-                + match self.query {
-                    Query::FixedSize { max_batch_size } => max_batch_size.encoded_len()?,
-                    _ => 0,
-                },
-        )
-    }
 }
 
 impl Decode for QueryConfig {
@@ -284,10 +258,6 @@ impl Encode for VdafConfig {
         self.dp_config.encode(bytes);
         self.vdaf_type.encode(bytes);
     }
-
-    fn encoded_len(&self) -> Option<usize> {
-        Some(self.dp_config.encoded_len()? + self.vdaf_type.encoded_len()?)
-    }
 }
 
 impl Decode for VdafConfig {
@@ -357,17 +327,6 @@ impl Encode for VdafType {
             }
         }
     }
-
-    fn encoded_len(&self) -> Option<usize> {
-        Some(
-            4 + match self {
-                Self::Prio3Count => 0,
-                Self::Prio3Sum { bits } => bits.encoded_len()?,
-                Self::Prio3Histogram { buckets } => 3 + buckets.len() * 0u64.encoded_len()?,
-                Self::Poplar1 { bits } => bits.encoded_len()?,
-            },
-        )
-    }
 }
 
 impl Decode for VdafType {
@@ -413,10 +372,6 @@ impl Encode for DpConfig {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.dp_mechanism.encode(bytes)
     }
-
-    fn encoded_len(&self) -> Option<usize> {
-        self.dp_mechanism.encoded_len()
-    }
 }
 
 impl Decode for DpConfig {
@@ -445,12 +400,6 @@ impl Encode for DpMechanism {
         match self {
             Self::Reserved => Self::RESERVED.encode(bytes),
             Self::None => Self::NONE.encode(bytes),
-        }
-    }
-
-    fn encoded_len(&self) -> Option<usize> {
-        match self {
-            Self::Reserved | Self::None => Some(1),
         }
     }
 }

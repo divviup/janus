@@ -163,27 +163,3 @@ async fn janus_janus_fixed_size() {
     )
     .await;
 }
-
-// This test exercises Prio3SumVec with Janus as both the leader and the helper.
-#[tokio::test(flavor = "multi_thread")]
-async fn janus_janus_sum_vec() {
-    install_test_trace_subscriber();
-
-    let container_client = container_client();
-    let janus_pair = JanusPair::new(
-        &container_client,
-        VdafInstance::Prio3SumVec {
-            bits: 16,
-            length: 15,
-        },
-        QueryType::TimeInterval,
-    )
-    .await;
-
-    submit_measurements_and_verify_aggregate(
-        &janus_pair.task_parameters,
-        (janus_pair.leader.port(), janus_pair.helper.port()),
-        &ClientBackend::InProcess,
-    )
-    .await;
-}

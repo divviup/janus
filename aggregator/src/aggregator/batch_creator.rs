@@ -9,16 +9,14 @@ use janus_aggregator_core::datastore::{
     Error, Transaction,
 };
 use janus_core::time::{Clock, DurationExt, TimeExt};
-use janus_messages::{
-    query_type::FixedSize, AggregationJobRound, BatchId, Duration, Interval, ReportId, TaskId, Time,
-};
+use janus_messages::{query_type::FixedSize, BatchId, Duration, Interval, ReportId, TaskId, Time};
 use prio::{codec::Encode, vdaf::Aggregator};
 use rand::random;
 use std::{
     cmp::{max, min, Ordering},
     collections::{binary_heap::PeekMut, hash_map, BinaryHeap, HashMap, VecDeque},
+    fmt::Debug,
     ops::RangeInclusive,
-    sync::Arc,
 };
 use tokio::try_join;
 use tracing::debug;
@@ -31,7 +29,8 @@ use super::aggregation_job_writer::AggregationJobWriter;
 /// reports.
 pub struct BatchCreator<'a, const SEED_SIZE: usize, A>
 where
-    A: Aggregator<SEED_SIZE, 16>,
+    A: Aggregator<SEED_SIZE>,
+    for<'b> &'b A::AggregateShare: Into<Vec<u8>>,
 {
     properties: Properties,
     aggregation_job_writer: &'a mut AggregationJobWriter<SEED_SIZE, FixedSize, A>,
@@ -53,7 +52,9 @@ struct Properties {
 
 impl<'a, const SEED_SIZE: usize, A> BatchCreator<'a, SEED_SIZE, A>
 where
-    A: Aggregator<SEED_SIZE, 16, AggregationParam = ()> + Send + Sync + 'a,
+    A: Aggregator<SEED_SIZE, AggregationParam = ()> + Send + Sync + 'a,
+    for<'b> &'b A::AggregateShare: Into<Vec<u8>>,
+    for<'b> <A::AggregateShare as TryFrom<&'b [u8]>>::Error: Debug,
     A::PrepareState: Encode,
 {
     pub fn new(
@@ -297,7 +298,6 @@ where
                     report_id,
                     client_timestamp,
                     ord,
-                    None,
                     ReportAggregationState::Start,
                 )
             })
@@ -318,7 +318,6 @@ where
             batch_id,
             client_timestamp_interval,
             AggregationJobState::InProgress,
-            AggregationJobRound::from(0),
         );
         aggregation_job_writer.put(aggregation_job, report_aggregations)?;
 
@@ -327,7 +326,7 @@ where
 
     /// Finish creating aggregation jobs with the remaining reports where possible. Marks remaining
     /// unused reports as unaggregated.
-    pub async fn finish<C>(mut self, tx: &Transaction<'_, C>, vdaf: Arc<A>) -> Result<(), Error>
+    pub async fn finish<C>(mut self, tx: &Transaction<'_, C>) -> Result<(), Error>
     where
         C: Clock,
     {
@@ -355,7 +354,7 @@ where
         }
 
         try_join!(
-            self.aggregation_job_writer.write(tx, vdaf),
+            self.aggregation_job_writer.write(tx),
             try_join_all(
                 self.new_batches
                     .iter()

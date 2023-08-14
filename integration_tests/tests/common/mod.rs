@@ -1,4 +1,5 @@
 use backoff::{future::retry, ExponentialBackoffBuilder};
+use http::StatusCode;
 use itertools::Itertools;
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
 use janus_collector::{
@@ -14,10 +15,11 @@ use janus_integration_tests::{
     client::{ClientBackend, ClientImplementation, InteropClientEncoding},
     EndpointFragments, TaskParameters,
 };
+use janus_interop_binaries::{FetchBatchIdsRequest, FetchBatchIdsResponse};
 use janus_messages::{
     problem_type::DapProblemType,
-    query_type::{self, FixedSize},
-    Duration, FixedSizeQuery, Interval, Query, Role,
+    query_type::{self},
+    Duration, Interval, Query, Role,
 };
 use prio::vdaf::{self, prio3::Prio3};
 use rand::{random, thread_rng, Rng};
@@ -65,7 +67,8 @@ pub fn test_task_builders(
 /// A set of inputs and an expected output for a VDAF's aggregation.
 pub struct AggregationTestCase<V>
 where
-    V: vdaf::Client<16> + vdaf::Collector,
+    V: vdaf::Client + vdaf::Collector,
+    for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
 {
     measurements: Vec<V::Measurement>,
     aggregation_parameter: V::AggregationParam,
@@ -80,7 +83,8 @@ pub async fn collect_generic<'a, V, Q>(
     port: u16,
 ) -> Result<Collection<V::AggregateResult, Q>, janus_collector::Error>
 where
-    V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
+    V: vdaf::Client + vdaf::Collector + InteropClientEncoding,
+    for<'b> &'b V::AggregateShare: Into<Vec<u8>>,
     Q: query_type::QueryType,
 {
     // An extra retry loop is needed here because our collect request may race against the
@@ -118,7 +122,8 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
     test_case: &AggregationTestCase<V>,
     client_implementation: &ClientImplementation<'_, V>,
 ) where
-    V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
+    V: vdaf::Client + vdaf::Collector + InteropClientEncoding,
+    for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
     V::AggregateResult: PartialEq,
 {
     // Submit some measurements, recording a timestamp before measurement upload to allow us to
@@ -133,7 +138,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
         .port_forwarded_leader_endpoint(leader_port);
     let collector_params = CollectorParameters::new(
         task_parameters.task_id,
-        leader_endpoint,
+        leader_endpoint.clone(),
         task_parameters.collector_auth_token.clone(),
         task_parameters.collector_hpke_config.clone(),
         task_parameters.collector_private_key.clone(),
@@ -181,31 +186,59 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
             assert_eq!(collection.aggregate_result(), &test_case.aggregate_result);
         }
         QueryType::FixedSize { .. } => {
+            let http_client = janus_collector::default_http_client().unwrap();
             let mut requests = 0;
-            let collection = loop {
+            let batch_id = loop {
                 requests += 1;
-                let collection_res = collect_generic::<_, FixedSize>(
-                    &collector,
-                    Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
-                    &test_case.aggregation_parameter,
-                    "127.0.0.1",
-                    leader_port,
-                )
-                .await;
-                match collection_res {
-                    Ok(collection) => break collection,
-                    Err(e) => {
-                        if requests >= 15 {
-                            panic!(
-                                "timed out waiting for a current batch query to succeed, error: \
-                                 {e}"
-                            );
-                        }
-                        sleep(StdDuration::from_secs(1)).await;
-                        continue;
+                let fetch_batch_ids_response = http_client
+                    .post(
+                        leader_endpoint
+                            .join("/internal/test/fetch_batch_ids")
+                            .unwrap(),
+                    )
+                    .json(&FetchBatchIdsRequest {
+                        task_id: task_parameters.task_id,
+                    })
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(fetch_batch_ids_response.status(), StatusCode::OK);
+                let fetch_batch_ids_response = fetch_batch_ids_response
+                    .json::<FetchBatchIdsResponse>()
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    fetch_batch_ids_response.status, "success",
+                    "error: {:?}",
+                    fetch_batch_ids_response.error,
+                );
+                let batch_ids = fetch_batch_ids_response
+                    .batch_ids
+                    .expect("fetch_batch_ids response is missing \"batch_ids\"");
+                if batch_ids.is_empty() {
+                    if requests >= 15 {
+                        panic!("timed out waiting for a batch ID to be assigned");
                     }
+                    sleep(StdDuration::from_secs(1)).await;
+                    continue;
                 }
+                assert_eq!(batch_ids.len(), 1, "too many batch IDs were assigned");
+                break batch_ids[0];
             };
+            // Hack: give the aggregation job creator enough time to assign reports to the correct
+            // batch; otherwise, creating a collection job against this batch ID will fail with
+            // `invalidBatchSize`. (It would be better to add/augment a retry loop which retries
+            // for awhile on `invalidBatchSize`, but I leave that for a future improvement.)
+            sleep(StdDuration::from_secs(10)).await;
+            let collection = collect_generic(
+                &collector,
+                Query::new_fixed_size(batch_id),
+                &test_case.aggregation_parameter,
+                "127.0.0.1",
+                leader_port,
+            )
+            .await
+            .unwrap();
 
             assert_eq!(
                 collection.report_count(),
@@ -227,7 +260,7 @@ pub async fn submit_measurements_and_verify_aggregate(
 
     match &task_parameters.vdaf {
         VdafInstance::Prio3Count => {
-            let vdaf = Prio3::new_count(2).unwrap();
+            let vdaf = Prio3::new_aes128_count(2).unwrap();
 
             let num_nonzero_measurements = total_measurements / 2;
             let num_zero_measurements = total_measurements - num_nonzero_measurements;
@@ -257,7 +290,7 @@ pub async fn submit_measurements_and_verify_aggregate(
             .await;
         }
         VdafInstance::Prio3Sum { bits } => {
-            let vdaf = Prio3::new_sum(2, *bits).unwrap();
+            let vdaf = Prio3::new_aes128_sum(2, *bits).unwrap();
 
             let measurements = iter::repeat_with(|| (random::<u128>()) >> (128 - bits))
                 .take(total_measurements)
@@ -283,47 +316,8 @@ pub async fn submit_measurements_and_verify_aggregate(
             )
             .await;
         }
-        VdafInstance::Prio3SumVec { bits, length } => {
-            let vdaf = Prio3::new_sum_vec_multithreaded(2, *bits, *length).unwrap();
-
-            let measurements = iter::repeat_with(|| {
-                iter::repeat_with(|| (random::<u128>()) >> (128 - bits))
-                    .take(*length)
-                    .collect::<Vec<_>>()
-            })
-            .take(total_measurements)
-            .collect::<Vec<_>>();
-            let aggregate_result =
-                measurements
-                    .iter()
-                    .fold(vec![0u128; *length], |mut accumulator, measurement| {
-                        for (sum, elem) in accumulator.iter_mut().zip(measurement.iter()) {
-                            *sum += *elem;
-                        }
-                        accumulator
-                    });
-            let test_case = AggregationTestCase {
-                measurements,
-                aggregation_parameter: (),
-                aggregate_result,
-            };
-
-            let client_implementation = client_backend
-                .build(task_parameters, (leader_port, helper_port), vdaf.clone())
-                .await
-                .unwrap();
-
-            submit_measurements_and_verify_aggregate_generic(
-                task_parameters,
-                leader_port,
-                vdaf,
-                &test_case,
-                &client_implementation,
-            )
-            .await;
-        }
         VdafInstance::Prio3Histogram { buckets } => {
-            let vdaf = Prio3::new_histogram(2, buckets).unwrap();
+            let vdaf = Prio3::new_aes128_histogram(2, buckets).unwrap();
 
             let mut aggregate_result = vec![0; buckets.len() + 1];
             aggregate_result.resize(buckets.len() + 1, 0);
@@ -361,7 +355,7 @@ pub async fn submit_measurements_and_verify_aggregate(
             .await;
         }
         VdafInstance::Prio3CountVec { length } => {
-            let vdaf = Prio3::new_sum_vec_multithreaded(2, 1, *length).unwrap();
+            let vdaf = Prio3::new_aes128_count_vec_multithreaded(2, *length).unwrap();
 
             let measurements = iter::repeat_with(|| {
                 iter::repeat_with(|| random::<bool>() as u128)

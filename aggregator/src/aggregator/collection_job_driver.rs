@@ -2,8 +2,7 @@
 
 use crate::aggregator::{
     aggregate_share::compute_aggregate_share, empty_batch_aggregations,
-    http_handlers::AGGREGATE_SHARES_ROUTE, query_type::CollectableQueryType,
-    send_request_to_helper, Error,
+    query_type::CollectableQueryType, send_request_to_helper, Error,
 };
 use derivative::Derivative;
 use futures::future::{try_join_all, BoxFuture};
@@ -19,7 +18,7 @@ use janus_aggregator_core::{
 use janus_core::{time::Clock, vdaf_dispatch};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
-    AggregateShare, AggregateShareReq, BatchSelector,
+    AggregateShareReq, AggregateShareResp, BatchSelector,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -30,7 +29,7 @@ use prio::{
     vdaf,
 };
 use reqwest::Method;
-use std::{sync::Arc, time::Duration};
+use std::{fmt::Debug, sync::Arc, time::Duration};
 use tokio::try_join;
 use tracing::{info, warn};
 
@@ -81,24 +80,24 @@ impl CollectionJobDriver {
     ) -> Result<(), Error> {
         match lease.leased().query_type() {
             task::QueryType::TimeInterval => {
-                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_dispatch!(lease.leased().vdaf(), (_, VdafType, VERIFY_KEY_LENGTH) => {
                     self.step_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
                         C,
                         TimeInterval,
                         VdafType
-                    >(datastore, Arc::new(vdaf), lease)
+                    >(datastore, lease)
                     .await
                 })
             }
             task::QueryType::FixedSize { .. } => {
-                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_dispatch!(lease.leased().vdaf(), (_, VdafType, VERIFY_KEY_LENGTH) => {
                     self.step_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
                         C,
                         FixedSize,
                         VdafType
-                    >(datastore, Arc::new(vdaf), lease)
+                    >(datastore,  lease)
                     .await
                 })
             }
@@ -109,22 +108,22 @@ impl CollectionJobDriver {
         const SEED_SIZE: usize,
         C: Clock,
         Q: CollectableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
-        vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredCollectionJob>>,
     ) -> Result<(), Error>
     where
         A: 'static,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: 'static + Send + Sync,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
         A::OutputShare: PartialEq + Eq + Send + Sync,
     {
         let (task, collection_job, batch_aggregations) = datastore
             .run_tx_with_name("step_collection_job_1", |tx| {
-                let vdaf = Arc::clone(&vdaf);
                 let lease = Arc::clone(&lease);
                 let batch_aggregation_shard_count = self.batch_aggregation_shard_count;
 
@@ -141,10 +140,7 @@ impl CollectionJobDriver {
                         })?;
 
                     let collection_job = tx
-                        .get_collection_job::<SEED_SIZE, Q, A>(
-                            vdaf.as_ref(),
-                            lease.leased().collection_job_id(),
-                        )
+                        .get_collection_job::<SEED_SIZE, Q, A>(lease.leased().collection_job_id())
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -161,7 +157,6 @@ impl CollectionJobDriver {
                         Q::get_batch_aggregations_for_collection_identifier(
                             tx,
                             &task,
-                            vdaf.as_ref(),
                             collection_job.batch_identifier(),
                             collection_job.aggregation_parameter(),
                         )
@@ -216,6 +211,7 @@ impl CollectionJobDriver {
 
         // Send an aggregate share request to the helper.
         let req = AggregateShareReq::<Q>::new(
+            *lease.leased().task_id(),
             BatchSelector::new(collection_job.batch_identifier().clone()),
             collection_job.aggregation_parameter().get_encoded(),
             report_count,
@@ -226,7 +222,7 @@ impl CollectionJobDriver {
             &self.http_client,
             Method::POST,
             task.aggregate_shares_uri()?,
-            AGGREGATE_SHARES_ROUTE,
+            "aggregate_share",
             AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
             req,
             task.primary_aggregator_auth_token(),
@@ -239,7 +235,7 @@ impl CollectionJobDriver {
         let collection_job = Arc::new(
             collection_job.with_state(CollectionJobState::Finished {
                 report_count,
-                encrypted_helper_aggregate_share: AggregateShare::get_decoded(&resp_bytes)?
+                encrypted_helper_aggregate_share: AggregateShareResp::get_decoded(&resp_bytes)?
                     .encrypted_aggregate_share()
                     .clone(),
                 leader_aggregate_share,
@@ -248,14 +244,13 @@ impl CollectionJobDriver {
 
         datastore
             .run_tx_with_name("step_collection_job_2", |tx| {
-                let vdaf = Arc::clone(&vdaf);
                 let lease = Arc::clone(&lease);
                 let collection_job = Arc::clone(&collection_job);
                 let metrics = self.metrics.clone();
 
                 Box::pin(async move {
                     let maybe_updated_collection_job = tx
-                        .get_collection_job::<SEED_SIZE, Q, A>(vdaf.as_ref(), collection_job.id())
+                        .get_collection_job::<SEED_SIZE, Q, A>(collection_job.id())
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -312,20 +307,18 @@ impl CollectionJobDriver {
     ) -> Result<(), Error> {
         match lease.leased().query_type() {
             task::QueryType::TimeInterval => {
-                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_dispatch!(lease.leased().vdaf(), (_, VdafType, VERIFY_KEY_LENGTH) => {
                     self.abandon_collection_job_generic::<VERIFY_KEY_LENGTH, C, TimeInterval, VdafType>(
                         datastore,
-                        Arc::new(vdaf),
                         lease,
                     )
                     .await
                 })
             }
             task::QueryType::FixedSize { .. } => {
-                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_dispatch!(lease.leased().vdaf(), (_, VdafType, VERIFY_KEY_LENGTH) => {
                     self.abandon_collection_job_generic::<VERIFY_KEY_LENGTH, C, FixedSize, VdafType>(
                         datastore,
-                        Arc::new(vdaf),
                         lease,
                     )
                     .await
@@ -338,27 +331,25 @@ impl CollectionJobDriver {
         const SEED_SIZE: usize,
         C: Clock,
         Q: QueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync + 'static,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
-        vdaf: Arc<A>,
         lease: Lease<AcquiredCollectionJob>,
     ) -> Result<(), Error>
     where
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
     {
         let lease = Arc::new(lease);
         datastore
             .run_tx_with_name("abandon_collection_job", |tx| {
-                let (vdaf, lease) = (Arc::clone(&vdaf), Arc::clone(&lease));
+                let lease = Arc::clone(&lease);
                 Box::pin(async move {
                     let collection_job = tx
-                        .get_collection_job::<SEED_SIZE, Q, A>(
-                            &vdaf,
-                            lease.leased().collection_job_id(),
-                        )
+                        .get_collection_job::<SEED_SIZE, Q, A>(lease.leased().collection_job_id())
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::DbState(format!(
@@ -550,8 +541,8 @@ mod tests {
         Runtime,
     };
     use janus_messages::{
-        query_type::TimeInterval, AggregateShare, AggregateShareReq, AggregationJobRound,
-        BatchSelector, Duration, HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum, Role,
+        query_type::TimeInterval, AggregateShareReq, AggregateShareResp, BatchSelector, Duration,
+        HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum, Role,
     };
     use prio::codec::{Decode, Encode};
     use rand::random;
@@ -612,7 +603,6 @@ mod tests {
                             (),
                             Interval::from_time(&report_timestamp).unwrap(),
                             AggregationJobState::Finished,
-                            AggregationJobRound::from(1),
                         ),
                     )
                     .await?;
@@ -645,7 +635,6 @@ mod tests {
                         *report.metadata().id(),
                         *report.metadata().time(),
                         0,
-                        None,
                         ReportAggregationState::Finished,
                     ))
                     .await?;
@@ -772,7 +761,6 @@ mod tests {
                             (),
                             Interval::from_time(&report_timestamp).unwrap(),
                             AggregationJobState::Finished,
-                            AggregationJobRound::from(1),
                         ),
                     )
                     .await?;
@@ -788,7 +776,6 @@ mod tests {
                         *report.metadata().id(),
                         *report.metadata().time(),
                         0,
-                        None,
                         ReportAggregationState::Finished,
                     ))
                     .await?;
@@ -869,6 +856,7 @@ mod tests {
         .unwrap();
 
         let leader_request = AggregateShareReq::new(
+            *task.id(),
             BatchSelector::new_time_interval(batch_interval),
             aggregation_param.get_encoded(),
             10,
@@ -913,10 +901,7 @@ mod tests {
         ds.run_tx(|tx| {
             Box::pin(async move {
                 let collection_job = tx
-                    .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        &dummy_vdaf::Vdaf::new(),
-                        &collection_job_id,
-                    )
+                    .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&collection_job_id)
                     .await
                     .unwrap()
                     .unwrap();
@@ -928,7 +913,7 @@ mod tests {
         .unwrap();
 
         // Helper aggregate share is opaque to the leader, so no need to construct a real one
-        let helper_response = AggregateShare::new(HpkeCiphertext::new(
+        let helper_response = AggregateShareResp::new(HpkeCiphertext::new(
             HpkeConfigId::from(100),
             Vec::new(),
             Vec::new(),
@@ -946,7 +931,7 @@ mod tests {
             )
             .match_body(leader_request.get_encoded())
             .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), AggregateShare::MEDIA_TYPE)
+            .with_header(CONTENT_TYPE.as_str(), AggregateShareResp::MEDIA_TYPE)
             .with_body(helper_response.get_encoded())
             .create_async()
             .await;
@@ -964,7 +949,6 @@ mod tests {
             Box::pin(async move {
                 let collection_job = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        &dummy_vdaf::Vdaf::new(),
                         &collection_job_id,
                     )
                     .await
@@ -1019,7 +1003,6 @@ mod tests {
                 Box::pin(async move {
                     let abandoned_collection_job = tx
                         .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                            &dummy_vdaf::Vdaf::new(),
                             collection_job.id(),
                         )
                         .await?
@@ -1124,11 +1107,8 @@ mod tests {
             .run_tx(|tx| {
                 let collection_job = collection_job.clone();
                 Box::pin(async move {
-                    tx.get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        &dummy_vdaf::Vdaf::new(),
-                        collection_job.id(),
-                    )
-                    .await
+                    tx.get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(collection_job.id())
+                        .await
                 })
             })
             .await
@@ -1166,7 +1146,7 @@ mod tests {
         .unwrap();
 
         // Helper aggregate share is opaque to the leader, so no need to construct a real one
-        let helper_response = AggregateShare::new(HpkeCiphertext::new(
+        let helper_response = AggregateShareResp::new(HpkeCiphertext::new(
             HpkeConfigId::from(100),
             Vec::new(),
             Vec::new(),
@@ -1175,7 +1155,7 @@ mod tests {
         let mocked_aggregate_share = server
             .mock("POST", task.aggregate_shares_uri().unwrap().path())
             .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), AggregateShare::MEDIA_TYPE)
+            .with_header(CONTENT_TYPE.as_str(), AggregateShareResp::MEDIA_TYPE)
             .with_body(helper_response.get_encoded())
             .create_async()
             .await;
@@ -1197,10 +1177,7 @@ mod tests {
             let collection_job = collection_job.clone();
             Box::pin(async move {
                 let collection_job = tx
-                    .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        &dummy_vdaf::Vdaf::new(),
-                        collection_job.id(),
-                    )
+                    .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(collection_job.id())
                     .await
                     .unwrap()
                     .unwrap();
