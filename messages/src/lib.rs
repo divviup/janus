@@ -1277,7 +1277,7 @@ impl<Q: QueryType> Query<Q> {
     ///
     /// This method would typically be used for code which is generic over the query type.
     /// Query-type specific code will typically call one of [`Self::batch_interval`] or
-    /// [`Self::fixed_size_query`].
+    /// [`Self::batch_id`].
     pub fn query_body(&self) -> &Q::QueryBody {
         &self.query_body
     }
