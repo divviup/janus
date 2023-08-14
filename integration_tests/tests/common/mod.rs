@@ -322,13 +322,13 @@ pub async fn submit_measurements_and_verify_aggregate(
             )
             .await;
         }
-        VdafInstance::Prio3Histogram { buckets } => {
-            let vdaf = Prio3::new_histogram(2, *buckets).unwrap();
+        VdafInstance::Prio3Histogram { length } => {
+            let vdaf = Prio3::new_histogram(2, *length).unwrap();
 
-            let mut aggregate_result = vec![0; *buckets];
-            aggregate_result.resize(*buckets, 0);
+            let mut aggregate_result = vec![0; *length];
+            aggregate_result.resize(*length, 0);
             let measurements = iter::repeat_with(|| {
-                let choice = thread_rng().gen_range(0..*buckets);
+                let choice = thread_rng().gen_range(0..*length);
                 aggregate_result[choice] += 1;
                 choice
             })

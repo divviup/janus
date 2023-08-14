@@ -71,10 +71,10 @@ fn json_encode_vdaf(vdaf: &VdafInstance) -> Value {
             "bits": format!("{bits}"),
             "length": format!("{length}"),
         }),
-        VdafInstance::Prio3Histogram { buckets } => {
+        VdafInstance::Prio3Histogram { length } => {
             json!({
                 "type": "Prio3Histogram",
-                "buckets": format!("{buckets}"),
+                "length": format!("{length}"),
             })
         }
         _ => panic!("VDAF {vdaf:?} is not yet supported"),

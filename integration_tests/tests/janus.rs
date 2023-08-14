@@ -99,7 +99,7 @@ async fn janus_janus_histogram_4_buckets() {
     let container_client = container_client();
     let janus_pair = JanusPair::new(
         &container_client,
-        VdafInstance::Prio3Histogram { buckets: 4 },
+        VdafInstance::Prio3Histogram { length: 4 },
         QueryType::TimeInterval,
     )
     .await;

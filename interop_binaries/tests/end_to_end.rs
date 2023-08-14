@@ -642,7 +642,7 @@ async fn e2e_prio3_histogram() {
         QueryKind::TimeInterval,
         json!({
             "type": "Prio3Histogram",
-            "buckets": "6",
+            "length": "6",
         }),
         &[
             json!("0"),

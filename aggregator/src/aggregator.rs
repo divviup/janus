@@ -787,8 +787,8 @@ impl<C: Clock> TaskAggregator<C> {
                 VdafOps::Prio3SumVec(Arc::new(vdaf), verify_key)
             }
 
-            VdafInstance::Prio3Histogram { buckets } => {
-                let vdaf = Prio3::new_histogram(2, *buckets)?;
+            VdafInstance::Prio3Histogram { length } => {
+                let vdaf = Prio3::new_histogram(2, *length)?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3Histogram(Arc::new(vdaf), verify_key)
             }

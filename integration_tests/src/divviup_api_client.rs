@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use http::{
     header::{ACCEPT, CONTENT_TYPE},
     Method,
@@ -41,7 +41,9 @@ impl TryFrom<&VdafInstance> for ApiVdaf {
                 // we want.
                 // https://github.com/divviup/divviup-api/issues/410
                 Ok(ApiVdaf::Histogram {
-                    buckets: (0..=length).collect(),
+                    buckets: (0..=*length)
+                        .map(|length| u64::try_from(length).context("cannot convert length to u64"))
+                        .collect::<Result<Vec<_>, _>>()?,
                 })
             }
             _ => Err(anyhow!("unsupported VDAF: {vdaf:?}")),

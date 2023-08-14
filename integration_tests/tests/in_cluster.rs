@@ -257,7 +257,7 @@ async fn in_cluster_histogram() {
 
     // Start port forwards and set up task.
     let janus_pair = InClusterJanusPair::new(
-        VdafInstance::Prio3Histogram { buckets: 4 },
+        VdafInstance::Prio3Histogram { length: 4 },
         QueryType::TimeInterval,
     )
     .await;

@@ -290,8 +290,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     .await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3Histogram { buckets }) => {
-                let vdaf = Arc::new(Prio3::new_histogram(2, *buckets)?);
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Histogram { length }) => {
+                let vdaf = Arc::new(Prio3::new_histogram(2, *length)?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Histogram>(task, vdaf)
                     .await
             }
@@ -404,9 +404,9 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     max_batch_size,
                     batch_time_window_size,
                 },
-                VdafInstance::Prio3Histogram { buckets },
+                VdafInstance::Prio3Histogram { length },
             ) => {
-                let vdaf = Arc::new(Prio3::new_histogram(2, *buckets)?);
+                let vdaf = Arc::new(Prio3::new_histogram(2, *length)?);
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
