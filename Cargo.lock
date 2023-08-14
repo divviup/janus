@@ -820,6 +820,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashmap"
+version = "5.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
+dependencies = [
+ "cfg-if",
+ "hashbrown 0.14.0",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
+
+[[package]]
 name = "deadpool"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -871,6 +884,15 @@ dependencies = [
  "const-oid",
  "pem-rfc7468",
  "zeroize",
+]
+
+[[package]]
+name = "deranged"
+version = "0.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2696e8a945f658fd14dc3b87242e6b80cd0f36ff04ea560fa39082368847946"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -927,6 +949,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "divviup-client"
+version = "0.0.1"
+source = "git+https://github.com/divviup/divviup-api?tag=0.0.25#8eda807aff7a6ed20d7ea8873b4d36b2421cdb95"
+dependencies = [
+ "base64 0.21.4",
+ "email_address",
+ "janus_messages 0.5.20",
+ "log",
+ "pad-adapter",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "time",
+ "trillium-client",
+ "trillium-http",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "dotenvy"
 version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -965,6 +1007,15 @@ dependencies = [
  "sec1",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "email_address"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2153bd83ebc09db15bcbdc3e2194d901804952e3dc96967e1cd3b0c5c32d112"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -1404,15 +1455,6 @@ checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
 
 [[package]]
 name = "hashbrown"
-version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43a3c133739dddd0d2990f9a4bdf8eb4b21ef50e4851ca85ab661199821d510e"
-dependencies = [
- "ahash",
-]
-
-[[package]]
-name = "hashbrown"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c6201b9ff9fd90a5a3bac2e56a830d0caa509576f0e503818ee82c181b3437a"
@@ -1788,7 +1830,7 @@ dependencies = [
  "janus_aggregator_api",
  "janus_aggregator_core",
  "janus_core",
- "janus_messages",
+ "janus_messages 0.6.0",
  "k8s-openapi",
  "kube",
  "mockito",
@@ -1798,7 +1840,7 @@ dependencies = [
  "opentelemetry-semantic-conventions",
  "postgres-protocol",
  "postgres-types",
- "prio",
+ "prio 0.15.1",
  "prometheus",
  "rand",
  "regex",
@@ -1850,7 +1892,7 @@ dependencies = [
  "futures",
  "janus_aggregator_core",
  "janus_core",
- "janus_messages",
+ "janus_messages 0.6.0",
  "opentelemetry",
  "querystring",
  "rand",
@@ -1890,13 +1932,13 @@ dependencies = [
  "hyper",
  "janus_aggregator_core",
  "janus_core",
- "janus_messages",
+ "janus_messages 0.6.0",
  "k8s-openapi",
  "kube",
  "opentelemetry",
  "postgres-protocol",
  "postgres-types",
- "prio",
+ "prio 0.15.1",
  "rand",
  "regex",
  "reqwest",
@@ -1941,9 +1983,9 @@ dependencies = [
  "http-api-problem",
  "itertools",
  "janus_core",
- "janus_messages",
+ "janus_messages 0.6.0",
  "mockito",
- "prio",
+ "prio 0.15.1",
  "rand",
  "reqwest",
  "thiserror",
@@ -1967,9 +2009,9 @@ dependencies = [
  "http-api-problem",
  "janus_collector",
  "janus_core",
- "janus_messages",
+ "janus_messages 0.6.0",
  "mockito",
- "prio",
+ "prio 0.15.1",
  "rand",
  "reqwest",
  "retry-after",
@@ -1996,11 +2038,11 @@ dependencies = [
  "http",
  "http-api-problem",
  "janus_core",
- "janus_messages",
+ "janus_messages 0.6.0",
  "k8s-openapi",
  "kube",
  "mockito",
- "prio",
+ "prio 0.15.1",
  "rand",
  "reqwest",
  "ring",
@@ -2029,6 +2071,7 @@ dependencies = [
  "anyhow",
  "backoff",
  "base64 0.21.4",
+ "divviup-client",
  "futures",
  "hex",
  "http",
@@ -2039,10 +2082,10 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_interop_binaries",
- "janus_messages",
+ "janus_messages 0.6.0",
  "k8s-openapi",
  "kube",
- "prio",
+ "prio 0.15.1",
  "rand",
  "reqwest",
  "serde",
@@ -2050,6 +2093,7 @@ dependencies = [
  "tempfile",
  "testcontainers",
  "tokio",
+ "trillium-tokio",
  "url",
 ]
 
@@ -2072,9 +2116,9 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_interop_binaries",
- "janus_messages",
+ "janus_messages 0.6.0",
  "opentelemetry",
- "prio",
+ "prio 0.15.1",
  "rand",
  "regex",
  "reqwest",
@@ -2097,6 +2141,24 @@ dependencies = [
 
 [[package]]
 name = "janus_messages"
+version = "0.5.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c7269662cdac52cea2a98cf10cb35028d1d673951e4ff1bcf8c653b5d3b8577"
+dependencies = [
+ "anyhow",
+ "base64 0.21.4",
+ "derivative",
+ "hex",
+ "num_enum",
+ "prio 0.12.3",
+ "rand",
+ "serde",
+ "thiserror",
+ "url",
+]
+
+[[package]]
+name = "janus_messages"
 version = "0.6.0"
 dependencies = [
  "anyhow",
@@ -2105,7 +2167,7 @@ dependencies = [
  "derivative",
  "hex",
  "num_enum",
- "prio",
+ "prio 0.15.1",
  "rand",
  "serde",
  "serde_test",
@@ -2126,8 +2188,8 @@ dependencies = [
  "fixed",
  "janus_collector",
  "janus_core",
- "janus_messages",
- "prio",
+ "janus_messages 0.6.0",
+ "prio 0.15.1",
  "rand",
  "reqwest",
  "serde_json",
@@ -2311,9 +2373,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.19"
+version = "0.4.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b06a4cde4c0f271a446782e3eff8de789548ce57dbc8eca9292c27f4a42004b4"
+checksum = "b5e6163cb8c49088c2c36f57875e58ccd8c87c7427f7fbd50ea6710b2f3f2e8f"
 
 [[package]]
 name = "matchers"
@@ -2715,6 +2777,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "pad-adapter"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56d80efc4b6721e8be2a10a5df21a30fa0b470f1539e53d8b4e6e75faf938b63"
+
+[[package]]
 name = "parking"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2934,6 +3002,22 @@ name = "ppv-lite86"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
+
+[[package]]
+name = "prio"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56d6fbe33c4d999c3ba5e5f2673cfeadffd2c8e1ffd58ab67a3cf06cd576d834"
+dependencies = [
+ "base64 0.21.4",
+ "byteorder",
+ "getrandom",
+ "serde",
+ "sha3",
+ "static_assertions",
+ "subtle",
+ "thiserror",
+]
 
 [[package]]
 name = "prio"
@@ -3577,9 +3661,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.106"
+version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2cc66a619ed80bf7a0f6b17dd063a84b88f6dea1813737cf469aef1d081142c2"
+checksum = "6b420ce6e3d8bd882e9b243c6eed35dbc9a6110c9769e74b584e0d68d1f20c65"
 dependencies = [
  "indexmap 2.0.0",
  "itoa",
@@ -3770,6 +3854,12 @@ name = "siphasher"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7bd3e3206899af3f8b12af284fafc038cc1dc2b41d1b89dd17297221c5d225de"
+
+[[package]]
+name = "size"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9fed904c7fb2856d868b92464fc8fa597fce366edea1a9cbfaa8cb5fe080bd6d"
 
 [[package]]
 name = "slab"
@@ -4232,10 +4322,11 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.3.23"
+version = "0.3.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59e399c068f43a5d116fedaf73b203fa4f9c519f17e2b34f63221d3792f81446"
+checksum = "17f6bb557fd245c28e6411aa56b6403c689ad95061f50e4be16c274e70a17e48"
 dependencies = [
+ "deranged",
  "itoa",
  "serde",
  "time-core",
@@ -4250,9 +4341,9 @@ checksum = "7300fbefb4dadc1af235a9cef3737cea692a9d97e1b9cbcd4ebdae6f8868e6fb"
 
 [[package]]
 name = "time-macros"
-version = "0.2.10"
+version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96ba15a897f3c86766b757e5ac7221554c6750054d74d5b28844fce5fb36a6c4"
+checksum = "1a942f44339478ef67935ab2bbaec2fb0322496cf3cbe84b261e06ac3814c572"
 dependencies = [
  "time-core",
 ]
@@ -4650,6 +4741,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "trillium-client"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe6ea026104c7c51ebe0bab6633ad66c4112bd95aa97c118e5110340c3055a39"
+dependencies = [
+ "crossbeam-queue",
+ "dashmap",
+ "encoding_rs",
+ "futures-lite",
+ "httparse",
+ "log",
+ "memmem",
+ "mime",
+ "serde",
+ "serde_json",
+ "size",
+ "thiserror",
+ "trillium-http",
+ "trillium-server-common",
+ "url",
+]
+
+[[package]]
 name = "trillium-head"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4660,13 +4774,13 @@ dependencies = [
 
 [[package]]
 name = "trillium-http"
-version = "0.3.2"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "150f7908e705f7fe806735b23a7a81c342ff0c1cc29faee39bd7a16e30e3aab0"
+checksum = "fb554db15b8b056d593ba768948d87cff0a819ea9823a1aa228344b4abed37ce"
 dependencies = [
  "encoding_rs",
  "futures-lite",
- "hashbrown 0.13.2",
+ "hashbrown 0.14.0",
  "httparse",
  "httpdate",
  "log",
@@ -4917,6 +5031,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "79daa5ed5740825c40b389c5e50312b9c86df53fccd33f281df655642b43869d"
 dependencies = [
  "getrandom",
+ "rand",
+ "serde",
 ]
 
 [[package]]

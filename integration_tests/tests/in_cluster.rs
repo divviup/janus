@@ -1,7 +1,9 @@
 #![cfg(feature = "in-cluster")]
-
-use base64::engine::{general_purpose::STANDARD, Engine};
 use common::{submit_measurements_and_verify_aggregate, test_task_builders};
+use divviup_client::{
+    Client, CollectorAuthenticationToken, DivviupClient, Histogram, HpkeConfigContents,
+    NewAggregator, NewSharedAggregator, NewTask, Vdaf,
+};
 use janus_aggregator_core::task::QueryType;
 use janus_core::{
     task::AuthenticationToken,
@@ -11,16 +13,10 @@ use janus_core::{
         kubernetes::{Cluster, PortForward},
     },
 };
-use janus_integration_tests::{
-    client::ClientBackend,
-    divviup_api_client::{
-        DivviupApiClient, NewAggregatorRequest, NewHpkeConfigRequest, NewTaskRequest,
-    },
-    TaskParameters,
-};
+use janus_integration_tests::{client::ClientBackend, TaskParameters};
 use janus_messages::TaskId;
-use prio::codec::Encode;
 use std::{env, str::FromStr};
+use trillium_tokio::ClientConfig;
 use url::Url;
 
 mod common;
@@ -101,15 +97,23 @@ impl InClusterJanusPair {
         // so they need the in-cluster DNS name of the other aggregator, and they can use well-known
         // service port numbers.
 
-        let divviup_api = DivviupApiClient::new(
-            cluster
-                .forward_port(&divviup_api_namespace, "divviup-api", 80)
-                .await,
+        let port_forward = cluster
+            .forward_port(&divviup_api_namespace, "divviup-api", 80)
+            .await;
+        let port = port_forward.local_port();
+
+        let mut divviup_api = DivviupClient::new(
+            "DUATignored".into(),
+            Client::new(ClientConfig::new()).with_default_pool(),
         );
+        divviup_api.set_url(format!("http://127.0.0.1:{port}").parse().unwrap());
 
         // Create an account first. (We should be implicitly logged in as a testing user already,
         // assuming divviup-api was built with the integration-testing feature)
-        let account = divviup_api.create_account().await;
+        let account = divviup_api
+            .create_account("Integration test account")
+            .await
+            .unwrap();
 
         // Pair the aggregators. The same Janus instances will get paired multiple times across
         // multiple tests, but it's to a different divviup-api account each time, so that's
@@ -118,68 +122,92 @@ impl InClusterJanusPair {
         //
         // - setting up tasks with one global aggregator and one per-account aggregator is most
         //   representative of the subscriber use cases Divvi Up supports,
-        // - pairing a global aggregator implictly marks it as "first-party" in divviup-api, which
-        //   is necessary for the task we later provision to pass a validity check.
         let paired_leader_aggregator = divviup_api
-            .pair_global_aggregator(&NewAggregatorRequest {
+            .create_shared_aggregator(NewSharedAggregator {
                 name: "leader".to_string(),
-                api_url: Self::in_cluster_aggregator_api_url(&leader_namespace).to_string(),
+                api_url: Self::in_cluster_aggregator_api_url(&leader_namespace),
                 bearer_token: leader_aggregator_api_auth_token,
+                is_first_party: true,
             })
-            .await;
+            .await
+            .unwrap();
 
         let paired_helper_aggregator = divviup_api
-            .pair_aggregator(
-                &account,
-                &NewAggregatorRequest {
+            .create_aggregator(
+                account.id,
+                NewAggregator {
                     name: "helper".to_string(),
-                    api_url: Self::in_cluster_aggregator_api_url(&helper_namespace).to_string(),
+                    api_url: Self::in_cluster_aggregator_api_url(&helper_namespace),
                     bearer_token: helper_aggregator_api_auth_token,
                 },
             )
-            .await;
+            .await
+            .unwrap();
 
+        let hpke_config = task.collector_hpke_config().unwrap();
         let collector_hpke_config = divviup_api
             .create_hpke_config(
-                &account,
-                &NewHpkeConfigRequest {
-                    name: "Integration test key".to_string(),
-                    contents: STANDARD.encode(task.collector_hpke_config().unwrap().get_encoded()),
-                },
+                account.id,
+                &HpkeConfigContents::new(
+                    u8::from(*hpke_config.id()).into(),
+                    (*hpke_config.kem_id() as u16).try_into().unwrap(),
+                    (*hpke_config.kdf_id() as u16).try_into().unwrap(),
+                    (*hpke_config.aead_id() as u16).try_into().unwrap(),
+                    hpke_config.public_key().as_ref().to_vec().into(),
+                ),
+                Some("Integration test key"),
             )
-            .await;
+            .await
+            .unwrap();
 
-        let provision_task_request = NewTaskRequest {
+        let provision_task_request = NewTask {
             name: "Integration test task".to_string(),
             leader_aggregator_id: paired_leader_aggregator.id,
             helper_aggregator_id: paired_helper_aggregator.id,
-            vdaf: task.vdaf().try_into().unwrap(),
+            vdaf: match task.vdaf().to_owned() {
+                VdafInstance::Prio3Count => Vdaf::Count,
+                VdafInstance::Prio3Sum { bits } => Vdaf::Sum {
+                    bits: bits.try_into().unwrap(),
+                },
+                VdafInstance::Prio3SumVec { bits, length } => Vdaf::SumVec {
+                    bits: bits.try_into().unwrap(),
+                    length: length.try_into().unwrap(),
+                },
+                VdafInstance::Prio3Histogram { length } => Vdaf::Histogram(Histogram::Length {
+                    length: length.try_into().unwrap(),
+                }),
+                VdafInstance::Prio3CountVec { length } => Vdaf::CountVec {
+                    length: length.try_into().unwrap(),
+                },
+                other => panic!("unsupported vdaf {other:?}"),
+            },
             min_batch_size: task.min_batch_size(),
             max_batch_size: match task.query_type() {
                 QueryType::TimeInterval => None,
                 QueryType::FixedSize { max_batch_size, .. } => Some(*max_batch_size),
             },
-            expiration: "3000-01-01T00:00:00Z".to_owned(),
             time_precision_seconds: task.time_precision().as_seconds(),
             hpke_config_id: collector_hpke_config.id,
         };
 
         // Provision the task into both aggregators via divviup-api
         let provisioned_task = divviup_api
-            .create_task(&account, &provision_task_request)
-            .await;
+            .create_task(account.id, provision_task_request)
+            .await
+            .unwrap();
 
-        let collector_auth_tokens = divviup_api
-            .list_collector_auth_tokens(&provisioned_task)
-            .await;
-        assert_eq!(collector_auth_tokens[0].r#type, "Bearer");
+        let CollectorAuthenticationToken::Bearer { token } = divviup_api
+            .task_collector_auth_tokens(&provisioned_task.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
 
         // Update the task parameters with the ID and collector auth token from divviup-api.
-        task_parameters.task_id = TaskId::from_str(provisioned_task.id.as_ref()).unwrap();
-        task_parameters.collector_auth_token = AuthenticationToken::new_bearer_token_from_string(
-            collector_auth_tokens[0].token.clone(),
-        )
-        .unwrap();
+        task_parameters.task_id = TaskId::from_str(&provisioned_task.id).unwrap();
+        task_parameters.collector_auth_token =
+            AuthenticationToken::new_bearer_token_from_string(token.clone()).unwrap();
 
         Self {
             task_parameters,
@@ -252,7 +280,6 @@ async fn in_cluster_sum() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divviup-api does not currently support DAP-07 (https://github.com/divviup/divviup-api/issues/410)"]
 async fn in_cluster_histogram() {
     install_test_trace_subscriber();
 
