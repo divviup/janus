@@ -30,8 +30,8 @@ pub enum VdafInstance {
     Prio3Sum { bits: usize },
     /// A vector of `Prio3` sums.
     Prio3SumVec { bits: usize, length: usize },
-    /// A `Prio3` histogram.
-    Prio3Histogram { buckets: usize },
+    /// A `Prio3` histogram with `length` buckets in it.
+    Prio3Histogram { length: usize },
     /// A `Prio3` 16-bit fixed point vector sum with bounded L2 norm.
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3FixedPoint16BitBoundedL2VecSum { length: usize },
@@ -84,7 +84,10 @@ impl TryFrom<&taskprov::VdafType> for VdafInstance {
                 bits: *bits as usize,
             }),
             taskprov::VdafType::Prio3Histogram { buckets } => Ok(Self::Prio3Histogram {
-                buckets: buckets.clone(),
+                // taskprov does not yet deal with the VDAF-06 representation of histograms. In the
+                // meantime, we translate the bucket boundaries to a length that Janus understands.
+                // https://github.com/wangshan/draft-wang-ppm-dap-taskprov/issues/33
+                length: buckets.len() + 1, // +1 to account for the top bucket extending to infinity
             }),
             taskprov::VdafType::Poplar1 { bits } => Ok(Self::Poplar1 {
                 bits: *bits as usize,
@@ -92,10 +95,6 @@ impl TryFrom<&taskprov::VdafType> for VdafInstance {
             _ => Err("unknown VdafType"),
         }
     }
-}
-
-fn bucket_count(buckets: &Vec<u64>, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "[{} buckets]", buckets.len() + 1)
 }
 
 /// Internal implementation details of [`vdaf_dispatch`](crate::vdaf_dispatch).
@@ -171,8 +170,8 @@ macro_rules! vdaf_dispatch_impl_base {
                 $body
             }
 
-            ::janus_core::task::VdafInstance::Prio3Histogram { buckets } => {
-                let $vdaf = ::prio::vdaf::prio3::Prio3::new_histogram(2, *buckets)?;
+            ::janus_core::task::VdafInstance::Prio3Histogram { length } => {
+                let $vdaf = ::prio::vdaf::prio3::Prio3::new_histogram(2, *length)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Histogram;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
@@ -765,14 +764,14 @@ mod tests {
             ],
         );
         assert_tokens(
-            &VdafInstance::Prio3Histogram { buckets: 6 },
+            &VdafInstance::Prio3Histogram { length: 6 },
             &[
                 Token::StructVariant {
                     name: "VdafInstance",
                     variant: "Prio3Histogram",
                     len: 1,
                 },
-                Token::Str("buckets"),
+                Token::Str("length"),
                 Token::U64(6),
                 Token::StructVariantEnd,
             ],

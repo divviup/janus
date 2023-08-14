@@ -21,7 +21,7 @@ pub enum ApiVdaf {
     /// Corresponds to Prio3Count
     Count,
     Histogram {
-        buckets: usize,
+        buckets: Vec<u64>,
     },
     Sum {
         bits: usize,
@@ -35,8 +35,14 @@ impl TryFrom<&VdafInstance> for ApiVdaf {
         match vdaf {
             VdafInstance::Prio3Count => Ok(ApiVdaf::Count),
             VdafInstance::Prio3Sum { bits } => Ok(ApiVdaf::Sum { bits: *bits }),
-            VdafInstance::Prio3Histogram { buckets } => {
-                Ok(ApiVdaf::Histogram { buckets: *buckets })
+            VdafInstance::Prio3Histogram { length } => {
+                // divviup-api does not yet support the new Prio3Histogram representation. Until it
+                // does, we synthesize fake bucket boundaries that will yield the number of buckets
+                // we want.
+                // https://github.com/divviup/divviup-api/issues/410
+                Ok(ApiVdaf::Histogram {
+                    buckets: (0..=length).collect(),
+                })
             }
             _ => Err(anyhow!("unsupported VDAF: {vdaf:?}")),
         }

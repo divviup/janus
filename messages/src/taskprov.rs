@@ -9,10 +9,7 @@ use prio::codec::{
     decode_u16_items, decode_u24_items, decode_u8_items, encode_u16_items, encode_u24_items,
     encode_u8_items, CodecError, Decode, Encode,
 };
-use std::{
-    fmt::{self, Debug, Formatter},
-    io::Cursor,
-};
+use std::{fmt::Debug, io::Cursor};
 
 /// Defines all parameters necessary to configure an aggregator with a new task.
 /// Provided by taskprov participants in all requests incident to task execution.
@@ -325,8 +322,9 @@ pub enum VdafType {
         bits: u8,
     },
     Prio3Histogram {
-        /// List of buckets.
-        #[derivative(Debug(format_with = "fmt_histogram"))]
+        /// Number of buckets in the histogram
+        // This may change as the taskprov draft adapts to VDAF-06
+        // https://github.com/wangshan/draft-wang-ppm-dap-taskprov/issues/33
         buckets: Vec<u64>,
     },
     Poplar1 {
@@ -340,10 +338,6 @@ impl VdafType {
     const PRIO3SUM: u32 = 0x00000001;
     const PRIO3HISTOGRAM: u32 = 0x00000002;
     const POPLAR1: u32 = 0x00001000;
-}
-
-fn fmt_histogram(buckets: &Vec<u64>, f: &mut Formatter) -> Result<(), fmt::Error> {
-    write!(f, "num_buckets: {}", buckets.len())
 }
 
 impl Encode for VdafType {
