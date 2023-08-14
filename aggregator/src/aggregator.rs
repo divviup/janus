@@ -2914,7 +2914,7 @@ mod tests {
         aad.extend(&public_share.get_encoded());
 
         generate_helper_report_share_for_plaintext(
-            report_metadata.clone(),
+            report_metadata,
             cfg,
             public_share.get_encoded(),
             &input_share.get_encoded(),

@@ -832,7 +832,7 @@ mod tests {
             ErrorKind::ArgumentConflict
         );
 
-        let mut bad_arguments = base_arguments.clone();
+        let mut bad_arguments = base_arguments;
         bad_arguments.extend([
             "--batch-interval-duration=1".to_string(),
             "--batch-id=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string(),

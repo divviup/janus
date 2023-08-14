@@ -429,7 +429,7 @@ where
                 let collection_location = response
                     .headers()
                     .get(LOCATION)
-                    .ok_or_else(|| Error::MissingLocationHeader)?
+                    .ok_or(Error::MissingLocationHeader)?
                     .to_str()?;
                 self.parameters.collect_poll_uri(collection_location)?
             }
