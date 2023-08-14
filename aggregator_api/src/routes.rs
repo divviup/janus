@@ -195,8 +195,7 @@ pub(super) async fn post_task<C: Clock>(
                     return Ok(())
                 }
 
-                let err = Error::Err(
-                    Status::Conflict,
+                let err = Error::Conflict(
                     "task with same VDAF verify key and task ID already exists with different parameters".to_string(),
                 );
                 return Err(datastore::Error::User(err.into()));
@@ -311,10 +310,7 @@ pub(super) async fn put_global_hpke_config<C: Clock>(
         (0..=u8::MAX)
             .find(|i| !existing_keypairs.contains(i))
             .ok_or_else(|| {
-                Error::Err(
-                    Status::Conflict,
-                    "All possible IDs for global HPKE key have been taken".to_string(),
-                )
+                Error::Conflict("All possible IDs for global HPKE key have been taken".to_string())
             })?,
     );
     let keypair = generate_hpke_config_and_private_key(

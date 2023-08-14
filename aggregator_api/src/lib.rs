@@ -135,31 +135,31 @@ async fn auth_check(conn: &mut Conn, (): ()) -> impl Handler {
 /// A simple error type that holds a message and an HTTP status. This can be used as a [`Handler`].
 #[derive(Debug, thiserror::Error)]
 enum Error {
-    /// Catch-all error with HTTP status code.
-    #[error("{0}")]
-    Err(Status, String),
     /// Errors that should never happen under expected behavior.
     #[error("Internal error: {0}")]
     Internal(String),
     /// A datastore error. The related HTTP status code depends on the type of datastore error.
-    #[error("{0}")]
+    #[error(transparent)]
     Db(#[from] datastore::Error),
     /// Errors that should return HTTP 400.
     #[error("{0}")]
     BadRequest(String),
-    #[error("Target resource was not found")]
     /// Errors that should return HTTP 404.
+    #[error("Target resource was not found")]
     NotFound,
+    /// Errors that should return HTTP 409.
+    #[error("{0}")]
+    Conflict(String),
 }
 
 #[async_trait]
 impl Handler for Error {
     async fn run(&self, conn: Conn) -> Conn {
         match self {
-            Self::Err(status, message) => {
-                conn.with_body(message.clone()).with_status(*status).halt()
+            Self::Internal(err) => {
+                error!(?err, "Internal error");
+                conn.with_status(Status::InternalServerError)
             }
-            Self::Internal(_) => conn.with_status(Status::InternalServerError).halt(),
             Self::Db(err) => match err {
                 datastore::Error::MutationTargetNotFound => conn.with_status(Status::NotFound),
                 datastore::Error::MutationTargetAlreadyExists => conn.with_status(Status::Conflict),
@@ -170,17 +170,20 @@ impl Handler for Error {
                     // arm.
                     user_err.downcast_ref::<Error>().unwrap().run(conn).await
                 }
-                err => conn
-                    .with_status(Status::InternalServerError)
-                    .with_body(format!("{}", err))
-                    .halt(),
+                err => {
+                    error!(?err, "Datastore error");
+                    conn.with_status(Status::InternalServerError)
+                }
             },
             Self::BadRequest(message) => conn
                 .with_status(Status::BadRequest)
-                .with_body(message.clone())
-                .halt(),
+                .with_body(message.clone()),
             Self::NotFound => conn.with_status(Status::NotFound),
+            Self::Conflict(message) => conn
+                .with_status(Status::Conflict)
+                .with_body(message.clone()),
         }
+        .halt()
     }
 }
 
@@ -195,7 +198,7 @@ impl ConnExt for Conn {
             self.param("task_id")
                 .ok_or_else(|| Error::Internal("Missing task_id parameter".to_string()))?,
         )
-        .map_err(|err| Error::Err(Status::BadRequest, format!("{:?}", err)))
+        .map_err(|err| Error::BadRequest(format!("{:?}", err)))
     }
 
     fn hpke_config_id_param(&self) -> Result<HpkeConfigId, Error> {
