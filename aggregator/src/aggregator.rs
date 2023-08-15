@@ -33,7 +33,7 @@ use janus_aggregator_core::{
 #[cfg(feature = "test-util")]
 use janus_core::test_util::dummy_vdaf;
 use janus_core::{
-    hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
+    hpke::{self, aggregate_share_aad, input_share_aad, HpkeApplicationInfo, HpkeKeypair, Label},
     http::response_to_problem_details,
     task::{AuthenticationToken, VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
     time::{Clock, DurationExt, IntervalExt, TimeExt},
@@ -504,25 +504,25 @@ impl<C: Clock> TaskAggregator<C> {
     /// aggregator.
     fn new(task: Task, report_writer: Arc<ReportWriteBatcher<C>>) -> Result<Self, Error> {
         let vdaf_ops = match task.vdaf() {
-            VdafInstance::Prio3Count => {
+            VdafInstance::Prio3Aes128Count => {
                 let vdaf = Prio3::new_aes128_count(2)?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3Count(Arc::new(vdaf), verify_key)
             }
 
-            VdafInstance::Prio3CountVec { length } => {
+            VdafInstance::Prio3Aes128CountVec { length } => {
                 let vdaf = Prio3::new_aes128_count_vec_multithreaded(2, *length)?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3CountVec(Arc::new(vdaf), verify_key)
             }
 
-            VdafInstance::Prio3Sum { bits } => {
+            VdafInstance::Prio3Aes128Sum { bits } => {
                 let vdaf = Prio3::new_aes128_sum(2, *bits)?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3Sum(Arc::new(vdaf), verify_key)
             }
 
-            VdafInstance::Prio3Histogram { buckets } => {
+            VdafInstance::Prio3Aes128Histogram { buckets } => {
                 let vdaf = Prio3::new_aes128_histogram(2, buckets)?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3Histogram(Arc::new(vdaf), verify_key)
@@ -994,18 +994,13 @@ impl VdafOps {
                 }
             };
 
-        let mut aad = Vec::new();
-        aad.extend(task.id().as_ref());
-        aad.extend(&report.metadata().get_encoded());
-        aad.extend(report.public_share());
-
         let try_hpke_open = |hpke_keypair: &HpkeKeypair| {
             hpke::open(
                 hpke_keypair.config(),
                 hpke_keypair.private_key(),
                 &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, task.role()),
                 leader_encrypted_input_share,
-                &aad,
+                &input_share_aad(task.id(), report.metadata(), report.public_share()),
             )
         };
 
@@ -1187,18 +1182,17 @@ impl VdafOps {
                 global_hpke_keypairs.keypair(report_share.encrypted_input_share().config_id());
 
             // If decryption fails, then the aggregator MUST fail with error `hpke-decrypt-error`. (§4.4.2.2)
-            let mut aad = Vec::new();
-            aad.extend(task.id().as_ref());
-            aad.extend(&report_share.metadata().get_encoded());
-            aad.extend(report_share.public_share());
-
             let try_hpke_open = |hpke_keypair: &HpkeKeypair| {
                 hpke::open(
                     hpke_keypair.config(),
                     hpke_keypair.private_key(),
                     &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
                     report_share.encrypted_input_share(),
-                    &aad,
+                    &input_share_aad(
+                        task.id(),
+                        report_share.metadata(),
+                        report_share.public_share(),
+                    ),
                 )
             };
 
@@ -1951,12 +1945,6 @@ impl VdafOps {
                     task_id = %task.id(),
                     "Serving cached collection job response"
                 );
-                let mut aad = Vec::new();
-                aad.extend(collection_job.task_id().as_ref());
-                aad.extend(
-                    BatchSelector::<Q>::new(collection_job.batch_identifier().clone())
-                        .get_encoded(),
-                );
                 let encrypted_leader_aggregate_share = hpke::seal(
                     task.collector_hpke_config(),
                     &HpkeApplicationInfo::new(
@@ -1965,7 +1953,10 @@ impl VdafOps {
                         &Role::Collector,
                     ),
                     &leader_aggregate_share.into(),
-                    &aad,
+                    &aggregate_share_aad(
+                        collection_job.task_id(),
+                        &BatchSelector::<Q>::new(collection_job.batch_identifier().clone()),
+                    ),
                 )?;
 
                 Ok(Some(
@@ -2290,15 +2281,11 @@ impl VdafOps {
         // shares in the datastore so that we can encrypt cached results to the collector HPKE
         // config valid when the current AggregateShareReq was made, and not whatever was valid at
         // the time the aggregate share was first computed.
-        let mut aad = Vec::new();
-        aad.extend(task.id().as_ref());
-        aad.extend(&aggregate_share_req.batch_selector().get_encoded());
-
         let encrypted_aggregate_share = hpke::seal(
             task.collector_hpke_config(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
             &aggregate_share_job.helper_aggregate_share().into(),
-            &aad,
+            &aggregate_share_aad(task.id(), aggregate_share_req.batch_selector()),
         )?;
 
         Ok(AggregateShareResp::new(encrypted_aggregate_share))
@@ -2464,7 +2451,7 @@ mod tests {
     };
     use janus_core::{
         hpke::{
-            self, test_util::generate_test_hpke_config_and_private_key_with_id,
+            self, input_share_aad, test_util::generate_test_hpke_config_and_private_key_with_id,
             HpkeApplicationInfo, HpkeKeypair, Label,
         },
         task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
@@ -2505,18 +2492,14 @@ mod tests {
         id: ReportId,
         hpke_key: &HpkeKeypair,
     ) -> Report {
-        assert_eq!(task.vdaf(), &VdafInstance::Prio3Count);
+        assert_eq!(task.vdaf(), &VdafInstance::Prio3Aes128Count);
 
         let vdaf = Prio3::new_aes128_count(2).unwrap();
         let report_metadata = ReportMetadata::new(id, report_timestamp, Vec::new());
 
         let (public_share, input_shares) = vdaf.shard(&1).unwrap();
 
-        let mut aad = Vec::new();
-        aad.extend(task.id().as_ref());
-        aad.extend(&report_metadata.get_encoded());
-        aad.extend(&public_share.get_encoded());
-
+        let aad = input_share_aad(task.id(), &report_metadata, &public_share.get_encoded());
         let leader_ciphertext = hpke::seal(
             hpke_key.config(),
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader),
@@ -2558,7 +2541,7 @@ mod tests {
         let vdaf = Prio3::new_aes128_count(2).unwrap();
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .build();
@@ -2908,11 +2891,7 @@ mod tests {
     where
         for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
     {
-        let mut aad = Vec::new();
-        aad.extend(task_id.as_ref());
-        aad.extend(&report_metadata.get_encoded());
-        aad.extend(&public_share.get_encoded());
-
+        let aad = input_share_aad(&task_id, &report_metadata, &public_share.get_encoded());
         generate_helper_report_share_for_plaintext(
             report_metadata,
             cfg,

@@ -23,7 +23,7 @@ pub enum Error {
     #[error("invalid message: {0}")]
     Message(#[from] janus_messages::Error),
     /// Corresponds to `reportTooLate`, §3.2
-    #[error("task {0}: report {1} rejected: {2}")]
+    #[error("task {0}: report {1} too late: {2}")]
     ReportTooLate(TaskId, ReportId, Time),
     /// Corresponds to `reportTooEarly`, §3.2. A report was rejected becuase the timestamp is too
     /// far in the future, §4.3.2.

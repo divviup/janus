@@ -5,7 +5,7 @@ use derivative::Derivative;
 use http::header::CONTENT_TYPE;
 use http_api_problem::HttpApiProblem;
 use janus_core::{
-    hpke::{self, HpkeApplicationInfo, Label},
+    hpke::{self, input_share_aad, HpkeApplicationInfo, Label},
     http::response_to_problem_details,
     retries::{http_request_exponential_backoff, retry_http_request},
     task::url_ensure_trailing_slash,
@@ -218,11 +218,6 @@ where
         let report_metadata = ReportMetadata::new(report_id, time, Vec::new());
         let encoded_public_share = public_share.get_encoded();
 
-        let mut aad = Vec::new();
-        aad.extend(self.parameters.task_id.as_ref());
-        aad.extend(&report_metadata.get_encoded());
-        aad.extend(&public_share.get_encoded());
-
         let encrypted_input_shares: Vec<HpkeCiphertext> = [
             (&self.leader_hpke_config, &Role::Leader),
             (&self.helper_hpke_config, &Role::Helper),
@@ -234,7 +229,11 @@ where
                 hpke_config,
                 &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, receiver_role),
                 &input_share.get_encoded(),
-                &aad,
+                &input_share_aad(
+                    &self.parameters.task_id,
+                    &report_metadata,
+                    &public_share.get_encoded(),
+                ),
             )?)
         })
         .collect::<Result<_, Error>>()?;

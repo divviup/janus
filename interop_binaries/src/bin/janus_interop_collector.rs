@@ -275,7 +275,7 @@ async fn handle_collect_start(
 
     let vdaf_instance = task_state.vdaf.clone().into();
     let task_handle = match (query, vdaf_instance) {
-        (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3Count {}) => {
+        (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3Aes128Count {}) => {
             let vdaf = Prio3::new_aes128_count(2).context("failed to construct Prio3Count VDAF")?;
             handle_collect_generic(
                 http_client,
@@ -289,7 +289,10 @@ async fn handle_collect_start(
             .await?
         }
 
-        (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3CountVec { length }) => {
+        (
+            ParsedQuery::TimeInterval(batch_interval),
+            VdafInstance::Prio3Aes128CountVec { length },
+        ) => {
             let vdaf = Prio3::new_aes128_count_vec_multithreaded(2, length)
                 .context("failed to construct Prio3CountVec VDAF")?;
             handle_collect_generic(
@@ -307,7 +310,7 @@ async fn handle_collect_start(
             .await?
         }
 
-        (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3Sum { bits }) => {
+        (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3Aes128Sum { bits }) => {
             let vdaf =
                 Prio3::new_aes128_sum(2, bits).context("failed to construct Prio3Sum VDAF")?;
             handle_collect_generic(
@@ -322,7 +325,10 @@ async fn handle_collect_start(
             .await?
         }
 
-        (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3Histogram { buckets }) => {
+        (
+            ParsedQuery::TimeInterval(batch_interval),
+            VdafInstance::Prio3Aes128Histogram { buckets },
+        ) => {
             let vdaf = Prio3::new_aes128_histogram(2, &buckets)
                 .context("failed to construct Prio3Histogram VDAF")?;
             handle_collect_generic(
@@ -340,7 +346,7 @@ async fn handle_collect_start(
             .await?
         }
 
-        (ParsedQuery::FixedSize(fixed_size_query), VdafInstance::Prio3Count {}) => {
+        (ParsedQuery::FixedSize(fixed_size_query), VdafInstance::Prio3Aes128Count {}) => {
             let vdaf = Prio3::new_aes128_count(2).context("failed to construct Prio3Count VDAF")?;
             handle_collect_generic(
                 http_client,
@@ -354,7 +360,10 @@ async fn handle_collect_start(
             .await?
         }
 
-        (ParsedQuery::FixedSize(fixed_size_query), VdafInstance::Prio3CountVec { length }) => {
+        (
+            ParsedQuery::FixedSize(fixed_size_query),
+            VdafInstance::Prio3Aes128CountVec { length },
+        ) => {
             let vdaf = Prio3::new_aes128_count_vec_multithreaded(2, length)
                 .context("failed to construct Prio3CountVec VDAF")?;
             handle_collect_generic(
@@ -372,7 +381,7 @@ async fn handle_collect_start(
             .await?
         }
 
-        (ParsedQuery::FixedSize(fixed_size_query), VdafInstance::Prio3Sum { bits }) => {
+        (ParsedQuery::FixedSize(fixed_size_query), VdafInstance::Prio3Aes128Sum { bits }) => {
             let vdaf =
                 Prio3::new_aes128_sum(2, bits).context("failed to construct Prio3Sum VDAF")?;
             handle_collect_generic(
@@ -387,7 +396,10 @@ async fn handle_collect_start(
             .await?
         }
 
-        (ParsedQuery::FixedSize(fixed_size_query), VdafInstance::Prio3Histogram { buckets }) => {
+        (
+            ParsedQuery::FixedSize(fixed_size_query),
+            VdafInstance::Prio3Aes128Histogram { buckets },
+        ) => {
             let vdaf = Prio3::new_aes128_histogram(2, &buckets)
                 .context("failed to construct Prio3Histogram VDAF")?;
             handle_collect_generic(

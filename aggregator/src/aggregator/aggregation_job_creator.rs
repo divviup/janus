@@ -260,24 +260,24 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         task: Arc<Task>,
     ) -> anyhow::Result<bool> {
         match (task.query_type(), task.vdaf()) {
-            (task::QueryType::TimeInterval, VdafInstance::Prio3Count) => {
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128Count) => {
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task)
                     .await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3CountVec { .. }) => {
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128CountVec { .. }) => {
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<
                     PRIO3_VERIFY_KEY_LENGTH,
                     Prio3Aes128CountVecMultithreaded
                 >(task).await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3Sum { .. }) => {
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128Sum { .. }) => {
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Sum>(task)
                     .await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3Histogram { .. }) => {
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128Histogram { .. }) => {
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Histogram>(task)
                     .await
             }
@@ -287,7 +287,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     max_batch_size,
                     batch_time_window_size,
                 },
-                VdafInstance::Prio3Count,
+                VdafInstance::Prio3Aes128Count,
             ) => {
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
@@ -302,7 +302,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     max_batch_size,
                     batch_time_window_size,
                 },
-                VdafInstance::Prio3CountVec { .. },
+                VdafInstance::Prio3Aes128CountVec { .. },
             ) => {
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
@@ -317,7 +317,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     max_batch_size,
                     batch_time_window_size,
                 },
-                VdafInstance::Prio3Sum { .. },
+                VdafInstance::Prio3Aes128Sum { .. },
             ) => {
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
@@ -332,7 +332,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     max_batch_size,
                     batch_time_window_size,
                 },
-                VdafInstance::Prio3Histogram { .. },
+                VdafInstance::Prio3Aes128Histogram { .. },
             ) => {
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
@@ -568,7 +568,7 @@ mod tests {
         let report_time = Time::from_seconds_since_epoch(0);
         let leader_task = TaskBuilder::new(
             TaskQueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .build();
@@ -578,7 +578,7 @@ mod tests {
 
         let helper_task = TaskBuilder::new(
             TaskQueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Helper,
         )
         .build();
@@ -693,7 +693,7 @@ mod tests {
         let task = Arc::new(
             TaskBuilder::new(
                 TaskQueryType::TimeInterval,
-                VdafInstance::Prio3Count,
+                VdafInstance::Prio3Aes128Count,
                 Role::Leader,
             )
             .build(),
@@ -802,7 +802,7 @@ mod tests {
         let task = Arc::new(
             TaskBuilder::new(
                 TaskQueryType::TimeInterval,
-                VdafInstance::Prio3Count,
+                VdafInstance::Prio3Aes128Count,
                 Role::Leader,
             )
             .build(),
@@ -935,7 +935,7 @@ mod tests {
         let task = Arc::new(
             TaskBuilder::new(
                 TaskQueryType::TimeInterval,
-                VdafInstance::Prio3Count,
+                VdafInstance::Prio3Aes128Count,
                 Role::Leader,
             )
             .build(),
@@ -1068,7 +1068,7 @@ mod tests {
                     max_batch_size: MAX_BATCH_SIZE as u64,
                     batch_time_window_size: None,
                 },
-                VdafInstance::Prio3Count,
+                VdafInstance::Prio3Aes128Count,
                 Role::Leader,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
@@ -1233,7 +1233,7 @@ mod tests {
                     max_batch_size: MAX_BATCH_SIZE as u64,
                     batch_time_window_size: None,
                 },
-                VdafInstance::Prio3Count,
+                VdafInstance::Prio3Aes128Count,
                 Role::Leader,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
@@ -1346,7 +1346,7 @@ mod tests {
                     max_batch_size: MAX_BATCH_SIZE as u64,
                     batch_time_window_size: None,
                 },
-                VdafInstance::Prio3Count,
+                VdafInstance::Prio3Aes128Count,
                 Role::Leader,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
@@ -1529,7 +1529,7 @@ mod tests {
                     max_batch_size: MAX_BATCH_SIZE as u64,
                     batch_time_window_size: None,
                 },
-                VdafInstance::Prio3Count,
+                VdafInstance::Prio3Aes128Count,
                 Role::Leader,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
@@ -1720,7 +1720,7 @@ mod tests {
                     max_batch_size: MAX_BATCH_SIZE as u64,
                     batch_time_window_size: Some(batch_time_window_size),
                 },
-                VdafInstance::Prio3Count,
+                VdafInstance::Prio3Aes128Count,
                 Role::Leader,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)

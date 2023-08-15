@@ -901,7 +901,8 @@ mod tests {
     };
     use janus_core::{
         hpke::{
-            self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
+            self, input_share_aad, test_util::generate_test_hpke_config_and_private_key,
+            HpkeApplicationInfo, Label,
         },
         report_id::ReportIdChecksumExt,
         task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
@@ -946,7 +947,7 @@ mod tests {
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .with_aggregator_endpoints(Vec::from([
@@ -1220,7 +1221,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .with_aggregator_endpoints(Vec::from([
@@ -1517,7 +1518,7 @@ mod tests {
                 max_batch_size: 10,
                 batch_time_window_size: None,
             },
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .with_aggregator_endpoints(Vec::from([
@@ -1762,7 +1763,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .with_aggregator_endpoints(Vec::from([
@@ -2151,7 +2152,7 @@ mod tests {
                 max_batch_size: 10,
                 batch_time_window_size: None,
             },
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .with_aggregator_endpoints(Vec::from([
@@ -2465,7 +2466,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .build();
@@ -2638,11 +2639,6 @@ mod tests {
     {
         assert_eq!(input_shares.len(), 2);
 
-        let mut aad = Vec::new();
-        aad.extend(task_id.as_ref());
-        aad.extend(&report_metadata.get_encoded());
-        aad.extend(&public_share.get_encoded());
-
         let encrypted_helper_input_share = hpke::seal(
             helper_hpke_config,
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
@@ -2650,7 +2646,7 @@ mod tests {
                 .get(Role::Helper.index().unwrap())
                 .unwrap()
                 .get_encoded(),
-            &aad,
+            &input_share_aad(&task_id, &report_metadata, &public_share.get_encoded()),
         )
         .unwrap();
 
@@ -2678,7 +2674,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .with_aggregator_endpoints(Vec::from([

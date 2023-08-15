@@ -22,13 +22,13 @@ pub const PRIO3_VERIFY_KEY_LENGTH: usize = 16;
 #[non_exhaustive]
 pub enum VdafInstance {
     /// A `Prio3` counter.
-    Prio3Count,
+    Prio3Aes128Count,
     /// A vector of `Prio3` counters.
-    Prio3CountVec { length: usize },
+    Prio3Aes128CountVec { length: usize },
     /// A `Prio3` sum.
-    Prio3Sum { bits: u32 },
+    Prio3Aes128Sum { bits: u32 },
     /// A `Prio3` histogram.
-    Prio3Histogram {
+    Prio3Aes128Histogram {
         #[derivative(Debug(format_with = "bucket_count"))]
         buckets: Vec<u64>,
     },
@@ -75,25 +75,25 @@ macro_rules! vdaf_dispatch_impl_base {
     // Provide the dispatched type only, don't construct a VDAF instance.
     (impl match base $vdaf_instance:expr, (_, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
         match $vdaf_instance {
-            ::janus_core::task::VdafInstance::Prio3Count => {
+            ::janus_core::task::VdafInstance::Prio3Aes128Count => {
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Count;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
-            ::janus_core::task::VdafInstance::Prio3CountVec { length } => {
+            ::janus_core::task::VdafInstance::Prio3Aes128CountVec { length } => {
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128CountVecMultithreaded;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
-            ::janus_core::task::VdafInstance::Prio3Sum { bits } => {
+            ::janus_core::task::VdafInstance::Prio3Aes128Sum { bits } => {
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Sum;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
-            ::janus_core::task::VdafInstance::Prio3Histogram { buckets } => {
+            ::janus_core::task::VdafInstance::Prio3Aes128Histogram { buckets } => {
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Histogram;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
@@ -106,15 +106,14 @@ macro_rules! vdaf_dispatch_impl_base {
     // Construct a VDAF instance, and provide that to the block as well.
     (impl match base $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
         match $vdaf_instance {
-            ::janus_core::task::VdafInstance::Prio3Count => {
+            ::janus_core::task::VdafInstance::Prio3Aes128Count => {
                 let $vdaf = ::prio::vdaf::prio3::Prio3::new_aes128_count(2)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Count;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
-            ::janus_core::task::VdafInstance::Prio3CountVec { length } => {
-                // Prio3CountVec is implemented as a 1-bit sum vec
+            ::janus_core::task::VdafInstance::Prio3Aes128CountVec { length } => {
                 let $vdaf =
                     ::prio::vdaf::prio3::Prio3::new_aes128_count_vec_multithreaded(2, *length)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128CountVecMultithreaded;
@@ -122,14 +121,14 @@ macro_rules! vdaf_dispatch_impl_base {
                 $body
             }
 
-            ::janus_core::task::VdafInstance::Prio3Sum { bits } => {
+            ::janus_core::task::VdafInstance::Prio3Aes128Sum { bits } => {
                 let $vdaf = ::prio::vdaf::prio3::Prio3::new_aes128_sum(2, *bits)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Sum;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
-            ::janus_core::task::VdafInstance::Prio3Histogram { buckets } => {
+            ::janus_core::task::VdafInstance::Prio3Aes128Histogram { buckets } => {
                 let $vdaf = ::prio::vdaf::prio3::Prio3::new_aes128_histogram(2, buckets)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Histogram;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
@@ -221,10 +220,10 @@ macro_rules! vdaf_dispatch_impl {
     // Provide the dispatched type only, don't construct a VDAF instance.
     (impl match all $vdaf_instance:expr, (_, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
         match $vdaf_instance {
-            ::janus_core::task::VdafInstance::Prio3Count
-            | ::janus_core::task::VdafInstance::Prio3CountVec { .. }
-            | ::janus_core::task::VdafInstance::Prio3Sum { .. }
-            | ::janus_core::task::VdafInstance::Prio3Histogram { .. } => {
+            ::janus_core::task::VdafInstance::Prio3Aes128Count
+            | ::janus_core::task::VdafInstance::Prio3Aes128CountVec { .. }
+            | ::janus_core::task::VdafInstance::Prio3Aes128Sum { .. }
+            | ::janus_core::task::VdafInstance::Prio3Aes128Histogram { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, (_, $Vdaf, $VERIFY_KEY_LENGTH) => $body)
             }
 
@@ -241,10 +240,10 @@ macro_rules! vdaf_dispatch_impl {
     // Construct a VDAF instance, and provide that to the block as well.
     (impl match all $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
         match $vdaf_instance {
-            ::janus_core::task::VdafInstance::Prio3Count
-            | ::janus_core::task::VdafInstance::Prio3CountVec { .. }
-            | ::janus_core::task::VdafInstance::Prio3Sum { .. }
-            | ::janus_core::task::VdafInstance::Prio3Histogram { .. } => {
+            ::janus_core::task::VdafInstance::Prio3Aes128Count
+            | ::janus_core::task::VdafInstance::Prio3Aes128CountVec { .. }
+            | ::janus_core::task::VdafInstance::Prio3Aes128Sum { .. }
+            | ::janus_core::task::VdafInstance::Prio3Aes128Histogram { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LENGTH) => $body)
             }
 
@@ -266,10 +265,10 @@ macro_rules! vdaf_dispatch_impl {
     // Provide the dispatched type only, don't construct a VDAF instance.
     (impl match all $vdaf_instance:expr, (_, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
         match $vdaf_instance {
-            ::janus_core::task::VdafInstance::Prio3Count
-            | ::janus_core::task::VdafInstance::Prio3CountVec { .. }
-            | ::janus_core::task::VdafInstance::Prio3Sum { .. }
-            | ::janus_core::task::VdafInstance::Prio3Histogram { .. } => {
+            ::janus_core::task::VdafInstance::Prio3Aes128Count
+            | ::janus_core::task::VdafInstance::Prio3Aes128CountVec { .. }
+            | ::janus_core::task::VdafInstance::Prio3Aes128Sum { .. }
+            | ::janus_core::task::VdafInstance::Prio3Aes128Histogram { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, (_, $Vdaf, $VERIFY_KEY_LENGTH) => $body)
             }
 
@@ -280,10 +279,10 @@ macro_rules! vdaf_dispatch_impl {
     // Construct a VDAF instance, and provide that to the block as well.
     (impl match all $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
         match $vdaf_instance {
-            ::janus_core::task::VdafInstance::Prio3Count
-            | ::janus_core::task::VdafInstance::Prio3CountVec { .. }
-            | ::janus_core::task::VdafInstance::Prio3Sum { .. }
-            | ::janus_core::task::VdafInstance::Prio3Histogram { .. } => {
+            ::janus_core::task::VdafInstance::Prio3Aes128Count
+            | ::janus_core::task::VdafInstance::Prio3Aes128CountVec { .. }
+            | ::janus_core::task::VdafInstance::Prio3Aes128Sum { .. }
+            | ::janus_core::task::VdafInstance::Prio3Aes128Histogram { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LENGTH) => $body)
             }
 
@@ -311,7 +310,7 @@ macro_rules! vdaf_dispatch_impl {
 /// #     Ok(())
 /// # }
 /// # fn test() -> Result<(), prio::vdaf::VdafError> {
-/// #     let vdaf = janus_core::task::VdafInstance::Prio3Count;
+/// #     let vdaf = janus_core::task::VdafInstance::Prio3Aes128Count;
 /// vdaf_dispatch!(&vdaf, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
 ///     handle_request_generic::<VdafType, VERIFY_KEY_LENGTH>(&vdaf)
 /// })
@@ -502,18 +501,18 @@ mod tests {
         // The `Vdaf` type must have a stable serialization, as it gets stored in a JSON database
         // column.
         assert_tokens(
-            &VdafInstance::Prio3Count,
+            &VdafInstance::Prio3Aes128Count,
             &[Token::UnitVariant {
                 name: "VdafInstance",
-                variant: "Prio3Count",
+                variant: "Prio3Aes128Count",
             }],
         );
         assert_tokens(
-            &VdafInstance::Prio3CountVec { length: 8 },
+            &VdafInstance::Prio3Aes128CountVec { length: 8 },
             &[
                 Token::StructVariant {
                     name: "VdafInstance",
-                    variant: "Prio3CountVec",
+                    variant: "Prio3Aes128CountVec",
                     len: 1,
                 },
                 Token::Str("length"),
@@ -522,11 +521,11 @@ mod tests {
             ],
         );
         assert_tokens(
-            &VdafInstance::Prio3Sum { bits: 64 },
+            &VdafInstance::Prio3Aes128Sum { bits: 64 },
             &[
                 Token::StructVariant {
                     name: "VdafInstance",
-                    variant: "Prio3Sum",
+                    variant: "Prio3Aes128Sum",
                     len: 1,
                 },
                 Token::Str("bits"),
@@ -535,13 +534,13 @@ mod tests {
             ],
         );
         assert_tokens(
-            &VdafInstance::Prio3Histogram {
+            &VdafInstance::Prio3Aes128Histogram {
                 buckets: Vec::from([0, 100, 200, 400]),
             },
             &[
                 Token::StructVariant {
                     name: "VdafInstance",
-                    variant: "Prio3Histogram",
+                    variant: "Prio3Aes128Histogram",
                     len: 1,
                 },
                 Token::Str("buckets"),

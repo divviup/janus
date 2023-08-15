@@ -813,7 +813,7 @@ mod tests {
         roundtrip_encoding(
             TaskBuilder::new(
                 QueryType::TimeInterval,
-                VdafInstance::Prio3Count,
+                VdafInstance::Prio3Aes128Count,
                 Role::Leader,
             )
             .build(),
@@ -835,7 +835,7 @@ mod tests {
                 "http://helper_endpoint".parse().unwrap(),
             ]),
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
             Vec::from([SecretBytes::new([0; PRIO3_VERIFY_KEY_LENGTH].into())]),
             0,
@@ -859,7 +859,7 @@ mod tests {
                 "http://helper_endpoint".parse().unwrap(),
             ]),
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
             Vec::from([SecretBytes::new([0; PRIO3_VERIFY_KEY_LENGTH].into())]),
             0,
@@ -883,7 +883,7 @@ mod tests {
                 "http://helper_endpoint".parse().unwrap(),
             ]),
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Helper,
             Vec::from([SecretBytes::new([0; PRIO3_VERIFY_KEY_LENGTH].into())]),
             0,
@@ -907,7 +907,7 @@ mod tests {
                 "http://helper_endpoint".parse().unwrap(),
             ]),
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Helper,
             Vec::from([SecretBytes::new([0; PRIO3_VERIFY_KEY_LENGTH].into())]),
             0,
@@ -933,7 +933,7 @@ mod tests {
                 "http://helper_endpoint".parse().unwrap(),
             ]),
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
             Vec::from([SecretBytes::new([0; PRIO3_VERIFY_KEY_LENGTH].into())]),
             0,
@@ -965,7 +965,7 @@ mod tests {
                 "",
                 TaskBuilder::new(
                     QueryType::TimeInterval,
-                    VdafInstance::Prio3Count,
+                    VdafInstance::Prio3Aes128Count,
                     Role::Leader,
                 )
                 .build(),
@@ -974,7 +974,7 @@ mod tests {
                 "/prefix",
                 TaskBuilder::new(
                     QueryType::TimeInterval,
-                    VdafInstance::Prio3Count,
+                    VdafInstance::Prio3Aes128Count,
                     Role::Leader,
                 )
                 .with_aggregator_endpoints(Vec::from([
@@ -1012,7 +1012,7 @@ mod tests {
                     "https://example.net/".parse().unwrap(),
                 ]),
                 QueryType::TimeInterval,
-                VdafInstance::Prio3Count,
+                VdafInstance::Prio3Aes128Count,
                 Role::Leader,
                 Vec::from([SecretBytes::new(b"1234567812345678".to_vec())]),
                 1,
@@ -1069,7 +1069,7 @@ mod tests {
                 Token::Str("vdaf"),
                 Token::UnitVariant {
                     name: "VdafInstance",
-                    variant: "Prio3Count",
+                    variant: "Prio3Aes128Count",
                 },
                 Token::Str("role"),
                 Token::UnitVariant {
@@ -1199,7 +1199,7 @@ mod tests {
                     max_batch_size: 10,
                     batch_time_window_size: None,
                 },
-                VdafInstance::Prio3CountVec { length: 8 },
+                VdafInstance::Prio3Aes128CountVec { length: 8 },
                 Role::Helper,
                 Vec::from([SecretBytes::new(b"1234567812345678".to_vec())]),
                 1,
@@ -1259,7 +1259,7 @@ mod tests {
                 Token::Str("vdaf"),
                 Token::StructVariant {
                     name: "VdafInstance",
-                    variant: "Prio3CountVec",
+                    variant: "Prio3Aes128CountVec",
                     len: 1,
                 },
                 Token::Str("length"),

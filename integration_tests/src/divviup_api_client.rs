@@ -33,9 +33,9 @@ impl TryFrom<&VdafInstance> for ApiVdaf {
 
     fn try_from(vdaf: &VdafInstance) -> Result<Self, Self::Error> {
         match vdaf {
-            VdafInstance::Prio3Count => Ok(ApiVdaf::Count),
-            VdafInstance::Prio3Sum { bits } => Ok(ApiVdaf::Sum { bits: *bits }),
-            VdafInstance::Prio3Histogram { buckets } => Ok(ApiVdaf::Histogram {
+            VdafInstance::Prio3Aes128Count => Ok(ApiVdaf::Count),
+            VdafInstance::Prio3Aes128Sum { bits } => Ok(ApiVdaf::Sum { bits: *bits }),
+            VdafInstance::Prio3Aes128Histogram { buckets } => Ok(ApiVdaf::Histogram {
                 buckets: buckets.clone(),
             }),
             _ => Err(anyhow!("unsupported VDAF: {vdaf:?}")),

@@ -138,28 +138,28 @@ async fn handle_upload(
 ) -> anyhow::Result<()> {
     let vdaf_instance = request.vdaf.clone().into();
     match vdaf_instance {
-        VdafInstance::Prio3Count {} => {
+        VdafInstance::Prio3Aes128Count {} => {
             let measurement = parse_primitive_measurement::<u64>(request.measurement.clone())?;
             let vdaf_client =
                 Prio3::new_aes128_count(2).context("failed to construct Prio3Count VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
 
-        VdafInstance::Prio3CountVec { length } => {
+        VdafInstance::Prio3Aes128CountVec { length } => {
             let measurement = parse_vector_measurement::<u128>(request.measurement.clone())?;
             let vdaf_client = Prio3::new_aes128_count_vec_multithreaded(2, length)
                 .context("failed to construct Prio3CountVec VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
 
-        VdafInstance::Prio3Sum { bits } => {
+        VdafInstance::Prio3Aes128Sum { bits } => {
             let measurement = parse_primitive_measurement::<u128>(request.measurement.clone())?;
             let vdaf_client =
                 Prio3::new_aes128_sum(2, bits).context("failed to construct Prio3Sum VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
 
-        VdafInstance::Prio3Histogram { ref buckets } => {
+        VdafInstance::Prio3Aes128Histogram { ref buckets } => {
             let measurement = parse_primitive_measurement::<u128>(request.measurement.clone())?;
             let vdaf_client = Prio3::new_aes128_histogram(2, buckets)
                 .context("failed to construct Prio3Histogram VDAF")?;

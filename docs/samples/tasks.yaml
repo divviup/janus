@@ -15,7 +15,7 @@
   query_type: TimeInterval
 
   # The task's VDAF. Each VDAF requires its own set of parameters.
-  vdaf: !Prio3Sum
+  vdaf: !Prio3Aes128Sum
     bits: 16
 
   # The DAP role of this Janus instance in this task. Either "Leader" or
@@ -110,7 +110,7 @@
   query_type: !FixedSize
     max_batch_size: 100
     batch_time_window_size: null
-  vdaf: Prio3Count
+  vdaf: Prio3Aes128Count
   role: Helper
   vdaf_verify_keys:
   - "ZXtE4kLqtsCOr8h_pNUeoQ"

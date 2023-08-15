@@ -567,7 +567,7 @@ mod tests {
     };
     use janus_core::{
         hpke::{
-            self,
+            self, aggregate_share_aad, input_share_aad,
             test_util::{
                 generate_test_hpke_config_and_private_key,
                 generate_test_hpke_config_and_private_key_with_id,
@@ -611,7 +611,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .build();
@@ -825,7 +825,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .build();
@@ -900,7 +900,7 @@ mod tests {
         const REPORT_EXPIRY_AGE: u64 = 1_000_000;
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
@@ -1068,7 +1068,7 @@ mod tests {
         // Reports with timestamps past the task's expiration should be rejected.
         let task_expire_soon = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .with_task_expiration(Some(clock.now().add(&Duration::from_seconds(60)).unwrap()))
@@ -1152,7 +1152,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Helper,
         )
         .build();
@@ -1203,7 +1203,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .build();
@@ -1290,7 +1290,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Helper,
         )
         .build();
@@ -1455,17 +1455,13 @@ mod tests {
             &(),
         );
         let mut input_share_bytes = transcript.input_shares[1].get_encoded();
-        let mut aad = Vec::new();
-        aad.extend(task.id().as_ref());
-        aad.extend(&report_metadata_2.get_encoded());
-        aad.extend(&encoded_public_share);
         input_share_bytes.push(0); // can no longer be decoded.
         let report_share_2 = generate_helper_report_share_for_plaintext(
             report_metadata_2.clone(),
             hpke_key.config(),
             encoded_public_share.clone(),
             &input_share_bytes,
-            &aad,
+            &input_share_aad(task.id(), &report_metadata_2, &encoded_public_share),
         );
 
         // report_share_3 has an unknown HPKE config ID.
@@ -1568,16 +1564,12 @@ mod tests {
             report_metadata_6.id(),
             &(),
         );
-        let mut aad = Vec::new();
-        aad.extend(task.id().as_ref());
-        aad.extend(&report_metadata_6.get_encoded());
-        aad.extend(&public_share_6);
         let report_share_6 = generate_helper_report_share_for_plaintext(
             report_metadata_6.clone(),
             hpke_key.config(),
             public_share_6.clone(),
             &transcript.input_shares[1].get_encoded(),
-            &aad,
+            &input_share_aad(task.id(), &report_metadata_6, &public_share_6),
         );
 
         // report_share_7 has already been aggregated in another aggregation job, with a different
@@ -2358,7 +2350,7 @@ mod tests {
         let aggregation_job_id = random();
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Helper,
         )
         .build();
@@ -2662,7 +2654,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Helper,
         )
         .build();
@@ -4338,7 +4330,7 @@ mod tests {
         let test_conn = test_case.get_collection_job(collection_location).await;
         assert_eq!(test_conn.status(), Some(Status::Accepted));
 
-        // Update the collection job with the aggregate shares and some aggregation jobs. collection
+        // Update the collection job with the aggregate shares and some aggregation jobs. Collection
         // job should now be complete.
         test_case
             .datastore
@@ -4346,10 +4338,6 @@ mod tests {
                 let task = test_case.task.clone();
                 let helper_aggregate_share_bytes = helper_aggregate_share.get_encoded();
                 Box::pin(async move {
-                    let mut aad = Vec::new();
-                    aad.extend(task.id().as_ref());
-                    aad.extend(&BatchSelector::new_time_interval(batch_interval).get_encoded());
-
                     let encrypted_helper_aggregate_share = hpke::seal(
                         task.collector_hpke_config(),
                         &HpkeApplicationInfo::new(
@@ -4358,7 +4346,10 @@ mod tests {
                             &Role::Collector,
                         ),
                         &helper_aggregate_share_bytes,
-                        &aad,
+                        &aggregate_share_aad(
+                            task.id(),
+                            &BatchSelector::new_time_interval(batch_interval),
+                        ),
                     )
                     .unwrap();
 
@@ -4395,9 +4386,10 @@ mod tests {
         assert_eq!(collect_resp.report_count(), 12);
         assert_eq!(collect_resp.encrypted_aggregate_shares().len(), 2);
 
-        let mut aad = Vec::new();
-        aad.extend(test_case.task.id().as_ref());
-        aad.extend(&BatchSelector::new_time_interval(batch_interval).get_encoded());
+        let aad = aggregate_share_aad(
+            test_case.task.id(),
+            &BatchSelector::new_time_interval(batch_interval),
+        );
 
         let decrypted_leader_aggregate_share = hpke::open(
             test_case.task.collector_hpke_config(),
@@ -5181,10 +5173,6 @@ mod tests {
                 let body_bytes = take_response_body(&mut test_conn).await;
                 let aggregate_share_resp = AggregateShareMessage::get_decoded(&body_bytes).unwrap();
 
-                let mut aad = Vec::new();
-                aad.extend(task.id().as_ref());
-                aad.extend(&request.batch_selector().get_encoded());
-
                 let aggregate_share = hpke::open(
                     collector_hpke_keypair.config(),
                     collector_hpke_keypair.private_key(),
@@ -5194,7 +5182,7 @@ mod tests {
                         &Role::Collector,
                     ),
                     aggregate_share_resp.encrypted_aggregate_share(),
-                    &aad,
+                    &aggregate_share_aad(task.id(), request.batch_selector()),
                 )
                 .unwrap();
 

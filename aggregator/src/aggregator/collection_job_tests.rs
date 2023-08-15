@@ -14,8 +14,8 @@ use janus_aggregator_core::{
 };
 use janus_core::{
     hpke::{
-        self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo,
-        HpkeKeypair, Label,
+        self, aggregate_share_aad, test_util::generate_test_hpke_config_and_private_key,
+        HpkeApplicationInfo, HpkeKeypair, Label,
     },
     task::{AuthenticationToken, VdafInstance},
     test_util::{
@@ -298,10 +298,6 @@ async fn collection_job_success_fixed_size() {
                         .unwrap();
                     let batch_id = *collection_job.batch_identifier();
 
-                    let mut aad = Vec::new();
-                    aad.extend(task.id().as_ref());
-                    aad.extend(&BatchSelector::new_fixed_size(batch_id).get_encoded());
-
                     let encrypted_helper_aggregate_share = hpke::seal(
                         task.collector_hpke_config(),
                         &HpkeApplicationInfo::new(
@@ -310,7 +306,7 @@ async fn collection_job_success_fixed_size() {
                             &Role::Collector,
                         ),
                         &helper_aggregate_share_bytes,
-                        &aad,
+                        &aggregate_share_aad(task.id(), &BatchSelector::new_fixed_size(batch_id)),
                     )
                     .unwrap();
 
@@ -362,9 +358,10 @@ async fn collection_job_success_fixed_size() {
         );
         assert_eq!(collect_resp.encrypted_aggregate_shares().len(), 2);
 
-        let mut aad = Vec::new();
-        aad.extend(test_case.task.id().as_ref());
-        aad.extend(&BatchSelector::new_fixed_size(batch_id).get_encoded());
+        let aad = aggregate_share_aad(
+            test_case.task.id(),
+            &BatchSelector::new_fixed_size(batch_id),
+        );
 
         let decrypted_leader_aggregate_share = hpke::open(
             test_case.task.collector_hpke_config(),

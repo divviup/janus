@@ -28,12 +28,11 @@ use std::{
 /// interval begins to the accumulated aggregate share, report count and checksum.
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub struct Accumulator<
-    const SEED_SIZE: usize,
-    Q: AccumulableQueryType,
+pub struct Accumulator<const SEED_SIZE: usize, Q, A>
+where
     A: vdaf::Aggregator<SEED_SIZE>,
-> where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    Q: AccumulableQueryType,
 {
     task: Arc<Task>,
     shard_count: u64,
@@ -43,18 +42,21 @@ pub struct Accumulator<
 }
 
 #[derive(Debug)]
-struct BatchData<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_SIZE>>
+struct BatchData<const SEED_SIZE: usize, Q, A>
 where
+    A: vdaf::Aggregator<SEED_SIZE>,
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    Q: AccumulableQueryType,
 {
     batch_aggregation: BatchAggregation<SEED_SIZE, Q, A>,
     included_report_ids: HashSet<ReportId>,
 }
 
-impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_SIZE>>
-    Accumulator<SEED_SIZE, Q, A>
+impl<const SEED_SIZE: usize, Q, A> Accumulator<SEED_SIZE, Q, A>
 where
+    A: vdaf::Aggregator<SEED_SIZE>,
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    Q: AccumulableQueryType,
 {
     /// Creates a new accumulator.
     pub fn new(

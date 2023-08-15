@@ -58,7 +58,7 @@ use derivative::Derivative;
 use http_api_problem::HttpApiProblem;
 pub use janus_core::task::AuthenticationToken;
 use janus_core::{
-    hpke::{self, HpkeApplicationInfo, HpkePrivateKey},
+    hpke::{self, aggregate_share_aad, HpkeApplicationInfo, HpkePrivateKey},
     http::response_to_problem_details,
     retries::{http_request_exponential_backoff, retry_http_request},
     task::url_ensure_trailing_slash,
@@ -513,16 +513,6 @@ where
             ));
         }
 
-        let mut aad = Vec::new();
-        aad.extend(self.parameters.task_id.as_ref());
-        aad.extend(
-            &BatchSelector::<Q>::new(Q::batch_identifier_for_collection(
-                &job.query,
-                &collect_response,
-            ))
-            .get_encoded(),
-        );
-
         let aggregate_shares_bytes = collect_response
             .encrypted_aggregate_shares()
             .iter()
@@ -533,7 +523,13 @@ where
                     &self.parameters.hpke_private_key,
                     &HpkeApplicationInfo::new(&hpke::Label::AggregateShare, role, &Role::Collector),
                     encrypted_aggregate_share,
-                    &aad,
+                    &aggregate_share_aad(
+                        &self.parameters.task_id,
+                        &BatchSelector::<Q>::new(Q::batch_identifier_for_collection(
+                            &job.query,
+                            &collect_response,
+                        )),
+                    ),
                 )
             });
         let aggregate_shares = aggregate_shares_bytes
@@ -665,7 +661,8 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use janus_core::{
         hpke::{
-            self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
+            self, aggregate_share_aad, test_util::generate_test_hpke_config_and_private_key,
+            HpkeApplicationInfo, Label,
         },
         retries::test_http_request_exponential_backoff,
         task::AuthenticationToken,
@@ -718,9 +715,10 @@ mod tests {
     where
         for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
     {
-        let mut aad = Vec::new();
-        aad.extend(parameters.task_id.as_ref());
-        aad.extend(&BatchSelector::new_time_interval(batch_interval).get_encoded());
+        let aad = aggregate_share_aad(
+            &parameters.task_id,
+            &BatchSelector::new_time_interval(batch_interval),
+        );
 
         CollectResp::new(
             PartialBatchSelector::new_time_interval(),
@@ -760,9 +758,10 @@ mod tests {
     where
         for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
     {
-        let mut aad = Vec::new();
-        aad.extend(parameters.task_id.as_ref());
-        aad.extend(&BatchSelector::new_fixed_size(batch_id).get_encoded());
+        let aad = aggregate_share_aad(
+            &parameters.task_id,
+            &BatchSelector::new_fixed_size(batch_id),
+        );
 
         CollectResp::new(
             PartialBatchSelector::new_fixed_size(batch_id),
@@ -1440,9 +1439,10 @@ mod tests {
 
         mock_collection_job_bad_ciphertext.assert_async().await;
 
-        let mut aad = Vec::new();
-        aad.extend(collector.parameters.task_id.as_ref());
-        aad.extend(&BatchSelector::new_time_interval(batch_interval).get_encoded());
+        let aad = aggregate_share_aad(
+            &collector.parameters.task_id,
+            &BatchSelector::new_time_interval(batch_interval),
+        );
 
         let collect_resp = CollectResp::new(
             PartialBatchSelector::new_time_interval(),

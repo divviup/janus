@@ -105,26 +105,26 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum VdafObject {
-    Prio3Count,
-    Prio3CountVec { length: NumberAsString<usize> },
-    Prio3Sum { bits: NumberAsString<u32> },
-    Prio3Histogram { buckets: Vec<NumberAsString<u64>> },
+    Prio3Aes128Count,
+    Prio3Aes128CountVec { length: NumberAsString<usize> },
+    Prio3Aes128Sum { bits: NumberAsString<u32> },
+    Prio3Aes128Histogram { buckets: Vec<NumberAsString<u64>> },
 }
 
 impl From<VdafInstance> for VdafObject {
     fn from(vdaf: VdafInstance) -> Self {
         match vdaf {
-            VdafInstance::Prio3Count => VdafObject::Prio3Count,
+            VdafInstance::Prio3Aes128Count => VdafObject::Prio3Aes128Count,
 
-            VdafInstance::Prio3CountVec { length } => VdafObject::Prio3CountVec {
+            VdafInstance::Prio3Aes128CountVec { length } => VdafObject::Prio3Aes128CountVec {
                 length: NumberAsString(length),
             },
 
-            VdafInstance::Prio3Sum { bits } => VdafObject::Prio3Sum {
+            VdafInstance::Prio3Aes128Sum { bits } => VdafObject::Prio3Aes128Sum {
                 bits: NumberAsString(bits),
             },
 
-            VdafInstance::Prio3Histogram { buckets } => VdafObject::Prio3Histogram {
+            VdafInstance::Prio3Aes128Histogram { buckets } => VdafObject::Prio3Aes128Histogram {
                 buckets: buckets.iter().copied().map(NumberAsString).collect(),
             },
 
@@ -136,15 +136,15 @@ impl From<VdafInstance> for VdafObject {
 impl From<VdafObject> for VdafInstance {
     fn from(vdaf: VdafObject) -> Self {
         match vdaf {
-            VdafObject::Prio3Count => VdafInstance::Prio3Count,
+            VdafObject::Prio3Aes128Count => VdafInstance::Prio3Aes128Count,
 
-            VdafObject::Prio3CountVec { length } => {
-                VdafInstance::Prio3CountVec { length: length.0 }
+            VdafObject::Prio3Aes128CountVec { length } => {
+                VdafInstance::Prio3Aes128CountVec { length: length.0 }
             }
 
-            VdafObject::Prio3Sum { bits } => VdafInstance::Prio3Sum { bits: bits.0 },
+            VdafObject::Prio3Aes128Sum { bits } => VdafInstance::Prio3Aes128Sum { bits: bits.0 },
 
-            VdafObject::Prio3Histogram { buckets } => VdafInstance::Prio3Histogram {
+            VdafObject::Prio3Aes128Histogram { buckets } => VdafInstance::Prio3Aes128Histogram {
                 buckets: buckets.iter().map(|value| value.0).collect(),
             },
         }

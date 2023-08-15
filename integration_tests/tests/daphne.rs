@@ -19,7 +19,7 @@ async fn daphne_janus() {
     // Start servers.
     let network = generate_network_name();
     let (mut task_parameters, leader_task, helper_task) =
-        test_task_builders(VdafInstance::Prio3Count, QueryType::TimeInterval);
+        test_task_builders(VdafInstance::Prio3Aes128Count, QueryType::TimeInterval);
 
     // Daphne is hardcoded to serve from a path starting with /v04/.
     task_parameters.endpoint_fragments.leader_endpoint_path = "/v04/".to_string();
@@ -49,14 +49,14 @@ async fn daphne_janus() {
 
 // This test places Janus in the leader role & Daphne in the helper role.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "Need to determine why I am getting invalidProtocolVersion."]
+#[ignore = "Daphne's DAP-02 implementation disagrees about AAD encodings (and a few other issues)"]
 async fn janus_daphne() {
     install_test_trace_subscriber();
 
     // Start servers.
     let network = generate_network_name();
     let (mut task_parameters, leader_task, helper_task) =
-        test_task_builders(VdafInstance::Prio3Count, QueryType::TimeInterval);
+        test_task_builders(VdafInstance::Prio3Aes128Count, QueryType::TimeInterval);
 
     // Daphne is hardcoded to serve from a path starting with /v02/.
     task_parameters.endpoint_fragments.helper_endpoint_path = "/v02/".to_string();

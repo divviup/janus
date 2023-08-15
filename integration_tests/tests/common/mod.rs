@@ -225,10 +225,10 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
                 assert_eq!(batch_ids.len(), 1, "too many batch IDs were assigned");
                 break batch_ids[0];
             };
-            // Hack: give the aggregation job creator enough time to assign reports to the correct
-            // batch; otherwise, creating a collection job against this batch ID will fail with
-            // `invalidBatchSize`. (It would be better to add/augment a retry loop which retries
-            // for awhile on `invalidBatchSize`, but I leave that for a future improvement.)
+            // TODO(#1727): give the aggregation job creator enough time to assign reports to the
+            // correct batch; otherwise, creating a collection job against this batch ID will fail
+            // with `invalidBatchSize`. (It would be better to add/augment a retry loop which
+            // retries for awhile on `invalidBatchSize`, but I leave that for a future improvement.)
             sleep(StdDuration::from_secs(10)).await;
             let collection = collect_generic(
                 &collector,
@@ -259,7 +259,7 @@ pub async fn submit_measurements_and_verify_aggregate(
     let total_measurements: usize = task_parameters.min_batch_size.try_into().unwrap();
 
     match &task_parameters.vdaf {
-        VdafInstance::Prio3Count => {
+        VdafInstance::Prio3Aes128Count => {
             let vdaf = Prio3::new_aes128_count(2).unwrap();
 
             let num_nonzero_measurements = total_measurements / 2;
@@ -289,7 +289,7 @@ pub async fn submit_measurements_and_verify_aggregate(
             )
             .await;
         }
-        VdafInstance::Prio3Sum { bits } => {
+        VdafInstance::Prio3Aes128Sum { bits } => {
             let vdaf = Prio3::new_aes128_sum(2, *bits).unwrap();
 
             let measurements = iter::repeat_with(|| (random::<u128>()) >> (128 - bits))
@@ -316,7 +316,7 @@ pub async fn submit_measurements_and_verify_aggregate(
             )
             .await;
         }
-        VdafInstance::Prio3Histogram { buckets } => {
+        VdafInstance::Prio3Aes128Histogram { buckets } => {
             let vdaf = Prio3::new_aes128_histogram(2, buckets).unwrap();
 
             let mut aggregate_result = vec![0; buckets.len() + 1];
@@ -354,7 +354,7 @@ pub async fn submit_measurements_and_verify_aggregate(
             )
             .await;
         }
-        VdafInstance::Prio3CountVec { length } => {
+        VdafInstance::Prio3Aes128CountVec { length } => {
             let vdaf = Prio3::new_aes128_count_vec_multithreaded(2, *length).unwrap();
 
             let measurements = iter::repeat_with(|| {

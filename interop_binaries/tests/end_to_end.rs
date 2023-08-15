@@ -603,7 +603,7 @@ async fn run(
 async fn e2e_prio3_count() {
     let result = run(
         QueryKind::TimeInterval,
-        json!({"type": "Prio3Count"}),
+        json!({"type": "Prio3Aes128Count"}),
         &[
             json!("0"),
             json!("1"),
@@ -634,7 +634,7 @@ async fn e2e_prio3_count() {
 async fn e2e_prio3_sum() {
     let result = run(
         QueryKind::TimeInterval,
-        json!({"type": "Prio3Sum", "bits": "64"}),
+        json!({"type": "Prio3Aes128Sum", "bits": "64"}),
         &[
             json!("0"),
             json!("10"),
@@ -655,7 +655,7 @@ async fn e2e_prio3_histogram() {
     let result = run(
         QueryKind::TimeInterval,
         json!({
-            "type": "Prio3Histogram",
+            "type": "Prio3Aes128Histogram",
             "buckets": ["0", "1", "10", "100", "1000", "10000", "100000"],
         }),
         &[
@@ -685,7 +685,7 @@ async fn e2e_prio3_histogram() {
 async fn e2e_prio3_count_vec() {
     let result = run(
         QueryKind::TimeInterval,
-        json!({"type": "Prio3CountVec", "length": "4"}),
+        json!({"type": "Prio3Aes128CountVec", "length": "4"}),
         &[
             json!(["0", "0", "0", "1"]),
             json!(["0", "0", "1", "0"]),
@@ -707,7 +707,7 @@ async fn e2e_prio3_count_vec() {
 async fn e2e_prio3_count_fixed_size() {
     let result = run(
         QueryKind::FixedSize,
-        json!({"type": "Prio3Count"}),
+        json!({"type": "Prio3Aes128Count"}),
         &[
             json!("0"),
             json!("1"),

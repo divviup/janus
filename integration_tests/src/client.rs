@@ -61,18 +61,18 @@ impl InteropClientEncoding for Prio3Aes128CountVecMultithreaded {
 
 fn json_encode_vdaf(vdaf: &VdafInstance) -> Value {
     match vdaf {
-        VdafInstance::Prio3Count => json!({
+        VdafInstance::Prio3Aes128Count => json!({
             "type": "Prio3Aes128Count"
         }),
-        VdafInstance::Prio3CountVec { length } => json!({
+        VdafInstance::Prio3Aes128CountVec { length } => json!({
             "type": "Prio3Aes128CountVec",
             "length": format!("{length}"),
         }),
-        VdafInstance::Prio3Sum { bits } => json!({
+        VdafInstance::Prio3Aes128Sum { bits } => json!({
             "type": "Prio3Aes128Sum",
             "bits": format!("{bits}"),
         }),
-        VdafInstance::Prio3Histogram { buckets } => {
+        VdafInstance::Prio3Aes128Histogram { buckets } => {
             let buckets = Value::Array(
                 buckets
                     .iter()

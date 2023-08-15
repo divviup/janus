@@ -25,7 +25,8 @@ use chrono::NaiveDate;
 use futures::future::try_join_all;
 use janus_core::{
     hpke::{
-        self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
+        self, aggregate_share_aad, test_util::generate_test_hpke_config_and_private_key,
+        HpkeApplicationInfo, Label,
     },
     task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
     test_util::{
@@ -102,19 +103,25 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
     // Insert tasks, check that they can be retrieved by ID.
     let mut want_tasks = HashMap::new();
     for (vdaf, role) in [
-        (VdafInstance::Prio3Count, Role::Leader),
-        (VdafInstance::Prio3CountVec { length: 8 }, Role::Leader),
-        (VdafInstance::Prio3CountVec { length: 64 }, Role::Helper),
-        (VdafInstance::Prio3Sum { bits: 64 }, Role::Helper),
-        (VdafInstance::Prio3Sum { bits: 32 }, Role::Helper),
+        (VdafInstance::Prio3Aes128Count, Role::Leader),
         (
-            VdafInstance::Prio3Histogram {
+            VdafInstance::Prio3Aes128CountVec { length: 8 },
+            Role::Leader,
+        ),
+        (
+            VdafInstance::Prio3Aes128CountVec { length: 64 },
+            Role::Helper,
+        ),
+        (VdafInstance::Prio3Aes128Sum { bits: 64 }, Role::Helper),
+        (VdafInstance::Prio3Aes128Sum { bits: 32 }, Role::Helper),
+        (
+            VdafInstance::Prio3Aes128Histogram {
                 buckets: Vec::from([0, 100, 200, 400]),
             },
             Role::Leader,
         ),
         (
-            VdafInstance::Prio3Histogram {
+            VdafInstance::Prio3Aes128Histogram {
                 buckets: Vec::from([0, 25, 50, 75, 100]),
             },
             Role::Leader,
@@ -608,14 +615,14 @@ async fn get_unaggregated_client_report_ids_for_task(ephemeral_datastore: Epheme
     .unwrap();
     let task = TaskBuilder::new(
         task::QueryType::TimeInterval,
-        VdafInstance::Prio3Count,
+        VdafInstance::Prio3Aes128Count,
         Role::Leader,
     )
     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
     .build();
     let unrelated_task = TaskBuilder::new(
         task::QueryType::TimeInterval,
-        VdafInstance::Prio3Count,
+        VdafInstance::Prio3Aes128Count,
         Role::Leader,
     )
     .build();
@@ -1079,7 +1086,7 @@ async fn roundtrip_report_share(ephemeral_datastore: EphemeralDatastore) {
 
     let task = TaskBuilder::new(
         task::QueryType::TimeInterval,
-        VdafInstance::Prio3Count,
+        VdafInstance::Prio3Aes128Count,
         Role::Leader,
     )
     .build();
@@ -1401,7 +1408,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     const AGGREGATION_JOB_COUNT: usize = 10;
     let task = TaskBuilder::new(
         task::QueryType::TimeInterval,
-        VdafInstance::Prio3Count,
+        VdafInstance::Prio3Aes128Count,
         Role::Leader,
     )
     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
@@ -1481,7 +1488,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
             // We don't want to retrieve this one, either.
             let helper_task = TaskBuilder::new(
                 task::QueryType::TimeInterval,
-                VdafInstance::Prio3Count,
+                VdafInstance::Prio3Aes128Count,
                 Role::Helper,
             )
             .build();
@@ -1538,7 +1545,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                     *task.id(),
                     agg_job_id,
                     task::QueryType::TimeInterval,
-                    VdafInstance::Prio3Count,
+                    VdafInstance::Prio3Aes128Count,
                 ),
                 want_expiry_time,
             )
@@ -1660,7 +1667,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                     *task.id(),
                     job_id,
                     task::QueryType::TimeInterval,
-                    VdafInstance::Prio3Count,
+                    VdafInstance::Prio3Aes128Count,
                 ),
                 want_expiry_time,
             )
@@ -1886,7 +1893,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
@@ -2236,7 +2243,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
 
     let task = TaskBuilder::new(
         task::QueryType::TimeInterval,
-        VdafInstance::Prio3Count,
+        VdafInstance::Prio3Aes128Count,
         Role::Leader,
     )
     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
@@ -2494,15 +2501,14 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
                 .unwrap();
             assert_eq!(&second_collection_job_id, second_collection_job.id());
 
-            let mut aad = Vec::new();
-            aad.extend(task.id().as_ref());
-            aad.extend(BatchSelector::new_time_interval(first_batch_interval).get_encoded());
-
             let encrypted_helper_aggregate_share = hpke::seal(
                 task.collector_hpke_config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
                 &[0, 1, 2, 3, 4, 5],
-                &aad,
+                &aggregate_share_aad(
+                    task.id(),
+                    &BatchSelector::new_time_interval(first_batch_interval),
+                ),
             )
             .unwrap();
 
