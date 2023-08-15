@@ -1911,6 +1911,7 @@ dependencies = [
  "janus_core",
  "janus_messages",
  "opentelemetry 0.19.0",
+ "querystring",
  "rand",
  "ring",
  "serde",
@@ -3155,6 +3156,12 @@ name = "protobuf"
 version = "2.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "106dd99e98437432fed6519dedecfade6a06a73bb7b2a1e019fdd2bee5778d94"
+
+[[package]]
+name = "querystring"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9318ead08c799aad12a55a3e78b82e0b6167271ffd1f627b758891282f739187"
 
 [[package]]
 name = "quote"

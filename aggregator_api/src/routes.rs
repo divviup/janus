@@ -20,6 +20,7 @@ use janus_messages::{
     query_type::Code as SupportedQueryType, Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, Role,
     TaskId,
 };
+use querystring::querify;
 use rand::random;
 use ring::digest::{digest, SHA256};
 use std::{str::FromStr, sync::Arc, unreachable};
@@ -53,10 +54,10 @@ pub(super) async fn get_task_ids<C: Clock>(
     State(ds): State<Arc<Datastore<C>>>,
 ) -> Result<Json<GetTaskIdsResp>, Error> {
     const PAGINATION_TOKEN_KEY: &str = "pagination_token";
-    let lower_bound = serde_urlencoded::from_str::<Vec<(String, String)>>(conn.querystring())?
+    let lower_bound = querify(conn.querystring())
         .into_iter()
-        .find(|(k, _)| k == PAGINATION_TOKEN_KEY)
-        .map(|(_, v)| TaskId::from_str(&v))
+        .find(|&(k, _)| k == PAGINATION_TOKEN_KEY)
+        .map(|(_, v)| TaskId::from_str(v))
         .transpose()
         .map_err(|err| Error::BadRequest(format!("Couldn't parse pagination_token: {:?}", err)))?;
 
