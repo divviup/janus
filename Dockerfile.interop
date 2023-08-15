@@ -43,7 +43,7 @@ COPY tools /src/tools
 ARG BINARY
 RUN cargo build --profile $PROFILE -p janus_interop_binaries --bin $BINARY
 
-FROM alpine:3.18.2 AS final
+FROM alpine:3.18.3 AS final
 ARG BINARY
 ARG PROFILE
 RUN mkdir /logs
