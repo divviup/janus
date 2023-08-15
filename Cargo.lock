@@ -2765,6 +2765,7 @@ dependencies = [
  "ordered-float 3.7.0",
  "percent-encoding",
  "rand",
+ "regex",
  "thiserror",
 ]
 
@@ -4706,12 +4707,12 @@ dependencies = [
 
 [[package]]
 name = "tracing-opentelemetry"
-version = "0.19.0"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00a39dcf9bfc1742fa4d6215253b33a6e474be78275884c216fc2a06267b3600"
+checksum = "fc09e402904a5261e42cf27aea09ccb7d5318c6717a9eec3d8e2e65c56b18f19"
 dependencies = [
  "once_cell",
- "opentelemetry 0.19.0",
+ "opentelemetry 0.20.0",
  "tracing",
  "tracing-core",
  "tracing-log",
