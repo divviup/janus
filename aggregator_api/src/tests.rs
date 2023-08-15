@@ -22,7 +22,11 @@ use janus_aggregator_core::{
 };
 use janus_core::{
     hpke::{
-        generate_hpke_config_and_private_key, test_util::generate_test_hpke_config_and_private_key,
+        generate_hpke_config_and_private_key,
+        test_util::{
+            generate_test_hpke_config_and_private_key,
+            generate_test_hpke_config_and_private_key_with_id,
+        },
         HpkeKeypair, HpkePrivateKey,
     },
     task::{AuthenticationToken, VdafInstance},
@@ -845,9 +849,10 @@ async fn get_global_hpke_configs() {
     .unwrap();
     assert_eq!(resp, vec![]);
 
-    let keypair1 = generate_test_hpke_config_and_private_key();
+    let keypair1_id = random();
+    let keypair1 = generate_test_hpke_config_and_private_key_with_id(keypair1_id);
     let keypair2 = generate_hpke_config_and_private_key(
-        random(),
+        HpkeConfigId::from(keypair1_id.wrapping_add(1)),
         HpkeKemId::P256HkdfSha256,
         HpkeKdfId::HkdfSha384,
         HpkeAeadId::Aes128Gcm,
@@ -945,9 +950,10 @@ async fn get_global_hpke_config() {
         "",
     );
 
-    let keypair1 = generate_test_hpke_config_and_private_key();
+    let keypair1_id = random();
+    let keypair1 = generate_test_hpke_config_and_private_key_with_id(keypair1_id);
     let keypair2 = generate_hpke_config_and_private_key(
-        random(),
+        HpkeConfigId::from(keypair1_id.wrapping_add(1)),
         HpkeKemId::P256HkdfSha256,
         HpkeKdfId::HkdfSha384,
         HpkeAeadId::Aes128Gcm,
