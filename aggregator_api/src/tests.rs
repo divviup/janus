@@ -1,9 +1,9 @@
 use crate::{
     aggregator_api_handler,
     models::{
-        GetTaskIdsResp, GetTaskMetricsResp, GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq,
-        PostTaskReq, PostTaskprovPeerAggregatorReq, PutGlobalHpkeConfigReq, TaskResp,
-        TaskprovPeerAggregatorResp,
+        DeleteTaskprovPeerAggregatorReq, GetTaskIdsResp, GetTaskMetricsResp, GlobalHpkeConfigResp,
+        PatchGlobalHpkeConfigReq, PostTaskReq, PostTaskprovPeerAggregatorReq,
+        PutGlobalHpkeConfigReq, TaskResp, TaskprovPeerAggregatorResp,
     },
     Config, CONTENT_TYPE,
 };
@@ -1311,79 +1311,6 @@ async fn get_taskprov_peer_aggregator() {
 
     assert_eq!(resp, expected);
 
-    let mut conn = get(format!(
-        "/taskprov/peer_aggregators?{}",
-        serde_urlencoded::to_string(vec![
-            ("endpoint", "https://helper.example.com/"),
-            ("role", "helper")
-        ])
-        .unwrap()
-    ))
-    .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-    .with_request_header("Accept", CONTENT_TYPE)
-    .with_request_header("Content-Type", CONTENT_TYPE)
-    .run_async(&handler)
-    .await;
-    assert_response!(conn, Status::Ok);
-    assert_eq!(
-        serde_json::from_slice::<Vec<TaskprovPeerAggregatorResp>>(
-            &conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap(),
-        vec![helper.into()]
-    );
-
-    // Non-existent peer.
-    assert_response!(
-        get(format!(
-            "/taskprov/peer_aggregators?{}",
-            serde_urlencoded::to_string(vec![
-                ("endpoint", "https://doesnt.exist.example.com/"),
-                ("role", "leader")
-            ])
-            .unwrap()
-        ))
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_header("Content-Type", CONTENT_TYPE)
-        .run_async(&handler)
-        .await,
-        Status::NotFound
-    );
-
-    // Missing endpoint.
-    assert_response!(
-        get(format!(
-            "/taskprov/peer_aggregators?{}",
-            serde_urlencoded::to_string(vec![("role", "leader")]).unwrap()
-        ))
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_header("Content-Type", CONTENT_TYPE)
-        .run_async(&handler)
-        .await,
-        Status::BadRequest
-    );
-
-    // Missing role.
-    assert_response!(
-        get(format!(
-            "/taskprov/peer_aggregators?{}",
-            serde_urlencoded::to_string(vec![("endpoint", "https://leader.example.com/")]).unwrap()
-        ))
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_header("Content-Type", CONTENT_TYPE)
-        .run_async(&handler)
-        .await,
-        Status::BadRequest
-    );
-
     // Missing authorization.
     assert_response!(
         get("/taskprov/peer_aggregators")
@@ -1399,12 +1326,15 @@ async fn get_taskprov_peer_aggregator() {
 async fn post_taskprov_peer_aggregator() {
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
+    let endpoint = Url::parse("https://leader.example.com/").unwrap();
     let leader = PeerAggregatorBuilder::new()
-        .with_endpoint(Url::parse("https://leader.example.com/").unwrap())
+        .with_endpoint(endpoint.clone())
         .with_role(Role::Leader)
         .build();
 
     let req = PostTaskprovPeerAggregatorReq {
+        endpoint,
+        role: Role::Leader,
         collector_hpke_config: leader.collector_hpke_config().clone(),
         verify_key_init: *leader.verify_key_init(),
         report_expiry_age: leader.report_expiry_age().cloned(),
@@ -1413,20 +1343,13 @@ async fn post_taskprov_peer_aggregator() {
         collector_auth_tokens: Vec::from(leader.collector_auth_tokens()),
     };
 
-    let mut conn = post(format!(
-        "/taskprov/peer_aggregators?{}",
-        serde_urlencoded::to_string(vec![
-            ("endpoint", "https://leader.example.com/"),
-            ("role", "leader")
-        ])
-        .unwrap()
-    ))
-    .with_request_body(serde_json::to_vec(&req).unwrap())
-    .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-    .with_request_header("Accept", CONTENT_TYPE)
-    .with_request_header("Content-Type", CONTENT_TYPE)
-    .run_async(&handler)
-    .await;
+    let mut conn = post("/taskprov/peer_aggregators")
+        .with_request_body(serde_json::to_vec(&req).unwrap())
+        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+        .with_request_header("Accept", CONTENT_TYPE)
+        .with_request_header("Content-Type", CONTENT_TYPE)
+        .run_async(&handler)
+        .await;
     assert_response!(conn, Status::Created);
     assert_eq!(
         serde_json::from_slice::<TaskprovPeerAggregatorResp>(
@@ -1450,25 +1373,6 @@ async fn post_taskprov_peer_aggregator() {
 
     // Can't insert the same aggregator.
     assert_response!(
-        post(format!(
-            "/taskprov/peer_aggregators?{}",
-            serde_urlencoded::to_string(vec![
-                ("endpoint", "https://leader.example.com/"),
-                ("role", "leader")
-            ])
-            .unwrap()
-        ))
-        .with_request_body(serde_json::to_vec(&req).unwrap())
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_header("Content-Type", CONTENT_TYPE)
-        .run_async(&handler)
-        .await,
-        Status::Conflict
-    );
-
-    // Missing parameters.
-    assert_response!(
         post("/taskprov/peer_aggregators")
             .with_request_body(serde_json::to_vec(&req).unwrap())
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
@@ -1476,7 +1380,7 @@ async fn post_taskprov_peer_aggregator() {
             .with_request_header("Content-Type", CONTENT_TYPE)
             .run_async(&handler)
             .await,
-        Status::BadRequest
+        Status::Conflict
     );
 
     // Missing authorization.
@@ -1495,8 +1399,9 @@ async fn post_taskprov_peer_aggregator() {
 async fn delete_taskprov_peer_aggregator() {
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
+    let endpoint = Url::parse("https://leader.example.com/").unwrap();
     let leader = PeerAggregatorBuilder::new()
-        .with_endpoint(Url::parse("https://leader.example.com/").unwrap())
+        .with_endpoint(endpoint.clone())
         .with_role(Role::Leader)
         .build();
 
@@ -1507,21 +1412,20 @@ async fn delete_taskprov_peer_aggregator() {
     .await
     .unwrap();
 
+    let req = DeleteTaskprovPeerAggregatorReq {
+        endpoint,
+        role: Role::Leader,
+    };
+
     // Delete target.
     assert_response!(
-        delete(format!(
-            "/taskprov/peer_aggregators?{}",
-            serde_urlencoded::to_string(vec![
-                ("endpoint", "https://leader.example.com/"),
-                ("role", "leader")
-            ])
-            .unwrap()
-        ))
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_header("Content-Type", CONTENT_TYPE)
-        .run_async(&handler)
-        .await,
+        delete("/taskprov/peer_aggregators")
+            .with_request_body(serde_json::to_vec(&req).unwrap())
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .with_request_header("Content-Type", CONTENT_TYPE)
+            .run_async(&handler)
+            .await,
         Status::NoContent
     );
 
@@ -1534,31 +1438,20 @@ async fn delete_taskprov_peer_aggregator() {
 
     // Non-existent target.
     assert_response!(
-        delete(format!(
-            "/taskprov/peer_aggregators?{}",
-            serde_urlencoded::to_string(vec![
-                ("endpoint", "https://leader.example.com/"),
-                ("role", "leader")
-            ])
-            .unwrap()
-        ))
-        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-        .with_request_header("Accept", CONTENT_TYPE)
-        .with_request_header("Content-Type", CONTENT_TYPE)
-        .run_async(&handler)
-        .await,
-        Status::NoContent
-    );
-
-    // Missing parameters.
-    assert_response!(
-        delete("/taskprov/peer_aggregators?")
+        delete("/taskprov/peer_aggregators")
+            .with_request_body(
+                serde_json::to_vec(&DeleteTaskprovPeerAggregatorReq {
+                    endpoint: Url::parse("https://doesnt-exist.example.com/").unwrap(),
+                    role: Role::Leader,
+                })
+                .unwrap()
+            )
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
             .with_request_header("Accept", CONTENT_TYPE)
             .with_request_header("Content-Type", CONTENT_TYPE)
             .run_async(&handler)
             .await,
-        Status::BadRequest
+        Status::NoContent
     );
 
     // Missing authorization.

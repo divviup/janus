@@ -155,7 +155,6 @@ enum Error {
     /// Errors that should return HTTP 409.
     #[error("{0}")]
     Conflict(String),
-
     /// Errors that should return HTTP 400.
     #[error("{0}")]
     BadRequest(String),

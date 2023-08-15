@@ -1,8 +1,9 @@
 use crate::{
     models::{
-        AggregatorApiConfig, AggregatorRole, GetTaskIdsResp, GetTaskMetricsResp,
-        GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PostTaskReq, PostTaskprovPeerAggregatorReq,
-        PutGlobalHpkeConfigReq, SupportedVdaf, TaskResp, TaskprovPeerAggregatorResp,
+        AggregatorApiConfig, AggregatorRole, DeleteTaskprovPeerAggregatorReq, GetTaskIdsResp,
+        GetTaskMetricsResp, GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PostTaskReq,
+        PostTaskprovPeerAggregatorReq, PutGlobalHpkeConfigReq, SupportedVdaf, TaskResp,
+        TaskprovPeerAggregatorResp,
     },
     Config, ConnExt, Error,
 };
@@ -370,29 +371,18 @@ pub(super) async fn delete_global_hpke_config<C: Clock>(
 }
 
 pub(super) async fn get_taskprov_peer_aggregators<C: Clock>(
-    conn: &mut Conn,
+    _: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
 ) -> Result<Json<Vec<TaskprovPeerAggregatorResp>>, Error> {
-    Ok(match get_endpoint_and_role(conn)? {
-        Some((endpoint, role)) => Json(Vec::from([ds
-            .run_tx_with_name("get_taskprov_peer_aggregator", |tx| {
-                let endpoint = endpoint.clone();
-                let role = role;
-                Box::pin(async move { tx.get_taskprov_peer_aggregator(&endpoint, &role).await })
-            })
-            .await?
-            .map(TaskprovPeerAggregatorResp::from)
-            .ok_or(Error::NotFound)?])),
-        None => Json(
-            ds.run_tx_with_name("get_taskprov_peer_aggregators", |tx| {
-                Box::pin(async move { tx.get_taskprov_peer_aggregators().await })
-            })
-            .await?
-            .into_iter()
-            .map(TaskprovPeerAggregatorResp::from)
-            .collect::<Vec<_>>(),
-        ),
-    })
+    Ok(Json(
+        ds.run_tx_with_name("get_taskprov_peer_aggregators", |tx| {
+            Box::pin(async move { tx.get_taskprov_peer_aggregators().await })
+        })
+        .await?
+        .into_iter()
+        .map(TaskprovPeerAggregatorResp::from)
+        .collect::<Vec<_>>(),
+    ))
 }
 
 /// Inserts a new peer aggregator. Insertion is only supported, attempting to modify an existing
@@ -402,18 +392,15 @@ pub(super) async fn get_taskprov_peer_aggregators<C: Clock>(
 /// token rotation cumbersome and fragile. Since token rotation is the main use case for updating
 /// an existing peer aggregator, we will resolve peer aggregator updates in that issue.
 pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
-    conn: &mut Conn,
+    _: &mut Conn,
     (State(ds), Json(req)): (
         State<Arc<Datastore<C>>>,
         Json<PostTaskprovPeerAggregatorReq>,
     ),
 ) -> Result<(Status, Json<TaskprovPeerAggregatorResp>), Error> {
-    let (endpoint, role) = get_endpoint_and_role(conn)?
-        .ok_or_else(|| Error::BadRequest("Must supply endpoint and role parameters".to_string()))?;
-
     let to_insert = PeerAggregator::new(
-        endpoint.clone(),
-        role,
+        req.endpoint,
+        req.role,
         req.verify_key_init,
         req.collector_hpke_config,
         req.report_expiry_age,
@@ -424,12 +411,11 @@ pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
 
     let inserted = ds
         .run_tx_with_name("post_taskprov_peer_aggregator", |tx| {
-            let endpoint = endpoint.clone();
             let to_insert = to_insert.clone();
-            let role = role;
             Box::pin(async move {
                 tx.put_taskprov_peer_aggregator(&to_insert).await?;
-                tx.get_taskprov_peer_aggregator(&endpoint, &role).await
+                tx.get_taskprov_peer_aggregator(to_insert.endpoint(), to_insert.role())
+                    .await
             })
         })
         .await?
@@ -440,55 +426,23 @@ pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
 }
 
 pub(super) async fn delete_taskprov_peer_aggregator<C: Clock>(
-    conn: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
+    _: &mut Conn,
+    (State(ds), Json(req)): (
+        State<Arc<Datastore<C>>>,
+        Json<DeleteTaskprovPeerAggregatorReq>,
+    ),
 ) -> Result<Status, Error> {
-    let (endpoint, role) = get_endpoint_and_role(conn)?
-        .ok_or_else(|| Error::BadRequest("Must supply endpoint and role parameters".to_string()))?;
-
     match ds
         .run_tx_with_name("delete_taskprov_peer_aggregator", |tx| {
-            let endpoint = endpoint.clone();
-            let role = role;
-            Box::pin(async move { tx.delete_taskprov_peer_aggregator(&endpoint, &role).await })
+            let req = req.clone();
+            Box::pin(async move {
+                tx.delete_taskprov_peer_aggregator(&req.endpoint, &req.role)
+                    .await
+            })
         })
         .await
     {
         Ok(_) | Err(datastore::Error::MutationTargetNotFound) => Ok(Status::NoContent),
         Err(err) => Err(err.into()),
-    }
-}
-
-fn get_endpoint_and_role(conn: &Conn) -> Result<Option<(Url, Role)>, Error> {
-    let params = serde_urlencoded::from_str::<Vec<(String, String)>>(conn.querystring())?;
-
-    let endpoint = params
-        .iter()
-        .find(|(k, _)| *k == "endpoint")
-        .map(|endpoint| Url::parse(&endpoint.1))
-        .transpose()?;
-
-    let role = params
-        .iter()
-        .find(|(k, _)| *k == "role")
-        .map(|role| {
-            let role = Role::from_str(&role.1)?;
-            if !role.is_aggregator() {
-                Err(Error::BadRequest(
-                    "Role must be leader or helper".to_string(),
-                ))
-            } else {
-                Ok(role)
-            }
-        })
-        .transpose()?;
-
-    match (endpoint, role) {
-        (Some(endpoint), Some(role)) => Ok(Some((endpoint, role))),
-        (None, None) => Ok(None),
-        // Partial queries are not supported.
-        (_, _) => Err(Error::BadRequest(
-            "Must supply both 'endpoint' and 'role' parameters".to_string(),
-        )),
     }
 }

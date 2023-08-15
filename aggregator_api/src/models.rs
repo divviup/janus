@@ -249,10 +249,18 @@ impl From<PeerAggregator> for TaskprovPeerAggregatorResp {
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct PostTaskprovPeerAggregatorReq {
+    pub(crate) endpoint: Url,
+    pub(crate) role: Role,
     pub(crate) collector_hpke_config: HpkeConfig,
     pub(crate) verify_key_init: VerifyKeyInit,
     pub(crate) report_expiry_age: Option<Duration>,
     pub(crate) tolerable_clock_skew: Duration,
     pub(crate) aggregator_auth_tokens: Vec<AuthenticationToken>,
     pub(crate) collector_auth_tokens: Vec<AuthenticationToken>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct DeleteTaskprovPeerAggregatorReq {
+    pub(crate) endpoint: Url,
+    pub(crate) role: Role,
 }
