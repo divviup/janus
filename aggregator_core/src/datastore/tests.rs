@@ -6788,6 +6788,19 @@ async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatast
             let another_example_leader_peer_aggregator =
                 another_example_leader_peer_aggregator.clone();
             Box::pin(async move {
+                for peer in [
+                    example_leader_peer_aggregator.clone(),
+                    example_helper_peer_aggregator.clone(),
+                    another_example_leader_peer_aggregator.clone(),
+                ] {
+                    assert_eq!(
+                        tx.get_taskprov_peer_aggregator(peer.endpoint(), peer.role())
+                            .await
+                            .unwrap(),
+                        Some(peer.clone()),
+                    );
+                }
+
                 assert_eq!(
                     tx.get_taskprov_peer_aggregators().await.unwrap(),
                     vec![
@@ -6796,6 +6809,18 @@ async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatast
                         another_example_leader_peer_aggregator.clone(),
                     ]
                 );
+
+                for peer in [
+                    example_leader_peer_aggregator.clone(),
+                    example_helper_peer_aggregator.clone(),
+                    another_example_leader_peer_aggregator.clone(),
+                ] {
+                    tx.delete_taskprov_peer_aggregator(peer.endpoint(), peer.role())
+                        .await
+                        .unwrap();
+                }
+                assert_eq!(tx.get_taskprov_peer_aggregators().await.unwrap(), vec![]);
+
                 Ok(())
             })
         })
