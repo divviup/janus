@@ -408,9 +408,8 @@ pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
         Json<PostTaskprovPeerAggregatorReq>,
     ),
 ) -> Result<(Status, Json<TaskprovPeerAggregatorResp>), Error> {
-    let (endpoint, role) = get_endpoint_and_role(conn)?.ok_or(Error::BadRequest(
-        "Must supply endpoint and role parameters".to_string(),
-    ))?;
+    let (endpoint, role) = get_endpoint_and_role(conn)?
+        .ok_or_else(|| Error::BadRequest("Must supply endpoint and role parameters".to_string()))?;
 
     let to_insert = PeerAggregator::new(
         endpoint.clone(),
@@ -444,9 +443,8 @@ pub(super) async fn delete_taskprov_peer_aggregator<C: Clock>(
     conn: &mut Conn,
     State(ds): State<Arc<Datastore<C>>>,
 ) -> Result<Status, Error> {
-    let (endpoint, role) = get_endpoint_and_role(conn)?.ok_or(Error::BadRequest(
-        "Must supply endpoint and role parameters".to_string(),
-    ))?;
+    let (endpoint, role) = get_endpoint_and_role(conn)?
+        .ok_or_else(|| Error::BadRequest("Must supply endpoint and role parameters".to_string()))?;
 
     match ds
         .run_tx_with_name("delete_taskprov_peer_aggregator", |tx| {
