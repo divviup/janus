@@ -2958,8 +2958,8 @@ checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
 
 [[package]]
 name = "prio"
-version = "0.10.0"
-source = "git+https://github.com/divviup/libprio-rs?branch=bran/dap-02-on-main-changes#8b74c410556cb982b2a1dbdbba3682ce019575c5"
+version = "0.10.1"
+source = "git+https://github.com/divviup/libprio-rs?branch=release/0.10#dd451734dbce85a2b800dde9e9ccbb844970bef6"
 dependencies = [
  "aes",
  "base64 0.21.2",
