@@ -161,8 +161,6 @@ enum Error {
     #[error(transparent)]
     Url(#[from] url::ParseError),
     #[error(transparent)]
-    UrlEncoding(#[from] serde_urlencoded::de::Error),
-    #[error(transparent)]
     Role(#[from] RoleParseError),
 }
 
@@ -197,9 +195,6 @@ impl Handler for Error {
                 .with_status(Status::BadRequest)
                 .with_body(message.to_string()),
             Self::Url(err) => conn
-                .with_status(Status::BadRequest)
-                .with_body(err.to_string()),
-            Self::UrlEncoding(err) => conn
                 .with_status(Status::BadRequest)
                 .with_body(err.to_string()),
             Self::Role(err) => conn
