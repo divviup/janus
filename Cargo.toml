@@ -19,7 +19,7 @@ edition = "2021"
 homepage = "https://divviup.org"
 license = "MPL-2.0"
 repository = "https://github.com/divviup/janus"
-rust-version = "1.65.0"
+rust-version = "1.67.0"
 version = "0.5.14"
 
 [workspace.dependencies]
