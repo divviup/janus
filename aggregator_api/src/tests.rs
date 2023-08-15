@@ -1406,9 +1406,9 @@ async fn post_taskprov_peer_aggregator() {
 
     let req = PostTaskprovPeerAggregatorReq {
         collector_hpke_config: leader.collector_hpke_config().clone(),
-        verify_key_init: leader.verify_key_init().clone(),
+        verify_key_init: *leader.verify_key_init(),
         report_expiry_age: leader.report_expiry_age().cloned(),
-        tolerable_clock_skew: leader.tolerable_clock_skew().clone(),
+        tolerable_clock_skew: *leader.tolerable_clock_skew(),
         aggregator_auth_tokens: Vec::from(leader.aggregator_auth_tokens()),
         collector_auth_tokens: Vec::from(leader.collector_auth_tokens()),
     };

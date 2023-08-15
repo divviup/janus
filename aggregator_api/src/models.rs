@@ -239,10 +239,10 @@ impl From<PeerAggregator> for TaskprovPeerAggregatorResp {
         // Exclude sensitive values.
         Self {
             endpoint: value.endpoint().clone(),
-            role: value.role().clone(),
+            role: *value.role(),
             collector_hpke_config: value.collector_hpke_config().clone(),
             report_expiry_age: value.report_expiry_age().cloned(),
-            tolerable_clock_skew: value.tolerable_clock_skew().clone(),
+            tolerable_clock_skew: *value.tolerable_clock_skew(),
         }
     }
 }

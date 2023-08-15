@@ -121,18 +121,20 @@ pub(super) async fn post_task<C: Clock>(
     let (aggregator_auth_tokens, collector_auth_tokens) = match req.role {
         Role::Leader => {
             let aggregator_auth_token = req.aggregator_auth_token.ok_or_else(|| {
-                Error::BadRequest(format!(
+                Error::BadRequest(
                     "aggregator acting in leader role must be provided an aggregator auth token"
-                ))
+                        .to_string(),
+                )
             })?;
             (Vec::from([aggregator_auth_token]), Vec::from([random()]))
         }
 
         Role::Helper => {
             if req.aggregator_auth_token.is_some() {
-                return Err(Error::BadRequest(format!(
+                return Err(Error::BadRequest(
                     "aggregator acting in helper role cannot be given an aggregator auth token"
-                )));
+                        .to_string(),
+                ));
             }
 
             (Vec::from([random()]), Vec::new())
@@ -487,8 +489,8 @@ fn get_endpoint_and_role(conn: &Conn) -> Result<Option<(Url, Role)>, Error> {
         (Some(endpoint), Some(role)) => Ok(Some((endpoint, role))),
         (None, None) => Ok(None),
         // Partial queries are not supported.
-        (_, _) => Err(Error::BadRequest(format!(
-            "Must supply both 'endpoint' and 'role' parameters"
-        ))),
+        (_, _) => Err(Error::BadRequest(
+            "Must supply both 'endpoint' and 'role' parameters".to_string(),
+        )),
     }
 }
