@@ -9,7 +9,11 @@ use janus_messages::{Duration, HpkeConfig, Role, TaskId, Time};
 use lazy_static::lazy_static;
 use rand::{distributions::Standard, prelude::Distribution};
 use ring::hkdf::{KeyType, Salt, HKDF_SHA256};
-use serde::{de::Error as DeserializeError, Deserialize, Deserializer, Serialize};
+use serde::{
+    de::{self, Visitor},
+    Deserialize, Serialize, Serializer,
+};
+use std::fmt;
 use url::Url;
 
 #[derive(Derivative, Clone, Copy, PartialEq, Eq)]
@@ -36,26 +40,44 @@ impl AsRef<[u8; Self::LEN]> for VerifyKeyInit {
     }
 }
 
-impl<'de> Deserialize<'de> for VerifyKeyInit {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let bytes = String::deserialize(deserializer).and_then(|s| {
-            URL_SAFE_NO_PAD
-                .decode(&s)
-                .map_err(|err| DeserializeError::custom(err.to_string()))
-        })?;
-        Self::try_from(bytes.as_ref()).map_err(|err| DeserializeError::custom(err.to_string()))
-    }
-}
-
 impl Serialize for VerifyKeyInit {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: Serializer,
     {
-        serializer.serialize_str(&URL_SAFE_NO_PAD.encode(&self.0))
+        let encoded = URL_SAFE_NO_PAD.encode(self.as_ref());
+        serializer.serialize_str(&encoded)
+    }
+}
+
+struct VerifyKeyInitVisitor;
+
+impl<'de> Visitor<'de> for VerifyKeyInitVisitor {
+    type Value = VerifyKeyInit;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a base64url-encoded string")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<VerifyKeyInit, E>
+    where
+        E: de::Error,
+    {
+        let decoded = URL_SAFE_NO_PAD
+            .decode(value)
+            .map_err(|_| E::custom("invalid base64url value"))?;
+        VerifyKeyInit::try_from(decoded.as_ref()).map_err(|err| E::custom(err.to_string()))
+    }
+}
+
+/// This customized implementation deserializes a [`VerifyKeyInit`] as a base64url-encoded string,
+/// instead of as a byte array. This is more compact and ergonomic when serialized to YAML.
+impl<'de> Deserialize<'de> for VerifyKeyInit {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_str(VerifyKeyInitVisitor)
     }
 }
 
