@@ -67,7 +67,7 @@ Example response:
   },
   "state": "pending"
 }
-````
+```
 
 The keypair and ID will be generated for you, and stored in the database. If
 you need to change the ciphers used, provide the `kem_id`, `kdf_id`, `aead_id`
