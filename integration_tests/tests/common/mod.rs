@@ -326,7 +326,6 @@ pub async fn submit_measurements_and_verify_aggregate(
             let vdaf = Prio3::new_histogram(2, *length).unwrap();
 
             let mut aggregate_result = vec![0; *length];
-            aggregate_result.resize(*length, 0);
             let measurements = iter::repeat_with(|| {
                 let choice = thread_rng().gen_range(0..*length);
                 aggregate_result[choice] += 1;
