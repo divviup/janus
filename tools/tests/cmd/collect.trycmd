@@ -49,13 +49,10 @@ VDAF Algorithm and Parameters:
           - histogram: Prio3Histogram
 
       --length <LENGTH>
-          Number of vector elements, for use with --vdaf=countvec and --vdaf=sumvec
+          Number of vector elements, when used with --vdaf=countvec and --vdaf=sumvec or number of histogram buckets, when used with --vdaf=histogram
 
       --bits <BITS>
           Bit length of measurements, for use with --vdaf=sum and --vdaf=sumvec
-
-      --buckets <BUCKETS>
-          Comma-separated list of bucket boundaries, for use with --vdaf=histogram
 
 Collect Request Parameters (Time Interval):
       --batch-interval-start <BATCH_INTERVAL_START>

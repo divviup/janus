@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use http::{
     header::{ACCEPT, CONTENT_TYPE},
     Method,
@@ -35,9 +35,17 @@ impl TryFrom<&VdafInstance> for ApiVdaf {
         match vdaf {
             VdafInstance::Prio3Count => Ok(ApiVdaf::Count),
             VdafInstance::Prio3Sum { bits } => Ok(ApiVdaf::Sum { bits: *bits }),
-            VdafInstance::Prio3Histogram { buckets } => Ok(ApiVdaf::Histogram {
-                buckets: buckets.clone(),
-            }),
+            VdafInstance::Prio3Histogram { length } => {
+                // divviup-api does not yet support the new Prio3Histogram representation. Until it
+                // does, we synthesize fake bucket boundaries that will yield the number of buckets
+                // we want.
+                // https://github.com/divviup/divviup-api/issues/410
+                Ok(ApiVdaf::Histogram {
+                    buckets: (0..*length - 1)
+                        .map(|length| u64::try_from(length).context("cannot convert length to u64"))
+                        .collect::<Result<Vec<_>, _>>()?,
+                })
+            }
             _ => Err(anyhow!("unsupported VDAF: {vdaf:?}")),
         }
     }

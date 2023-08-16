@@ -361,8 +361,8 @@ async fn handle_collection_start(
             .await?
         }
 
-        (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3Histogram { buckets }) => {
-            let vdaf = Prio3::new_histogram(2, &buckets)
+        (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3Histogram { length }) => {
+            let vdaf = Prio3::new_histogram(2, length)
                 .context("failed to construct Prio3Histogram VDAF")?;
             handle_collect_generic(
                 http_client,
@@ -581,8 +581,8 @@ async fn handle_collection_start(
             .await?
         }
 
-        (ParsedQuery::FixedSize(fixed_size_query), VdafInstance::Prio3Histogram { buckets }) => {
-            let vdaf = Prio3::new_histogram(2, &buckets)
+        (ParsedQuery::FixedSize(fixed_size_query), VdafInstance::Prio3Histogram { length }) => {
+            let vdaf = Prio3::new_histogram(2, length)
                 .context("failed to construct Prio3Histogram VDAF")?;
             handle_collect_generic(
                 http_client,

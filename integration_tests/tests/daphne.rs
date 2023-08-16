@@ -49,6 +49,7 @@ async fn daphne_janus() {
 
 // This test places Janus in the leader role & Daphne in the helper role.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "Daphne does not currently support DAP-05 (issue #1669)"]
 async fn janus_daphne() {
     install_test_trace_subscriber();
 

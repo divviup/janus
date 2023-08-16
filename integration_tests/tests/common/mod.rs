@@ -322,21 +322,14 @@ pub async fn submit_measurements_and_verify_aggregate(
             )
             .await;
         }
-        VdafInstance::Prio3Histogram { buckets } => {
-            let vdaf = Prio3::new_histogram(2, buckets).unwrap();
+        VdafInstance::Prio3Histogram { length } => {
+            let vdaf = Prio3::new_histogram(2, *length).unwrap();
 
-            let mut aggregate_result = vec![0; buckets.len() + 1];
-            aggregate_result.resize(buckets.len() + 1, 0);
+            let mut aggregate_result = vec![0; *length];
             let measurements = iter::repeat_with(|| {
-                let choice = thread_rng().gen_range(0..=buckets.len());
+                let choice = thread_rng().gen_range(0..*length);
                 aggregate_result[choice] += 1;
-                let measurement = if choice == buckets.len() {
-                    // This goes into the counter covering the range that extends to positive infinity.
-                    buckets[buckets.len() - 1] + 1
-                } else {
-                    buckets[choice]
-                };
-                measurement as u128
+                choice
             })
             .take(total_measurements)
             .collect::<Vec<_>>();

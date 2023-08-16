@@ -252,13 +252,13 @@ async fn in_cluster_sum() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "divviup-api does not currently support DAP-05 (https://github.com/divviup/divviup-api/issues/410)"]
 async fn in_cluster_histogram() {
     install_test_trace_subscriber();
 
     // Start port forwards and set up task.
-    let buckets = Vec::from([3, 6, 8]);
     let janus_pair = InClusterJanusPair::new(
-        VdafInstance::Prio3Histogram { buckets },
+        VdafInstance::Prio3Histogram { length: 4 },
         QueryType::TimeInterval,
     )
     .await;
