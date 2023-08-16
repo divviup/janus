@@ -43,6 +43,9 @@ taskprov_config:
   enabled: true
 ```
 
+Once this flag is enabled, it must not be disabled. You cannot go from a Taskprov
+aggregator back to a non-Taskprov aggregator.
+
 ### Peer Aggregators
 
 Peer aggregators are identified by their HTTP endpoint (as shared in task
