@@ -41,7 +41,7 @@ impl TryFrom<&VdafInstance> for ApiVdaf {
                 // we want.
                 // https://github.com/divviup/divviup-api/issues/410
                 Ok(ApiVdaf::Histogram {
-                    buckets: (0..=*length)
+                    buckets: (0..*length - 1)
                         .map(|length| u64::try_from(length).context("cannot convert length to u64"))
                         .collect::<Result<Vec<_>, _>>()?,
                 })
