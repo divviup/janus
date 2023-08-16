@@ -11,7 +11,7 @@ use std::sync::Arc;
 type ArcPrepInitFn =
     Arc<dyn Fn(&AggregationParam) -> Result<(), VdafError> + 'static + Send + Sync>;
 type ArcPrepStepFn =
-    Arc<dyn Fn() -> Result<PrepareTransition<Vdaf, 0, 16>, VdafError> + 'static + Send + Sync>;
+    Arc<dyn Fn() -> Result<PrepareTransition<Vdaf, 0>, VdafError> + 'static + Send + Sync>;
 
 #[derive(Clone)]
 pub struct Vdaf {
@@ -36,7 +36,7 @@ impl Vdaf {
     pub fn new() -> Self {
         Self {
             prep_init_fn: Arc::new(|_| -> Result<(), VdafError> { Ok(()) }),
-            prep_step_fn: Arc::new(|| -> Result<PrepareTransition<Self, 0, 16>, VdafError> {
+            prep_step_fn: Arc::new(|| -> Result<PrepareTransition<Self, 0>, VdafError> {
                 Ok(PrepareTransition::Finish(OutputShare()))
             }),
             input_share: InputShare::default(),
@@ -54,7 +54,7 @@ impl Vdaf {
         self
     }
 
-    pub fn with_prep_step_fn<F: Fn() -> Result<PrepareTransition<Self, 0, 16>, VdafError>>(
+    pub fn with_prep_step_fn<F: Fn() -> Result<PrepareTransition<Self, 0>, VdafError>>(
         mut self,
         f: F,
     ) -> Self
@@ -93,7 +93,7 @@ impl vdaf::Vdaf for Vdaf {
     }
 }
 
-impl vdaf::Aggregator<0, 16> for Vdaf {
+impl vdaf::Aggregator<0> for Vdaf {
     type PrepareState = PrepareState;
     type PrepareShare = ();
     type PrepareMessage = ();
@@ -103,7 +103,7 @@ impl vdaf::Aggregator<0, 16> for Vdaf {
         _verify_key: &[u8; 0],
         _: usize,
         aggregation_param: &Self::AggregationParam,
-        _nonce: &[u8; 16],
+        _nonce: &[u8],
         _: &Self::PublicShare,
         input_share: &Self::InputShare,
     ) -> Result<(Self::PrepareState, Self::PrepareShare), VdafError> {
@@ -122,7 +122,7 @@ impl vdaf::Aggregator<0, 16> for Vdaf {
         &self,
         _: Self::PrepareState,
         _: Self::PrepareMessage,
-    ) -> Result<PrepareTransition<Self, 0, 16>, VdafError> {
+    ) -> Result<PrepareTransition<Self, 0>, VdafError> {
         (self.prep_step_fn)()
     }
 
@@ -139,11 +139,10 @@ impl vdaf::Aggregator<0, 16> for Vdaf {
     }
 }
 
-impl vdaf::Client<16> for Vdaf {
+impl vdaf::Client for Vdaf {
     fn shard(
         &self,
         _measurement: &Self::Measurement,
-        _nonce: &[u8; 16],
     ) -> Result<(Self::PublicShare, Vec<Self::InputShare>), VdafError> {
         Ok(((), Vec::from([self.input_share, self.input_share])))
     }
@@ -155,10 +154,6 @@ pub struct InputShare(pub u8);
 impl Encode for InputShare {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.0.encode(bytes)
-    }
-
-    fn encoded_len(&self) -> Option<usize> {
-        self.0.encoded_len()
     }
 }
 
@@ -174,10 +169,6 @@ pub struct AggregationParam(pub u8);
 impl Encode for AggregationParam {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.0.encode(bytes);
-    }
-
-    fn encoded_len(&self) -> Option<usize> {
-        self.0.encoded_len()
     }
 }
 
@@ -198,10 +189,6 @@ impl Decode for OutputShare {
 
 impl Encode for OutputShare {
     fn encode(&self, _: &mut Vec<u8>) {}
-
-    fn encoded_len(&self) -> Option<usize> {
-        Some(0)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -210,10 +197,6 @@ pub struct PrepareState(pub u8);
 impl Encode for PrepareState {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.0.encode(bytes);
-    }
-
-    fn encoded_len(&self) -> Option<usize> {
-        self.0.encoded_len()
     }
 }
 
@@ -257,8 +240,20 @@ impl Encode for AggregateShare {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.0.encode(bytes)
     }
+}
 
-    fn encoded_len(&self) -> Option<usize> {
-        self.0.encoded_len()
+impl From<&AggregateShare> for Vec<u8> {
+    fn from(value: &AggregateShare) -> Self {
+        let mut bytes = Vec::new();
+        value.encode(&mut bytes);
+        bytes
+    }
+}
+
+impl TryFrom<&[u8]> for AggregateShare {
+    type Error = CodecError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        Self::get_decoded(bytes)
     }
 }

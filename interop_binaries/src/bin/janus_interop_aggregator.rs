@@ -14,14 +14,20 @@ use janus_aggregator_core::{
 use janus_core::{task::AuthenticationToken, time::RealClock};
 use janus_interop_binaries::{
     status::{ERROR, SUCCESS},
-    AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole, HpkeConfigRegistry, Keyring,
+    AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole, FetchBatchIdsRequest,
+    FetchBatchIdsResponse, HpkeConfigRegistry, Keyring,
 };
-use janus_messages::{Duration, HpkeConfig, Time};
+use janus_messages::{BatchId, Duration, HpkeConfig, TaskId, Time};
 use opentelemetry::metrics::Meter;
 use prio::codec::Decode;
 use serde::{Deserialize, Serialize};
 use sqlx::{migrate::Migrator, Connection, PgConnection};
-use std::{net::SocketAddr, path::Path, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    net::SocketAddr,
+    path::Path,
+    sync::Arc,
+};
 use tokio::sync::Mutex;
 use trillium::{Conn, Handler};
 use trillium_api::{api, Json};
@@ -44,8 +50,8 @@ async fn handle_add_task(
             .context("invalid header value in \"leader_authentication_token\"")?;
     let vdaf_verify_key = SecretBytes::new(
         URL_SAFE_NO_PAD
-            .decode(request.vdaf_verify_key)
-            .context("invalid base64url content in \"vdaf_verify_key\"")?,
+            .decode(request.verify_key)
+            .context("invalid base64url content in \"verify_key\"")?,
     );
     let time_precision = Duration::from_seconds(request.time_precision);
     let collector_hpke_config_bytes = URL_SAFE_NO_PAD
@@ -117,6 +123,26 @@ async fn handle_add_task(
         .context("error adding task to database")
 }
 
+async fn handle_fetch_batch_ids(
+    datastore: &Datastore<RealClock>,
+    batch_id_storage: &Mutex<HashMap<TaskId, HashSet<BatchId>>>,
+    request: FetchBatchIdsRequest,
+) -> anyhow::Result<Vec<BatchId>> {
+    let outstanding_batches = datastore
+        .run_tx(move |tx| {
+            Box::pin(async move { tx.get_outstanding_batches(&request.task_id, &None).await })
+        })
+        .await
+        .context("error fetching batches from database")?;
+
+    Ok({
+        let mut batch_id_storage = batch_id_storage.lock().await;
+        let batch_ids = batch_id_storage.entry(request.task_id).or_default();
+        batch_ids.extend(outstanding_batches.into_iter().map(|ob| *ob.id()));
+        batch_ids.iter().copied().collect()
+    })
+}
+
 async fn make_handler(
     datastore: Arc<Datastore<RealClock>>,
     meter: &Meter,
@@ -148,7 +174,8 @@ async fn make_handler(
         )
         .post(
             "internal/test/add_task",
-            api(
+            api({
+                let datastore = Arc::clone(&datastore);
                 move |_conn: &mut Conn, Json(request): Json<AggregatorAddTaskRequest>| {
                     let datastore = Arc::clone(&datastore);
                     let keyring = keyring.clone();
@@ -164,8 +191,34 @@ async fn make_handler(
                             }),
                         }
                     }
-                },
-            ),
+                }
+            }),
+        )
+        .post(
+            "/internal/test/fetch_batch_ids",
+            api({
+                let datastore = Arc::clone(&datastore);
+                let batch_id_storage = Arc::new(Mutex::new(HashMap::new()));
+                move |_conn: &mut Conn, Json(request): Json<FetchBatchIdsRequest>| {
+                    let datastore = Arc::clone(&datastore);
+                    let batch_id_storage = Arc::clone(&batch_id_storage);
+
+                    async move {
+                        match handle_fetch_batch_ids(&datastore, &batch_id_storage, request).await {
+                            Ok(batch_ids) => Json(FetchBatchIdsResponse {
+                                status: SUCCESS.to_string(),
+                                error: None,
+                                batch_ids: Some(batch_ids),
+                            }),
+                            Err(err) => Json(FetchBatchIdsResponse {
+                                status: ERROR.to_string(),
+                                error: Some(format!("{err:?}")),
+                                batch_ids: None,
+                            }),
+                        }
+                    }
+                }
+            }),
         );
     Ok(handler)
 }

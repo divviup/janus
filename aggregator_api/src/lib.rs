@@ -677,8 +677,8 @@ mod tests {
         time::MockClock,
     };
     use janus_messages::{
-        query_type::TimeInterval, AggregationJobRound, Duration, HpkeAeadId, HpkeConfig,
-        HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Interval, Role, TaskId, Time,
+        query_type::TimeInterval, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId,
+        HpkeKemId, HpkePublicKey, Interval, Role, TaskId, Time,
     };
     use rand::{distributions::Standard, random, thread_rng, Rng};
     use serde_test::{assert_ser_tokens, assert_tokens, Token};
@@ -832,7 +832,7 @@ mod tests {
         let req = PostTaskReq {
             peer_aggregator_endpoint: "http://aggregator.endpoint".try_into().unwrap(),
             query_type: QueryType::TimeInterval,
-            vdaf: VdafInstance::Prio3Count,
+            vdaf: VdafInstance::Prio3Aes128Count,
             role: Role::Collector,
             vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
             max_batch_query_count: 12,
@@ -873,7 +873,7 @@ mod tests {
         let req = PostTaskReq {
             peer_aggregator_endpoint: "http://aggregator.endpoint".try_into().unwrap(),
             query_type: QueryType::TimeInterval,
-            vdaf: VdafInstance::Prio3Count,
+            vdaf: VdafInstance::Prio3Aes128Count,
             role: Role::Helper,
             vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
             max_batch_query_count: 12,
@@ -915,7 +915,7 @@ mod tests {
         let req = PostTaskReq {
             peer_aggregator_endpoint: "http://aggregator.endpoint".try_into().unwrap(),
             query_type: QueryType::TimeInterval,
-            vdaf: VdafInstance::Prio3Count,
+            vdaf: VdafInstance::Prio3Aes128Count,
             role: Role::Helper,
             vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
             max_batch_query_count: 12,
@@ -992,7 +992,7 @@ mod tests {
         let req = PostTaskReq {
             peer_aggregator_endpoint: "http://aggregator.endpoint".try_into().unwrap(),
             query_type: QueryType::TimeInterval,
-            vdaf: VdafInstance::Prio3Count,
+            vdaf: VdafInstance::Prio3Aes128Count,
             role: Role::Helper,
             vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
             max_batch_query_count: 12,
@@ -1035,7 +1035,7 @@ mod tests {
         let mut req = PostTaskReq {
             peer_aggregator_endpoint: "http://aggregator.endpoint".try_into().unwrap(),
             query_type: QueryType::TimeInterval,
-            vdaf: VdafInstance::Prio3Count,
+            vdaf: VdafInstance::Prio3Aes128Count,
             role: Role::Leader,
             vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
             max_batch_query_count: 12,
@@ -1116,7 +1116,7 @@ mod tests {
         let req = PostTaskReq {
             peer_aggregator_endpoint: "http://aggregator.endpoint".try_into().unwrap(),
             query_type: QueryType::TimeInterval,
-            vdaf: VdafInstance::Prio3Count,
+            vdaf: VdafInstance::Prio3Aes128Count,
             role: Role::Leader,
             vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
             max_batch_query_count: 12,
@@ -1203,7 +1203,7 @@ mod tests {
         let req = PostTaskReq {
             peer_aggregator_endpoint: "http://aggregator.endpoint".try_into().unwrap(),
             query_type: QueryType::TimeInterval,
-            vdaf: VdafInstance::Prio3Count,
+            vdaf: VdafInstance::Prio3Aes128Count,
             role: Role::Leader,
             vdaf_verify_key: URL_SAFE_NO_PAD.encode(&vdaf_verify_key),
             max_batch_query_count: 12,
@@ -1406,7 +1406,6 @@ mod tests {
                             )
                             .unwrap(),
                             AggregationJobState::InProgress,
-                            AggregationJobRound::from(0),
                         ),
                     )
                     .await?;
@@ -1424,7 +1423,6 @@ mod tests {
                                         *report.metadata().id(),
                                         *report.metadata().time(),
                                         ord.try_into().unwrap(),
-                                        None,
                                         ReportAggregationState::Start,
                                     ),
                                 )
@@ -1527,7 +1525,7 @@ mod tests {
                     max_batch_size: 999,
                     batch_time_window_size: None,
                 },
-                vdaf: VdafInstance::Prio3CountVec { length: 5 },
+                vdaf: VdafInstance::Prio3Aes128CountVec { length: 5 },
                 role: Role::Helper,
                 vdaf_verify_key: "encoded".to_owned(),
                 max_batch_query_count: 1,
@@ -1564,7 +1562,7 @@ mod tests {
                 Token::Str("vdaf"),
                 Token::StructVariant {
                     name: "VdafInstance",
-                    variant: "Prio3CountVec",
+                    variant: "Prio3Aes128CountVec",
                     len: 1,
                 },
                 Token::Str("length"),
@@ -1628,7 +1626,7 @@ mod tests {
                     max_batch_size: 999,
                     batch_time_window_size: None,
                 },
-                vdaf: VdafInstance::Prio3CountVec { length: 5 },
+                vdaf: VdafInstance::Prio3Aes128CountVec { length: 5 },
                 role: Role::Leader,
                 vdaf_verify_key: "encoded".to_owned(),
                 max_batch_query_count: 1,
@@ -1667,7 +1665,7 @@ mod tests {
                 Token::Str("vdaf"),
                 Token::StructVariant {
                     name: "VdafInstance",
-                    variant: "Prio3CountVec",
+                    variant: "Prio3Aes128CountVec",
                     len: 1,
                 },
                 Token::Str("length"),
@@ -1750,7 +1748,7 @@ mod tests {
                 max_batch_size: 999,
                 batch_time_window_size: None,
             },
-            VdafInstance::Prio3CountVec { length: 5 },
+            VdafInstance::Prio3Aes128CountVec { length: 5 },
             Role::Leader,
             Vec::from([SecretBytes::new(b"vdaf verify key!".to_vec())]),
             1,
@@ -1811,7 +1809,7 @@ mod tests {
                 Token::Str("vdaf"),
                 Token::StructVariant {
                     name: "VdafInstance",
-                    variant: "Prio3CountVec",
+                    variant: "Prio3Aes128CountVec",
                     len: 1,
                 },
                 Token::Str("length"),

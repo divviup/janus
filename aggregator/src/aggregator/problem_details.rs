@@ -85,7 +85,7 @@ mod tests {
             DapProblemType::MissingTaskId,
             DapProblemType::UnrecognizedAggregationJob,
             DapProblemType::OutdatedConfig,
-            DapProblemType::ReportRejected,
+            DapProblemType::ReportTooLate,
             DapProblemType::ReportTooEarly,
             DapProblemType::BatchInvalid,
             DapProblemType::InvalidBatchSize,
@@ -128,9 +128,9 @@ mod tests {
                 TestCase::new(Box::new(|| Error::InvalidConfiguration("test")), None),
                 TestCase::new(
                     Box::new(|| {
-                        Error::ReportRejected(random(), random(), RealClock::default().now())
+                        Error::ReportTooLate(random(), random(), RealClock::default().now())
                     }),
-                    Some(DapProblemType::ReportRejected),
+                    Some(DapProblemType::ReportTooLate),
                 ),
                 TestCase::new(
                     Box::new(|| Error::UnrecognizedMessage(Some(random()), "test")),

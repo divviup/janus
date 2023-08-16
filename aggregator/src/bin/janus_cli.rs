@@ -590,13 +590,13 @@ mod tests {
         let tasks = Vec::from([
             TaskBuilder::new(
                 QueryType::TimeInterval,
-                VdafInstance::Prio3Count,
+                VdafInstance::Prio3Aes128Count,
                 Role::Leader,
             )
             .build(),
             TaskBuilder::new(
                 QueryType::TimeInterval,
-                VdafInstance::Prio3Sum { bits: 64 },
+                VdafInstance::Prio3Aes128Sum { bits: 64 },
                 Role::Helper,
             )
             .build(),
@@ -623,7 +623,7 @@ mod tests {
 
         let tasks = Vec::from([TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .build()]);
@@ -646,13 +646,13 @@ mod tests {
         let tasks = Vec::from([
             TaskBuilder::new(
                 QueryType::TimeInterval,
-                VdafInstance::Prio3Count,
+                VdafInstance::Prio3Aes128Count,
                 Role::Leader,
             )
             .build(),
             TaskBuilder::new(
                 QueryType::TimeInterval,
-                VdafInstance::Prio3Sum { bits: 64 },
+                VdafInstance::Prio3Aes128Sum { bits: 64 },
                 Role::Helper,
             )
             .build(),
@@ -676,7 +676,7 @@ mod tests {
                 max_batch_size: 100,
                 batch_time_window_size: None,
             },
-            VdafInstance::Prio3CountVec { length: 4 },
+            VdafInstance::Prio3Aes128CountVec { length: 4 },
             Role::Leader,
         )
         .with_id(*tasks[0].id())
@@ -721,7 +721,7 @@ mod tests {
   - https://leader
   - https://helper
   query_type: TimeInterval
-  vdaf: !Prio3Sum
+  vdaf: !Prio3Aes128Sum
     bits: 2
   role: Leader
   vdaf_verify_keys:
@@ -744,7 +744,7 @@ mod tests {
   - https://leader
   - https://helper
   query_type: TimeInterval
-  vdaf: !Prio3Sum
+  vdaf: !Prio3Aes128Sum
     bits: 2
   role: Helper
   vdaf_verify_keys:

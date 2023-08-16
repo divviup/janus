@@ -4,8 +4,10 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use hpke_dispatch::{HpkeError, Kem, Keypair};
 use janus_messages::{
-    HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,
+    query_type::QueryType, BatchSelector, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId,
+    HpkeKdfId, HpkeKemId, HpkePublicKey, ReportMetadata, Role, TaskId,
 };
+use prio::codec::Encode;
 use serde::{
     de::{self, Visitor},
     Deserialize, Serialize, Serializer,
@@ -51,8 +53,8 @@ impl Label {
     /// Get the message-specific portion of the application info string for this label.
     pub fn as_bytes(&self) -> &'static [u8] {
         match self {
-            Self::InputShare => b"dap-04 input share",
-            Self::AggregateShare => b"dap-04 aggregate share",
+            Self::InputShare => b"dap-02 input share",
+            Self::AggregateShare => b"dap-02 aggregate share",
         }
     }
 }
@@ -73,6 +75,30 @@ impl HpkeApplicationInfo {
             .concat(),
         )
     }
+}
+
+/// Computes the additional authenticated data to use for input share encryptions/decryptions.
+pub fn input_share_aad(
+    task_id: &TaskId,
+    metadata: &ReportMetadata,
+    public_share: &[u8],
+) -> Vec<u8> {
+    let mut aad = Vec::new();
+    aad.extend(task_id.as_ref());
+    aad.extend(&metadata.get_encoded());
+    aad.extend(public_share);
+    aad
+}
+
+/// Computes the additional authenticated data to use for aggregate share encryptions/decryptions.
+pub fn aggregate_share_aad<Q: QueryType>(
+    task_id: &TaskId,
+    batch_selector: &BatchSelector<Q>,
+) -> Vec<u8> {
+    let mut aad = Vec::new();
+    aad.extend(task_id.as_ref());
+    aad.extend(&batch_selector.get_encoded());
+    aad
 }
 
 /// An HPKE private key, serialized using the `SerializePrivateKey` function as

@@ -53,7 +53,7 @@ async fn janus_janus_count() {
     let container_client = container_client();
     let janus_pair = JanusPair::new(
         &container_client,
-        VdafInstance::Prio3Count,
+        VdafInstance::Prio3Aes128Count,
         QueryType::TimeInterval,
     )
     .await;
@@ -76,7 +76,7 @@ async fn janus_janus_sum_16() {
     let container_client = container_client();
     let janus_pair = JanusPair::new(
         &container_client,
-        VdafInstance::Prio3Sum { bits: 16 },
+        VdafInstance::Prio3Aes128Sum { bits: 16 },
         QueryType::TimeInterval,
     )
     .await;
@@ -101,7 +101,7 @@ async fn janus_janus_histogram_4_buckets() {
     let container_client = container_client();
     let janus_pair = JanusPair::new(
         &container_client,
-        VdafInstance::Prio3Histogram { buckets },
+        VdafInstance::Prio3Aes128Histogram { buckets },
         QueryType::TimeInterval,
     )
     .await;
@@ -124,7 +124,7 @@ async fn janus_janus_count_vec_15() {
     let container_client = container_client();
     let janus_pair = JanusPair::new(
         &container_client,
-        VdafInstance::Prio3CountVec { length: 15 },
+        VdafInstance::Prio3Aes128CountVec { length: 15 },
         QueryType::TimeInterval,
     )
     .await;
@@ -147,7 +147,7 @@ async fn janus_janus_fixed_size() {
     let container_client = container_client();
     let janus_pair = JanusPair::new(
         &container_client,
-        VdafInstance::Prio3Count,
+        VdafInstance::Prio3Aes128Count,
         QueryType::FixedSize {
             max_batch_size: 50,
             batch_time_window_size: None,
@@ -156,30 +156,6 @@ async fn janus_janus_fixed_size() {
     .await;
 
     // Run the behavioral test.
-    submit_measurements_and_verify_aggregate(
-        &janus_pair.task_parameters,
-        (janus_pair.leader.port(), janus_pair.helper.port()),
-        &ClientBackend::InProcess,
-    )
-    .await;
-}
-
-// This test exercises Prio3SumVec with Janus as both the leader and the helper.
-#[tokio::test(flavor = "multi_thread")]
-async fn janus_janus_sum_vec() {
-    install_test_trace_subscriber();
-
-    let container_client = container_client();
-    let janus_pair = JanusPair::new(
-        &container_client,
-        VdafInstance::Prio3SumVec {
-            bits: 16,
-            length: 15,
-        },
-        QueryType::TimeInterval,
-    )
-    .await;
-
     submit_measurements_and_verify_aggregate(
         &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),

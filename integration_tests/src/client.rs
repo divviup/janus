@@ -9,7 +9,10 @@ use prio::{
     codec::Encode,
     vdaf::{
         self,
-        prio3::{Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVecMultithreaded},
+        prio3::{
+            Prio3Aes128Count, Prio3Aes128CountVecMultithreaded, Prio3Aes128Histogram,
+            Prio3Aes128Sum,
+        },
     },
 };
 use rand::random;
@@ -20,29 +23,32 @@ use url::Url;
 
 /// Extension trait to encode measurements for VDAFs as JSON objects, according to
 /// draft-dcook-ppm-dap-interop-test-design.
-pub trait InteropClientEncoding: vdaf::Client<16> {
+pub trait InteropClientEncoding: vdaf::Client
+where
+    for<'a> &'a Self::AggregateShare: Into<Vec<u8>>,
+{
     fn json_encode_measurement(&self, measurement: &Self::Measurement) -> Value;
 }
 
-impl InteropClientEncoding for Prio3Count {
+impl InteropClientEncoding for Prio3Aes128Count {
     fn json_encode_measurement(&self, measurement: &Self::Measurement) -> Value {
         Value::String(format!("{measurement}"))
     }
 }
 
-impl InteropClientEncoding for Prio3Sum {
+impl InteropClientEncoding for Prio3Aes128Sum {
     fn json_encode_measurement(&self, measurement: &Self::Measurement) -> Value {
         Value::String(format!("{measurement}"))
     }
 }
 
-impl InteropClientEncoding for Prio3Histogram {
+impl InteropClientEncoding for Prio3Aes128Histogram {
     fn json_encode_measurement(&self, measurement: &Self::Measurement) -> Value {
         Value::String(format!("{measurement}"))
     }
 }
 
-impl InteropClientEncoding for Prio3SumVecMultithreaded {
+impl InteropClientEncoding for Prio3Aes128CountVecMultithreaded {
     fn json_encode_measurement(&self, measurement: &Self::Measurement) -> Value {
         Value::Array(
             measurement
@@ -55,23 +61,18 @@ impl InteropClientEncoding for Prio3SumVecMultithreaded {
 
 fn json_encode_vdaf(vdaf: &VdafInstance) -> Value {
     match vdaf {
-        VdafInstance::Prio3Count => json!({
-            "type": "Prio3Count"
+        VdafInstance::Prio3Aes128Count => json!({
+            "type": "Prio3Aes128Count"
         }),
-        VdafInstance::Prio3CountVec { length } => json!({
-            "type": "Prio3CountVec",
+        VdafInstance::Prio3Aes128CountVec { length } => json!({
+            "type": "Prio3Aes128CountVec",
             "length": format!("{length}"),
         }),
-        VdafInstance::Prio3Sum { bits } => json!({
-            "type": "Prio3Sum",
+        VdafInstance::Prio3Aes128Sum { bits } => json!({
+            "type": "Prio3Aes128Sum",
             "bits": format!("{bits}"),
         }),
-        VdafInstance::Prio3SumVec { bits, length } => json!({
-            "type": "Prio3SumVec",
-            "bits": format!("{bits}"),
-            "length": format!("{length}"),
-        }),
-        VdafInstance::Prio3Histogram { buckets } => {
+        VdafInstance::Prio3Aes128Histogram { buckets } => {
             let buckets = Value::Array(
                 buckets
                     .iter()
@@ -79,7 +80,7 @@ fn json_encode_vdaf(vdaf: &VdafInstance) -> Value {
                     .collect(),
             );
             json!({
-                "type": "Prio3Histogram",
+                "type": "Prio3Aes128Histogram",
                 "buckets": buckets,
             })
         }
@@ -118,8 +119,8 @@ impl InteropClient {
                 name: "us-west2-docker.pkg.dev/divviup-artifacts-public/divviup-ts/\
                        divviup_ts_interop_client"
                     .to_string(),
-                tag: "dap-draft-04@sha256:\
-                      43ccdf68e319c677f12f0cb730c63e73b872477cf0e1310b727f449b74a14ac2"
+                tag: "dap-draft-02@sha256:\
+                      1fdcbea395465eeac1cb49f8bb65f419d9b5e147a993f8cf912310a8ea0b62e6"
                     .to_string(),
             }
         }
@@ -163,7 +164,8 @@ impl<'a> ClientBackend<'a> {
         vdaf: V,
     ) -> anyhow::Result<ClientImplementation<'a, V>>
     where
-        V: vdaf::Client<16> + InteropClientEncoding,
+        V: vdaf::Client + InteropClientEncoding,
+        for<'b> &'b V::AggregateShare: Into<Vec<u8>>,
     {
         match self {
             ClientBackend::InProcess => ClientImplementation::new_in_process(
@@ -190,7 +192,8 @@ impl<'a> ClientBackend<'a> {
 
 pub struct ContainerClientImplementation<'d, V>
 where
-    V: vdaf::Client<16>,
+    V: vdaf::Client,
+    for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
 {
     _container: ContainerLogsDropGuard<'d, InteropClient>,
     leader: Url,
@@ -207,7 +210,8 @@ where
 /// [`ClientBackend`].
 pub enum ClientImplementation<'d, V>
 where
-    V: vdaf::Client<16>,
+    V: vdaf::Client,
+    for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
 {
     InProcess { client: Client<V, RealClock> },
     Container(Box<ContainerClientImplementation<'d, V>>),
@@ -215,7 +219,8 @@ where
 
 impl<'d, V> ClientImplementation<'d, V>
 where
-    V: vdaf::Client<16> + InteropClientEncoding,
+    V: vdaf::Client + InteropClientEncoding,
+    for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
 {
     pub async fn new_in_process(
         task_parameters: &TaskParameters,

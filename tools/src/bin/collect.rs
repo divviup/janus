@@ -5,19 +5,12 @@ use clap::{
     ArgAction, Args, CommandFactory, FromArgMatches, Parser, ValueEnum,
 };
 use derivative::Derivative;
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::types::extra::{U15, U31, U63};
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::{FixedI16, FixedI32, FixedI64};
 use janus_collector::{default_http_client, AuthenticationToken, Collector, CollectorParameters};
 use janus_core::hpke::HpkePrivateKey;
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
-    BatchId, Duration, FixedSizeQuery, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId,
-    Time,
+    BatchId, Duration, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId, Time,
 };
-#[cfg(feature = "fpvec_bounded_l2")]
-use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded;
 use prio::{
     codec::Decode,
     vdaf::{self, prio3::Prio3},
@@ -59,19 +52,8 @@ enum VdafType {
     CountVec,
     /// Prio3Sum
     Sum,
-    /// Prio3SumVec
-    SumVec,
     /// Prio3Histogram
     Histogram,
-    #[cfg(feature = "fpvec_bounded_l2")]
-    /// Prio3FixedPoint16BitBoundedL2VecSum
-    FixedPoint16BitBoundedL2VecSum,
-    #[cfg(feature = "fpvec_bounded_l2")]
-    /// Prio3FixedPoint32BitBoundedL2VecSum
-    FixedPoint32BitBoundedL2VecSum,
-    #[cfg(feature = "fpvec_bounded_l2")]
-    /// Prio3FixedPoint64BitBoundedL2VecSum
-    FixedPoint64BitBoundedL2VecSum,
 }
 
 #[derive(Clone)]
@@ -291,18 +273,10 @@ struct QueryOptions {
     #[clap(
         long,
         value_parser = BatchIdValueParser::new(),
-        conflicts_with_all = ["batch_interval_start", "batch_interval_duration", "current_batch"],
+        conflicts_with_all = ["batch_interval_start", "batch_interval_duration"],
         help_heading = "Collect Request Parameters (Fixed Size)",
     )]
     batch_id: Option<BatchId>,
-    /// Have the aggregator select a batch that has not yet been collected
-    #[clap(
-        long,
-        action = ArgAction::SetTrue,
-        conflicts_with_all = ["batch_interval_start", "batch_interval_duration", "batch_id"],
-        help_heading = "Collect Request Parameters (Fixed Size)",
-    )]
-    current_batch: bool,
 }
 
 #[derive(Derivative, Parser, PartialEq, Eq)]
@@ -360,7 +334,7 @@ struct Options {
     length: Option<usize>,
     /// Bit length of measurements, for use with --vdaf=sum and --vdaf=sumvec
     #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
-    bits: Option<usize>,
+    bits: Option<u32>,
     /// Comma-separated list of bucket boundaries, for use with --vdaf=histogram
     #[clap(
         long,
@@ -403,9 +377,8 @@ async fn run(options: Options) -> Result<(), Error> {
         &options.query.batch_interval_start,
         &options.query.batch_interval_duration,
         &options.query.batch_id,
-        options.query.current_batch,
     ) {
-        (Some(batch_interval_start), Some(batch_interval_duration), None, false) => {
+        (Some(batch_interval_start), Some(batch_interval_duration), None) => {
             let batch_interval = Interval::new(
                 Time::from_seconds_since_epoch(*batch_interval_start),
                 Duration::from_seconds(*batch_interval_duration),
@@ -413,16 +386,9 @@ async fn run(options: Options) -> Result<(), Error> {
             .map_err(|err| Error::Anyhow(err.into()))?;
             run_with_query(options, Query::new_time_interval(batch_interval)).await
         }
-        (None, None, Some(batch_id), false) => {
+        (None, None, Some(batch_id)) => {
             let batch_id = *batch_id;
-            run_with_query(
-                options,
-                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
-            )
-            .await
-        }
-        (None, None, None, true) => {
-            run_with_query(options, Query::new_fixed_size(FixedSizeQuery::CurrentBatch)).await
+            run_with_query(options, Query::new_fixed_size(batch_id)).await
         }
         _ => unreachable!(),
     }
@@ -450,60 +416,27 @@ where
     let http_client = default_http_client().map_err(|err| Error::Anyhow(err.into()))?;
     match (options.vdaf, options.length, options.bits, options.buckets) {
         (VdafType::Count, None, None, None) => {
-            let vdaf = Prio3::new_count(2).map_err(|err| Error::Anyhow(err.into()))?;
+            let vdaf = Prio3::new_aes128_count(2).map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
         }
         (VdafType::CountVec, Some(length), None, None) => {
-            let vdaf = Prio3::new_sum_vec(2, 1, length).map_err(|err| Error::Anyhow(err.into()))?;
+            let vdaf =
+                Prio3::new_aes128_count_vec(2, length).map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
         }
         (VdafType::Sum, None, Some(bits), None) => {
-            let vdaf = Prio3::new_sum(2, bits).map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, http_client, query, &())
-                .await
-                .map_err(|err| Error::Anyhow(err.into()))
-        }
-        (VdafType::SumVec, Some(length), Some(bits), None) => {
-            let vdaf =
-                Prio3::new_sum_vec(2, bits, length).map_err(|err| Error::Anyhow(err.into()))?;
+            let vdaf = Prio3::new_aes128_sum(2, bits).map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
         }
         (VdafType::Histogram, None, None, Some(ref buckets)) => {
-            let vdaf =
-                Prio3::new_histogram(2, &buckets.0).map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, http_client, query, &())
-                .await
-                .map_err(|err| Error::Anyhow(err.into()))
-        }
-        #[cfg(feature = "fpvec_bounded_l2")]
-        (VdafType::FixedPoint16BitBoundedL2VecSum, Some(length), None, None) => {
-            let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>> =
-                Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
-                    .map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, http_client, query, &())
-                .await
-                .map_err(|err| Error::Anyhow(err.into()))
-        }
-        #[cfg(feature = "fpvec_bounded_l2")]
-        (VdafType::FixedPoint32BitBoundedL2VecSum, Some(length), None, None) => {
-            let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>> =
-                Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
-                    .map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, http_client, query, &())
-                .await
-                .map_err(|err| Error::Anyhow(err.into()))
-        }
-        #[cfg(feature = "fpvec_bounded_l2")]
-        (VdafType::FixedPoint64BitBoundedL2VecSum, Some(length), None, None) => {
-            let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>> =
-                Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
-                    .map_err(|err| Error::Anyhow(err.into()))?;
+            let vdaf = Prio3::new_aes128_histogram(2, &buckets.0)
+                .map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
@@ -533,6 +466,7 @@ async fn run_collection_generic<V: vdaf::Collector, Q: QueryTypeExt>(
 ) -> Result<(), janus_collector::Error>
 where
     V::AggregateResult: Debug,
+    for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
 {
     let collector = Collector::new(parameters, vdaf, http_client);
     let collection = collector.collect(query, agg_param).await?;
@@ -543,11 +477,6 @@ where
         );
     }
     println!("Number of reports: {}", collection.report_count());
-    println!(
-        "Spanned interval: start: {} length: {}",
-        collection.interval().0,
-        collection.interval().1
-    );
     println!("Aggregation result: {:?}", collection.aggregate_result());
     Ok(())
 }
@@ -639,7 +568,6 @@ mod tests {
                 batch_interval_start: Some(1_000_000),
                 batch_interval_duration: Some(1_000),
                 batch_id: None,
-                current_batch: false,
             },
         };
         let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
@@ -754,42 +682,6 @@ mod tests {
             Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
         );
 
-        #[cfg(feature = "fpvec_bounded_l2")]
-        {
-            let mut bad_arguments = base_arguments.clone();
-            bad_arguments.extend([
-                "--vdaf=fixedpoint16bitboundedl2vecsum".to_string(),
-                "--bits=3".to_string(),
-            ]);
-            let bad_options = Options::try_parse_from(bad_arguments).unwrap();
-            assert_matches!(
-                run(bad_options).await.unwrap_err(),
-                Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
-            );
-
-            let mut bad_arguments = base_arguments.clone();
-            bad_arguments.extend([
-                "--vdaf=fixedpoint32bitboundedl2vecsum".to_string(),
-                "--bits=3".to_string(),
-            ]);
-            let bad_options = Options::try_parse_from(bad_arguments).unwrap();
-            assert_matches!(
-                run(bad_options).await.unwrap_err(),
-                Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
-            );
-
-            let mut bad_arguments = base_arguments.clone();
-            bad_arguments.extend([
-                "--vdaf=fixedpoint64bitboundedl2vecsum".to_string(),
-                "--bits=3".to_string(),
-            ]);
-            let bad_options = Options::try_parse_from(bad_arguments).unwrap();
-            assert_matches!(
-                run(bad_options).await.unwrap_err(),
-                Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
-            );
-        }
-
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.extend([
             "--vdaf=histogram".to_string(),
@@ -826,42 +718,10 @@ mod tests {
 
         let mut good_arguments = base_arguments.clone();
         good_arguments.extend([
-            "--vdaf=sumvec".to_string(),
-            "--bits=8".to_string(),
-            "--length=10".to_string(),
-        ]);
-        Options::try_parse_from(good_arguments).unwrap();
-
-        let mut good_arguments = base_arguments.clone();
-        good_arguments.extend([
             "--vdaf=histogram".to_string(),
             "--buckets=1,2,3,4".to_string(),
         ]);
         Options::try_parse_from(good_arguments).unwrap();
-
-        #[cfg(feature = "fpvec_bounded_l2")]
-        {
-            let mut good_arguments = base_arguments.clone();
-            good_arguments.extend([
-                "--vdaf=fixedpoint16bitboundedl2vecsum".to_string(),
-                "--length=10".to_string(),
-            ]);
-            Options::try_parse_from(good_arguments).unwrap();
-
-            let mut good_arguments = base_arguments.clone();
-            good_arguments.extend([
-                "--vdaf=fixedpoint32bitboundedl2vecsum".to_string(),
-                "--length=10".to_string(),
-            ]);
-            Options::try_parse_from(good_arguments).unwrap();
-
-            let mut good_arguments = base_arguments.clone();
-            good_arguments.extend([
-                "--vdaf=fixedpoint64bitboundedl2vecsum".to_string(),
-                "--length=10".to_string(),
-            ]);
-            Options::try_parse_from(good_arguments).unwrap();
-        }
     }
 
     #[test]
@@ -875,44 +735,6 @@ mod tests {
         let encoded_hpke_config = URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded());
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
         let auth_token = AuthenticationToken::DapAuth(random());
-
-        // Check parsing arguments for a current batch query.
-        let expected = Options {
-            task_id,
-            leader: leader.clone(),
-            authentication: AuthenticationOptions {
-                dap_auth_token: Some(auth_token.clone()),
-                authorization_bearer_token: None,
-            },
-            hpke_config: hpke_keypair.config().clone(),
-            hpke_private_key: hpke_keypair.private_key().clone(),
-            vdaf: VdafType::Count,
-            length: None,
-            bits: None,
-            buckets: None,
-            query: QueryOptions {
-                batch_interval_start: None,
-                batch_interval_duration: None,
-                batch_id: None,
-                current_batch: true,
-            },
-        };
-        let correct_arguments = [
-            "collect",
-            &format!("--task-id={task_id_encoded}"),
-            "--leader",
-            leader.as_str(),
-            &format!("--dap-auth-token={}", auth_token.as_str()),
-            &format!("--hpke-config={encoded_hpke_config}"),
-            &format!("--hpke-private-key={encoded_private_key}"),
-            "--vdaf",
-            "count",
-            "--current-batch",
-        ];
-        match Options::try_parse_from(correct_arguments) {
-            Ok(got) => assert_eq!(got, expected),
-            Err(e) => panic!("{}\narguments were {:?}", e, correct_arguments),
-        }
 
         // Check parsing arguments for a by-batch-id query.
         let batch_id: BatchId = random();
@@ -934,7 +756,6 @@ mod tests {
                 batch_interval_start: None,
                 batch_interval_duration: None,
                 batch_id: Some(batch_id),
-                current_batch: false,
             },
         };
         let correct_arguments = [
@@ -964,10 +785,6 @@ mod tests {
             format!("--hpke-private-key={encoded_private_key}"),
             "--vdaf=count".to_string(),
         ]);
-
-        let mut good_arguments = base_arguments.clone();
-        good_arguments.push("--current-batch".to_string());
-        Options::try_parse_from(good_arguments).unwrap();
 
         // Check that clap enforces all the constraints we need on combinations of query arguments.
         // This allows us to treat a default match branch as `unreachable!()` when unpacking the
@@ -1015,40 +832,10 @@ mod tests {
             ErrorKind::ArgumentConflict
         );
 
-        let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend([
-            "--batch-interval-duration=1".to_string(),
-            "--batch-id=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string(),
-        ]);
-        assert_eq!(
-            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
-            ErrorKind::ArgumentConflict
-        );
-
-        let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend([
-            "--batch-interval-start=1".to_string(),
-            "--current-batch".to_string(),
-        ]);
-        assert_eq!(
-            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
-            ErrorKind::ArgumentConflict
-        );
-
-        let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend([
-            "--batch-interval-duration=1".to_string(),
-            "--current-batch".to_string(),
-        ]);
-        assert_eq!(
-            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
-            ErrorKind::ArgumentConflict
-        );
-
         let mut bad_arguments = base_arguments;
         bad_arguments.extend([
+            "--batch-interval-duration=1".to_string(),
             "--batch-id=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string(),
-            "--current-batch".to_string(),
         ]);
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),

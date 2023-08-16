@@ -14,7 +14,6 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-fpvec_bounded_l2 = ["prio/experimental"]
 test-util = [
     "dep:assert_matches",
     "dep:lazy_static",
@@ -66,7 +65,6 @@ tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"],
 trillium.workspace = true
 
 [dev-dependencies]
-fixed = "1.23"
 hex = { version = "0.4", features = ["serde"] }  # ensure this remains compatible with the non-dev dependency
 janus_core = { path = ".", features = ["test-util"] }
 kube.workspace = true

@@ -11,10 +11,10 @@ use futures::future::try_join_all;
 use janus_core::time::{Clock, TimeExt as _};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
-    Duration, FixedSizeQuery, Interval, Query, ReportMetadata, TaskId, Time,
+    Duration, Interval, Query, ReportMetadata, TaskId, Time,
 };
 use prio::vdaf;
-use std::iter;
+use std::{fmt::Debug, iter};
 
 #[async_trait]
 pub trait AccumulableQueryType: QueryType {
@@ -30,26 +30,30 @@ pub trait AccumulableQueryType: QueryType {
     async fn get_conflicting_aggregate_share_jobs<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync,
     >(
         tx: &Transaction<'_, C>,
-        vdaf: &A,
         task_id: &TaskId,
         partial_batch_identifier: &Self::PartialBatchIdentifier,
         report_metadata: &ReportMetadata,
-    ) -> Result<Vec<AggregateShareJob<SEED_SIZE, Self, A>>, datastore::Error>;
+    ) -> Result<Vec<AggregateShareJob<SEED_SIZE, Self, A>>, datastore::Error>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug;
 
     /// Retrieves collection jobs which include the given batch identifier.
     async fn get_collection_jobs_including<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync,
     >(
         tx: &Transaction<'_, C>,
-        vdaf: &A,
         task_id: &TaskId,
         batch_identifier: &Self::BatchIdentifier,
-    ) -> Result<Vec<CollectionJob<SEED_SIZE, Self, A>>, datastore::Error>;
+    ) -> Result<Vec<CollectionJob<SEED_SIZE, Self, A>>, datastore::Error>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug;
 
     /// Some query types (e.g. [`TimeInterval`]) can represent their batch identifiers as an
     /// interval. This method extracts the interval from such identifiers, or returns `None` if the
@@ -87,33 +91,35 @@ impl AccumulableQueryType for TimeInterval {
     async fn get_conflicting_aggregate_share_jobs<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync,
     >(
         tx: &Transaction<'_, C>,
-        vdaf: &A,
         task_id: &TaskId,
         _: &Self::PartialBatchIdentifier,
         report_metadata: &ReportMetadata,
-    ) -> Result<Vec<AggregateShareJob<SEED_SIZE, Self, A>>, datastore::Error> {
-        tx.get_aggregate_share_jobs_including_time::<SEED_SIZE, A>(
-            vdaf,
-            task_id,
-            report_metadata.time(),
-        )
-        .await
+    ) -> Result<Vec<AggregateShareJob<SEED_SIZE, Self, A>>, datastore::Error>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
+    {
+        tx.get_aggregate_share_jobs_including_time::<SEED_SIZE, A>(task_id, report_metadata.time())
+            .await
     }
 
     async fn get_collection_jobs_including<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync,
     >(
         tx: &Transaction<'_, C>,
-        vdaf: &A,
         task_id: &TaskId,
         batch_identifier: &Self::BatchIdentifier,
-    ) -> Result<Vec<CollectionJob<SEED_SIZE, Self, A>>, datastore::Error> {
-        tx.get_collection_jobs_intersecting_interval(vdaf, task_id, batch_identifier)
+    ) -> Result<Vec<CollectionJob<SEED_SIZE, Self, A>>, datastore::Error>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
+    {
+        tx.get_collection_jobs_intersecting_interval(task_id, batch_identifier)
             .await
     }
 
@@ -151,30 +157,35 @@ impl AccumulableQueryType for FixedSize {
     async fn get_conflicting_aggregate_share_jobs<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync,
     >(
         tx: &Transaction<'_, C>,
-        vdaf: &A,
         task_id: &TaskId,
         batch_id: &Self::PartialBatchIdentifier,
         _: &ReportMetadata,
-    ) -> Result<Vec<AggregateShareJob<SEED_SIZE, Self, A>>, datastore::Error> {
-        tx.get_aggregate_share_jobs_by_batch_id(vdaf, task_id, batch_id)
+    ) -> Result<Vec<AggregateShareJob<SEED_SIZE, Self, A>>, datastore::Error>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
+    {
+        tx.get_aggregate_share_jobs_by_batch_id(task_id, batch_id)
             .await
     }
 
     async fn get_collection_jobs_including<
         const SEED_SIZE: usize,
         C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync,
     >(
         tx: &Transaction<'_, C>,
-        vdaf: &A,
         task_id: &TaskId,
         batch_id: &Self::BatchIdentifier,
-    ) -> Result<Vec<CollectionJob<SEED_SIZE, Self, A>>, datastore::Error> {
-        tx.get_collection_jobs_by_batch_id(vdaf, task_id, batch_id)
-            .await
+    ) -> Result<Vec<CollectionJob<SEED_SIZE, Self, A>>, datastore::Error>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
+    {
+        tx.get_collection_jobs_by_batch_id(task_id, batch_id).await
     }
 
     fn to_batch_interval(_: &Self::BatchIdentifier) -> Option<&Interval> {
@@ -238,16 +249,16 @@ pub trait CollectableQueryType: AccumulableQueryType {
     /// identifier.
     async fn get_batch_aggregations_for_collection_identifier<
         const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync,
         C: Clock,
     >(
         tx: &Transaction<C>,
         task: &Task,
-        vdaf: &A,
         collection_identifier: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
     ) -> Result<Vec<BatchAggregation<SEED_SIZE, Self, A>>, datastore::Error>
     where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
     {
@@ -257,7 +268,6 @@ pub trait CollectableQueryType: AccumulableQueryType {
                     let (task_id, aggregation_param) = (*task.id(), aggregation_param.clone());
                     async move {
                         tx.get_batch_aggregations_for_batch(
-                            vdaf,
                             &task_id,
                             &batch_identifier,
                             &aggregation_param,
@@ -276,7 +286,7 @@ pub trait CollectableQueryType: AccumulableQueryType {
     /// Retrieves all batches identified by the given collection identifier.
     async fn get_batches_for_collection_identifier<
         const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        A: vdaf::Aggregator<SEED_SIZE> + Send + Sync,
         C: Clock,
     >(
         tx: &Transaction<C>,
@@ -285,6 +295,7 @@ pub trait CollectableQueryType: AccumulableQueryType {
         aggregation_param: &A::AggregationParam,
     ) -> Result<Vec<Batch<SEED_SIZE, Self, A>>, datastore::Error>
     where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
     {
@@ -427,17 +438,11 @@ impl CollectableQueryType for FixedSize {
     type Iter = iter::Once<Self::BatchIdentifier>;
 
     async fn collection_identifier_for_query<C: Clock>(
-        tx: &Transaction<'_, C>,
-        task: &Task,
+        _: &Transaction<'_, C>,
+        _: &Task,
         query: &Query<Self>,
     ) -> Result<Option<Self::BatchIdentifier>, datastore::Error> {
-        match query.fixed_size_query() {
-            FixedSizeQuery::ByBatchId { batch_id } => Ok(Some(*batch_id)),
-            FixedSizeQuery::CurrentBatch => {
-                tx.get_filled_outstanding_batch(task.id(), task.min_batch_size())
-                    .await
-            }
-        }
+        Ok(Some(*query.batch_id()))
     }
 
     fn batch_identifiers_for_collection_identifier(

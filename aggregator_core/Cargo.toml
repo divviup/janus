@@ -42,7 +42,7 @@ lazy_static = { version = "1", optional = true }
 opentelemetry = { workspace = true, features = ["rt-tokio"] }
 postgres-protocol = "0.6.5"
 postgres-types = { version = "0.2.5", features = ["derive", "array-impls"] }
-prio = { workspace = true, features = ["experimental"] }
+prio = { workspace = true }
 rand = { version = "0.8", features = ["min_const_gen"] }
 regex = "1"
 reqwest = { version = "0.11.18", default-features = false, features = ["rustls-tls", "json"] }

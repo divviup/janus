@@ -211,7 +211,7 @@ async fn in_cluster_count() {
 
     // Start port forwards and set up task.
     let janus_pair =
-        InClusterJanusPair::new(VdafInstance::Prio3Count, QueryType::TimeInterval).await;
+        InClusterJanusPair::new(VdafInstance::Prio3Aes128Count, QueryType::TimeInterval).await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
@@ -227,8 +227,11 @@ async fn in_cluster_sum() {
     install_test_trace_subscriber();
 
     // Start port forwards and set up task.
-    let janus_pair =
-        InClusterJanusPair::new(VdafInstance::Prio3Sum { bits: 16 }, QueryType::TimeInterval).await;
+    let janus_pair = InClusterJanusPair::new(
+        VdafInstance::Prio3Aes128Sum { bits: 16 },
+        QueryType::TimeInterval,
+    )
+    .await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
@@ -246,7 +249,7 @@ async fn in_cluster_histogram() {
     // Start port forwards and set up task.
     let buckets = Vec::from([3, 6, 8]);
     let janus_pair = InClusterJanusPair::new(
-        VdafInstance::Prio3Histogram { buckets },
+        VdafInstance::Prio3Aes128Histogram { buckets },
         QueryType::TimeInterval,
     )
     .await;
@@ -266,7 +269,7 @@ async fn in_cluster_fixed_size() {
 
     // Start port forwards and set up task.
     let janus_pair = InClusterJanusPair::new(
-        VdafInstance::Prio3Count,
+        VdafInstance::Prio3Aes128Count,
         QueryType::FixedSize {
             max_batch_size: 110,
             batch_time_window_size: None,

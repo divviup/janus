@@ -12,9 +12,8 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
-    AggregationJobId, AggregationJobRound, BatchId, CollectionJobId, Duration, Extension,
-    HpkeCiphertext, Interval, PrepareStep, ReportId, ReportIdChecksum, ReportMetadata,
-    ReportShareError, Role, TaskId, Time,
+    AggregationJobId, BatchId, CollectionJobId, Duration, HpkeCiphertext, Interval, ReportId,
+    ReportIdChecksum, ReportMetadata, ReportShareError, Role, TaskId, Time,
 };
 use postgres_protocol::types::{
     range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql, Range, RangeBound,
@@ -75,13 +74,13 @@ impl From<&AuthenticationToken> for AuthenticationTokenType {
 #[derivative(Debug)]
 pub struct LeaderStoredReport<const SEED_SIZE: usize, A>
 where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
+    A: vdaf::Aggregator<SEED_SIZE>,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     task_id: TaskId,
     metadata: ReportMetadata,
     #[derivative(Debug = "ignore")]
     public_share: A::PublicShare,
-    leader_extensions: Vec<Extension>,
     #[derivative(Debug = "ignore")]
     leader_input_share: A::InputShare,
     #[derivative(Debug = "ignore")]
@@ -90,13 +89,13 @@ where
 
 impl<const SEED_SIZE: usize, A> LeaderStoredReport<SEED_SIZE, A>
 where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
+    A: vdaf::Aggregator<SEED_SIZE>,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     pub fn new(
         task_id: TaskId,
         metadata: ReportMetadata,
         public_share: A::PublicShare,
-        leader_extensions: Vec<Extension>,
         leader_input_share: A::InputShare,
         helper_encrypted_input_share: HpkeCiphertext,
     ) -> Self {
@@ -104,7 +103,6 @@ where
             task_id,
             metadata,
             public_share,
-            leader_extensions,
             leader_input_share,
             helper_encrypted_input_share,
         }
@@ -122,10 +120,6 @@ where
         &self.public_share
     }
 
-    pub fn leader_extensions(&self) -> &[Extension] {
-        &self.leader_extensions
-    }
-
     pub fn leader_input_share(&self) -> &A::InputShare {
         &self.leader_input_share
     }
@@ -137,7 +131,8 @@ where
 
 impl<const SEED_SIZE: usize, A> PartialEq for LeaderStoredReport<SEED_SIZE, A>
 where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
+    A: vdaf::Aggregator<SEED_SIZE>,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::InputShare: PartialEq,
     A::PublicShare: PartialEq,
 {
@@ -145,7 +140,6 @@ where
         self.task_id == other.task_id
             && self.metadata == other.metadata
             && self.public_share == other.public_share
-            && self.leader_extensions == other.leader_extensions
             && self.leader_input_share == other.leader_input_share
             && self.helper_encrypted_input_share == other.helper_encrypted_input_share
     }
@@ -153,7 +147,8 @@ where
 
 impl<const SEED_SIZE: usize, A> Eq for LeaderStoredReport<SEED_SIZE, A>
 where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
+    A: vdaf::Aggregator<SEED_SIZE>,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::InputShare: Eq,
     A::PublicShare: PartialEq,
 {
@@ -167,9 +162,8 @@ impl LeaderStoredReport<0, janus_core::test_util::dummy_vdaf::Vdaf> {
 
         Self::new(
             task_id,
-            ReportMetadata::new(random(), when),
+            ReportMetadata::new(random(), when, Vec::new()),
             (),
-            Vec::new(),
             janus_core::test_util::dummy_vdaf::InputShare::default(),
             HpkeCiphertext::new(
                 HpkeConfigId::from(13),
@@ -215,7 +209,9 @@ impl AggregatorRole {
 /// AggregationJob represents an aggregation job from the DAP specification.
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
-pub struct AggregationJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
+pub struct AggregationJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     /// The ID of the task this aggregation job belongs to.
     task_id: TaskId,
@@ -231,16 +227,12 @@ pub struct AggregationJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggrega
     client_timestamp_interval: Interval,
     /// The overall state of this aggregation job.
     state: AggregationJobState,
-    /// The round of VDAF preparation that this aggregation job is currently on.
-    round: AggregationJobRound,
-    /// The SHA-256 hash of the most recent [`janus_messages::AggregationJobContinueReq`]
-    /// received for this aggregation job. Will only be set for helpers, and only after the
-    /// first round of the job.
-    last_continue_request_hash: Option<[u8; 32]>,
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
+impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>>
     AggregationJob<SEED_SIZE, Q, A>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     /// Creates a new [`AggregationJob`].
     pub fn new(
@@ -250,7 +242,6 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         batch_id: Q::PartialBatchIdentifier,
         client_timestamp_interval: Interval,
         state: AggregationJobState,
-        round: AggregationJobRound,
     ) -> Self {
         Self {
             task_id,
@@ -259,8 +250,6 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
             batch_id,
             client_timestamp_interval,
             state,
-            round,
-            last_continue_request_hash: None,
         }
     }
 
@@ -303,36 +292,11 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
     pub fn with_state(self, state: AggregationJobState) -> Self {
         AggregationJob { state, ..self }
     }
-
-    /// Returns the round of the VDAF preparation protocol the aggregation job is on.
-    pub fn round(&self) -> AggregationJobRound {
-        self.round
-    }
-
-    /// Returns a new [`AggregationJob`] corresponding to this aggregation job updated to be on
-    /// the given VDAF preparation round.
-    pub fn with_round(self, round: AggregationJobRound) -> Self {
-        Self { round, ..self }
-    }
-
-    /// Returns the SHA-256 digest of the most recent
-    /// [`janus_messages::AggregationJobContinueReq`] for the job, if any.
-    pub fn last_continue_request_hash(&self) -> Option<[u8; 32]> {
-        self.last_continue_request_hash
-    }
-
-    /// Returns a new [`AggregationJob`] corresponding to this aggregation job updated to have
-    /// the given last continue request hash.
-    pub fn with_last_continue_request_hash(self, hash: [u8; 32]) -> Self {
-        Self {
-            last_continue_request_hash: Some(hash),
-            ..self
-        }
-    }
 }
 
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
-    AggregationJob<SEED_SIZE, FixedSize, A>
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE>> AggregationJob<SEED_SIZE, FixedSize, A>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     /// Gets the batch ID associated with this aggregation job.
     pub fn batch_id(&self) -> &BatchId {
@@ -340,10 +304,11 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     }
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
+impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>> PartialEq
     for AggregationJob<SEED_SIZE, Q, A>
 where
     A::AggregationParam: PartialEq,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     fn eq(&self, other: &Self) -> bool {
         self.task_id == other.task_id
@@ -352,14 +317,13 @@ where
             && self.batch_id == other.batch_id
             && self.client_timestamp_interval == other.client_timestamp_interval
             && self.state == other.state
-            && self.round == other.round
-            && self.last_continue_request_hash == other.last_continue_request_hash
     }
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
+impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>> Eq
     for AggregationJob<SEED_SIZE, Q, A>
 where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::AggregationParam: Eq,
 {
 }
@@ -580,17 +544,22 @@ impl AcquiredCollectionJob {
 
 /// ReportAggregation represents a the state of a single client report's ongoing aggregation.
 #[derive(Clone, Debug)]
-pub struct ReportAggregation<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
+pub struct ReportAggregation<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE>>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+{
     task_id: TaskId,
     aggregation_job_id: AggregationJobId,
     report_id: ReportId,
     time: Time,
     ord: u64,
-    last_prep_step: Option<PrepareStep>,
     state: ReportAggregationState<SEED_SIZE, A>,
 }
 
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> ReportAggregation<SEED_SIZE, A> {
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE>> ReportAggregation<SEED_SIZE, A>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+{
     /// Creates a new [`ReportAggregation`].
     pub fn new(
         task_id: TaskId,
@@ -598,7 +567,6 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> ReportAggregati
         report_id: ReportId,
         time: Time,
         ord: u64,
-        last_prep_step: Option<PrepareStep>,
         state: ReportAggregationState<SEED_SIZE, A>,
     ) -> Self {
         Self {
@@ -607,7 +575,6 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> ReportAggregati
             report_id,
             time,
             ord,
-            last_prep_step,
             state,
         }
     }
@@ -632,28 +599,9 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> ReportAggregati
         &self.time
     }
 
-    /// Returns a [`ReportMetadata`] corresponding to this report.
-    pub fn report_metadata(&self) -> ReportMetadata {
-        ReportMetadata::new(self.report_id, self.time)
-    }
-
     /// Returns the order of this report aggregation in its aggregation job.
     pub fn ord(&self) -> u64 {
         self.ord
-    }
-
-    /// Returns the last preparation step returned by the Helper, if any.
-    pub fn last_prep_step(&self) -> Option<&PrepareStep> {
-        self.last_prep_step.as_ref()
-    }
-
-    /// Returns a new [`ReportAggregation`] corresponding to this report aggregation updated to
-    /// have the given last preparation step.
-    pub fn with_last_prep_step(self, last_prep_step: Option<PrepareStep>) -> Self {
-        Self {
-            last_prep_step,
-            ..self
-        }
     }
 
     /// Returns the state of the report aggregation.
@@ -668,9 +616,10 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> ReportAggregati
     }
 }
 
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE>> PartialEq
     for ReportAggregation<SEED_SIZE, A>
 where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::PrepareState: PartialEq,
     A::PrepareMessage: PartialEq,
     A::PrepareShare: PartialEq,
@@ -682,14 +631,13 @@ where
             && self.report_id == other.report_id
             && self.time == other.time
             && self.ord == other.ord
-            && self.last_prep_step == other.last_prep_step
             && self.state == other.state
     }
 }
 
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
-    for ReportAggregation<SEED_SIZE, A>
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE>> Eq for ReportAggregation<SEED_SIZE, A>
 where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::PrepareState: Eq,
     A::PrepareMessage: Eq,
     A::PrepareShare: Eq,
@@ -701,7 +649,10 @@ where
 /// to the REPORT_AGGREGATION_STATE enum in the schema, along with the state-specific data.
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
-pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
+pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE>>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+{
     Start,
     Waiting(
         #[derivative(Debug = "ignore")] A::PrepareState,
@@ -711,8 +662,9 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED
     Failed(ReportShareError),
 }
 
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
-    ReportAggregationState<SEED_SIZE, A>
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE>> ReportAggregationState<SEED_SIZE, A>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     pub fn state_code(&self) -> ReportAggregationStateCode {
         match self {
@@ -774,9 +726,10 @@ pub enum ReportAggregationStateCode {
     Failed,
 }
 
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE>> PartialEq
     for ReportAggregationState<SEED_SIZE, A>
 where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::PrepareState: PartialEq,
     A::PrepareMessage: PartialEq,
     A::PrepareShare: PartialEq,
@@ -796,9 +749,10 @@ where
     }
 }
 
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE>> Eq
     for ReportAggregationState<SEED_SIZE, A>
 where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::PrepareState: Eq,
     A::PrepareMessage: Eq,
     A::PrepareShare: Eq,
@@ -813,11 +767,10 @@ where
 /// request consists of one or more `BatchAggregation`s merged together.
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
-pub struct BatchAggregation<
-    const SEED_SIZE: usize,
-    Q: QueryType,
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-> {
+pub struct BatchAggregation<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+{
     /// The task ID for this aggregation result.
     task_id: TaskId,
     /// The identifier of the batch being aggregated over.
@@ -844,8 +797,10 @@ pub struct BatchAggregation<
     checksum: ReportIdChecksum,
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
+impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>>
     BatchAggregation<SEED_SIZE, Q, A>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     /// Creates a new [`BatchAggregation`].
     #[allow(clippy::too_many_arguments)]
@@ -964,8 +919,10 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
     }
 }
 
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE>>
     BatchAggregation<SEED_SIZE, TimeInterval, A>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     /// Gets the batch interval associated with this batch aggregation.
     pub fn batch_interval(&self) -> &Interval {
@@ -973,8 +930,10 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     }
 }
 
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE>>
     BatchAggregation<SEED_SIZE, FixedSize, A>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     /// Gets the batch ID associated with this batch aggregation.
     pub fn batch_id(&self) -> &BatchId {
@@ -982,10 +941,11 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     }
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
+impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>> PartialEq
     for BatchAggregation<SEED_SIZE, Q, A>
 where
     A::AggregationParam: PartialEq,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::AggregateShare: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
@@ -1001,10 +961,11 @@ where
     }
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
+impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>> Eq
     for BatchAggregation<SEED_SIZE, Q, A>
 where
     A::AggregationParam: Eq,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::AggregateShare: Eq,
 {
 }
@@ -1025,7 +986,10 @@ pub enum BatchAggregationState {
 /// running collection jobs and store the results of completed ones.
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
-pub struct CollectionJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> {
+pub struct CollectionJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+{
     /// The task ID for this collection job.
     task_id: TaskId,
     /// The unique identifier for the collection job.
@@ -1039,8 +1003,10 @@ pub struct CollectionJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregat
     state: CollectionJobState<SEED_SIZE, A>,
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
+impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>>
     CollectionJob<SEED_SIZE, Q, A>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     /// Creates a new [`CollectionJob`].
     pub fn new(
@@ -1095,8 +1061,10 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
     }
 }
 
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE>>
     CollectionJob<SEED_SIZE, TimeInterval, A>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     /// Gets the batch interval associated with this collection job.
     pub fn batch_interval(&self) -> &Interval {
@@ -1104,8 +1072,9 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     }
 }
 
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
-    CollectionJob<SEED_SIZE, FixedSize, A>
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE>> CollectionJob<SEED_SIZE, FixedSize, A>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     /// Gets the batch ID associated with this collection job.
     pub fn batch_id(&self) -> &BatchId {
@@ -1113,9 +1082,10 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     }
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
+impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>> PartialEq
     for CollectionJob<SEED_SIZE, Q, A>
 where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::AggregationParam: PartialEq,
     CollectionJobState<SEED_SIZE, A>: PartialEq,
 {
@@ -1128,9 +1098,10 @@ where
     }
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
+impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>> Eq
     for CollectionJob<SEED_SIZE, Q, A>
 where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::AggregationParam: Eq,
     CollectionJobState<SEED_SIZE, A>: Eq,
 {
@@ -1138,7 +1109,10 @@ where
 
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
-pub enum CollectionJobState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
+pub enum CollectionJobState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE>>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+{
     Start,
     Collectable,
     Finished {
@@ -1156,7 +1130,8 @@ pub enum CollectionJobState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZ
 
 impl<const SEED_SIZE: usize, A> CollectionJobState<SEED_SIZE, A>
 where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
+    A: vdaf::Aggregator<SEED_SIZE>,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     pub fn collection_job_state_code(&self) -> CollectionJobStateCode {
         match self {
@@ -1171,7 +1146,8 @@ where
 
 impl<const SEED_SIZE: usize, A> Display for CollectionJobState<SEED_SIZE, A>
 where
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
+    A: vdaf::Aggregator<SEED_SIZE>,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -1188,9 +1164,10 @@ where
     }
 }
 
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE>> PartialEq
     for CollectionJobState<SEED_SIZE, A>
 where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::AggregateShare: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
@@ -1216,9 +1193,9 @@ where
     }
 }
 
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
-    for CollectionJobState<SEED_SIZE, A>
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE>> Eq for CollectionJobState<SEED_SIZE, A>
 where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::AggregateShare: Eq,
 {
 }
@@ -1243,11 +1220,10 @@ pub enum CollectionJobStateCode {
 
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
-pub struct AggregateShareJob<
-    const SEED_SIZE: usize,
-    Q: QueryType,
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-> {
+pub struct AggregateShareJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+{
     /// The task ID for this aggregate share.
     task_id: TaskId,
     /// The batch identifier for the batch covered by the aggregate share.
@@ -1265,8 +1241,10 @@ pub struct AggregateShareJob<
     checksum: ReportIdChecksum,
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
+impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>>
     AggregateShareJob<SEED_SIZE, Q, A>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     /// Creates a new [`AggregateShareJob`].
     pub fn new(
@@ -1318,8 +1296,10 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
     }
 }
 
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE>>
     AggregateShareJob<SEED_SIZE, TimeInterval, A>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     /// Gets the batch interval associated with this aggregate share job.
     pub fn batch_interval(&self) -> &Interval {
@@ -1327,8 +1307,10 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     }
 }
 
-impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE>>
     AggregateShareJob<SEED_SIZE, FixedSize, A>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     /// Gets the batch ID associated with this aggregate share job.
     pub fn batch_id(&self) -> &BatchId {
@@ -1336,9 +1318,10 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     }
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
+impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>> PartialEq
     for AggregateShareJob<SEED_SIZE, Q, A>
 where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::AggregationParam: PartialEq,
     A::AggregateShare: PartialEq,
 {
@@ -1352,9 +1335,10 @@ where
     }
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
+impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>> Eq
     for AggregateShareJob<SEED_SIZE, Q, A>
 where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::AggregationParam: Eq,
     A::AggregateShare: Eq,
 {
@@ -1424,7 +1408,10 @@ pub enum BatchState {
 
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
-pub struct Batch<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> {
+pub struct Batch<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+{
     task_id: TaskId,
     batch_identifier: Q::BatchIdentifier,
     #[derivative(Debug = "ignore")]
@@ -1434,8 +1421,9 @@ pub struct Batch<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_
     client_timestamp_interval: Interval,
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
-    Batch<SEED_SIZE, Q, A>
+impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>> Batch<SEED_SIZE, Q, A>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     /// Creates a new [`Batch`].
     pub fn new(
@@ -1510,9 +1498,10 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
     }
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
+impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>> PartialEq
     for Batch<SEED_SIZE, Q, A>
 where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::AggregationParam: PartialEq,
     Q::BatchIdentifier: PartialEq,
 {
@@ -1526,17 +1515,19 @@ where
     }
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
+impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>> Eq
     for Batch<SEED_SIZE, Q, A>
 where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::AggregationParam: Eq,
     Q::BatchIdentifier: Eq,
 {
 }
 
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Hash
+impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE>> Hash
     for Batch<SEED_SIZE, Q, A>
 where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::AggregationParam: Hash,
 {
     fn hash<H: Hasher>(&self, state: &mut H) {

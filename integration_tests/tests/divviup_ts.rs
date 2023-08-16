@@ -39,14 +39,18 @@ async fn run_divviup_ts_integration_test(container_client: &Cli, vdaf: VdafInsta
 async fn janus_divviup_ts_count() {
     install_test_trace_subscriber();
 
-    run_divviup_ts_integration_test(&container_client(), VdafInstance::Prio3Count).await;
+    run_divviup_ts_integration_test(&container_client(), VdafInstance::Prio3Aes128Count).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_divviup_ts_sum() {
     install_test_trace_subscriber();
 
-    run_divviup_ts_integration_test(&container_client(), VdafInstance::Prio3Sum { bits: 8 }).await;
+    run_divviup_ts_integration_test(
+        &container_client(),
+        VdafInstance::Prio3Aes128Sum { bits: 8 },
+    )
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -55,7 +59,7 @@ async fn janus_divviup_ts_histogram() {
 
     run_divviup_ts_integration_test(
         &container_client(),
-        VdafInstance::Prio3Histogram {
+        VdafInstance::Prio3Aes128Histogram {
             buckets: Vec::from([1, 10, 100, 1000]),
         },
     )

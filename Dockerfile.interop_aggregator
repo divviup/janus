@@ -25,7 +25,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM chef AS builder-aggregator
 COPY --from=planner /src/recipe.json /src/recipe.json
 ARG PROFILE
-RUN cargo chef cook --features fpvec_bounded_l2 --profile $PROFILE -p janus_aggregator
+RUN cargo chef cook --profile $PROFILE -p janus_aggregator
 COPY Cargo.toml Cargo.lock /src/
 COPY aggregator /src/aggregator
 COPY aggregator_api /src/aggregator_api
@@ -39,7 +39,7 @@ COPY integration_tests /src/integration_tests
 COPY interop_binaries /src/interop_binaries
 COPY messages /src/messages
 COPY tools /src/tools
-RUN cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_aggregator \
+RUN cargo build --profile $PROFILE -p janus_aggregator \
     --bin aggregation_job_creator \
     --bin aggregation_job_driver \
     --bin collection_job_driver
@@ -47,7 +47,7 @@ RUN cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_aggregat
 FROM chef AS builder-interop
 COPY --from=planner /src/recipe.json /src/recipe.json
 ARG PROFILE
-RUN cargo chef cook --features fpvec_bounded_l2 --profile $PROFILE -p janus_interop_binaries
+RUN cargo chef cook --profile $PROFILE -p janus_interop_binaries
 COPY Cargo.toml Cargo.lock /src/
 COPY aggregator /src/aggregator
 COPY aggregator_api /src/aggregator_api
@@ -61,7 +61,7 @@ COPY integration_tests /src/integration_tests
 COPY interop_binaries /src/interop_binaries
 COPY messages /src/messages
 COPY tools /src/tools
-RUN cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_interop_binaries \
+RUN cargo build --profile $PROFILE -p janus_interop_binaries \
     --bin janus_interop_aggregator
 
 FROM postgres:14-alpine AS final

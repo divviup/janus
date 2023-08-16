@@ -28,11 +28,12 @@ use std::{
 /// interval begins to the accumulated aggregate share, report count and checksum.
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub struct Accumulator<
-    const SEED_SIZE: usize,
+pub struct Accumulator<const SEED_SIZE: usize, Q, A>
+where
+    A: vdaf::Aggregator<SEED_SIZE>,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     Q: AccumulableQueryType,
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-> {
+{
     task: Arc<Task>,
     shard_count: u64,
     #[derivative(Debug = "ignore")]
@@ -41,17 +42,21 @@ pub struct Accumulator<
 }
 
 #[derive(Debug)]
-struct BatchData<
-    const SEED_SIZE: usize,
+struct BatchData<const SEED_SIZE: usize, Q, A>
+where
+    A: vdaf::Aggregator<SEED_SIZE>,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     Q: AccumulableQueryType,
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-> {
+{
     batch_aggregation: BatchAggregation<SEED_SIZE, Q, A>,
     included_report_ids: HashSet<ReportId>,
 }
 
-impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
-    Accumulator<SEED_SIZE, Q, A>
+impl<const SEED_SIZE: usize, Q, A> Accumulator<SEED_SIZE, Q, A>
+where
+    A: vdaf::Aggregator<SEED_SIZE>,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    Q: AccumulableQueryType,
 {
     /// Creates a new accumulator.
     pub fn new(
@@ -133,7 +138,6 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
     pub async fn flush_to_datastore<C: Clock>(
         &self,
         tx: &Transaction<'_, C>,
-        vdaf: &A,
     ) -> Result<HashSet<ReportId>, datastore::Error> {
         let unmergeable_report_ids = Arc::new(Mutex::new(HashSet::new()));
 
@@ -142,7 +146,6 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
             async move {
                 match tx
                     .get_batch_aggregation::<SEED_SIZE, Q, A>(
-                        vdaf,
                         data.batch_aggregation.task_id(),
                         data.batch_aggregation.batch_identifier(),
                         data.batch_aggregation.aggregation_parameter(),

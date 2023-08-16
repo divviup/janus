@@ -1,16 +1,22 @@
 //! Functionality for tests interacting with Daphne (<https://github.com/cloudflare/daphne>).
 
-use crate::interop_api;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use janus_aggregator_core::task::QueryType;
 use janus_aggregator_core::task::{test_util::TaskBuilder, Task};
-use janus_interop_binaries::log_export_path;
 use janus_interop_binaries::test_util::await_http_server;
-use janus_messages::{Role, Time};
+use janus_interop_binaries::{log_export_path, AggregatorRole, VdafObject};
+use janus_messages::query_type::{FixedSize, QueryType as _, TimeInterval};
+use janus_messages::{Role, TaskId, Time};
+use prio::codec::Encode;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::{
     fs::{create_dir_all, File},
     process::{Command, Stdio},
     thread::panicking,
 };
 use testcontainers::{clients::Cli, images::generic::GenericImage, Container, RunnableImage};
+use url::Url;
 
 const DAPHNE_HELPER_IMAGE_NAME_AND_TAG: &str = "cloudflare/daphne-worker-helper:sha-f6b3ef1";
 
@@ -37,7 +43,8 @@ impl<'a> Daphne<'a> {
         let endpoint = task.aggregator_url(task.role()).unwrap();
         let runnable_image = RunnableImage::from(GenericImage::new(image_name, image_tag))
             .with_network(network)
-            .with_container_name(endpoint.host_str().unwrap());
+            .with_container_name(endpoint.host_str().unwrap())
+            .with_env_var(("DAP_DEFAULT_VERSION", "v02")); // https://github.com/cloudflare/daphne/blob/bf992e9af3d7dece19b5a6cc3b271470a27d3695/daphne_worker/src/config.rs#L151-L152
         let daphne_container = container_client.run(runnable_image);
         let port = daphne_container.get_host_port_ipv4(Self::INTERNAL_SERVING_PORT);
 
@@ -56,7 +63,7 @@ impl<'a> Daphne<'a> {
         let role = *task.role();
 
         // Write the given task to the Daphne instance we started.
-        interop_api::aggregator_add_task(port, task).await;
+        aggregator_add_task(port, task).await;
 
         Self {
             daphne_container,
@@ -92,6 +99,90 @@ impl<'a> Drop for Daphne<'a> {
                 docker_logs_status.success(),
                 "`docker logs` failed with status {docker_logs_status:?}"
             );
+        }
+    }
+}
+
+// Note: the latest version of Daphne implements the latest version of the interop test API, even
+// when operating against a prior version of the DAP spec (e.g. DAP-02). We work around this by
+// encoding our add task request as expected by the latest version of the interop test API spec.
+
+/// Send an interop test API request to add a DAP task. This assumes the server is available on
+/// some localhost port.
+async fn aggregator_add_task(port: u16, task: Task) {
+    let http_client = reqwest::Client::default();
+    let resp = http_client
+        .post(Url::parse(&format!("http://127.0.0.1:{port}/internal/test/add_task")).unwrap())
+        .json(&AggregatorAddTaskRequest::from(task))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+    let resp: HashMap<String, Option<String>> = resp.json().await.unwrap();
+    assert_eq!(
+        resp.get("status"),
+        Some(&Some("success".to_string())),
+        "error: {:?}",
+        resp.get("error")
+    );
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AggregatorAddTaskRequest {
+    pub task_id: TaskId, // uses unpadded base64url
+    pub leader: Url,
+    pub helper: Url,
+    pub vdaf: VdafObject,
+    pub leader_authentication_token: String,
+    #[serde(default)]
+    pub collector_authentication_token: Option<String>,
+    pub role: AggregatorRole,
+    pub vdaf_verify_key: String, // in unpadded base64url
+    pub max_batch_query_count: u64,
+    pub query_type: u8,
+    pub min_batch_size: u64,
+    pub max_batch_size: Option<u64>,
+    pub time_precision: u64,           // in seconds
+    pub collector_hpke_config: String, // in unpadded base64url
+    pub task_expiration: Option<u64>,  // in seconds since the epoch
+}
+
+impl From<Task> for AggregatorAddTaskRequest {
+    fn from(task: Task) -> Self {
+        let (query_type, max_batch_size) = match task.query_type() {
+            QueryType::TimeInterval => (TimeInterval::CODE as u8, None),
+            QueryType::FixedSize { max_batch_size, .. } => {
+                (FixedSize::CODE as u8, Some(*max_batch_size))
+            }
+        };
+        Self {
+            task_id: *task.id(),
+            leader: task.aggregator_url(&Role::Leader).unwrap().clone(),
+            helper: task.aggregator_url(&Role::Helper).unwrap().clone(),
+            vdaf: task.vdaf().clone().into(),
+            leader_authentication_token: String::from_utf8(
+                task.primary_aggregator_auth_token().as_ref().to_vec(),
+            )
+            .unwrap(),
+            collector_authentication_token: if task.role() == &Role::Leader {
+                Some(
+                    String::from_utf8(task.primary_collector_auth_token().as_ref().to_vec())
+                        .unwrap(),
+                )
+            } else {
+                None
+            },
+            role: (*task.role()).try_into().unwrap(),
+            vdaf_verify_key: URL_SAFE_NO_PAD
+                .encode(task.vdaf_verify_keys().first().unwrap().as_ref()),
+            max_batch_query_count: task.max_batch_query_count(),
+            query_type,
+            min_batch_size: task.min_batch_size(),
+            max_batch_size,
+            time_precision: task.time_precision().as_seconds(),
+            collector_hpke_config: URL_SAFE_NO_PAD
+                .encode(task.collector_hpke_config().get_encoded()),
+            task_expiration: task.task_expiration().map(Time::as_seconds_since_epoch),
         }
     }
 }
