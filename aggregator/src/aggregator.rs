@@ -254,34 +254,49 @@ impl<C: Clock> Aggregator<C> {
     }
 
     async fn handle_hpke_config(&self, task_id_base64: Option<&[u8]>) -> Result<HpkeConfig, Error> {
-        match task_id_base64 {
-            Some(task_id_base64) => {
-                let task_id_bytes = URL_SAFE_NO_PAD
-                    .decode(task_id_base64)
-                    .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
-                let task_id = TaskId::get_decoded(&task_id_bytes)
-                    .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
-                let task_aggregator = self
-                    .task_aggregator_for(&task_id)
-                    .await?
-                    .ok_or(Error::UnrecognizedTask(task_id))?;
-                Ok(task_aggregator.handle_hpke_config())
-            }
-            None => {
-                self.global_hpke_keypairs
+        // If we're running in taskprov mode, unconditionally provide the global keys and ignore
+        // the task_id parameter.
+        if self.cfg.taskprov_config.enabled {
+            self.global_hpke_keypairs
+                .configs()
+                .iter()
+                .max_by_key(|cfg| cfg.id())
+                .ok_or_else(|| {
+                    Error::Internal("this server is missing its global HPKE config".into())
+                })
+                .cloned()
+        } else {
+            // Otherwise, try to get the task-specific key.
+            match task_id_base64 {
+                Some(task_id_base64) => {
+                    let task_id_bytes = URL_SAFE_NO_PAD
+                        .decode(task_id_base64)
+                        .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
+                    let task_id = TaskId::get_decoded(&task_id_bytes)
+                        .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
+                    let task_aggregator = self
+                        .task_aggregator_for(&task_id)
+                        .await?
+                        .ok_or(Error::UnrecognizedTask(task_id))?;
+
+                    match task_aggregator.handle_hpke_config() {
+                        Some(hpke_config_list) => Ok(hpke_config_list),
+                        // Assuming something hasn't gone horribly wrong with the database, this
+                        // should only happen in the case where the system has been moved from taskprov
+                        // mode to non-taskprov mode. Thus there's still taskprov tasks in the database.
+                        // This isn't a supported use case, so the operator needs to delete these tasks
+                        // or move the system back into taskprov mode.
+                        None => Err(Error::Internal("task has no HPKE configs".to_string())),
+                    }
+                }
+                // No task ID present, try to fall back to a global config.
+                None => self
+                    .global_hpke_keypairs
                     .configs()
                     .iter()
                     .max_by_key(|cfg| cfg.id())
-                    .ok_or_else(|| {
-                        if self.cfg.taskprov_config.enabled {
-                            // A global HPKE configuration is only _required_ when taskprov
-                            // is enabled.
-                            Error::Internal("this server is missing its global HPKE config".into())
-                        } else {
-                            Error::MissingTaskId
-                        }
-                    })
-                    .cloned()
+                    .ok_or(Error::MissingTaskId)
+                    .cloned(),
             }
         }
     }
@@ -803,18 +818,19 @@ impl<C: Clock> TaskAggregator<C> {
         })
     }
 
-    fn handle_hpke_config(&self) -> HpkeConfig {
+    fn handle_hpke_config(&self) -> Option<HpkeConfig> {
         // TODO(#239): consider deciding a better way to determine "primary" (e.g. most-recent) HPKE
         // config/key -- right now it's the one with the maximal config ID, but that will run into
         // trouble if we ever need to wrap-around, which we may since config IDs are effectively a u8.
-        self.task
-            .hpke_keys()
-            .iter()
-            .max_by_key(|(&id, _)| id)
-            .unwrap()
-            .1
-            .config()
-            .clone()
+        Some(
+            self.task
+                .hpke_keys()
+                .iter()
+                .max_by_key(|(&id, _)| id)?
+                .1
+                .config()
+                .clone(),
+        )
     }
 
     async fn handle_upload(

@@ -608,23 +608,26 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::{
-        aggregate_init_tests::{post_aggregation_job, setup_aggregate_init_test},
-        aggregation_job_continue::test_util::{
-            post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
+    use crate::{
+        aggregator::{
+            aggregate_init_tests::{post_aggregation_job, setup_aggregate_init_test},
+            aggregation_job_continue::test_util::{
+                post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
+            },
+            collection_job_tests::setup_collection_job_test_case,
+            empty_batch_aggregations,
+            http_handlers::{
+                aggregator_handler, aggregator_handler_with_aggregator,
+                test_util::{take_problem_details, take_response_body},
+            },
+            tests::{
+                create_report, create_report_custom, default_aggregator_config,
+                generate_helper_report_share, generate_helper_report_share_for_plaintext,
+                BATCH_AGGREGATION_SHARD_COUNT,
+            },
+            Config,
         },
-        collection_job_tests::setup_collection_job_test_case,
-        empty_batch_aggregations,
-        http_handlers::{
-            aggregator_handler, aggregator_handler_with_aggregator,
-            test_util::{take_problem_details, take_response_body},
-        },
-        tests::{
-            create_report, create_report_custom, default_aggregator_config,
-            generate_helper_report_share, generate_helper_report_share_for_plaintext,
-            BATCH_AGGREGATION_SHARD_COUNT,
-        },
-        Config,
+        config::TaskprovConfig,
     };
     use assert_matches::assert_matches;
     use futures::future::try_join_all;
@@ -639,6 +642,7 @@ mod tests {
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
         task::{test_util::TaskBuilder, QueryType, VerifyKey},
+        taskprov,
         test_util::noop_meter,
     };
     use janus_core::{
@@ -874,6 +878,83 @@ mod tests {
         aggregator.refresh_caches().await.unwrap();
         let test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    }
+
+    #[tokio::test]
+    async fn global_hpke_config_with_taskprov() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+
+        // Insert an HPKE config, i.e. start the application with a keypair already
+        // in the database.
+        let first_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(1);
+        datastore
+            .run_tx(|tx| {
+                let keypair = first_hpke_keypair.clone();
+                Box::pin(async move {
+                    tx.put_global_hpke_keypair(&keypair).await?;
+                    tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        // Insert a taskprov task. This task won't have its task-specific HPKE key.
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count,
+            Role::Leader,
+        )
+        .build();
+        let task_id = *task.id();
+        let task = taskprov::Task::new(
+            task_id,
+            task.aggregator_endpoints().to_vec(),
+            *task.query_type(),
+            task.vdaf().clone(),
+            *task.role(),
+            task.vdaf_verify_keys().to_vec(),
+            task.max_batch_query_count(),
+            task.task_expiration().cloned(),
+            task.report_expiry_age().cloned(),
+            task.min_batch_size(),
+            *task.time_precision(),
+            *task.tolerable_clock_skew(),
+        )
+        .unwrap();
+        datastore.put_task(&task.into()).await.unwrap();
+
+        let cfg = Config {
+            taskprov_config: TaskprovConfig { enabled: true },
+            ..Default::default()
+        };
+
+        let aggregator = Arc::new(
+            crate::aggregator::Aggregator::new(
+                datastore.clone(),
+                clock.clone(),
+                &noop_meter(),
+                cfg,
+            )
+            .await
+            .unwrap(),
+        );
+        let handler = aggregator_handler_with_aggregator(aggregator.clone(), &noop_meter())
+            .await
+            .unwrap();
+
+        let mut test_conn = get(&format!("/hpke_config?task_id={}", task_id))
+            .run_async(&handler)
+            .await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let bytes = take_response_body(&mut test_conn).await;
+        let hpke_config = HpkeConfig::get_decoded(&bytes).unwrap();
+        assert_eq!(hpke_config, first_hpke_keypair.config().clone());
+        check_hpke_config_is_usable(&hpke_config, &first_hpke_keypair);
     }
 
     fn check_hpke_config_is_usable(hpke_config: &HpkeConfig, hpke_keypair: &HpkeKeypair) {
