@@ -14,7 +14,7 @@ This document describes the operational overhead of managing these keys.
 
 A global keypair has three states:
 - `pending`: The key is in the database, but is not being advertised to clients.
-- `active`: The key is used by clients, and clients should use it to encrypt
+- `active`: The key is being advertised to clients, and clients should use it to encrypt
   reports.
 - `expired`: The key is not advertised to clients and will eventually be deleted.
 
