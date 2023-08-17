@@ -33,7 +33,7 @@ pub(super) async fn get_config(
     State(config): State<Arc<Config>>,
 ) -> Json<AggregatorApiConfig> {
     Json(AggregatorApiConfig {
-        dap_version: "DAP-05",
+        protocol: "DAP-05",
         dap_url: config.public_dap_url.clone(),
         role: AggregatorRole::Either,
         vdafs: vec![
