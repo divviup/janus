@@ -82,7 +82,7 @@ async fn get_config() {
             .await,
         Status::Ok,
         concat!(
-            r#"{"dap_versions":["DAP-05"],"dap_url":"https://dap.url/","role":"Either","vdafs":"#,
+            r#"{"dap_version":"DAP-05","dap_url":"https://dap.url/","role":"Either","vdafs":"#,
             r#"["Prio3Count","Prio3Sum","Prio3Histogram","Prio3CountVec","Prio3SumVec"],"#,
             r#""query_types":["TimeInterval","FixedSize"]}"#
         )
