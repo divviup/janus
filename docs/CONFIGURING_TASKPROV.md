@@ -19,12 +19,11 @@ implemented on any branches missing from this list.
 
 | Git branch | Taskprov draft version | Conforms to protocol? | Status |
 | ---------- | ------------- | --------------------- | ------ |
-| `release/0.subscriber-01` | [`draft-wang-ppm-dap-taskprov-02`][2] | Helper only | Supported |
-| `release/0.5` | [`draft-wang-ppm-dap-taskprov-04`][3] | Helper only | Supported |
-| `main` | [`draft-wang-ppm-dap-taskprov-04`][3] | Helper only | Supported |
+| `release/0.subscriber-01` | [`draft-wang-ppm-dap-taskprov-04`][2] | Helper only | Supported |
+| `release/0.5` | [`draft-wang-ppm-dap-taskprov-04`][2] | Helper only | Supported |
+| `main` | [`draft-wang-ppm-dap-taskprov-04`][2] | Helper only | Supported |
 
-[2]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/02/
-[3]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/04/
+[2]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/04/
 
 ## Operational Considerations
 
