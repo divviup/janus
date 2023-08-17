@@ -41,7 +41,7 @@ backoff = { version = "0.4.0", features = ["tokio"] }
 base64 = "0.21.2"
 bytes = "1.4.0"
 chrono.workspace = true
-clap = { version = "4.3.19", features = ["derive", "env"] }
+clap = { version = "4.3.21", features = ["derive", "env"] }
 console-subscriber = { version = "0.1.10", optional = true }
 deadpool = { version = "0.9.5", features = ["rt_tokio_1"] }
 deadpool-postgres = "0.10.5"
@@ -76,13 +76,13 @@ reqwest = { version = "0.11.18", default-features = false, features = ["rustls-t
 ring = "0.16.20"
 routefinder = "0.5.3"
 serde.workspace = true
-serde_json = "1.0.103"
+serde_json.workspace = true
 serde_urlencoded = "0.7.1"
-serde_yaml = "0.9.25"
+serde_yaml.workspace = true
 signal-hook = "0.3.17"
 signal-hook-tokio = { version = "0.3.1", features = ["futures-v0_3"] }
 testcontainers = { version = "0.14.0", optional = true }
-thiserror = "1.0"
+thiserror.workspace = true
 tokio.workspace = true
 tokio-postgres = { version = "0.7.8", features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1", "array-impls"] }
 tonic = { version = "0.9.2", optional = true, features = ["tls", "tls-webpki-roots"] }  # keep this version in sync with what opentelemetry-otlp uses
@@ -111,7 +111,7 @@ janus_aggregator = { path = ".", features = ["fpvec_bounded_l2", "test-util"] }
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
 mockito = "1.1.0"
 rstest.workspace = true
-tempfile = "3.7.0"
+tempfile = "3.7.1"
 tokio = { version = "1", features = ["test-util"] } # ensure this remains compatible with the non-dev dependency
 trillium-testing.workspace = true
 trycmd = "0.14.16"

@@ -159,9 +159,14 @@ pub(crate) async fn setup_collection_job_test_case(
 
 async fn setup_fixed_size_current_batch_collection_job_test_case(
 ) -> (CollectionJobTestCase, BatchId, BatchId, Interval) {
-    let test_case =
-        setup_collection_job_test_case(Role::Leader, QueryType::FixedSize { max_batch_size: 10 })
-            .await;
+    let test_case = setup_collection_job_test_case(
+        Role::Leader,
+        QueryType::FixedSize {
+            max_batch_size: 10,
+            batch_time_window_size: None,
+        },
+    )
+    .await;
 
     // Fill the datastore with the necessary data so that there is are two outstanding batches to be
     // collected.
@@ -239,7 +244,7 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
                     .await
                     .unwrap();
 
-                    tx.put_outstanding_batch(task.id(), &batch_id)
+                    tx.put_outstanding_batch(task.id(), &batch_id, &None)
                         .await
                         .unwrap();
                 }
@@ -301,7 +306,7 @@ async fn collection_job_success_fixed_size() {
                     let batch_id = *collection_job.batch_identifier();
 
                     let encrypted_helper_aggregate_share = hpke::seal(
-                        task.collector_hpke_config(),
+                        task.collector_hpke_config().unwrap(),
                         &HpkeApplicationInfo::new(
                             &Label::AggregateShare,
                             &Role::Helper,
@@ -371,7 +376,7 @@ async fn collection_job_success_fixed_size() {
         assert_eq!(collect_resp.encrypted_aggregate_shares().len(), 2);
 
         let decrypted_leader_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_config(),
+            test_case.task.collector_hpke_config().unwrap(),
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
             &collect_resp.encrypted_aggregate_shares()[0],
@@ -389,7 +394,7 @@ async fn collection_job_success_fixed_size() {
         );
 
         let decrypted_helper_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_config(),
+            test_case.task.collector_hpke_config().unwrap(),
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
             &collect_resp.encrypted_aggregate_shares()[1],
@@ -417,6 +422,13 @@ async fn collection_job_success_fixed_size() {
         .put_collection_job(&collection_job_id, &request)
         .await;
     assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(
+        test_conn
+            .response_headers()
+            .get(KnownHeaderName::ContentType)
+            .unwrap(),
+        "application/problem+json"
+    );
     let problem_details: serde_json::Value = serde_json::from_slice(
         &test_conn
             .take_response_body()
@@ -640,9 +652,14 @@ async fn collection_job_put_idempotence_fixed_size_current_batch_mutate_aggregat
 
 #[tokio::test]
 async fn collection_job_put_idempotence_fixed_size_by_batch_id() {
-    let test_case =
-        setup_collection_job_test_case(Role::Leader, QueryType::FixedSize { max_batch_size: 10 })
-            .await;
+    let test_case = setup_collection_job_test_case(
+        Role::Leader,
+        QueryType::FixedSize {
+            max_batch_size: 10,
+            batch_time_window_size: None,
+        },
+    )
+    .await;
 
     let collection_job_id = random();
     let batch_id = random();
@@ -688,9 +705,14 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id() {
 
 #[tokio::test]
 async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_batch_id() {
-    let test_case =
-        setup_collection_job_test_case(Role::Leader, QueryType::FixedSize { max_batch_size: 10 })
-            .await;
+    let test_case = setup_collection_job_test_case(
+        Role::Leader,
+        QueryType::FixedSize {
+            max_batch_size: 10,
+            batch_time_window_size: None,
+        },
+    )
+    .await;
 
     let collection_job_id = random();
     let first_batch_id = random();
@@ -752,9 +774,14 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_batch_id()
 
 #[tokio::test]
 async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_aggregation_param() {
-    let test_case =
-        setup_collection_job_test_case(Role::Leader, QueryType::FixedSize { max_batch_size: 10 })
-            .await;
+    let test_case = setup_collection_job_test_case(
+        Role::Leader,
+        QueryType::FixedSize {
+            max_batch_size: 10,
+            batch_time_window_size: None,
+        },
+    )
+    .await;
 
     let collection_job_id = random();
     let batch_id = random();

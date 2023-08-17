@@ -117,7 +117,7 @@ pub enum VdafObject {
         length: NumberAsString<usize>,
     },
     Prio3Histogram {
-        buckets: Vec<NumberAsString<u64>>,
+        length: NumberAsString<usize>,
     },
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3FixedPoint16BitBoundedL2VecSum {
@@ -151,8 +151,8 @@ impl From<VdafInstance> for VdafObject {
                 length: NumberAsString(length),
             },
 
-            VdafInstance::Prio3Histogram { buckets } => VdafObject::Prio3Histogram {
-                buckets: buckets.iter().copied().map(NumberAsString).collect(),
+            VdafInstance::Prio3Histogram { length } => VdafObject::Prio3Histogram {
+                length: NumberAsString(length),
             },
 
             #[cfg(feature = "fpvec_bounded_l2")]
@@ -196,9 +196,9 @@ impl From<VdafObject> for VdafInstance {
                 length: length.0,
             },
 
-            VdafObject::Prio3Histogram { buckets } => VdafInstance::Prio3Histogram {
-                buckets: buckets.iter().map(|value| value.0).collect(),
-            },
+            VdafObject::Prio3Histogram { length } => {
+                VdafInstance::Prio3Histogram { length: length.0 }
+            }
 
             #[cfg(feature = "fpvec_bounded_l2")]
             VdafObject::Prio3FixedPoint16BitBoundedL2VecSum { length } => {
@@ -281,7 +281,7 @@ impl From<Task> for AggregatorAddTaskRequest {
     fn from(task: Task) -> Self {
         let (query_type, max_batch_size) = match task.query_type() {
             QueryType::TimeInterval => (TimeInterval::CODE as u8, None),
-            QueryType::FixedSize { max_batch_size } => {
+            QueryType::FixedSize { max_batch_size, .. } => {
                 (FixedSize::CODE as u8, Some(*max_batch_size))
             }
         };
@@ -311,7 +311,7 @@ impl From<Task> for AggregatorAddTaskRequest {
             max_batch_size,
             time_precision: task.time_precision().as_seconds(),
             collector_hpke_config: URL_SAFE_NO_PAD
-                .encode(task.collector_hpke_config().get_encoded()),
+                .encode(task.collector_hpke_config().unwrap().get_encoded()),
             task_expiration: task.task_expiration().map(Time::as_seconds_since_epoch),
         }
     }

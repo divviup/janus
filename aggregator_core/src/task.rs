@@ -6,10 +6,11 @@ use derivative::Derivative;
 use janus_core::{
     hpke::{generate_hpke_config_and_private_key, HpkeKeypair},
     task::{url_ensure_trailing_slash, AuthenticationToken, VdafInstance},
+    time::TimeExt,
 };
 use janus_messages::{
-    AggregationJobId, CollectionJobId, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId,
-    HpkeKemId, Role, TaskId, Time,
+    taskprov, AggregationJobId, CollectionJobId, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId,
+    HpkeKdfId, HpkeKemId, Role, TaskId, Time,
 };
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
@@ -39,12 +40,36 @@ pub enum QueryType {
     /// Time-interval: used to support a collection style based on fixed time intervals.
     TimeInterval,
 
-    /// Fixed-size: used to support collection of batches as quickly as possible, without aligning
-    /// to a fixed batch window.
+    /// Fixed-size: used to support collection of batches as quickly as possible, without the
+    /// latency of waiting for batch time intervals to pass, and with direct control over the number
+    /// of reports per batch.
     FixedSize {
         /// The maximum number of reports in a batch to allow it to be collected.
         max_batch_size: u64,
+        /// If present, reports will be separated into different batches by timestamp, such that
+        /// the client timestamp interval duration will not exceed this value. The minimum and
+        /// maximum allowed report timestamps for each batch will be multiples of this value as
+        /// well. This must be a multiple of the task's time precision.
+        ///
+        /// This is an implementation-specific configuration parameter, and not part of the query
+        /// type as defined in DAP.
+        batch_time_window_size: Option<Duration>,
     },
+}
+
+impl TryFrom<&taskprov::Query> for QueryType {
+    type Error = Error;
+
+    fn try_from(value: &taskprov::Query) -> Result<Self, Self::Error> {
+        match value {
+            taskprov::Query::TimeInterval => Ok(Self::TimeInterval),
+            taskprov::Query::FixedSize { max_batch_size } => Ok(Self::FixedSize {
+                max_batch_size: *max_batch_size as u64,
+                batch_time_window_size: None,
+            }),
+            _ => Err(Error::InvalidParameter("unknown query type")),
+        }
+    }
 }
 
 /// A verification key for a VDAF, with a fixed length. It must be kept secret from clients to
@@ -106,7 +131,7 @@ pub struct Task {
     /// farther than this duration into the future will be rejected.
     tolerable_clock_skew: Duration,
     /// HPKE configuration for the collector.
-    collector_hpke_config: HpkeConfig,
+    collector_hpke_config: Option<HpkeConfig>,
     /// Tokens used to authenticate messages sent to or received from the other aggregator.
     aggregator_auth_tokens: Vec<AuthenticationToken>,
     /// Tokens used to authenticate messages sent to or received from the collector.
@@ -120,7 +145,7 @@ impl Task {
     #[allow(clippy::too_many_arguments)]
     pub fn new<I: IntoIterator<Item = HpkeKeypair>>(
         task_id: TaskId,
-        mut aggregator_endpoints: Vec<Url>,
+        aggregator_endpoints: Vec<Url>,
         query_type: QueryType,
         vdaf: VdafInstance,
         role: Role,
@@ -136,6 +161,49 @@ impl Task {
         collector_auth_tokens: Vec<AuthenticationToken>,
         hpke_keys: I,
     ) -> Result<Self, Error> {
+        let task = Self::new_without_validation(
+            task_id,
+            aggregator_endpoints,
+            query_type,
+            vdaf,
+            role,
+            vdaf_verify_keys,
+            max_batch_query_count,
+            task_expiration,
+            report_expiry_age,
+            min_batch_size,
+            time_precision,
+            tolerable_clock_skew,
+            Some(collector_hpke_config),
+            aggregator_auth_tokens,
+            collector_auth_tokens,
+            hpke_keys,
+        );
+        task.validate()?;
+        Ok(task)
+    }
+
+    /// Create a new [`Task`] from the provided values, without performing validation. Used for
+    /// crate-internal functions that know what they're doing.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_without_validation<I: IntoIterator<Item = HpkeKeypair>>(
+        task_id: TaskId,
+        mut aggregator_endpoints: Vec<Url>,
+        query_type: QueryType,
+        vdaf: VdafInstance,
+        role: Role,
+        vdaf_verify_keys: Vec<SecretBytes>,
+        max_batch_query_count: u64,
+        task_expiration: Option<Time>,
+        report_expiry_age: Option<Duration>,
+        min_batch_size: u64,
+        time_precision: Duration,
+        tolerable_clock_skew: Duration,
+        collector_hpke_config: Option<HpkeConfig>,
+        aggregator_auth_tokens: Vec<AuthenticationToken>,
+        collector_auth_tokens: Vec<AuthenticationToken>,
+        hpke_keys: I,
+    ) -> Self {
         // Ensure provided aggregator endpoints end with a slash, as we will be joining additional
         // path segments into these endpoints & the Url::join implementation is persnickety about
         // the slash at the end of the path.
@@ -149,7 +217,7 @@ impl Task {
             .map(|keypair| (*keypair.config().id(), keypair))
             .collect();
 
-        let task = Self {
+        Self {
             task_id,
             aggregator_endpoints,
             query_type,
@@ -166,12 +234,11 @@ impl Task {
             aggregator_auth_tokens,
             collector_auth_tokens,
             hpke_keys,
-        };
-        task.validate()?;
-        Ok(task)
+        }
     }
 
-    fn validate(&self) -> Result<(), Error> {
+    /// Validates using criteria common to all tasks regardless of their provenance.
+    pub(crate) fn validate_common(&self) -> Result<(), Error> {
         // DAP currently only supports configurations of exactly two aggregators.
         if self.aggregator_endpoints.len() != 2 {
             return Err(Error::InvalidParameter("aggregator_endpoints"));
@@ -179,6 +246,34 @@ impl Task {
         if !self.role.is_aggregator() {
             return Err(Error::InvalidParameter("role"));
         }
+        if self.vdaf_verify_keys.is_empty() {
+            return Err(Error::InvalidParameter("vdaf_verify_keys"));
+        }
+        if let QueryType::FixedSize { max_batch_size, .. } = self.query_type() {
+            if *max_batch_size < self.min_batch_size() {
+                return Err(Error::InvalidParameter("max_batch_size"));
+            }
+        }
+
+        // These fields are stored as 64-bit signed integers in the database but are held in
+        // memory as unsigned. Reject values that are too large. (perhaps these should be
+        // represented by different types?)
+        if let Some(report_expiry_age) = self.report_expiry_age() {
+            if report_expiry_age > &Duration::from_seconds(i64::MAX as u64) {
+                return Err(Error::InvalidParameter("report_expiry_age too large"));
+            }
+        }
+        if let Some(task_expiration) = self.task_expiration() {
+            task_expiration
+                .as_naive_date_time()
+                .map_err(|_| Error::InvalidParameter("task_expiration out of range"))?;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), Error> {
+        self.validate_common()?;
         if self.aggregator_auth_tokens.is_empty() {
             return Err(Error::InvalidParameter("aggregator_auth_tokens"));
         }
@@ -187,15 +282,16 @@ impl Task {
             // leader role.
             return Err(Error::InvalidParameter("collector_auth_tokens"));
         }
-        if self.vdaf_verify_keys.is_empty() {
-            return Err(Error::InvalidParameter("vdaf_verify_keys"));
-        }
         if self.hpke_keys.is_empty() {
             return Err(Error::InvalidParameter("hpke_keys"));
         }
-        if let QueryType::FixedSize { max_batch_size } = self.query_type() {
-            if *max_batch_size < self.min_batch_size() {
-                return Err(Error::InvalidParameter("max_batch_size"));
+        if let QueryType::FixedSize {
+            batch_time_window_size: Some(batch_time_window_size),
+            ..
+        } = self.query_type()
+        {
+            if batch_time_window_size.as_seconds() % self.time_precision().as_seconds() != 0 {
+                return Err(Error::InvalidParameter("batch_time_window_size"));
             }
         }
         Ok(())
@@ -262,8 +358,8 @@ impl Task {
     }
 
     /// Retrieves the collector HPKE config associated with this task.
-    pub fn collector_hpke_config(&self) -> &HpkeConfig {
-        &self.collector_hpke_config
+    pub fn collector_hpke_config(&self) -> Option<&HpkeConfig> {
+        self.collector_hpke_config.as_ref()
     }
 
     /// Retrieves the aggregator authentication tokens associated with this task.
@@ -299,7 +395,7 @@ impl Task {
                 // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.2
                 batch_size >= self.min_batch_size()
             }
-            QueryType::FixedSize { max_batch_size } => {
+            QueryType::FixedSize { max_batch_size, .. } => {
                 // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.2.2
                 batch_size >= self.min_batch_size() && batch_size <= max_batch_size
             }
@@ -502,7 +598,10 @@ impl Serialize for Task {
             min_batch_size: self.min_batch_size,
             time_precision: self.time_precision,
             tolerable_clock_skew: self.tolerable_clock_skew,
-            collector_hpke_config: self.collector_hpke_config.clone(),
+            collector_hpke_config: self
+                .collector_hpke_config()
+                .expect("serializable tasks must have collector_hpke_config")
+                .clone(),
             aggregator_auth_tokens: self.aggregator_auth_tokens.clone(),
             collector_auth_tokens: self.collector_auth_tokens.clone(),
             hpke_keys,
@@ -707,7 +806,7 @@ pub mod test_util {
         /// Associates the eventual task with the given collector HPKE config.
         pub fn with_collector_hpke_config(self, collector_hpke_config: HpkeConfig) -> Self {
             Self(Task {
-                collector_hpke_config,
+                collector_hpke_config: Some(collector_hpke_config),
                 ..self.0
             })
         }
@@ -782,6 +881,7 @@ mod tests {
         task::{test_util::TaskBuilder, QueryType, Task, VdafInstance},
         SecretBytes,
     };
+    use assert_matches::assert_matches;
     use janus_core::{
         hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair, HpkePrivateKey},
         task::{AuthenticationToken, PRIO3_VERIFY_KEY_LENGTH},
@@ -793,7 +893,8 @@ mod tests {
         TaskId,
     };
     use rand::random;
-    use serde_test::{assert_tokens, Token};
+    use serde_json::json;
+    use serde_test::{assert_de_tokens, assert_tokens, Token};
     use url::Url;
 
     #[test]
@@ -1118,7 +1219,10 @@ mod tests {
                     len: 2,
                 },
                 Token::Str("type"),
-                Token::Str("DapAuth"),
+                Token::UnitVariant {
+                    name: "AuthenticationToken",
+                    variant: "DapAuth",
+                },
                 Token::Str("token"),
                 Token::Str("YWdncmVnYXRvciB0b2tlbg"),
                 Token::StructEnd,
@@ -1130,7 +1234,10 @@ mod tests {
                     len: 2,
                 },
                 Token::Str("type"),
-                Token::Str("Bearer"),
+                Token::UnitVariant {
+                    name: "AuthenticationToken",
+                    variant: "Bearer",
+                },
                 Token::Str("token"),
                 Token::Str("Y29sbGVjdG9yIHRva2Vu"),
                 Token::StructEnd,
@@ -1184,7 +1291,10 @@ mod tests {
                     "https://example.com/".parse().unwrap(),
                     "https://example.net/".parse().unwrap(),
                 ]),
-                QueryType::FixedSize { max_batch_size: 10 },
+                QueryType::FixedSize {
+                    max_batch_size: 10,
+                    batch_time_window_size: None,
+                },
                 VdafInstance::Prio3CountVec { length: 8 },
                 Role::Helper,
                 Vec::from([SecretBytes::new(b"1234567812345678".to_vec())]),
@@ -1235,10 +1345,12 @@ mod tests {
                 Token::StructVariant {
                     name: "QueryType",
                     variant: "FixedSize",
-                    len: 1,
+                    len: 2,
                 },
                 Token::Str("max_batch_size"),
                 Token::U64(10),
+                Token::Str("batch_time_window_size"),
+                Token::None,
                 Token::StructVariantEnd,
                 Token::Str("vdaf"),
                 Token::StructVariant {
@@ -1309,7 +1421,10 @@ mod tests {
                     len: 2,
                 },
                 Token::Str("type"),
-                Token::Str("Bearer"),
+                Token::UnitVariant {
+                    name: "AuthenticationToken",
+                    variant: "Bearer",
+                },
                 Token::Str("token"),
                 Token::Str("YWdncmVnYXRvciB0b2tlbg"),
                 Token::StructEnd,
@@ -1357,6 +1472,87 @@ mod tests {
                 Token::SeqEnd,
                 Token::StructEnd,
             ],
+        );
+    }
+
+    #[test]
+    fn query_type_serde() {
+        assert_tokens(
+            &QueryType::TimeInterval,
+            &[Token::UnitVariant {
+                name: "QueryType",
+                variant: "TimeInterval",
+            }],
+        );
+        assert_tokens(
+            &QueryType::FixedSize {
+                max_batch_size: 10,
+                batch_time_window_size: None,
+            },
+            &[
+                Token::StructVariant {
+                    name: "QueryType",
+                    variant: "FixedSize",
+                    len: 2,
+                },
+                Token::Str("max_batch_size"),
+                Token::U64(10),
+                Token::Str("batch_time_window_size"),
+                Token::None,
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_tokens(
+            &QueryType::FixedSize {
+                max_batch_size: 10,
+                batch_time_window_size: Some(Duration::from_hours(1).unwrap()),
+            },
+            &[
+                Token::StructVariant {
+                    name: "QueryType",
+                    variant: "FixedSize",
+                    len: 2,
+                },
+                Token::Str("max_batch_size"),
+                Token::U64(10),
+                Token::Str("batch_time_window_size"),
+                Token::Some,
+                Token::NewtypeStruct { name: "Duration" },
+                Token::U64(3600),
+                Token::StructVariantEnd,
+            ],
+        );
+
+        // Backwards compatibility cases:
+        assert_de_tokens(
+            &QueryType::FixedSize {
+                max_batch_size: 10,
+                batch_time_window_size: None,
+            },
+            &[
+                Token::StructVariant {
+                    name: "QueryType",
+                    variant: "FixedSize",
+                    len: 2,
+                },
+                Token::Str("max_batch_size"),
+                Token::U64(10),
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_matches!(
+            serde_json::from_value(json!({ "FixedSize": { "max_batch_size": 10 } })),
+            Ok(QueryType::FixedSize {
+                max_batch_size: 10,
+                batch_time_window_size: None,
+            })
+        );
+        assert_matches!(
+            serde_yaml::from_str("!FixedSize { max_batch_size: 10 }"),
+            Ok(QueryType::FixedSize {
+                max_batch_size: 10,
+                batch_time_window_size: None,
+            })
         );
     }
 }

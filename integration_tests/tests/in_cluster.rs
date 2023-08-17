@@ -13,7 +13,9 @@ use janus_core::{
 };
 use janus_integration_tests::{
     client::ClientBackend,
-    divviup_api_client::{DivviupApiClient, NewAggregatorRequest, NewTaskRequest},
+    divviup_api_client::{
+        DivviupApiClient, NewAggregatorRequest, NewHpkeConfigRequest, NewTaskRequest,
+    },
     TaskParameters,
 };
 use janus_messages::TaskId;
@@ -137,6 +139,16 @@ impl InClusterJanusPair {
             )
             .await;
 
+        let collector_hpke_config = divviup_api
+            .create_hpke_config(
+                &account,
+                &NewHpkeConfigRequest {
+                    name: "Integration test key".to_string(),
+                    contents: STANDARD.encode(task.collector_hpke_config().unwrap().get_encoded()),
+                },
+            )
+            .await;
+
         let provision_task_request = NewTaskRequest {
             name: "Integration test task".to_string(),
             leader_aggregator_id: paired_leader_aggregator.id,
@@ -145,11 +157,11 @@ impl InClusterJanusPair {
             min_batch_size: task.min_batch_size(),
             max_batch_size: match task.query_type() {
                 QueryType::TimeInterval => None,
-                QueryType::FixedSize { max_batch_size } => Some(*max_batch_size),
+                QueryType::FixedSize { max_batch_size, .. } => Some(*max_batch_size),
             },
             expiration: "3000-01-01T00:00:00Z".to_owned(),
             time_precision_seconds: task.time_precision().as_seconds(),
-            hpke_config: STANDARD.encode(task.collector_hpke_config().get_encoded()),
+            hpke_config_id: collector_hpke_config.id,
         };
 
         // Provision the task into both aggregators via divviup-api
@@ -240,13 +252,13 @@ async fn in_cluster_sum() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "divviup-api does not currently support DAP-05 (https://github.com/divviup/divviup-api/issues/410)"]
 async fn in_cluster_histogram() {
     install_test_trace_subscriber();
 
     // Start port forwards and set up task.
-    let buckets = Vec::from([3, 6, 8]);
     let janus_pair = InClusterJanusPair::new(
-        VdafInstance::Prio3Histogram { buckets },
+        VdafInstance::Prio3Histogram { length: 4 },
         QueryType::TimeInterval,
     )
     .await;
@@ -269,6 +281,7 @@ async fn in_cluster_fixed_size() {
         VdafInstance::Prio3Count,
         QueryType::FixedSize {
             max_batch_size: 110,
+            batch_time_window_size: None,
         },
     )
     .await;

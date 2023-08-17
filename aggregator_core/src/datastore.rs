@@ -10,6 +10,7 @@ use self::models::{
 use crate::{
     query_type::{AccumulableQueryType, CollectableQueryType},
     task::{self, Task},
+    taskprov::{self, PeerAggregator},
     SecretBytes,
 };
 use anyhow::anyhow;
@@ -17,7 +18,7 @@ use chrono::NaiveDateTime;
 use futures::future::try_join_all;
 use janus_core::{
     hpke::{HpkeKeypair, HpkePrivateKey},
-    task::VdafInstance,
+    task::{AuthenticationToken, VdafInstance},
     time::{Clock, TimeExt},
 };
 use janus_messages::{
@@ -99,7 +100,7 @@ macro_rules! supported_schema_versions {
 // version is seen, [`Datastore::new`] fails.
 //
 // Note that the latest supported version must be first in the list.
-supported_schema_versions!(13);
+supported_schema_versions!(15);
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -535,39 +536,45 @@ impl<C: Clock> Transaction<'_, C> {
                     task_id, aggregator_role, aggregator_endpoints, query_type, vdaf,
                     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
                     time_precision, tolerable_clock_skew, collector_hpke_config)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                ON CONFLICT DO NOTHING",
             )
             .await?;
-        self.execute(
-            &stmt,
-            &[
-                /* task_id */ &task.id().as_ref(),
-                /* aggregator_role */ &AggregatorRole::from_role(*task.role())?,
-                /* aggregator_endpoints */ &endpoints,
-                /* query_type */ &Json(task.query_type()),
-                /* vdaf */ &Json(task.vdaf()),
-                /* max_batch_query_count */
-                &i64::try_from(task.max_batch_query_count())?,
-                /* task_expiration */
-                &task
-                    .task_expiration()
-                    .map(Time::as_naive_date_time)
-                    .transpose()?,
-                /* report_expiry_age */
-                &task
-                    .report_expiry_age()
-                    .map(Duration::as_seconds)
-                    .map(i64::try_from)
-                    .transpose()?,
-                /* min_batch_size */ &i64::try_from(task.min_batch_size())?,
-                /* time_precision */
-                &i64::try_from(task.time_precision().as_seconds())?,
-                /* tolerable_clock_skew */
-                &i64::try_from(task.tolerable_clock_skew().as_seconds())?,
-                /* collector_hpke_config */ &task.collector_hpke_config().get_encoded(),
-            ],
-        )
-        .await?;
+        check_insert(
+            self.execute(
+                &stmt,
+                &[
+                    /* task_id */ &task.id().as_ref(),
+                    /* aggregator_role */ &AggregatorRole::from_role(*task.role())?,
+                    /* aggregator_endpoints */ &endpoints,
+                    /* query_type */ &Json(task.query_type()),
+                    /* vdaf */ &Json(task.vdaf()),
+                    /* max_batch_query_count */
+                    &i64::try_from(task.max_batch_query_count())?,
+                    /* task_expiration */
+                    &task
+                        .task_expiration()
+                        .map(Time::as_naive_date_time)
+                        .transpose()?,
+                    /* report_expiry_age */
+                    &task
+                        .report_expiry_age()
+                        .map(Duration::as_seconds)
+                        .map(i64::try_from)
+                        .transpose()?,
+                    /* min_batch_size */ &i64::try_from(task.min_batch_size())?,
+                    /* time_precision */
+                    &i64::try_from(task.time_precision().as_seconds())?,
+                    /* tolerable_clock_skew */
+                    &i64::try_from(task.tolerable_clock_skew().as_seconds())?,
+                    /* collector_hpke_config */
+                    &task
+                        .collector_hpke_config()
+                        .map(|config| config.get_encoded()),
+                ],
+            )
+            .await?,
+        )?;
 
         // Aggregator auth tokens.
         let mut aggregator_auth_token_ords = Vec::new();
@@ -964,7 +971,10 @@ impl<C: Clock> Transaction<'_, C> {
         let time_precision = Duration::from_seconds(row.get_bigint_and_convert("time_precision")?);
         let tolerable_clock_skew =
             Duration::from_seconds(row.get_bigint_and_convert("tolerable_clock_skew")?);
-        let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
+        let collector_hpke_config = row
+            .get::<_, Option<Vec<u8>>>("collector_hpke_config")
+            .map(|config| HpkeConfig::get_decoded(&config))
+            .transpose()?;
 
         // Aggregator authentication tokens.
         let mut aggregator_auth_tokens = Vec::new();
@@ -1041,7 +1051,7 @@ impl<C: Clock> Transaction<'_, C> {
             )?));
         }
 
-        Ok(Task::new(
+        let task = Task::new_without_validation(
             *task_id,
             endpoints,
             query_type,
@@ -1058,7 +1068,29 @@ impl<C: Clock> Transaction<'_, C> {
             aggregator_auth_tokens,
             collector_auth_tokens,
             hpke_keypairs,
-        )?)
+        );
+        // Trial validation through all known schemes. This is a workaround to avoid extending the
+        // schema to track the provenance of tasks. If we do end up implementing a task provenance
+        // column anyways, we can simplify this logic.
+        task.validate().or_else(|error| {
+            taskprov::Task(task.clone())
+                .validate()
+                .map_err(|taskprov_error| {
+                    error!(
+                        %task_id,
+                        %error,
+                        %taskprov_error,
+                        ?task,
+                        "task has failed all available validation checks",
+                    );
+                    // Choose some error to bubble up to the caller. Either way this error
+                    // occurring is an indication of a bug, which we'll need to go into the
+                    // logs for.
+                    error
+                })
+        })?;
+
+        Ok(task)
     }
 
     /// Retrieves report & report aggregation metrics for a given task: either a tuple
@@ -1307,6 +1339,7 @@ impl<C: Clock> Transaction<'_, C> {
                     WHERE tasks.task_id = $1
                       AND client_reports.aggregation_started = FALSE
                       AND client_reports.client_timestamp >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                    ORDER BY client_timestamp DESC
                     FOR UPDATE OF client_reports SKIP LOCKED
                     LIMIT 5000
                 )
@@ -3639,13 +3672,14 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         task_id: &TaskId,
         batch_id: &BatchId,
+        time_bucket_start: &Option<Time>,
     ) -> Result<(), Error> {
         let stmt = self
             .prepare_cached(
-                "INSERT INTO outstanding_batches (task_id, batch_id)
-                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2)
+                "INSERT INTO outstanding_batches (task_id, batch_id, time_bucket_start)
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3)
                 ON CONFLICT DO NOTHING
-                RETURNING COALESCE(UPPER((SELECT client_timestamp_interval FROM batches WHERE task_id = outstanding_batches.task_id AND batch_identifier = outstanding_batches.batch_id)) < COALESCE($3::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
+                RETURNING COALESCE(UPPER((SELECT client_timestamp_interval FROM batches WHERE task_id = outstanding_batches.task_id AND batch_identifier = outstanding_batches.batch_id)) < COALESCE($4::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
             )
             .await?;
         let rows = self
@@ -3654,6 +3688,11 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* task_id */ task_id.as_ref(),
                     /* batch_id */ batch_id.as_ref(),
+                    /* time_bucket_start */
+                    &time_bucket_start
+                        .as_ref()
+                        .map(Time::as_naive_date_time)
+                        .transpose()?,
                     /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
             )
@@ -3688,24 +3727,46 @@ impl<C: Clock> Transaction<'_, C> {
         check_insert(row_count)
     }
 
-    /// Retrieves all [`OutstandingBatch`]es for a given task.
+    /// Retrieves all [`OutstandingBatch`]es for a given task and time bucket, if applicable.
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_outstanding_batches_for_task(
+    pub async fn get_outstanding_batches(
         &self,
         task_id: &TaskId,
+        time_bucket_start: &Option<Time>,
     ) -> Result<Vec<OutstandingBatch>, Error> {
-        let stmt = self
-            .prepare_cached(
-                "SELECT batch_id FROM outstanding_batches
-                JOIN tasks ON tasks.id = outstanding_batches.task_id
-                JOIN batches ON batches.task_id = outstanding_batches.task_id
-                            AND batches.batch_identifier = outstanding_batches.batch_id
-                WHERE tasks.task_id = $1
-                  AND UPPER(batches.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+        let rows = if let Some(time_bucket_start) = time_bucket_start {
+            let stmt = self
+                .prepare_cached(
+                    "SELECT batch_id FROM outstanding_batches
+                    JOIN tasks ON tasks.id = outstanding_batches.task_id
+                    JOIN batches ON batches.task_id = outstanding_batches.task_id
+                                AND batches.batch_identifier = outstanding_batches.batch_id
+                    WHERE tasks.task_id = $1
+                    AND time_bucket_start = $2
+                    AND UPPER(batches.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                )
+                .await?;
+            self.query(
+                &stmt,
+                &[
+                    /* task_id */ task_id.as_ref(),
+                    /* time_bucket_start */ &time_bucket_start.as_naive_date_time()?,
+                    /* now */ &self.clock.now().as_naive_date_time()?,
+                ],
             )
-            .await?;
-
-        try_join_all(
+            .await?
+        } else {
+            let stmt = self
+                .prepare_cached(
+                    "SELECT batch_id FROM outstanding_batches
+                    JOIN tasks ON tasks.id = outstanding_batches.task_id
+                    JOIN batches ON batches.task_id = outstanding_batches.task_id
+                                AND batches.batch_identifier = outstanding_batches.batch_id
+                    WHERE tasks.task_id = $1
+                    AND time_bucket_start IS NULL
+                    AND UPPER(batches.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                )
+                .await?;
             self.query(
                 &stmt,
                 &[
@@ -3714,13 +3775,13 @@ impl<C: Clock> Transaction<'_, C> {
                 ],
             )
             .await?
-            .into_iter()
-            .map(|row| async move {
-                let batch_id = BatchId::get_decoded(row.get("batch_id"))?;
-                let size = self.read_batch_size(task_id, &batch_id).await?;
-                Ok(OutstandingBatch::new(*task_id, batch_id, size))
-            }),
-        )
+        };
+
+        try_join_all(rows.into_iter().map(|row| async move {
+            let batch_id = BatchId::get_decoded(row.get("batch_id"))?;
+            let size = self.read_batch_size(task_id, &batch_id).await?;
+            Ok(OutstandingBatch::new(*task_id, batch_id, size))
+        }))
         .await
     }
 
@@ -4333,6 +4394,336 @@ impl<C: Clock> Transaction<'_, C> {
             )
             .await?,
         )
+    }
+
+    #[tracing::instrument(skip(self), err)]
+    pub async fn get_taskprov_peer_aggregators(&self) -> Result<Vec<PeerAggregator>, Error> {
+        let stmt = self
+            .prepare_cached(
+                "SELECT id, endpoint, role, verify_key_init, collector_hpke_config,
+                        report_expiry_age, tolerable_clock_skew
+                    FROM taskprov_peer_aggregators",
+            )
+            .await?;
+        let peer_aggregator_rows = self.query(&stmt, &[]);
+
+        let stmt = self
+            .prepare_cached(
+                "SELECT (SELECT p.id FROM taskprov_peer_aggregators AS p 
+                    WHERE p.id = a.peer_aggregator_id) AS peer_id,
+                ord, type, token FROM taskprov_aggregator_auth_tokens AS a
+                    ORDER BY ord ASC",
+            )
+            .await?;
+        let aggregator_auth_token_rows = self.query(&stmt, &[]);
+
+        let stmt = self
+            .prepare_cached(
+                "SELECT (SELECT p.id FROM taskprov_peer_aggregators AS p 
+                    WHERE p.id = a.peer_aggregator_id) AS peer_id,
+                ord, type, token FROM taskprov_collector_auth_tokens AS a
+                    ORDER BY ord ASC",
+            )
+            .await?;
+        let collector_auth_token_rows = self.query(&stmt, &[]);
+
+        let (peer_aggregator_rows, aggregator_auth_token_rows, collector_auth_token_rows) = try_join!(
+            peer_aggregator_rows,
+            aggregator_auth_token_rows,
+            collector_auth_token_rows,
+        )?;
+
+        let mut aggregator_auth_token_rows_by_peer_id: HashMap<i64, Vec<Row>> = HashMap::new();
+        for row in aggregator_auth_token_rows {
+            aggregator_auth_token_rows_by_peer_id
+                .entry(row.get("peer_id"))
+                .or_default()
+                .push(row);
+        }
+
+        let mut collector_auth_token_rows_by_peer_id: HashMap<i64, Vec<Row>> = HashMap::new();
+        for row in collector_auth_token_rows {
+            collector_auth_token_rows_by_peer_id
+                .entry(row.get("peer_id"))
+                .or_default()
+                .push(row);
+        }
+
+        peer_aggregator_rows
+            .into_iter()
+            .map(|row| (row.get("id"), row))
+            .map(|(peer_id, peer_aggregator_row)| {
+                self.taskprov_peer_aggregator_from_rows(
+                    &peer_aggregator_row,
+                    &aggregator_auth_token_rows_by_peer_id
+                        .remove(&peer_id)
+                        .unwrap_or_default(),
+                    &collector_auth_token_rows_by_peer_id
+                        .remove(&peer_id)
+                        .unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+
+    #[tracing::instrument(skip(self), err)]
+    pub async fn get_taskprov_peer_aggregator(
+        &self,
+        aggregator_url: &Url,
+        role: &Role,
+    ) -> Result<Option<PeerAggregator>, Error> {
+        let aggregator_url = aggregator_url.as_str();
+        let role = AggregatorRole::from_role(*role)?;
+        let params: &[&(dyn ToSql + Sync)] = &[&aggregator_url, &role];
+
+        let stmt = self
+            .prepare_cached(
+                "SELECT id, endpoint, role, verify_key_init, collector_hpke_config,
+                        report_expiry_age, tolerable_clock_skew
+                    FROM taskprov_peer_aggregators WHERE endpoint = $1 AND role = $2",
+            )
+            .await?;
+        let peer_aggregator_row = self.query_opt(&stmt, params);
+
+        let stmt = self
+            .prepare_cached(
+                "SELECT ord, type, token FROM taskprov_aggregator_auth_tokens
+                    WHERE peer_aggregator_id = (SELECT id FROM taskprov_peer_aggregators
+                        WHERE endpoint = $1 AND role = $2)
+                    ORDER BY ord ASC",
+            )
+            .await?;
+        let aggregator_auth_token_rows = self.query(&stmt, params);
+
+        let stmt = self
+            .prepare_cached(
+                "SELECT ord, type, token FROM taskprov_collector_auth_tokens
+                    WHERE peer_aggregator_id = (SELECT id FROM taskprov_peer_aggregators
+                        WHERE endpoint = $1 AND role = $2)
+                    ORDER BY ord ASC",
+            )
+            .await?;
+        let collector_auth_token_rows = self.query(&stmt, params);
+
+        let (peer_aggregator_row, aggregator_auth_token_rows, collector_auth_token_rows) = try_join!(
+            peer_aggregator_row,
+            aggregator_auth_token_rows,
+            collector_auth_token_rows,
+        )?;
+        peer_aggregator_row
+            .map(|peer_aggregator_row| {
+                self.taskprov_peer_aggregator_from_rows(
+                    &peer_aggregator_row,
+                    &aggregator_auth_token_rows,
+                    &collector_auth_token_rows,
+                )
+            })
+            .transpose()
+    }
+
+    fn taskprov_peer_aggregator_from_rows(
+        &self,
+        peer_aggregator_row: &Row,
+        aggregator_auth_token_rows: &[Row],
+        collector_auth_token_rows: &[Row],
+    ) -> Result<PeerAggregator, Error> {
+        let endpoint = Url::parse(peer_aggregator_row.get::<_, &str>("endpoint"))?;
+        let endpoint_bytes = endpoint.as_str().as_ref();
+        let role: AggregatorRole = peer_aggregator_row.get("role");
+        let report_expiry_age = peer_aggregator_row
+            .get_nullable_bigint_and_convert("report_expiry_age")?
+            .map(Duration::from_seconds);
+        let tolerable_clock_skew = Duration::from_seconds(
+            peer_aggregator_row.get_bigint_and_convert("tolerable_clock_skew")?,
+        );
+        let collector_hpke_config =
+            HpkeConfig::get_decoded(peer_aggregator_row.get("collector_hpke_config"))?;
+
+        let encrypted_verify_key_init: Vec<u8> = peer_aggregator_row.get("verify_key_init");
+        let verify_key_init = self
+            .crypter
+            .decrypt(
+                "taskprov_peer_aggregator",
+                endpoint_bytes,
+                "verify_key_init",
+                &encrypted_verify_key_init,
+            )?
+            .as_slice()
+            .try_into()?;
+
+        let decrypt_tokens = |rows: &[Row], table| -> Result<Vec<_>, Error> {
+            rows.iter()
+                .map(|row| {
+                    let ord: i64 = row.get("ord");
+                    let auth_token_type: AuthenticationTokenType = row.get("type");
+                    let encrypted_token: Vec<u8> = row.get("token");
+
+                    let mut row_id = Vec::new();
+                    row_id.extend_from_slice(endpoint_bytes);
+                    row_id.extend_from_slice(&role.as_role().get_encoded());
+                    row_id.extend_from_slice(&ord.to_be_bytes());
+
+                    auth_token_type.as_authentication(&self.crypter.decrypt(
+                        table,
+                        &row_id,
+                        "token",
+                        &encrypted_token,
+                    )?)
+                })
+                .collect()
+        };
+
+        let aggregator_auth_tokens = decrypt_tokens(
+            aggregator_auth_token_rows,
+            "taskprov_aggregator_auth_tokens",
+        )?;
+        let collector_auth_tokens =
+            decrypt_tokens(collector_auth_token_rows, "taskprov_collector_auth_tokens")?;
+
+        Ok(PeerAggregator::new(
+            endpoint,
+            role.as_role(),
+            verify_key_init,
+            collector_hpke_config,
+            report_expiry_age,
+            tolerable_clock_skew,
+            aggregator_auth_tokens,
+            collector_auth_tokens,
+        ))
+    }
+
+    #[tracing::instrument(skip(self), err)]
+    pub async fn put_taskprov_peer_aggregator(
+        &self,
+        peer_aggregator: &PeerAggregator,
+    ) -> Result<(), Error> {
+        let endpoint = peer_aggregator.endpoint().as_str();
+        let role = &AggregatorRole::from_role(*peer_aggregator.role())?;
+        let encrypted_verify_key_init = self.crypter.encrypt(
+            "taskprov_peer_aggregator",
+            endpoint.as_ref(),
+            "verify_key_init",
+            peer_aggregator.verify_key_init().as_ref(),
+        )?;
+
+        let stmt = self
+            .prepare_cached(
+                "INSERT INTO taskprov_peer_aggregators (
+                    endpoint, role, verify_key_init, tolerable_clock_skew, report_expiry_age,
+                    collector_hpke_config
+                ) VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT DO NOTHING",
+            )
+            .await?;
+        check_insert(
+            self.execute(
+                &stmt,
+                &[
+                    /* endpoint */ &endpoint,
+                    /* role */ role,
+                    /* verify_key_init */ &encrypted_verify_key_init,
+                    /* tolerable_clock_skew */
+                    &i64::try_from(peer_aggregator.tolerable_clock_skew().as_seconds())?,
+                    /* report_expiry_age */
+                    &peer_aggregator
+                        .report_expiry_age()
+                        .map(Duration::as_seconds)
+                        .map(i64::try_from)
+                        .transpose()?,
+                    /* collector_hpke_config */
+                    &peer_aggregator.collector_hpke_config().get_encoded(),
+                ],
+            )
+            .await?,
+        )?;
+
+        let encrypt_tokens = |tokens: &[AuthenticationToken], table| -> Result<_, Error> {
+            let mut ords = Vec::new();
+            let mut types = Vec::new();
+            let mut encrypted_tokens = Vec::new();
+            for (ord, token) in tokens.iter().enumerate() {
+                let ord = i64::try_from(ord)?;
+
+                let mut row_id = Vec::new();
+                row_id.extend_from_slice(endpoint.as_ref());
+                row_id.extend_from_slice(&role.as_role().get_encoded());
+                row_id.extend_from_slice(&ord.to_be_bytes());
+
+                let encrypted_auth_token =
+                    self.crypter
+                        .encrypt(table, &row_id, "token", token.as_ref())?;
+
+                ords.push(ord);
+                types.push(AuthenticationTokenType::from(token));
+                encrypted_tokens.push(encrypted_auth_token);
+            }
+            Ok((ords, types, encrypted_tokens))
+        };
+
+        let (aggregator_auth_token_ords, aggregator_auth_token_types, aggregator_auth_tokens) =
+            encrypt_tokens(
+                peer_aggregator.aggregator_auth_tokens(),
+                "taskprov_aggregator_auth_tokens",
+            )?;
+        let stmt = self
+            .prepare_cached(
+                "INSERT INTO taskprov_aggregator_auth_tokens (peer_aggregator_id, ord, type, token)
+                SELECT
+                    (SELECT id FROM taskprov_peer_aggregators WHERE endpoint = $1 AND role = $2),
+                    * FROM UNNEST($3::BIGINT[], $4::AUTH_TOKEN_TYPE[], $5::BYTEA[])",
+            )
+            .await?;
+        let aggregator_auth_tokens_params: &[&(dyn ToSql + Sync)] = &[
+            /* endpoint */ &endpoint,
+            /* role */ role,
+            /* ords */ &aggregator_auth_token_ords,
+            /* token_types */ &aggregator_auth_token_types,
+            /* tokens */ &aggregator_auth_tokens,
+        ];
+        let aggregator_auth_tokens_future = self.execute(&stmt, aggregator_auth_tokens_params);
+
+        let (collector_auth_token_ords, collector_auth_token_types, collector_auth_tokens) =
+            encrypt_tokens(
+                peer_aggregator.collector_auth_tokens(),
+                "taskprov_collector_auth_tokens",
+            )?;
+        let stmt = self
+            .prepare_cached(
+                "INSERT INTO taskprov_collector_auth_tokens (peer_aggregator_id, ord, type, token)
+                SELECT
+                    (SELECT id FROM taskprov_peer_aggregators WHERE endpoint = $1 AND role = $2),
+                    * FROM UNNEST($3::BIGINT[], $4::AUTH_TOKEN_TYPE[], $5::BYTEA[])",
+            )
+            .await?;
+        let collector_auth_tokens_params: &[&(dyn ToSql + Sync)] = &[
+            /* endpoint */ &endpoint,
+            /* role */ role,
+            /* ords */ &collector_auth_token_ords,
+            /* token_types */ &collector_auth_token_types,
+            /* tokens */ &collector_auth_tokens,
+        ];
+        let collector_auth_tokens_future = self.execute(&stmt, collector_auth_tokens_params);
+
+        try_join!(aggregator_auth_tokens_future, collector_auth_tokens_future)?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self), err)]
+    pub async fn delete_taskprov_peer_aggregator(
+        &self,
+        aggregator_url: &Url,
+        role: &Role,
+    ) -> Result<(), Error> {
+        let aggregator_url = aggregator_url.as_str();
+        let role = AggregatorRole::from_role(*role)?;
+
+        // Deletion of other data implemented via ON DELETE CASCADE.
+        let stmt = self
+            .prepare_cached(
+                "DELETE FROM taskprov_peer_aggregators WHERE endpoint = $1 AND role = $2",
+            )
+            .await?;
+        check_single_row_mutation(self.execute(&stmt, &[&aggregator_url, &role]).await?)
     }
 }
 

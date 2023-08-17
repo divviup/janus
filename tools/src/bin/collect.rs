@@ -203,41 +203,6 @@ impl TypedValueParser for PrivateKeyValueParser {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Buckets(Vec<u64>);
-
-#[derive(Clone)]
-struct BucketsValueParser {
-    inner: NonEmptyStringValueParser,
-}
-
-impl BucketsValueParser {
-    fn new() -> BucketsValueParser {
-        BucketsValueParser {
-            inner: NonEmptyStringValueParser::new(),
-        }
-    }
-}
-
-impl TypedValueParser for BucketsValueParser {
-    type Value = Buckets;
-
-    fn parse_ref(
-        &self,
-        cmd: &clap::Command,
-        arg: Option<&clap::Arg>,
-        value: &std::ffi::OsStr,
-    ) -> Result<Self::Value, clap::Error> {
-        let input = self.inner.parse_ref(cmd, arg, value)?;
-        input
-            .split(',')
-            .map(|chunk| chunk.trim().parse())
-            .collect::<Result<Vec<_>, _>>()
-            .map(Buckets)
-            .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))
-    }
-}
-
 #[derive(Derivative, Args, PartialEq, Eq)]
 #[derivative(Debug)]
 #[group(required = true)]
@@ -355,22 +320,13 @@ struct Options {
         display_order = 0
     )]
     vdaf: VdafType,
-    /// Number of vector elements, for use with --vdaf=countvec and --vdaf=sumvec
+    /// Number of vector elements, when used with --vdaf=countvec and --vdaf=sumvec or number of
+    /// histogram buckets, when used with --vdaf=histogram
     #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
     length: Option<usize>,
     /// Bit length of measurements, for use with --vdaf=sum and --vdaf=sumvec
     #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
     bits: Option<usize>,
-    /// Comma-separated list of bucket boundaries, for use with --vdaf=histogram
-    #[clap(
-        long,
-        required = false,
-        num_args = 1,
-        action = ArgAction::Set,
-        value_parser = BucketsValueParser::new(),
-        help_heading = "VDAF Algorithm and Parameters"
-    )]
-    buckets: Option<Buckets>,
 
     #[clap(flatten)]
     query: QueryOptions,
@@ -448,41 +404,40 @@ where
         options.hpke_private_key.clone(),
     );
     let http_client = default_http_client().map_err(|err| Error::Anyhow(err.into()))?;
-    match (options.vdaf, options.length, options.bits, options.buckets) {
-        (VdafType::Count, None, None, None) => {
+    match (options.vdaf, options.length, options.bits) {
+        (VdafType::Count, None, None) => {
             let vdaf = Prio3::new_count(2).map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
         }
-        (VdafType::CountVec, Some(length), None, None) => {
+        (VdafType::CountVec, Some(length), None) => {
             let vdaf = Prio3::new_sum_vec(2, 1, length).map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
         }
-        (VdafType::Sum, None, Some(bits), None) => {
+        (VdafType::Sum, None, Some(bits)) => {
             let vdaf = Prio3::new_sum(2, bits).map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
         }
-        (VdafType::SumVec, Some(length), Some(bits), None) => {
+        (VdafType::SumVec, Some(length), Some(bits)) => {
             let vdaf =
                 Prio3::new_sum_vec(2, bits, length).map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
         }
-        (VdafType::Histogram, None, None, Some(ref buckets)) => {
-            let vdaf =
-                Prio3::new_histogram(2, &buckets.0).map_err(|err| Error::Anyhow(err.into()))?;
+        (VdafType::Histogram, Some(length), None) => {
+            let vdaf = Prio3::new_histogram(2, length).map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
         }
         #[cfg(feature = "fpvec_bounded_l2")]
-        (VdafType::FixedPoint16BitBoundedL2VecSum, Some(length), None, None) => {
+        (VdafType::FixedPoint16BitBoundedL2VecSum, Some(length), None) => {
             let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>> =
                 Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
                     .map_err(|err| Error::Anyhow(err.into()))?;
@@ -491,7 +446,7 @@ where
                 .map_err(|err| Error::Anyhow(err.into()))
         }
         #[cfg(feature = "fpvec_bounded_l2")]
-        (VdafType::FixedPoint32BitBoundedL2VecSum, Some(length), None, None) => {
+        (VdafType::FixedPoint32BitBoundedL2VecSum, Some(length), None) => {
             let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>> =
                 Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
                     .map_err(|err| Error::Anyhow(err.into()))?;
@@ -500,7 +455,7 @@ where
                 .map_err(|err| Error::Anyhow(err.into()))
         }
         #[cfg(feature = "fpvec_bounded_l2")]
-        (VdafType::FixedPoint64BitBoundedL2VecSum, Some(length), None, None) => {
+        (VdafType::FixedPoint64BitBoundedL2VecSum, Some(length), None) => {
             let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>> =
                 Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
                     .map_err(|err| Error::Anyhow(err.into()))?;
@@ -634,7 +589,6 @@ mod tests {
             vdaf: VdafType::Count,
             length: None,
             bits: None,
-            buckets: None,
             query: QueryOptions {
                 batch_interval_start: Some(1_000_000),
                 batch_interval_duration: Some(1_000),
@@ -648,8 +602,7 @@ mod tests {
             &format!("--task-id={task_id_encoded}"),
             "--leader",
             leader.as_str(),
-            "--dap-auth-token",
-            auth_token.as_str(),
+            &format!("--dap-auth-token={}", auth_token.as_str()),
             &format!("--hpke-config={encoded_hpke_config}"),
             &format!("--hpke-private-key={encoded_private_key}"),
             "--vdaf",
@@ -693,14 +646,14 @@ mod tests {
         );
 
         let mut bad_arguments = correct_arguments;
-        bad_arguments[6] = "--hpke-config=not valid base64";
+        bad_arguments[5] = "--hpke-config=not valid base64";
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ValueValidation,
         );
 
         let mut bad_arguments = correct_arguments;
-        bad_arguments[7] = "--hpke-private-key=not valid base64";
+        bad_arguments[6] = "--hpke-private-key=not valid base64";
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ValueValidation,
@@ -711,8 +664,7 @@ mod tests {
             format!("--task-id={task_id_encoded}"),
             "--leader".to_string(),
             leader.to_string(),
-            "--dap-auth-token".to_string(),
-            auth_token.as_str().to_string(),
+            format!("--dap-auth-token={}", auth_token.as_str()),
             format!("--hpke-config={encoded_hpke_config}"),
             format!("--hpke-private-key={encoded_private_key}"),
             "--batch-interval-start".to_string(),
@@ -720,33 +672,6 @@ mod tests {
             "--batch-interval-duration".to_string(),
             "1000".to_string(),
         ]);
-
-        let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend(["--vdaf=count".to_string(), "--buckets=1,2,3,4".to_string()]);
-        let bad_options = Options::try_parse_from(bad_arguments).unwrap();
-        assert_matches!(
-            run(bad_options).await.unwrap_err(),
-            Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
-        );
-
-        let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend(["--vdaf=sum".to_string(), "--buckets=1,2,3,4".to_string()]);
-        let bad_options = Options::try_parse_from(bad_arguments).unwrap();
-        assert_matches!(
-            run(bad_options).await.unwrap_err(),
-            Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
-        );
-
-        let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend([
-            "--vdaf=countvec".to_string(),
-            "--buckets=1,2,3,4".to_string(),
-        ]);
-        let bad_options = Options::try_parse_from(bad_arguments).unwrap();
-        assert_matches!(
-            run(bad_options).await.unwrap_err(),
-            Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
-        );
 
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.extend(["--vdaf=countvec".to_string(), "--bits=3".to_string()]);
@@ -793,10 +718,7 @@ mod tests {
         }
 
         let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend([
-            "--vdaf=histogram".to_string(),
-            "--buckets=1,2,3,4,apple".to_string(),
-        ]);
+        bad_arguments.extend(["--vdaf=histogram".to_string(), "--length=apple".to_string()]);
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ValueValidation
@@ -835,10 +757,7 @@ mod tests {
         Options::try_parse_from(good_arguments).unwrap();
 
         let mut good_arguments = base_arguments.clone();
-        good_arguments.extend([
-            "--vdaf=histogram".to_string(),
-            "--buckets=1,2,3,4".to_string(),
-        ]);
+        good_arguments.extend(["--vdaf=histogram".to_string(), "--length=4".to_string()]);
         Options::try_parse_from(good_arguments).unwrap();
 
         #[cfg(feature = "fpvec_bounded_l2")]
@@ -891,7 +810,6 @@ mod tests {
             vdaf: VdafType::Count,
             length: None,
             bits: None,
-            buckets: None,
             query: QueryOptions {
                 batch_interval_start: None,
                 batch_interval_duration: None,
@@ -904,8 +822,7 @@ mod tests {
             &format!("--task-id={task_id_encoded}"),
             "--leader",
             leader.as_str(),
-            "--dap-auth-token",
-            auth_token.as_str(),
+            &format!("--dap-auth-token={}", auth_token.as_str()),
             &format!("--hpke-config={encoded_hpke_config}"),
             &format!("--hpke-private-key={encoded_private_key}"),
             "--vdaf",
@@ -932,7 +849,6 @@ mod tests {
             vdaf: VdafType::Count,
             length: None,
             bits: None,
-            buckets: None,
             query: QueryOptions {
                 batch_interval_start: None,
                 batch_interval_duration: None,
@@ -945,8 +861,7 @@ mod tests {
             &format!("--task-id={task_id_encoded}"),
             "--leader",
             leader.as_str(),
-            "--dap-auth-token",
-            auth_token.as_str(),
+            &format!("--dap-auth-token={}", auth_token.as_str()),
             &format!("--hpke-config={encoded_hpke_config}"),
             &format!("--hpke-private-key={encoded_private_key}"),
             "--vdaf",
@@ -963,8 +878,7 @@ mod tests {
             format!("--task-id={task_id_encoded}"),
             "--leader".to_string(),
             "https://example.com/dap/".to_string(),
-            "--dap-auth-token".to_string(),
-            auth_token.as_str().to_string(),
+            format!("--dap-auth-token={}", auth_token.as_str()),
             format!("--hpke-config={encoded_hpke_config}"),
             format!("--hpke-private-key={encoded_private_key}"),
             "--vdaf=count".to_string(),
@@ -1087,17 +1001,12 @@ mod tests {
         let dap_auth_token: TokenInner = random();
         let bearer_token: TokenInner = random();
 
-        let dap_auth_token_arguments = Vec::from([
-            "--dap-auth-token".to_string(),
-            dap_auth_token.as_str().to_string(),
-        ]);
-        let authorization_bearer_token_arguments = Vec::from([
-            "--authorization-bearer-token".to_string(),
-            bearer_token.as_str().to_string(),
-        ]);
+        let dap_auth_token_argument = format!("--dap-auth-token={}", dap_auth_token.as_str());
+        let authorization_bearer_token_argument =
+            format!("--authorization-bearer-token={}", bearer_token.as_str());
 
         let mut case_1_arguments = base_arguments.clone();
-        case_1_arguments.extend(dap_auth_token_arguments.iter().cloned());
+        case_1_arguments.push(dap_auth_token_argument.clone());
         assert_eq!(
             Options::try_parse_from(case_1_arguments)
                 .unwrap()
@@ -1109,7 +1018,7 @@ mod tests {
         );
 
         let mut case_2_arguments = base_arguments.clone();
-        case_2_arguments.extend(authorization_bearer_token_arguments.iter().cloned());
+        case_2_arguments.push(authorization_bearer_token_argument.clone());
         assert_eq!(
             Options::try_parse_from(case_2_arguments)
                 .unwrap()
@@ -1129,8 +1038,8 @@ mod tests {
         );
 
         let mut case_4_arguments = base_arguments.clone();
-        case_4_arguments.extend(dap_auth_token_arguments.iter().cloned());
-        case_4_arguments.extend(authorization_bearer_token_arguments.iter().cloned());
+        case_4_arguments.push(dap_auth_token_argument);
+        case_4_arguments.push(authorization_bearer_token_argument);
         assert_eq!(
             Options::try_parse_from(case_4_arguments)
                 .unwrap_err()

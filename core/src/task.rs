@@ -1,11 +1,12 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use http::header::AUTHORIZATION;
+use janus_messages::taskprov;
 use rand::{distributions::Standard, prelude::Distribution};
 use reqwest::Url;
 use ring::constant_time;
 use serde::{de::Error, Deserialize, Deserializer, Serialize};
-use std::{fmt, str};
+use std::str;
 
 /// HTTP header where auth tokens are provided in messages between participants.
 pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
@@ -29,11 +30,8 @@ pub enum VdafInstance {
     Prio3Sum { bits: usize },
     /// A vector of `Prio3` sums.
     Prio3SumVec { bits: usize, length: usize },
-    /// A `Prio3` histogram.
-    Prio3Histogram {
-        #[derivative(Debug(format_with = "bucket_count"))]
-        buckets: Vec<u64>,
-    },
+    /// A `Prio3` histogram with `length` buckets in it.
+    Prio3Histogram { length: usize },
     /// A `Prio3` 16-bit fixed point vector sum with bounded L2 norm.
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3FixedPoint16BitBoundedL2VecSum { length: usize },
@@ -60,10 +58,6 @@ pub enum VdafInstance {
     FakeFailsPrepStep,
 }
 
-fn bucket_count(buckets: &Vec<u64>, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "[{} buckets]", buckets.len() + 1)
-}
-
 impl VdafInstance {
     /// Returns the expected length of a VDAF verification key for a VDAF of this type.
     pub fn verify_key_length(&self) -> usize {
@@ -76,6 +70,29 @@ impl VdafInstance {
             // All "real" VDAFs use a verify key of length 16 currently. (Poplar1 may not, but it's
             // not yet done being specified, so choosing 16 bytes is fine for testing.)
             _ => PRIO3_VERIFY_KEY_LENGTH,
+        }
+    }
+}
+
+impl TryFrom<&taskprov::VdafType> for VdafInstance {
+    type Error = &'static str;
+
+    fn try_from(value: &taskprov::VdafType) -> Result<Self, Self::Error> {
+        match value {
+            taskprov::VdafType::Prio3Count => Ok(Self::Prio3Count),
+            taskprov::VdafType::Prio3Sum { bits } => Ok(Self::Prio3Sum {
+                bits: *bits as usize,
+            }),
+            taskprov::VdafType::Prio3Histogram { buckets } => Ok(Self::Prio3Histogram {
+                // taskprov does not yet deal with the VDAF-06 representation of histograms. In the
+                // meantime, we translate the bucket boundaries to a length that Janus understands.
+                // https://github.com/wangshan/draft-wang-ppm-dap-taskprov/issues/33
+                length: buckets.len() + 1, // +1 to account for the top bucket extending to infinity
+            }),
+            taskprov::VdafType::Poplar1 { bits } => Ok(Self::Poplar1 {
+                bits: *bits as usize,
+            }),
+            _ => Err("unknown VdafType"),
         }
     }
 }
@@ -153,8 +170,8 @@ macro_rules! vdaf_dispatch_impl_base {
                 $body
             }
 
-            ::janus_core::task::VdafInstance::Prio3Histogram { buckets } => {
-                let $vdaf = ::prio::vdaf::prio3::Prio3::new_histogram(2, buckets)?;
+            ::janus_core::task::VdafInstance::Prio3Histogram { length } => {
+                let $vdaf = ::prio::vdaf::prio3::Prio3::new_histogram(2, *length)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Histogram;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
@@ -747,22 +764,15 @@ mod tests {
             ],
         );
         assert_tokens(
-            &VdafInstance::Prio3Histogram {
-                buckets: Vec::from([0, 100, 200, 400]),
-            },
+            &VdafInstance::Prio3Histogram { length: 6 },
             &[
                 Token::StructVariant {
                     name: "VdafInstance",
                     variant: "Prio3Histogram",
                     len: 1,
                 },
-                Token::Str("buckets"),
-                Token::Seq { len: Some(4) },
-                Token::U64(0),
-                Token::U64(100),
-                Token::U64(200),
-                Token::U64(400),
-                Token::SeqEnd,
+                Token::Str("length"),
+                Token::U64(6),
                 Token::StructVariantEnd,
             ],
         );

@@ -1,26 +1,30 @@
 use super::{Aggregator, Config, Error};
 use crate::aggregator::problem_details::ProblemDetailsConnExt;
 use async_trait::async_trait;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{datastore::Datastore, instrumented};
 use janus_core::{
     http::extract_bearer_token,
     task::{AuthenticationToken, DAP_AUTH_HEADER},
+    taskprov::TASKPROV_HEADER,
     time::Clock,
 };
 use janus_messages::{
-    problem_type::DapProblemType, query_type::TimeInterval, AggregateShare, AggregateShareReq,
-    AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
-    Collection, CollectionJobId, CollectionReq, HpkeConfigList, Report, TaskId,
+    codec::Decode, problem_type::DapProblemType, query_type::TimeInterval, taskprov::TaskConfig,
+    AggregateShare, AggregateShareReq, AggregationJobContinueReq, AggregationJobId,
+    AggregationJobInitializeReq, AggregationJobResp, Collection, CollectionJobId, CollectionReq,
+    HpkeConfigList, Report, TaskId,
 };
 use opentelemetry::{
     metrics::{Counter, Meter},
     KeyValue,
 };
 use prio::codec::Encode;
+use ring::digest::{digest, SHA256};
 use routefinder::Captures;
 use serde::Deserialize;
-use std::sync::Arc;
 use std::time::Duration as StdDuration;
+use std::{io::Cursor, sync::Arc};
 use tracing::warn;
 use trillium::{Conn, Handler, KnownHeaderName, Status};
 use trillium_api::{api, State};
@@ -99,6 +103,9 @@ impl Handler for Error {
             }
             Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
             Error::BadRequest(_) => conn.with_status(Status::BadRequest),
+            Error::InvalidTask(task_id, _) => {
+                conn.with_problem_details(DapProblemType::InvalidTask, Some(task_id))
+            }
         }
     }
 }
@@ -369,8 +376,15 @@ async fn aggregation_jobs_put<C: Clock>(
     let task_id = parse_task_id(&captures)?;
     let aggregation_job_id = parse_aggregation_job_id(&captures)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
+    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
     let response = aggregator
-        .handle_aggregate_init(&task_id, &aggregation_job_id, &body, auth_token)
+        .handle_aggregate_init(
+            &task_id,
+            &aggregation_job_id,
+            &body,
+            auth_token,
+            taskprov_task_config.as_ref(),
+        )
         .await?;
 
     Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))
@@ -390,8 +404,15 @@ async fn aggregation_jobs_post<C: Clock>(
     let task_id = parse_task_id(&captures)?;
     let aggregation_job_id = parse_aggregation_job_id(&captures)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
+    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
     let response = aggregator
-        .handle_aggregate_continue(&task_id, &aggregation_job_id, &body, auth_token)
+        .handle_aggregate_continue(
+            &task_id,
+            &aggregation_job_id,
+            &body,
+            auth_token,
+            taskprov_task_config.as_ref(),
+        )
         .await?;
 
     Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))
@@ -476,8 +497,9 @@ async fn aggregate_shares<C: Clock>(
 
     let task_id = parse_task_id(&captures)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
+    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
     let share = aggregator
-        .handle_aggregate_share(&task_id, &body, auth_token)
+        .handle_aggregate_share(&task_id, &body, auth_token, taskprov_task_config.as_ref())
         .await?;
 
     Ok(EncodedBody::new(share, AggregateShare::MEDIA_TYPE))
@@ -549,22 +571,86 @@ fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<Authenticati
         .transpose()
 }
 
+fn parse_taskprov_header<C: Clock>(
+    aggregator: &Aggregator<C>,
+    task_id: &TaskId,
+    conn: &Conn,
+) -> Result<Option<TaskConfig>, Error> {
+    if aggregator.cfg.taskprov_config.enabled {
+        match conn.request_headers().get(TASKPROV_HEADER) {
+            Some(taskprov_header) => {
+                let task_config_encoded =
+                    &URL_SAFE_NO_PAD.decode(taskprov_header).map_err(|_| {
+                        Error::UnrecognizedMessage(
+                            Some(*task_id),
+                            "taskprov header could not be decoded",
+                        )
+                    })?;
+
+                if task_id.as_ref() != digest(&SHA256, task_config_encoded).as_ref() {
+                    Err(Error::UnrecognizedMessage(
+                        Some(*task_id),
+                        "derived taskprov task ID does not match task config",
+                    ))
+                } else {
+                    // TODO(#1684): Parsing the taskprov header like this before we've been able
+                    // to actually authenticate the client is undesireable. We should rework this
+                    // such that the authorization header is handled before parsing the untrusted
+                    // input.
+                    Ok(Some(TaskConfig::decode(&mut Cursor::new(
+                        task_config_encoded,
+                    ))?))
+                }
+            }
+            None => Ok(None),
+        }
+    } else {
+        Ok(None)
+    }
+}
+
+#[cfg(feature = "test-util")]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
+pub mod test_util {
+    use std::borrow::Cow;
+    use trillium_testing::TestConn;
+
+    pub async fn take_response_body(test_conn: &mut TestConn) -> Cow<'_, [u8]> {
+        test_conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap()
+    }
+
+    pub async fn take_problem_details(test_conn: &mut TestConn) -> serde_json::Value {
+        serde_json::from_slice(&take_response_body(test_conn).await).unwrap()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::{
-        aggregate_init_tests::{put_aggregation_job, setup_aggregate_init_test},
-        aggregation_job_continue::test_util::{
-            post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
+    use crate::{
+        aggregator::{
+            aggregate_init_tests::{put_aggregation_job, setup_aggregate_init_test},
+            aggregation_job_continue::test_util::{
+                post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
+            },
+            collection_job_tests::setup_collection_job_test_case,
+            empty_batch_aggregations,
+            http_handlers::{
+                aggregator_handler, aggregator_handler_with_aggregator,
+                test_util::{take_problem_details, take_response_body},
+            },
+            tests::{
+                create_report, create_report_custom, default_aggregator_config,
+                generate_helper_report_share, generate_helper_report_share_for_plaintext,
+                BATCH_AGGREGATION_SHARD_COUNT,
+            },
+            Config,
         },
-        collection_job_tests::setup_collection_job_test_case,
-        empty_batch_aggregations,
-        http_handlers::{aggregator_handler, aggregator_handler_with_aggregator},
-        tests::{
-            create_report, create_report_custom, default_aggregator_config,
-            generate_helper_report_share, generate_helper_report_share_for_plaintext,
-            BATCH_AGGREGATION_SHARD_COUNT,
-        },
-        Config,
+        config::TaskprovConfig,
     };
     use assert_matches::assert_matches;
     use futures::future::try_join_all;
@@ -579,6 +665,7 @@ mod tests {
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
         task::{test_util::TaskBuilder, QueryType, VerifyKey},
+        taskprov,
         test_util::noop_meter,
     };
     use janus_core::{
@@ -614,9 +701,7 @@ mod tests {
     };
     use rand::random;
     use serde_json::json;
-    use std::{
-        borrow::Cow, collections::HashMap, io::Cursor, sync::Arc, time::Duration as StdDuration,
-    };
+    use std::{collections::HashMap, io::Cursor, sync::Arc, time::Duration as StdDuration};
     use trillium::{KnownHeaderName, Status};
     use trillium_testing::{
         assert_headers,
@@ -656,6 +741,13 @@ mod tests {
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
         assert_eq!(
+            test_conn
+                .response_headers()
+                .get(KnownHeaderName::ContentType)
+                .unwrap(),
+            "application/problem+json"
+        );
+        assert_eq!(
             take_problem_details(&mut test_conn).await,
             json!({
                 "status": 400u16,
@@ -671,6 +763,13 @@ mod tests {
         // Expected status and problem type should be per the protocol
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.1
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        assert_eq!(
+            test_conn
+                .response_headers()
+                .get(KnownHeaderName::ContentType)
+                .unwrap(),
+            "application/problem+json"
+        );
         assert_eq!(
             take_problem_details(&mut test_conn).await,
             json!({
@@ -847,6 +946,86 @@ mod tests {
         aggregator.refresh_caches().await.unwrap();
         let test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    }
+
+    #[tokio::test]
+    async fn global_hpke_config_with_taskprov() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+
+        // Insert an HPKE config, i.e. start the application with a keypair already
+        // in the database.
+        let first_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(1);
+        datastore
+            .run_tx(|tx| {
+                let keypair = first_hpke_keypair.clone();
+                Box::pin(async move {
+                    tx.put_global_hpke_keypair(&keypair).await?;
+                    tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        // Insert a taskprov task. This task won't have its task-specific HPKE key.
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Count,
+            Role::Leader,
+        )
+        .build();
+        let task_id = *task.id();
+        let task = taskprov::Task::new(
+            task_id,
+            task.aggregator_endpoints().to_vec(),
+            *task.query_type(),
+            task.vdaf().clone(),
+            *task.role(),
+            task.vdaf_verify_keys().to_vec(),
+            task.max_batch_query_count(),
+            task.task_expiration().cloned(),
+            task.report_expiry_age().cloned(),
+            task.min_batch_size(),
+            *task.time_precision(),
+            *task.tolerable_clock_skew(),
+        )
+        .unwrap();
+        datastore.put_task(&task.into()).await.unwrap();
+
+        let cfg = Config {
+            taskprov_config: TaskprovConfig { enabled: true },
+            ..Default::default()
+        };
+
+        let aggregator = Arc::new(
+            crate::aggregator::Aggregator::new(
+                datastore.clone(),
+                clock.clone(),
+                &noop_meter(),
+                cfg,
+            )
+            .await
+            .unwrap(),
+        );
+        let handler = aggregator_handler_with_aggregator(aggregator.clone(), &noop_meter())
+            .await
+            .unwrap();
+
+        let mut test_conn = get(&format!("/hpke_config?task_id={}", task_id))
+            .run_async(&handler)
+            .await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let bytes = take_response_body(&mut test_conn).await;
+        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
+        assert_eq!(
+            hpke_config_list.hpke_configs(),
+            &[first_hpke_keypair.config().clone()]
+        );
+        check_hpke_config_is_usable(&hpke_config_list, &first_hpke_keypair);
     }
 
     fn check_hpke_config_is_usable(hpke_config_list: &HpkeConfigList, hpke_keypair: &HpkeKeypair) {
@@ -4443,7 +4622,7 @@ mod tests {
                 let helper_aggregate_share_bytes = helper_aggregate_share.get_encoded();
                 Box::pin(async move {
                     let encrypted_helper_aggregate_share = hpke::seal(
-                        task.collector_hpke_config(),
+                        task.collector_hpke_config().unwrap(),
                         &HpkeApplicationInfo::new(
                             &Label::AggregateShare,
                             &Role::Helper,
@@ -4496,7 +4675,7 @@ mod tests {
         assert_eq!(collect_resp.encrypted_aggregate_shares().len(), 2);
 
         let decrypted_leader_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_config(),
+            test_case.task.collector_hpke_config().unwrap(),
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
             &collect_resp.encrypted_aggregate_shares()[0],
@@ -4514,7 +4693,7 @@ mod tests {
         );
 
         let decrypted_helper_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_config(),
+            test_case.task.collector_hpke_config().unwrap(),
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
             &collect_resp.encrypted_aggregate_shares()[1],
@@ -5388,18 +5567,5 @@ mod tests {
                 })
             );
         }
-    }
-
-    async fn take_response_body(test_conn: &mut TestConn) -> Cow<'_, [u8]> {
-        test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap()
-    }
-
-    async fn take_problem_details(test_conn: &mut TestConn) -> serde_json::Value {
-        serde_json::from_slice(&take_response_body(test_conn).await).unwrap()
     }
 }

@@ -674,6 +674,7 @@ mod tests {
         let replacement_task = TaskBuilder::new(
             QueryType::FixedSize {
                 max_batch_size: 100,
+                batch_time_window_size: None,
             },
             VdafInstance::Prio3CountVec { length: 4 },
             Role::Leader,

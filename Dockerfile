@@ -1,4 +1,4 @@
-FROM rust:1.71.0-alpine AS chef
+FROM rust:1.71.1-alpine AS chef
 RUN apk add --no-cache libc-dev
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 RUN cargo install cargo-chef --version 0.1.60 && \
@@ -41,7 +41,7 @@ ARG GIT_REVISION=unknown
 ENV GIT_REVISION ${GIT_REVISION}
 RUN cargo build --release -p janus_aggregator --bin $BINARY --features=prometheus,otlp
 
-FROM alpine:3.18.2 AS final
+FROM alpine:3.18.3 AS final
 ARG BINARY=aggregator
 ARG GIT_REVISION=unknown
 LABEL revision ${GIT_REVISION}

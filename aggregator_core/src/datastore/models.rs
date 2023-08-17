@@ -25,6 +25,7 @@ use prio::{
     vdaf::{self, Aggregatable},
 };
 use rand::{distributions::Standard, prelude::Distribution};
+use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
@@ -1681,8 +1682,9 @@ impl ToSql for SqlInterval {
 }
 
 /// The state of an HPKE key pair, corresponding to the HPKE_KEY_STATE enum in the schema.
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, ToSql, FromSql)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, ToSql, FromSql, Serialize, Deserialize)]
 #[postgres(name = "hpke_key_state")]
+#[serde(rename_all = "snake_case")]
 pub enum HpkeKeyState {
     /// The key should be advertised to DAP clients, and is the preferred key
     /// for new reports to be encrypted with.

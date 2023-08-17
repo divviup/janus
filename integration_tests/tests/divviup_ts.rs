@@ -36,6 +36,7 @@ async fn run_divviup_ts_integration_test(container_client: &Cli, vdaf: VdafInsta
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "divviup-ts does not currently support DAP-05 (issue #1669)"]
 async fn janus_divviup_ts_count() {
     install_test_trace_subscriber();
 
@@ -43,6 +44,7 @@ async fn janus_divviup_ts_count() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "divviup-ts does not currently support DAP-05 (issue #1669)"]
 async fn janus_divviup_ts_sum() {
     install_test_trace_subscriber();
 
@@ -50,14 +52,13 @@ async fn janus_divviup_ts_sum() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "divviup-ts does not currently support DAP-05 (issue #1669)"]
 async fn janus_divviup_ts_histogram() {
     install_test_trace_subscriber();
 
     run_divviup_ts_integration_test(
         &container_client(),
-        VdafInstance::Prio3Histogram {
-            buckets: Vec::from([1, 10, 100, 1000]),
-        },
+        VdafInstance::Prio3Histogram { length: 4 },
     )
     .await;
 }

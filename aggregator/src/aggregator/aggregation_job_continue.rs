@@ -336,12 +336,12 @@ pub mod test_util {
         request: &AggregationJobContinueReq,
         handler: &impl Handler,
         want_status: Status,
-    ) -> Option<trillium::Body> {
-        let mut test_conn = post_aggregation_job(task, aggregation_job_id, request, handler).await;
+    ) -> TestConn {
+        let test_conn = post_aggregation_job(task, aggregation_job_id, request, handler).await;
 
         assert_eq!(want_status, test_conn.status().unwrap());
 
-        test_conn.take_response_body()
+        test_conn
     }
 
     pub async fn post_aggregation_job_expecting_error(
@@ -353,7 +353,7 @@ pub mod test_util {
         want_error_type: &str,
         want_error_title: &str,
     ) {
-        let body = post_aggregation_job_expecting_status(
+        let mut test_conn = post_aggregation_job_expecting_status(
             task,
             aggregation_job_id,
             request,
@@ -361,6 +361,16 @@ pub mod test_util {
             want_status,
         )
         .await;
+
+        assert_eq!(
+            test_conn
+                .response_headers()
+                .get(KnownHeaderName::ContentType)
+                .unwrap(),
+            "application/problem+json"
+        );
+
+        let body = test_conn.take_response_body();
 
         let problem_details: serde_json::Value =
             serde_json::from_slice(&body.unwrap().into_bytes().await.unwrap()).unwrap();

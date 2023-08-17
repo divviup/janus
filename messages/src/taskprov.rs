@@ -2,17 +2,14 @@
 //!
 //! [1]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
 
-use crate::{Duration, Error, Time, Url};
+use crate::{Duration, Error, Role, Time, Url};
 use anyhow::anyhow;
 use derivative::Derivative;
 use prio::codec::{
     decode_u16_items, decode_u24_items, decode_u8_items, encode_u16_items, encode_u24_items,
     encode_u8_items, CodecError, Decode, Encode,
 };
-use std::{
-    fmt::{self, Debug, Formatter},
-    io::Cursor,
-};
+use std::{fmt::Debug, io::Cursor};
 
 /// Defines all parameters necessary to configure an aggregator with a new task.
 /// Provided by taskprov participants in all requests incident to task execution.
@@ -73,6 +70,12 @@ impl TaskConfig {
 
     pub fn vdaf_config(&self) -> &VdafConfig {
         &self.vdaf_config
+    }
+
+    /// Returns the [`Url`] relative to which the server performing `role` serves its API.
+    pub fn aggregator_url(&self, role: &Role) -> Result<&Url, Error> {
+        let index = role.index().ok_or(Error::InvalidParameter(role.as_str()))?;
+        Ok(&self.aggregator_endpoints[index])
     }
 }
 
@@ -236,6 +239,7 @@ impl Decode for QueryConfig {
 ///     directly adjacent to its associated parameters. This is not the case
 ///     in taskprov.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Query {
     Reserved,
     TimeInterval,
@@ -318,8 +322,9 @@ pub enum VdafType {
         bits: u8,
     },
     Prio3Histogram {
-        /// List of buckets.
-        #[derivative(Debug(format_with = "fmt_histogram"))]
+        /// Number of buckets in the histogram
+        // This may change as the taskprov draft adapts to VDAF-06
+        // https://github.com/wangshan/draft-wang-ppm-dap-taskprov/issues/33
         buckets: Vec<u64>,
     },
     Poplar1 {
@@ -335,24 +340,20 @@ impl VdafType {
     const POPLAR1: u32 = 0x00001000;
 }
 
-fn fmt_histogram(buckets: &Vec<u64>, f: &mut Formatter) -> Result<(), fmt::Error> {
-    write!(f, "num_buckets: {}", buckets.len())
-}
-
 impl Encode for VdafType {
     fn encode(&self, bytes: &mut Vec<u8>) {
         match self {
-            VdafType::Prio3Count => VdafType::PRIO3COUNT.encode(bytes),
-            VdafType::Prio3Sum { bits } => {
-                VdafType::PRIO3SUM.encode(bytes);
+            Self::Prio3Count => Self::PRIO3COUNT.encode(bytes),
+            Self::Prio3Sum { bits } => {
+                Self::PRIO3SUM.encode(bytes);
                 bits.encode(bytes);
             }
-            VdafType::Prio3Histogram { buckets } => {
-                VdafType::PRIO3HISTOGRAM.encode(bytes);
+            Self::Prio3Histogram { buckets } => {
+                Self::PRIO3HISTOGRAM.encode(bytes);
                 encode_u24_items(bytes, &(), buckets);
             }
-            VdafType::Poplar1 { bits } => {
-                VdafType::POPLAR1.encode(bytes);
+            Self::Poplar1 { bits } => {
+                Self::POPLAR1.encode(bytes);
                 bits.encode(bytes);
             }
         }
@@ -361,10 +362,10 @@ impl Encode for VdafType {
     fn encoded_len(&self) -> Option<usize> {
         Some(
             4 + match self {
-                VdafType::Prio3Count => 0,
-                VdafType::Prio3Sum { bits } => bits.encoded_len()?,
-                VdafType::Prio3Histogram { buckets } => 3 + buckets.len() * 0u64.encoded_len()?,
-                VdafType::Poplar1 { bits } => bits.encoded_len()?,
+                Self::Prio3Count => 0,
+                Self::Prio3Sum { bits } => bits.encoded_len()?,
+                Self::Prio3Histogram { buckets } => 3 + buckets.len() * 0u64.encoded_len()?,
+                Self::Poplar1 { bits } => bits.encoded_len()?,
             },
         )
     }
@@ -373,18 +374,18 @@ impl Encode for VdafType {
 impl Decode for VdafType {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         match u32::decode(bytes)? {
-            VdafType::PRIO3COUNT => Ok(VdafType::Prio3Count),
-            VdafType::PRIO3SUM => Ok(VdafType::Prio3Sum {
+            Self::PRIO3COUNT => Ok(Self::Prio3Count),
+            Self::PRIO3SUM => Ok(Self::Prio3Sum {
                 bits: u8::decode(bytes)?,
             }),
-            VdafType::PRIO3HISTOGRAM => Ok(VdafType::Prio3Histogram {
+            Self::PRIO3HISTOGRAM => Ok(Self::Prio3Histogram {
                 buckets: decode_u24_items(&(), bytes)?,
             }),
-            VdafType::POPLAR1 => Ok(VdafType::Poplar1 {
+            Self::POPLAR1 => Ok(Self::Poplar1 {
                 bits: u16::decode(bytes)?,
             }),
             val => Err(CodecError::Other(
-                anyhow!("unexpected VdafType value {}", val).into(),
+                anyhow!("unexpected Self value {}", val).into(),
             )),
         }
     }
@@ -443,14 +444,14 @@ impl DpMechanism {
 impl Encode for DpMechanism {
     fn encode(&self, bytes: &mut Vec<u8>) {
         match self {
-            DpMechanism::Reserved => DpMechanism::RESERVED.encode(bytes),
-            DpMechanism::None => DpMechanism::NONE.encode(bytes),
+            Self::Reserved => Self::RESERVED.encode(bytes),
+            Self::None => Self::NONE.encode(bytes),
         }
     }
 
     fn encoded_len(&self) -> Option<usize> {
         match self {
-            DpMechanism::Reserved | DpMechanism::None => Some(1),
+            Self::Reserved | Self::None => Some(1),
         }
     }
 }
@@ -458,8 +459,8 @@ impl Encode for DpMechanism {
 impl Decode for DpMechanism {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         match u8::decode(bytes)? {
-            DpMechanism::RESERVED => Ok(DpMechanism::Reserved),
-            DpMechanism::NONE => Ok(DpMechanism::None),
+            Self::RESERVED => Ok(Self::Reserved),
+            Self::NONE => Ok(Self::None),
             val => Err(CodecError::Other(
                 anyhow!("unexpected DpMechanism value {}", val).into(),
             )),
