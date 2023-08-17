@@ -11,6 +11,7 @@ This document describes the operational overhead of managing these keys.
 [1]: https://github.com/divviup/janus/issues/1641
 
 ## Lifecycle
+
 A global keypair has three states:
 - `pending`: The key is in the database, but is not being advertised to clients.
 - `active`: The key is used by clients, and clients should use it to encrypt
