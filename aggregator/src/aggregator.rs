@@ -1231,51 +1231,19 @@ impl VdafOps {
                 })
             });
 
-<<<<<<< HEAD
-=======
-            let plaintext_input_share = plaintext.and_then(|plaintext| {
-                let plaintext_input_share = PlaintextInputShare::get_decoded(&plaintext).map_err(|error| {
-                    info!(task_id = %task.id(), metadata = ?report_share.metadata(), ?error, "Couldn't decode helper's plaintext input share");
-                    aggregate_step_failure_counter.add(1, &[KeyValue::new("type", "plaintext_input_share_decode_failure")]);
-                    ReportShareError::UnrecognizedMessage
-                })?;
-                // Check for repeated extensions.
-                let mut extension_types = HashSet::new();
-                if !plaintext_input_share
-                    .extensions()
-                    .iter()
-                    .all(|extension| extension_types.insert(extension.extension_type())) {
-                        info!(task_id = %task.id(), metadata = ?report_share.metadata(), "Received report share with duplicate extensions");
-                        aggregate_step_failure_counter.add(1, &[KeyValue::new("type", "duplicate_extension")]);
-                        return Err(ReportShareError::UnrecognizedMessage)
-                }
-                Ok(plaintext_input_share)
-            });
-
->>>>>>> 7f5b03e3 (Update all other opentelemetry crates, too.)
             let input_share = plaintext_input_share.and_then(|plaintext_input_share| {
                 A::InputShare::get_decoded_with_param(&(vdaf, Role::Helper.index().unwrap()), &plaintext_input_share)
                     .map_err(|error| {
                         info!(task_id = %task.id(), metadata = ?report_share.metadata(), ?error, "Couldn't decode helper's input share");
-<<<<<<< HEAD
-                        aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "input_share_decode_failure")]);
+                        aggregate_step_failure_counter.add( 1, &[KeyValue::new("type", "input_share_decode_failure")]);
                         ReportShareError::VdafPrepError
-=======
-                        aggregate_step_failure_counter.add(1, &[KeyValue::new("type", "input_share_decode_failure")]);
-                        ReportShareError::UnrecognizedMessage
->>>>>>> 7f5b03e3 (Update all other opentelemetry crates, too.)
                     })
             });
 
             let public_share = A::PublicShare::get_decoded_with_param(&vdaf, report_share.public_share()).map_err(|error|{
                 info!(task_id = %task.id(), metadata = ?report_share.metadata(), ?error, "Couldn't decode public share");
-<<<<<<< HEAD
-                aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "public_share_decode_failure")]);
-                ReportShareError::VdafPrepError
-=======
                 aggregate_step_failure_counter.add(1, &[KeyValue::new("type", "public_share_decode_failure")]);
-                ReportShareError::UnrecognizedMessage
->>>>>>> 7f5b03e3 (Update all other opentelemetry crates, too.)
+                ReportShareError::VdafPrepError
             });
 
             let shares = input_share.and_then(|input_share| Ok((public_share?, input_share)));

@@ -328,25 +328,6 @@ impl AggregationJobDriver {
                 continue;
             };
 
-<<<<<<< HEAD
-=======
-            // Check for repeated extensions.
-            let mut extension_types = HashSet::new();
-            if !report
-                .leader_extensions()
-                .iter()
-                .all(|extension| extension_types.insert(extension.extension_type()))
-            {
-                info!(report_id = %report_aggregation.report_id(), "Received report with duplicate extensions");
-                self.aggregate_step_failure_counter
-                    .add(1, &[KeyValue::new("type", "duplicate_extension")]);
-                report_aggregations_to_write.push(report_aggregation.with_state(
-                    ReportAggregationState::Failed(ReportShareError::UnrecognizedMessage),
-                ));
-                continue;
-            }
-
->>>>>>> 7f5b03e3 (Update all other opentelemetry crates, too.)
             // Initialize the leader's preparation state from the input share.
             let prepare_init_res = trace_span!("VDAF preparation").in_scope(|| {
                 vdaf.prepare_init(
