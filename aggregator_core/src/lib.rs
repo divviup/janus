@@ -21,6 +21,7 @@ use janus_core::test_util::dummy_vdaf;
 pub mod datastore;
 pub mod query_type;
 pub mod task;
+pub mod taskprov;
 
 /// A secret byte array. This does not implement `Debug` or `Display`, to avoid accidental
 /// inclusion in logs.
@@ -68,15 +69,28 @@ impl<H: Handler> InstrumentedHandler<H> {
         self.0.run(conn).instrument(span).await
     }
 
-    async fn before_send(&self, conn: Conn) -> Conn {
-        if let Some(span) = conn.state::<InstrumentedHandlerSpan>() {
-            let _entered = span.0.enter();
-            let status = conn
-                .status()
-                .as_ref()
-                .map_or("unknown", Status::canonical_reason);
-            info!(status, "Finished handling request");
+    async fn before_send(&self, mut conn: Conn) -> Conn {
+        if let Some(span) = conn.take_state::<InstrumentedHandlerSpan>() {
+            let conn = self.0.before_send(conn).instrument(span.0.clone()).await;
+            span.0.in_scope(|| {
+                let status = conn
+                    .status()
+                    .as_ref()
+                    .map_or("unknown", Status::canonical_reason);
+                info!(status, "Finished handling request");
+            });
+            conn
+        } else {
+            self.0.before_send(conn).await
         }
-        conn
+    }
+}
+
+#[cfg(feature = "test-util")]
+pub mod test_util {
+    use opentelemetry::metrics::{noop::NoopMeterProvider, Meter, MeterProvider};
+
+    pub fn noop_meter() -> Meter {
+        NoopMeterProvider::new().meter("janus_aggregator")
     }
 }

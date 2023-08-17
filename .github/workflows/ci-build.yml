@@ -17,7 +17,7 @@ jobs:
       matrix:
         rust-toolchain: [
           # MSRV from Cargo.toml
-          "1.65",
+          "1.67",
           "stable",
         ]
     runs-on: ubuntu-latest
@@ -33,7 +33,7 @@ jobs:
       id: default-input-values
       run: |
         DIVVIUP_TS_INTEROP_CONTAINER= ${{ inputs.divviup_ts_interop_container }}
-        echo "divviup_ts_interop_container=${DIVVIUP_TS_INTEROP_CONTAINER:-us-west2-docker.pkg.dev/divviup-artifacts-public/divviup-ts/divviup_ts_interop_client:dap-draft-04@sha256:ad6fa3f6fa6f732ccf8291692e250ffa0cc50acd31bb393d98ebaec0f1d2f48c}" >> $GITHUB_OUTPUT
+        echo "divviup_ts_interop_container=${DIVVIUP_TS_INTEROP_CONTAINER:-us-west2-docker.pkg.dev/divviup-artifacts-public/divviup-ts/divviup_ts_interop_client:dap-draft-04@sha256:43ccdf68e319c677f12f0cb730c63e73b872477cf0e1310b727f449b74a14ac2}" >> $GITHUB_OUTPUT
     - name: Get OS version
       id: os-version
       run: echo "release=$(lsb_release --release --short)" >> $GITHUB_OUTPUT
@@ -59,7 +59,7 @@ jobs:
       with:
         key: ${{ steps.os-version.outputs.release }}
     - name: Pre-build embedded container images
-      uses: docker/bake-action@v3.0.1
+      uses: docker/bake-action@v3.1.0
       with:
         files: docker-bake.hcl
         workdir: .
@@ -101,7 +101,7 @@ jobs:
       matrix:
         rust-toolchain: [
           # MSRV from Cargo.toml
-          "1.65",
+          "1.67",
           "stable",
         ]
     runs-on: ubuntu-latest
@@ -140,7 +140,7 @@ jobs:
         driver: docker-container
         use: true
     - name: Build
-      uses: docker/bake-action@v3.0.1
+      uses: docker/bake-action@v3.1.0
       with:
         files: docker-bake.hcl
         workdir: .
@@ -164,7 +164,7 @@ jobs:
         driver: docker-container
         use: true
     - name: Build
-      uses: docker/bake-action@v3.0.1
+      uses: docker/bake-action@v3.1.0
       with:
         files: docker-bake.hcl
         workdir: .

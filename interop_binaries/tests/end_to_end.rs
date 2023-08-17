@@ -52,7 +52,7 @@ async fn run(
         }
         QueryKind::FixedSize => {
             let query_type = json!(FixedSize::CODE as u8);
-            (query_type, Some(json!(10)))
+            (query_type, Some(json!(measurements.len())))
         }
     };
 
@@ -268,7 +268,7 @@ async fn run(
         "vdaf_verify_key": vdaf_verify_key_encoded,
         "max_batch_query_count": 1,
         "query_type": query_type_json,
-        "min_batch_size": 1,
+        "min_batch_size": measurements.len(),
         "time_precision": TIME_PRECISION,
         "collector_hpke_config": collector_hpke_config_encoded,
     });
@@ -320,7 +320,7 @@ async fn run(
         "vdaf_verify_key": vdaf_verify_key_encoded,
         "max_batch_query_count": 1,
         "query_type": query_type_json,
-        "min_batch_size": 1,
+        "min_batch_size": measurements.len(),
         "time_precision": TIME_PRECISION,
         "collector_hpke_config": collector_hpke_config_encoded,
     });
@@ -544,12 +544,11 @@ async fn run(
                 .expect("\"batch_id\" value is not a string");
             URL_SAFE_NO_PAD.decode(batch_id_encoded).unwrap();
         }
-        assert_eq!(
-            collection_poll_response_object
-                .get("report_count")
-                .expect("completed collection_poll response is missing \"report_count\""),
-            measurements.len()
-        );
+        collection_poll_response_object
+            .get("report_count")
+            .expect("completed collection_poll response is missing \"report_count\"")
+            .as_u64()
+            .expect("\"report_count\" is not an integer");
         collection_poll_response_object
             .get("interval_start")
             .expect("completed collection_poll response is missing \"interval_start\"")
@@ -643,19 +642,15 @@ async fn e2e_prio3_histogram() {
         QueryKind::TimeInterval,
         json!({
             "type": "Prio3Histogram",
-            "buckets": ["0", "1", "10", "100", "1000", "10000", "100000"],
+            "length": "6",
         }),
         &[
+            json!("0"),
             json!("1"),
+            json!("2"),
+            json!("3"),
             json!("4"),
-            json!("16"),
-            json!("64"),
-            json!("256"),
-            json!("1024"),
-            json!("4096"),
-            json!("16384"),
-            json!("65536"),
-            json!("262144"),
+            json!("5"),
         ],
         b"",
     )

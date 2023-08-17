@@ -19,20 +19,38 @@ updates:
       interval: "weekly"
     target-branch: "main"
 
-  # Manage dependencies on the release/0.2 branch
+  # Manage dependencies on the `release/0.subscriber-01` branch
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "weekly"
-    target-branch: "release/0.2"
+    target-branch: "release/0.subscriber-01"
     open-pull-requests-limit: 20
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-    target-branch: "release/0.2"
+    target-branch: "release/0.subscriber-01"
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
-    target-branch: "release/0.2"
+    target-branch: "release/0.subscriber-01"
+
+  # Manage dependencies on the `release/0.5` branch
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "release/0.5"
+    open-pull-requests-limit: 20
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "release/0.5"
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "release/0.5"

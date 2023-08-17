@@ -182,20 +182,12 @@ impl CollectableQueryType for FixedSize {
     ) -> Result<(), datastore::Error> {
         let query_count = match task.role() {
             Role::Leader => tx
-                .get_collection_jobs_by_batch_identifier::<SEED_SIZE, FixedSize, A>(
-                    vdaf,
-                    task.id(),
-                    batch_id,
-                )
+                .get_collection_jobs_by_batch_id::<SEED_SIZE, A>(vdaf, task.id(), batch_id)
                 .await?
                 .len(),
 
             Role::Helper => tx
-                .get_aggregate_share_jobs_by_batch_identifier::<SEED_SIZE, FixedSize, A>(
-                    vdaf,
-                    task.id(),
-                    batch_id,
-                )
+                .get_aggregate_share_jobs_by_batch_id::<SEED_SIZE, A>(vdaf, task.id(), batch_id)
                 .await?
                 .len(),
 

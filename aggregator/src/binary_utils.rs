@@ -5,7 +5,7 @@ pub mod job_driver;
 use crate::{
     config::{BinaryConfig, DbConfig},
     metrics::{install_metrics_exporter, MetricsExporterConfiguration},
-    trace::{cleanup_trace_subscriber, install_trace_subscriber, OpenTelemetryTraceConfiguration},
+    trace::{install_trace_subscriber, OpenTelemetryTraceConfiguration},
 };
 use anyhow::{anyhow, Context as _, Result};
 use backoff::{future::retry, ExponentialBackoff};
@@ -17,7 +17,7 @@ use futures::StreamExt;
 use git_version::git_version;
 use janus_aggregator_core::datastore::{Crypter, Datastore};
 use janus_core::time::Clock;
-use opentelemetry::{Context, KeyValue};
+use opentelemetry::{metrics::Meter, Context, KeyValue};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::{
     fmt::{self, Debug, Formatter},
@@ -133,6 +133,7 @@ pub async fn database_pool(db_config: &DbConfig, db_password: Option<&str>) -> R
 pub async fn datastore<C: Clock>(
     pool: Pool,
     clock: C,
+    meter: &Meter,
     datastore_keys: &[String],
     check_schema_version: bool,
 ) -> Result<Datastore<C>> {
@@ -161,9 +162,10 @@ pub async fn datastore<C: Clock>(
     }
 
     let datastore = if check_schema_version {
-        Datastore::new(pool, Crypter::new(datastore_keys), clock).await?
+        Datastore::new(pool, Crypter::new(datastore_keys), clock, meter).await?
     } else {
-        Datastore::new_without_supported_versions(pool, Crypter::new(datastore_keys), clock).await
+        Datastore::new_without_supported_versions(pool, Crypter::new(datastore_keys), clock, meter)
+            .await
     };
 
     Ok(datastore)
@@ -261,6 +263,7 @@ pub struct BinaryContext<C: Clock, Options: BinaryOptions, Config: BinaryConfig>
     pub options: Options,
     pub config: Config,
     pub datastore: Datastore<C>,
+    pub meter: Meter,
 }
 
 pub async fn janus_main<C, Options, Config, F, Fut>(clock: C, f: F) -> anyhow::Result<()>
@@ -276,35 +279,15 @@ where
     let config: Config = read_config(options.common_options())?;
 
     // Install tracing/metrics handlers.
-    install_trace_subscriber(&config.common_config().logging_config)
+    let _guards = install_trace_subscriber(&config.common_config().logging_config)
         .context("couldn't install tracing subscriber")?;
     let _metrics_exporter = install_metrics_exporter(&config.common_config().metrics_config)
         .await
         .context("failed to install metrics exporter")?;
+    let meter = opentelemetry::global::meter("janus_aggregator");
 
     // Create build info metrics gauge.
-    let meter = opentelemetry::global::meter("janus_aggregator");
-    let gauge = meter
-        .u64_observable_gauge("janus_build_info")
-        .with_description(
-            "A metric with a constant '1' value labeled with build-time version information.",
-        )
-        .init();
-    let mut git_revision: &str = git_version!(fallback = "unknown");
-    if git_revision == "unknown" {
-        if let Some(value) = option_env!("GIT_REVISION") {
-            git_revision = value;
-        }
-    }
-    gauge.observe(
-        &Context::current(),
-        1,
-        &[
-            KeyValue::new("version", env!("CARGO_PKG_VERSION")),
-            KeyValue::new("revision", git_revision),
-            KeyValue::new("rust_version", env!("RUSTC_SEMVER")),
-        ],
-    );
+    record_build_info_gauge(&meter);
 
     info!(common_options = ?options.common_options(), ?config, "Starting up");
 
@@ -318,13 +301,12 @@ where
     let datastore = datastore(
         pool,
         clock.clone(),
+        &meter,
         &options.common_options().datastore_keys,
         config.common_config().database.check_schema_version,
     )
     .await
     .context("couldn't create datastore")?;
-
-    let logging_config = config.common_config().logging_config.clone();
 
     let health_check_listen_address = config.common_config().health_check_listen_address;
     let healthz_task_handle =
@@ -337,12 +319,11 @@ where
         options,
         config,
         datastore,
+        meter,
     })
     .await;
 
     healthz_task_handle.abort();
-
-    cleanup_trace_subscriber(&logging_config);
 
     result
 }
@@ -364,33 +345,21 @@ async fn health_endpoint_server(address: SocketAddr) {
         .await;
 }
 
-/// Register a signal handler for SIGTERM, and return a future that will become ready when a
-/// SIGTERM signal is received.
-pub fn setup_signal_handler() -> Result<impl Future<Output = ()>, std::io::Error> {
+/// Register a signal handler for SIGTERM, and stop the [`Stopper`] when a SIGTERM signal is
+/// received.
+pub fn setup_signal_handler(stopper: Stopper) -> Result<(), std::io::Error> {
     let mut signal_stream = signal_hook_tokio::Signals::new([signal_hook::consts::SIGTERM])?;
     let handle = signal_stream.handle();
-    let (sender, receiver) = futures::channel::oneshot::channel();
-    let mut sender = Some(sender);
     tokio::spawn(async move {
         while let Some(signal) = signal_stream.next().await {
             if signal == signal_hook::consts::SIGTERM {
-                if let Some(sender) = sender.take() {
-                    // This may return Err(()) if the receiver has been dropped already. If
-                    // that is the case, the consumer must be shut down already, so we can
-                    // safely ignore the error case.
-                    let _ = sender.send(());
-                    handle.close();
-                    break;
-                }
+                stopper.stop();
+                handle.close();
+                break;
             }
         }
     });
-    Ok(async move {
-        // The receiver may return Err(Canceled) if the sender has been dropped. By inspection, the
-        // sender always has a message sent across it before it is dropped, and the async task it
-        // is owned by will not terminate before that happens.
-        receiver.await.unwrap_or_default()
-    })
+    Ok(())
 }
 
 /// Construct a server that listens on the provided [`SocketAddr`] and services requests with
@@ -400,18 +369,9 @@ pub fn setup_signal_handler() -> Result<impl Future<Output = ()>, std::io::Error
 pub async fn setup_server(
     listen_address: SocketAddr,
     response_headers: Headers,
-    shutdown_signal: impl Future<Output = ()> + Send + 'static,
+    stopper: Stopper,
     handler: impl Handler,
 ) -> anyhow::Result<(SocketAddr, impl Future<Output = ()> + 'static)> {
-    let stopper = Stopper::new();
-    tokio::spawn({
-        let stopper = stopper.clone();
-        async move {
-            shutdown_signal.await;
-            stopper.stop();
-        }
-    });
-
     let (sender, receiver) = oneshot::channel();
     let init = Init::new(|info: Info| async move {
         // Ignore error if the receiver is dropped.
@@ -441,6 +401,30 @@ pub async fn setup_server(
     };
 
     Ok((address, future))
+}
+
+pub fn record_build_info_gauge(meter: &Meter) {
+    let gauge = meter
+        .u64_observable_gauge("janus_build_info")
+        .with_description(
+            "A metric with a constant '1' value labeled with build-time version information.",
+        )
+        .init();
+    let mut git_revision: &str = git_version!(fallback = "unknown");
+    if git_revision == "unknown" {
+        if let Some(value) = option_env!("GIT_REVISION") {
+            git_revision = value;
+        }
+    }
+    gauge.observe(
+        &Context::current(),
+        1,
+        &[
+            KeyValue::new("version", env!("CARGO_PKG_VERSION")),
+            KeyValue::new("revision", git_revision),
+            KeyValue::new("rust_version", env!("RUSTC_SEMVER")),
+        ],
+    );
 }
 
 #[cfg(test)]

@@ -11,15 +11,13 @@ use janus_aggregator_core::{
     task::{self, Task},
     SecretBytes,
 };
-use janus_core::{
-    task::{AuthenticationToken, DapAuthToken},
-    time::RealClock,
-};
+use janus_core::{task::AuthenticationToken, time::RealClock};
 use janus_interop_binaries::{
     status::{ERROR, SUCCESS},
     AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole, HpkeConfigRegistry, Keyring,
 };
 use janus_messages::{Duration, HpkeConfig, Time};
+use opentelemetry::metrics::Meter;
 use prio::codec::Decode;
 use serde::{Deserialize, Serialize};
 use sqlx::{migrate::Migrator, Connection, PgConnection};
@@ -41,10 +39,9 @@ async fn handle_add_task(
     request: AggregatorAddTaskRequest,
 ) -> anyhow::Result<()> {
     let vdaf = request.vdaf.into();
-    let leader_authentication_token = AuthenticationToken::DapAuth(
-        DapAuthToken::try_from(request.leader_authentication_token.into_bytes())
-            .context("invalid header value in \"leader_authentication_token\"")?,
-    );
+    let leader_authentication_token =
+        AuthenticationToken::new_dap_auth_token_from_string(request.leader_authentication_token)
+            .context("invalid header value in \"leader_authentication_token\"")?;
     let vdaf_verify_key = SecretBytes::new(
         URL_SAFE_NO_PAD
             .decode(request.vdaf_verify_key)
@@ -63,10 +60,10 @@ async fn handle_add_task(
                 return Err(anyhow::anyhow!("collector authentication token is missing"))
             }
             (AggregatorRole::Leader, Some(collector_authentication_token)) => {
-                Vec::from([AuthenticationToken::DapAuth(
-                    DapAuthToken::try_from(collector_authentication_token.into_bytes())
-                        .context("invalid header value in \"collector_authentication_token\"")?,
-                )])
+                Vec::from([AuthenticationToken::new_dap_auth_token_from_string(
+                    collector_authentication_token,
+                )
+                .context("invalid header value in \"collector_authentication_token\"")?])
             }
             (AggregatorRole::Helper, _) => Vec::new(),
         };
@@ -79,6 +76,7 @@ async fn handle_add_task(
             max_batch_size: request
                 .max_batch_size
                 .ok_or_else(|| anyhow::anyhow!("\"max_batch_size\" is missing"))?,
+            batch_time_window_size: None,
         },
         _ => {
             return Err(anyhow::anyhow!(
@@ -119,20 +117,24 @@ async fn handle_add_task(
         .context("error adding task to database")
 }
 
-fn make_handler(
+async fn make_handler(
     datastore: Arc<Datastore<RealClock>>,
+    meter: &Meter,
     dap_serving_prefix: String,
 ) -> anyhow::Result<impl Handler> {
     let keyring = Keyring::new();
     let dap_handler = aggregator_handler(
         Arc::clone(&datastore),
         RealClock::default(),
+        meter,
         aggregator::Config {
             max_upload_batch_size: 100,
             max_upload_batch_write_delay: std::time::Duration::from_millis(100),
             batch_aggregation_shard_count: 32,
+            ..Default::default()
         },
-    )?;
+    )
+    .await?;
 
     let handler = Router::new()
         .all(format!("{dap_serving_prefix}/*"), dap_handler)
@@ -231,7 +233,12 @@ async fn main() -> anyhow::Result<()> {
 
         // Run an HTTP server with both the DAP aggregator endpoints and the interoperation test
         // endpoints.
-        let handler = make_handler(Arc::clone(&datastore), ctx.config.dap_serving_prefix)?;
+        let handler = make_handler(
+            Arc::clone(&datastore),
+            &ctx.meter,
+            ctx.config.dap_serving_prefix,
+        )
+        .await?;
         trillium_tokio::config()
             .with_host(&ctx.config.listen_address.ip().to_string())
             .with_port(ctx.config.listen_address.port())

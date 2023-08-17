@@ -18,7 +18,7 @@
 //! use url::Url;
 //!
 //! # async fn run() {
-//! // Supply DAP task paramenters.
+//! // Supply DAP task parameters.
 //! let task_id = random();
 //! let hpke_keypair = janus_core::hpke::generate_hpke_config_and_private_key(
 //!     HpkeConfigId::from(0),
@@ -29,7 +29,7 @@
 //! let parameters = CollectorParameters::new(
 //!     task_id,
 //!     "https://example.com/dap/".parse().unwrap(),
-//!     AuthenticationToken::Bearer(b"my-authentication-token".to_vec()),
+//!     AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
 //!     hpke_keypair.config().clone(),
 //!     hpke_keypair.private_key().clone(),
 //! );
@@ -704,7 +704,7 @@ mod tests {
         let parameters = CollectorParameters::new(
             random(),
             server_url,
-            AuthenticationToken::Bearer(b"token".to_vec()),
+            AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
             hpke_keypair.config().clone(),
             hpke_keypair.private_key().clone(),
         )
@@ -805,7 +805,7 @@ mod tests {
         let collector_parameters = CollectorParameters::new(
             random(),
             "http://example.com/dap".parse().unwrap(),
-            AuthenticationToken::Bearer(b"token".to_vec()),
+            AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
             hpke_keypair.config().clone(),
             hpke_keypair.private_key().clone(),
         );
@@ -818,7 +818,7 @@ mod tests {
         let collector_parameters = CollectorParameters::new(
             random(),
             "http://example.com".parse().unwrap(),
-            AuthenticationToken::Bearer(b"token".to_vec()),
+            AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
             hpke_keypair.config().clone(),
             hpke_keypair.private_key().clone(),
         );
@@ -838,7 +838,6 @@ mod tests {
         let collector = setup_collector(&mut server, vdaf);
         let (auth_header, auth_value) =
             collector.parameters.authentication.request_authentication();
-        let auth_value = String::from_utf8(auth_value).unwrap();
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000),
@@ -1002,8 +1001,8 @@ mod tests {
     async fn successful_collect_prio3_histogram() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_histogram(2, &[25, 50, 75, 100]).unwrap();
-        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &80);
+        let vdaf = Prio3::new_histogram(2, 4).unwrap();
+        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &3);
         let collector = setup_collector(&mut server, vdaf);
 
         let batch_interval = Interval::new(
@@ -1059,7 +1058,7 @@ mod tests {
                     ),
                     chrono::Duration::seconds(3600),
                 ),
-                Vec::from([0, 0, 0, 1, 0])
+                Vec::from([0, 0, 0, 1])
             )
         );
 
@@ -1224,7 +1223,7 @@ mod tests {
         let parameters = CollectorParameters::new(
             random(),
             server_url,
-            AuthenticationToken::Bearer(Vec::from([0x41u8; 16])),
+            AuthenticationToken::new_bearer_token_from_bytes(Vec::from([0x41u8; 16])).unwrap(),
             hpke_keypair.config().clone(),
             hpke_keypair.private_key().clone(),
         )
@@ -1247,7 +1246,7 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 CollectionReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .match_header(AUTHORIZATION.as_str(), "Bearer QUFBQUFBQUFBQUFBQUFBQQ==")
+            .match_header(AUTHORIZATION.as_str(), "Bearer AAAAAAAAAAAAAAAA")
             .with_status(201)
             .expect(1)
             .create_async()
@@ -1255,15 +1254,15 @@ mod tests {
 
         let job = collector
             .start_collection(Query::new_time_interval(batch_interval), &())
-            .await
-            .unwrap();
-        assert_eq!(job.query.batch_interval(), &batch_interval);
+            .await;
 
         mocked_collect_start_success.assert_async().await;
+        let job = job.unwrap();
+        assert_eq!(job.query.batch_interval(), &batch_interval);
 
         let mocked_collect_complete = server
             .mock("POST", job.collection_job_url.path())
-            .match_header(AUTHORIZATION.as_str(), "Bearer QUFBQUFBQUFBQUFBQUFBQQ==")
+            .match_header(AUTHORIZATION.as_str(), "Bearer AAAAAAAAAAAAAAAA")
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),

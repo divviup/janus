@@ -29,16 +29,20 @@ logging_config:
     # Socket address to listen on. (optional)
     listen_address: "127.0.0.1:6669"
 
-  # OpenTelemetry tracing configuration. This can either contain the string
-  # "jaeger" or a map with an "otlp" key. (optional)
-  open_telemetry_config: "jaeger"
+  # OpenTelemetry tracing configuration. This can contain an "otlp" key with a
+  # map containing exporter configuration. (optional)
+  open_telemetry_config:
+    otlp:
+      # OTLP gRPC endpoint.
+      endpoint: "https://example.com"
+      # gRPC metadata to send with OTLP requests. (optional)
+      metadata:
+        key: "value"
 
-  ##otlp:
-  ##  # OTLP gRPC endpoint.
-  ##  endpoint: "https://example.com/"
-  ##  # gRPC metadata to send with OTLP requests. (optional)
-  ##  metadata:
-  ##    key: "value"
+  # Flag to write tracing spans and events to JSON files. This is compatible
+  # with Chrome's trace viewer, available at `chrome://tracing`, and
+  # Perfetto, at https://ui.perfetto.dev/. (optional)
+  chrome: false
 
 # Metrics configuration. (optional)
 metrics_config:
@@ -61,11 +65,18 @@ metrics_config:
 # Aggregator-specific parameters:
 
 # Socket address for DAP requests. (required)
-listen_address: "0.0.0.0:80"
+listen_address: "0.0.0.0:8080"
 
-# Socket address for Janus aggregator API requests. If not set, Janus aggregator API is not served.
-# (optional)
-aggregator_api_listen_address: "0.0.0.0:8081"
+# How to serve the Janus aggregator API. If not set, Janus aggregator API is not served. (optional)
+aggregator_api:
+  # Socket address on which to listen for requests.
+  listen_address: "0.0.0.0:8081"
+  # Alternately, the aggregator API may be served on `listen_address`, at an arbitrary path prefix.
+  # path_prefix: "aggregator-api"
+
+  # Resource location at which the DAP service managed by this
+  # aggregator api can be found on the public internet. Required.
+  public_dap_url: "https://dap.test"
 
 # Maximum number of uploaded reports per batching transaction. (required)
 max_upload_batch_size: 100
@@ -74,5 +85,28 @@ max_upload_batch_size: 100
 max_upload_batch_write_delay_ms: 250
 
 # Number of sharded database records per batch aggregation. Must not be greater
-# than the equivalent setting in the collection job driver.
+# than the equivalent setting in the collection job driver. (required)
 batch_aggregation_shard_count: 32
+
+# Configuration for the taskprov extension. If enabled, this changes the behavior of the
+# aggregator as described in draft-wang-ppm-dap-taskprov. (optional)
+taskprov_config:
+  # Whether to enable the taskprov extension. Defaults to false.
+  enabled: false
+
+# Configuration for garbage collection. If omitted, old data is never deleted. (optional)
+garbage_collection:
+  # How frequently to collect garbage, in seconds.
+  gc_frequency_s: 60
+
+  # The maximum number of client reports, per task, to delete in a single run of the garbage
+  # collector.
+  report_limit: 5000
+
+  # The maximum number of aggregation jobs (& related artifacts), per task, to delete in a single
+  # run of the garbage collector.
+  aggregation_limit: 500
+
+  # The maximum number of collection jobs (& related artifacts), per task, to delete in a single run
+  # of the garbage collector.
+  collection_limit: 50

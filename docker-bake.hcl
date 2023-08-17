@@ -72,7 +72,7 @@ target "janus_aggregator" {
     "type=gha,scope=${GITHUB_REF_NAME}-janus",
   ]
   cache-to = ["type=gha,scope=${GITHUB_REF_NAME}-janus,mode=max"]
-  tags = ["janus_aggregator"]
+  tags     = ["janus_aggregator:${VERSION}"]
 }
 
 target "janus_aggregator_release" {
@@ -85,7 +85,7 @@ target "janus_aggregator_release" {
 
 target "janus_aggregation_job_creator" {
   args = {
-    BINARY = "aggregation_job_creator"
+    BINARY       = "aggregation_job_creator"
     GIT_REVISION = "${GIT_REVISION}"
   }
   cache-from = [
@@ -93,7 +93,7 @@ target "janus_aggregation_job_creator" {
     "type=gha,scope=${GITHUB_BASE_REF}-janus",
     "type=gha,scope=${GITHUB_REF_NAME}-janus",
   ]
-  tags = ["janus_aggregation_job_creator"]
+  tags = ["janus_aggregation_job_creator:${VERSION}"]
 }
 
 target "janus_aggregation_job_creator_release" {
@@ -106,7 +106,7 @@ target "janus_aggregation_job_creator_release" {
 
 target "janus_aggregation_job_driver" {
   args = {
-    BINARY = "aggregation_job_driver"
+    BINARY       = "aggregation_job_driver"
     GIT_REVISION = "${GIT_REVISION}"
   }
   cache-from = [
@@ -114,7 +114,7 @@ target "janus_aggregation_job_driver" {
     "type=gha,scope=${GITHUB_BASE_REF}-janus",
     "type=gha,scope=${GITHUB_REF_NAME}-janus",
   ]
-  tags = ["janus_aggregation_job_driver"]
+  tags = ["janus_aggregation_job_driver:${VERSION}"]
 }
 
 target "janus_aggregation_job_driver_release" {
@@ -127,7 +127,7 @@ target "janus_aggregation_job_driver_release" {
 
 target "janus_collection_job_driver" {
   args = {
-    BINARY = "collection_job_driver"
+    BINARY       = "collection_job_driver"
     GIT_REVISION = "${GIT_REVISION}"
   }
   cache-from = [
@@ -135,7 +135,7 @@ target "janus_collection_job_driver" {
     "type=gha,scope=${GITHUB_BASE_REF}-janus",
     "type=gha,scope=${GITHUB_REF_NAME}-janus",
   ]
-  tags = ["janus_collection_job_driver"]
+  tags = ["janus_collection_job_driver:${VERSION}"]
 }
 
 target "janus_collection_job_driver_release" {
@@ -148,7 +148,7 @@ target "janus_collection_job_driver_release" {
 
 target "janus_cli" {
   args = {
-    BINARY = "janus_cli"
+    BINARY       = "janus_cli"
     GIT_REVISION = "${GIT_REVISION}"
   }
   cache-from = [
@@ -156,7 +156,7 @@ target "janus_cli" {
     "type=gha,scope=${GITHUB_BASE_REF}-janus",
     "type=gha,scope=${GITHUB_REF_NAME}-janus",
   ]
-  tags = ["janus_cli"]
+  tags = ["janus_cli:${VERSION}"]
 }
 
 target "janus_cli_release" {
@@ -177,7 +177,7 @@ target "janus_interop_client" {
     "type=gha,scope=${GITHUB_BASE_REF}-interop",
     "type=gha,scope=${GITHUB_REF_NAME}-interop",
   ]
-  tags = ["janus_interop_client"]
+  tags = ["janus_interop_client:${VERSION}"]
 }
 
 target "janus_interop_client_release" {
@@ -196,7 +196,7 @@ target "janus_interop_aggregator" {
     "type=gha,scope=${GITHUB_REF_NAME}-interop",
   ]
   cache-to = ["type=gha,scope=${GITHUB_REF_NAME}-interop,mode=max"]
-  tags = ["janus_interop_aggregator"]
+  tags     = ["janus_interop_aggregator:${VERSION}"]
 }
 
 target "janus_interop_aggregator_release" {
@@ -217,7 +217,7 @@ target "janus_interop_collector" {
     "type=gha,scope=${GITHUB_BASE_REF}-interop",
     "type=gha,scope=${GITHUB_REF_NAME}-interop",
   ]
-  tags = ["janus_interop_collector"]
+  tags = ["janus_interop_collector:${VERSION}"]
 }
 
 target "janus_interop_collector_release" {
@@ -235,7 +235,7 @@ target "janus_interop_collector_release" {
 target "janus_interop_client_small" {
   args = {
     PROFILE = "small"
-    BINARY = "janus_interop_client"
+    BINARY  = "janus_interop_client"
   }
   cache-from = [
     "type=gha,scope=main-interop-small",
@@ -254,14 +254,14 @@ target "janus_interop_aggregator_small" {
     "type=gha,scope=${GITHUB_BASE_REF}-interop-small",
     "type=gha,scope=${GITHUB_REF_NAME}-interop-small",
   ]
-  cache-to = ["type=gha,scope=${GITHUB_REF_NAME}-interop-small,mode=max"]
+  cache-to   = ["type=gha,scope=${GITHUB_REF_NAME}-interop-small,mode=max"]
   dockerfile = "Dockerfile.interop_aggregator"
 }
 
 target "janus_interop_collector_small" {
   args = {
     PROFILE = "small"
-    BINARY = "janus_interop_collector"
+    BINARY  = "janus_interop_collector"
   }
   cache-from = [
     "type=gha,scope=main-interop-small",

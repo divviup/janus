@@ -1,0 +1,27 @@
+name: ci-migrations
+
+on:
+  push:
+    branches: [ main, release/** ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  janus_migrations:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+    - name: Check that existing migrations have not changed
+      if: github.event_name == 'pull_request'
+      env:
+        BASE_SHA: "${{ github.event.pull_request.base.sha }}"
+      run: |
+        # --diff-filter=a includes all differences except added files.
+        if ! git diff --exit-code --diff-filter=a "$BASE_SHA" ./db; then
+          echo "fatal: migrations cannot be modified or removed, only added"
+          exit 1
+        fi
+    - name: Check validity of migrations
+      uses: "./.github/actions/validate-migrations"

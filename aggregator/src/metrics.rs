@@ -23,13 +23,8 @@ use {
 
 #[cfg(feature = "otlp")]
 use {
-    opentelemetry::{
-        runtime::Tokio,
-        sdk::{metrics::controllers::BasicController, Resource},
-        KeyValue,
-    },
+    opentelemetry::{runtime::Tokio, sdk::metrics::controllers::BasicController},
     opentelemetry_otlp::WithExportConfig,
-    opentelemetry_semantic_conventions::resource::SERVICE_NAME,
     tonic::metadata::{MetadataKey, MetadataMap, MetadataValue},
 };
 
@@ -204,10 +199,6 @@ pub async fn install_metrics_exporter(
                     stateless_temporality_selector(),
                     Tokio,
                 )
-                .with_resource(Resource::new([KeyValue::new(
-                    SERVICE_NAME,
-                    "janus_aggregator",
-                )]))
                 .with_exporter(
                     opentelemetry_otlp::new_exporter()
                         .tonic()

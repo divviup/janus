@@ -84,6 +84,20 @@ impl DbConfig {
     }
 }
 
+/// Configuration options for the Taskprov extension. This extension is
+/// described in [draft-wang-ppm-dap-taskprov][spec], although its configuration
+/// options are implementation-specific.
+///
+/// [spec]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct TaskprovConfig {
+    /// Whether to enable the extension or not. Enabling this changes the behavior
+    /// of the aggregator consistent with the taskprov [specification][spec].
+    ///
+    /// [spec]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
+    pub enabled: bool,
+}
+
 /// Non-secret configuration options for Janus Job Driver jobs.
 ///
 /// # Examples
@@ -167,6 +181,7 @@ pub mod test_util {
                     ]),
                 },
             )),
+            chrome: false,
         }
     }
 

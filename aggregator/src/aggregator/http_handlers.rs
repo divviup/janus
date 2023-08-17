@@ -1,26 +1,30 @@
 use super::{Aggregator, Config, Error};
 use crate::aggregator::problem_details::ProblemDetailsConnExt;
 use async_trait::async_trait;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{datastore::Datastore, instrumented};
 use janus_core::{
     http::extract_bearer_token,
-    task::{AuthenticationToken, DapAuthToken, DAP_AUTH_HEADER},
+    task::{AuthenticationToken, DAP_AUTH_HEADER},
+    taskprov::TASKPROV_HEADER,
     time::Clock,
 };
 use janus_messages::{
-    problem_type::DapProblemType, query_type::TimeInterval, AggregateShare, AggregateShareReq,
-    AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
-    Collection, CollectionJobId, CollectionReq, HpkeConfigList, Report, TaskId,
+    codec::Decode, problem_type::DapProblemType, query_type::TimeInterval, taskprov::TaskConfig,
+    AggregateShare, AggregateShareReq, AggregationJobContinueReq, AggregationJobId,
+    AggregationJobInitializeReq, AggregationJobResp, Collection, CollectionJobId, CollectionReq,
+    HpkeConfigList, Report, TaskId,
 };
 use opentelemetry::{
     metrics::{Counter, Meter},
     Context, KeyValue,
 };
 use prio::codec::Encode;
+use ring::digest::{digest, SHA256};
 use routefinder::Captures;
 use serde::Deserialize;
-use std::sync::Arc;
 use std::time::Duration as StdDuration;
+use std::{io::Cursor, sync::Arc};
 use tracing::warn;
 use trillium::{Conn, Handler, KnownHeaderName, Status};
 use trillium_api::{api, State};
@@ -99,6 +103,9 @@ impl Handler for Error {
             }
             Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
             Error::BadRequest(_) => conn.with_status(Status::BadRequest),
+            Error::InvalidTask(task_id, _) => {
+                conn.with_problem_details(DapProblemType::InvalidTask, Some(task_id))
+            }
         }
     }
 }
@@ -146,7 +153,7 @@ impl StatusCounter {
     fn new(meter: &Meter) -> Self {
         Self(
             meter
-                .u64_counter("janus_aggregator_responses_total")
+                .u64_counter("janus_aggregator_responses")
                 .with_description(
                     "Count of requests handled by the aggregator, by method, route, and response status.",
                 )
@@ -201,17 +208,23 @@ pub(crate) static COLLECTION_JOB_ROUTE: &str = "tasks/:task_id/collection_jobs/:
 pub(crate) static AGGREGATE_SHARES_ROUTE: &str = "tasks/:task_id/aggregate_shares";
 
 /// Constructs a Trillium handler for the aggregator.
-pub fn aggregator_handler<C: Clock>(
+pub async fn aggregator_handler<C: Clock>(
     datastore: Arc<Datastore<C>>,
     clock: C,
+    meter: &Meter,
     cfg: Config,
 ) -> Result<impl Handler, Error> {
-    let meter = opentelemetry::global::meter("janus_aggregator");
-    let aggregator = Arc::new(Aggregator::new(datastore, clock, &meter, cfg));
+    let aggregator = Arc::new(Aggregator::new(datastore, clock, meter, cfg).await?);
+    aggregator_handler_with_aggregator(aggregator, meter).await
+}
 
+async fn aggregator_handler_with_aggregator<C: Clock>(
+    aggregator: Arc<Aggregator<C>>,
+    meter: &Meter,
+) -> Result<impl Handler, Error> {
     Ok((
         State(aggregator),
-        metrics("janus_aggregator"),
+        metrics("janus_aggregator").with_route(|conn| conn.route().map(ToString::to_string)),
         Router::new()
             .without_options_handling()
             .get("hpke_config", instrumented(api(hpke_config::<C>)))
@@ -250,7 +263,7 @@ pub fn aggregator_handler<C: Clock>(
                 AGGREGATE_SHARES_ROUTE,
                 instrumented(api(aggregate_shares::<C>)),
             ),
-        StatusCounter::new(&meter),
+        StatusCounter::new(meter),
     ))
 }
 
@@ -364,8 +377,15 @@ async fn aggregation_jobs_put<C: Clock>(
     let task_id = parse_task_id(&captures)?;
     let aggregation_job_id = parse_aggregation_job_id(&captures)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
+    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
     let response = aggregator
-        .handle_aggregate_init(&task_id, &aggregation_job_id, &body, auth_token)
+        .handle_aggregate_init(
+            &task_id,
+            &aggregation_job_id,
+            &body,
+            auth_token,
+            taskprov_task_config.as_ref(),
+        )
         .await?;
 
     Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))
@@ -385,8 +405,15 @@ async fn aggregation_jobs_post<C: Clock>(
     let task_id = parse_task_id(&captures)?;
     let aggregation_job_id = parse_aggregation_job_id(&captures)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
+    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
     let response = aggregator
-        .handle_aggregate_continue(&task_id, &aggregation_job_id, &body, auth_token)
+        .handle_aggregate_continue(
+            &task_id,
+            &aggregation_job_id,
+            &body,
+            auth_token,
+            taskprov_task_config.as_ref(),
+        )
         .await?;
 
     Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))
@@ -471,8 +498,9 @@ async fn aggregate_shares<C: Clock>(
 
     let task_id = parse_task_id(&captures)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
+    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
     let share = aggregator
-        .handle_aggregate_share(&task_id, &body, auth_token)
+        .handle_aggregate_share(&task_id, &body, auth_token, taskprov_task_config.as_ref())
         .await?;
 
     Ok(EncodedBody::new(share, AggregateShare::MEDIA_TYPE))
@@ -532,34 +560,98 @@ fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<Authenticati
     if let Some(bearer_token) =
         extract_bearer_token(conn).map_err(|_| Error::UnauthorizedRequest(*task_id))?
     {
-        return Ok(Some(AuthenticationToken::Bearer(bearer_token)));
+        return Ok(Some(bearer_token));
     }
 
     conn.request_headers()
         .get(DAP_AUTH_HEADER)
         .map(|value| {
-            DapAuthToken::try_from(value.as_ref().to_vec())
-                .map(AuthenticationToken::DapAuth)
+            AuthenticationToken::new_dap_auth_token_from_bytes(value.as_ref())
                 .map_err(|e| Error::BadRequest(format!("bad DAP-Auth-Token header: {e}")))
         })
         .transpose()
 }
 
+fn parse_taskprov_header<C: Clock>(
+    aggregator: &Aggregator<C>,
+    task_id: &TaskId,
+    conn: &Conn,
+) -> Result<Option<TaskConfig>, Error> {
+    if aggregator.cfg.taskprov_config.enabled {
+        match conn.request_headers().get(TASKPROV_HEADER) {
+            Some(taskprov_header) => {
+                let task_config_encoded =
+                    &URL_SAFE_NO_PAD.decode(taskprov_header).map_err(|_| {
+                        Error::UnrecognizedMessage(
+                            Some(*task_id),
+                            "taskprov header could not be decoded",
+                        )
+                    })?;
+
+                if task_id.as_ref() != digest(&SHA256, task_config_encoded).as_ref() {
+                    Err(Error::UnrecognizedMessage(
+                        Some(*task_id),
+                        "derived taskprov task ID does not match task config",
+                    ))
+                } else {
+                    // TODO(#1684): Parsing the taskprov header like this before we've been able
+                    // to actually authenticate the client is undesireable. We should rework this
+                    // such that the authorization header is handled before parsing the untrusted
+                    // input.
+                    Ok(Some(TaskConfig::decode(&mut Cursor::new(
+                        task_config_encoded,
+                    ))?))
+                }
+            }
+            None => Ok(None),
+        }
+    } else {
+        Ok(None)
+    }
+}
+
+#[cfg(feature = "test-util")]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
+pub mod test_util {
+    use std::borrow::Cow;
+    use trillium_testing::TestConn;
+
+    pub async fn take_response_body(test_conn: &mut TestConn) -> Cow<'_, [u8]> {
+        test_conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap()
+    }
+
+    pub async fn take_problem_details(test_conn: &mut TestConn) -> serde_json::Value {
+        serde_json::from_slice(&take_response_body(test_conn).await).unwrap()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::{
-        aggregate_init_tests::{put_aggregation_job, setup_aggregate_init_test},
-        aggregation_job_continue::test_util::{
-            post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
+    use crate::{
+        aggregator::{
+            aggregate_init_tests::{put_aggregation_job, setup_aggregate_init_test},
+            aggregation_job_continue::test_util::{
+                post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
+            },
+            collection_job_tests::setup_collection_job_test_case,
+            empty_batch_aggregations,
+            http_handlers::{
+                aggregator_handler, aggregator_handler_with_aggregator,
+                test_util::{take_problem_details, take_response_body},
+            },
+            tests::{
+                create_report, create_report_custom, default_aggregator_config,
+                generate_helper_report_share, generate_helper_report_share_for_plaintext,
+                BATCH_AGGREGATION_SHARD_COUNT,
+            },
+            Config,
         },
-        collection_job_tests::setup_collection_job_test_case,
-        empty_batch_aggregations,
-        http_handlers::aggregator_handler,
-        tests::{
-            create_report, create_report_with_id, default_aggregator_config,
-            generate_helper_report_share, generate_helper_report_share_for_plaintext,
-            BATCH_AGGREGATION_SHARD_COUNT, DUMMY_VERIFY_KEY_LENGTH,
-        },
+        config::TaskprovConfig,
     };
     use assert_matches::assert_matches;
     use futures::future::try_join_all;
@@ -567,17 +659,24 @@ mod tests {
         datastore::{
             models::{
                 AggregateShareJob, AggregationJob, AggregationJobState, Batch, BatchAggregation,
-                BatchAggregationState, BatchState, CollectionJob, CollectionJobState,
+                BatchAggregationState, BatchState, CollectionJob, CollectionJobState, HpkeKeyState,
                 ReportAggregation, ReportAggregationState,
             },
             test_util::ephemeral_datastore,
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
         task::{test_util::TaskBuilder, QueryType, VerifyKey},
+        taskprov,
+        test_util::noop_meter,
     };
     use janus_core::{
         hpke::{
-            self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
+            self,
+            test_util::{
+                generate_test_hpke_config_and_private_key,
+                generate_test_hpke_config_and_private_key_with_id,
+            },
+            HpkeApplicationInfo, HpkeKeypair, Label,
         },
         report_id::ReportIdChecksumExt,
         task::{AuthenticationToken, VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
@@ -603,7 +702,7 @@ mod tests {
     };
     use rand::random;
     use serde_json::json;
-    use std::{io::Cursor, sync::Arc};
+    use std::{collections::HashMap, io::Cursor, sync::Arc, time::Duration as StdDuration};
     use trillium::{KnownHeaderName, Status};
     use trillium_testing::{
         assert_headers,
@@ -630,23 +729,27 @@ mod tests {
 
         let want_hpke_key = task.current_hpke_key().clone();
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
 
-        // No task ID provided
+        // No task ID provided and no global keys are configured.
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            test_conn
+                .response_headers()
+                .get(KnownHeaderName::ContentType)
+                .unwrap(),
+            "application/problem+json"
+        );
+        assert_eq!(
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": 400u16,
                 "type": "urn:ietf:params:ppm:dap:error:missingTaskID",
@@ -661,17 +764,15 @@ mod tests {
         // Expected status and problem type should be per the protocol
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.1
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            test_conn
+                .response_headers()
+                .get(KnownHeaderName::ContentType)
+                .unwrap(),
+            "application/problem+json"
+        );
+        assert_eq!(
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": 400u16,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
@@ -692,18 +793,243 @@ mod tests {
             "content-type" => (HpkeConfigList::MEDIA_TYPE),
         );
 
-        let bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
+        let bytes = take_response_body(&mut test_conn).await;
         let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
         assert_eq!(
             hpke_config_list.hpke_configs(),
             &[want_hpke_key.config().clone()]
         );
+        check_hpke_config_is_usable(&hpke_config_list, &want_hpke_key);
+    }
 
+    #[tokio::test]
+    async fn global_hpke_config() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+
+        // Insert an HPKE config, i.e. start the application with a keypair already
+        // in the database.
+        let first_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(1);
+        datastore
+            .run_tx(|tx| {
+                let keypair = first_hpke_keypair.clone();
+                Box::pin(async move {
+                    tx.put_global_hpke_keypair(&keypair).await?;
+                    tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        let cfg = Config {
+            global_hpke_configs_refresh_interval: StdDuration::from_millis(500),
+            ..Default::default()
+        };
+
+        let aggregator = Arc::new(
+            crate::aggregator::Aggregator::new(
+                datastore.clone(),
+                clock.clone(),
+                &noop_meter(),
+                cfg,
+            )
+            .await
+            .unwrap(),
+        );
+        let handler = aggregator_handler_with_aggregator(aggregator.clone(), &noop_meter())
+            .await
+            .unwrap();
+
+        // No task ID provided
+        let mut test_conn = get("/hpke_config").run_async(&handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert_headers!(
+            &test_conn,
+            "cache-control" => "max-age=86400",
+            "content-type" => (HpkeConfigList::MEDIA_TYPE),
+        );
+        let bytes = take_response_body(&mut test_conn).await;
+        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
+        assert_eq!(
+            hpke_config_list.hpke_configs(),
+            &[first_hpke_keypair.config().clone()]
+        );
+        check_hpke_config_is_usable(&hpke_config_list, &first_hpke_keypair);
+
+        // Insert an inactive HPKE config.
+        let second_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(2);
+        datastore
+            .run_tx(|tx| {
+                let keypair = second_hpke_keypair.clone();
+                Box::pin(async move { tx.put_global_hpke_keypair(&keypair).await })
+            })
+            .await
+            .unwrap();
+        aggregator.refresh_caches().await.unwrap();
+        let mut test_conn = get("/hpke_config").run_async(&handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let bytes = take_response_body(&mut test_conn).await;
+        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
+        assert_eq!(
+            hpke_config_list.hpke_configs(),
+            &[first_hpke_keypair.config().clone()]
+        );
+
+        // Set key active.
+        datastore
+            .run_tx(|tx| {
+                let keypair = second_hpke_keypair.clone();
+                Box::pin(async move {
+                    tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+        aggregator.refresh_caches().await.unwrap();
+        let mut test_conn = get("/hpke_config").run_async(&handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let bytes = take_response_body(&mut test_conn).await;
+        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
+        // Unordered comparison.
+        assert_eq!(
+            HashMap::from_iter(
+                hpke_config_list
+                    .hpke_configs()
+                    .iter()
+                    .map(|config| (config.id(), config))
+            ),
+            HashMap::from([
+                (
+                    first_hpke_keypair.config().id(),
+                    &first_hpke_keypair.config().clone()
+                ),
+                (
+                    second_hpke_keypair.config().id(),
+                    &second_hpke_keypair.config().clone()
+                ),
+            ]),
+        );
+
+        // Expire a key.
+        datastore
+            .run_tx(|tx| {
+                let keypair = second_hpke_keypair.clone();
+                Box::pin(async move {
+                    tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Expired)
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+        aggregator.refresh_caches().await.unwrap();
+        let mut test_conn = get("/hpke_config").run_async(&handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let bytes = take_response_body(&mut test_conn).await;
+        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
+        assert_eq!(
+            hpke_config_list.hpke_configs(),
+            &[first_hpke_keypair.config().clone()]
+        );
+
+        // Delete a key, no keys left.
+        datastore
+            .run_tx(|tx| {
+                let keypair = first_hpke_keypair.clone();
+                Box::pin(async move { tx.delete_global_hpke_keypair(keypair.config().id()).await })
+            })
+            .await
+            .unwrap();
+        aggregator.refresh_caches().await.unwrap();
+        let test_conn = get("/hpke_config").run_async(&handler).await;
+        assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    }
+
+    #[tokio::test]
+    async fn global_hpke_config_with_taskprov() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+
+        // Insert an HPKE config, i.e. start the application with a keypair already
+        // in the database.
+        let first_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(1);
+        datastore
+            .run_tx(|tx| {
+                let keypair = first_hpke_keypair.clone();
+                Box::pin(async move {
+                    tx.put_global_hpke_keypair(&keypair).await?;
+                    tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        // Insert a taskprov task. This task won't have its task-specific HPKE key.
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Count,
+            Role::Leader,
+        )
+        .build();
+        let task_id = *task.id();
+        let task = taskprov::Task::new(
+            task_id,
+            task.aggregator_endpoints().to_vec(),
+            *task.query_type(),
+            task.vdaf().clone(),
+            *task.role(),
+            task.vdaf_verify_keys().to_vec(),
+            task.max_batch_query_count(),
+            task.task_expiration().cloned(),
+            task.report_expiry_age().cloned(),
+            task.min_batch_size(),
+            *task.time_precision(),
+            *task.tolerable_clock_skew(),
+        )
+        .unwrap();
+        datastore.put_task(&task.into()).await.unwrap();
+
+        let cfg = Config {
+            taskprov_config: TaskprovConfig { enabled: true },
+            ..Default::default()
+        };
+
+        let aggregator = Arc::new(
+            crate::aggregator::Aggregator::new(
+                datastore.clone(),
+                clock.clone(),
+                &noop_meter(),
+                cfg,
+            )
+            .await
+            .unwrap(),
+        );
+        let handler = aggregator_handler_with_aggregator(aggregator.clone(), &noop_meter())
+            .await
+            .unwrap();
+
+        let mut test_conn = get(&format!("/hpke_config?task_id={}", task_id))
+            .run_async(&handler)
+            .await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let bytes = take_response_body(&mut test_conn).await;
+        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
+        assert_eq!(
+            hpke_config_list.hpke_configs(),
+            &[first_hpke_keypair.config().clone()]
+        );
+        check_hpke_config_is_usable(&hpke_config_list, &first_hpke_keypair);
+    }
+
+    fn check_hpke_config_is_usable(hpke_config_list: &HpkeConfigList, hpke_keypair: &HpkeKeypair) {
         let application_info =
             HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
         let message = b"this is a message";
@@ -717,8 +1043,8 @@ mod tests {
         )
         .unwrap();
         let plaintext = hpke::open(
-            want_hpke_key.config(),
-            want_hpke_key.private_key(),
+            hpke_keypair.config(),
+            hpke_keypair.private_key(),
             &application_info,
             &ciphertext,
             associated_data,
@@ -743,8 +1069,14 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
 
         // Check for appropriate CORS headers in response to a preflight request.
         let test_conn = TestConn::build(
@@ -786,17 +1118,8 @@ mod tests {
             desired_task_id: &TaskId,
         ) {
             assert_eq!(test_conn.status(), Some(desired_status));
-            let problem_details: serde_json::Value = serde_json::from_slice(
-                &test_conn
-                    .take_response_body()
-                    .unwrap()
-                    .into_bytes()
-                    .await
-                    .unwrap(),
-            )
-            .unwrap();
             assert_eq!(
-                problem_details,
+                take_problem_details(test_conn).await,
                 json!({
                     "status": desired_status as u16,
                     "type": format!("urn:ietf:params:ppm:dap:error:{desired_type}"),
@@ -825,8 +1148,10 @@ mod tests {
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock.clone(),
+            &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         // Upload a report. Do this twice to prove that PUT is idempotent.
@@ -844,7 +1169,12 @@ mod tests {
         let accepted_report_id = report.metadata().id();
 
         // Verify that new reports using an existing report ID are rejected with reportRejected
-        let duplicate_id_report = create_report_with_id(&task, clock.now(), *accepted_report_id);
+        let duplicate_id_report = create_report_custom(
+            &task,
+            clock.now(),
+            *accepted_report_id,
+            task.current_hpke_key(),
+        );
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
             .with_request_body(duplicate_id_report.get_encoded())
@@ -1058,8 +1388,14 @@ mod tests {
         datastore.put_task(&task).await.unwrap();
         let report = create_report(&task, clock.now());
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
 
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
@@ -1068,13 +1404,7 @@ mod tests {
             .await;
 
         assert!(!test_conn.status().unwrap().is_success());
-        let bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
-        let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let problem_details = take_problem_details(&mut test_conn).await;
         assert_eq!(
             problem_details,
             json!({
@@ -1118,21 +1448,21 @@ mod tests {
             Vec::new(),
         );
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         let mut test_conn =
             put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
-
         assert!(!test_conn.status().unwrap().is_success());
-        let bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
-        let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        let problem_details = take_problem_details(&mut test_conn).await;
         assert_eq!(
             problem_details,
             json!({
@@ -1206,8 +1536,14 @@ mod tests {
             Vec::new(),
         );
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         let wrong_token_value = random();
@@ -1218,7 +1554,7 @@ mod tests {
             .aggregator_auth_tokens()
             .iter()
             .find(|token| matches!(token, AuthenticationToken::DapAuth(_)))
-            .map(|token| AuthenticationToken::Bearer(token.as_ref().to_vec()))
+            .map(|token| AuthenticationToken::new_bearer_token_from_bytes(token.as_ref()).unwrap())
             .unwrap();
 
         for auth_token in [Some(wrong_token_value), Some(wrong_token_format), None] {
@@ -1240,17 +1576,8 @@ mod tests {
             let mut test_conn = test_conn.run_async(&handler).await;
 
             let want_status = 400;
-            let problem_details: serde_json::Value = serde_json::from_slice(
-                &test_conn
-                    .take_response_body()
-                    .unwrap()
-                    .into_bytes()
-                    .await
-                    .unwrap(),
-            )
-            .unwrap();
             assert_eq!(
-                problem_details,
+                take_problem_details(&mut test_conn).await,
                 json!({
                     "status": want_status,
                     "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -1528,8 +1855,10 @@ mod tests {
 
         let (conflicting_aggregation_job, non_conflicting_aggregation_job) = datastore
             .run_tx(|tx| {
-                let (task, report_share_4, report_share_8) =
-                    (task.clone(), report_share_4.clone(), report_share_8.clone());
+                let task = task.clone();
+                let report_share_4 = report_share_4.clone();
+                let report_share_5 = report_share_5.clone();
+                let report_share_8 = report_share_8.clone();
                 Box::pin(async move {
                     tx.put_task(&task).await?;
 
@@ -1611,8 +1940,8 @@ mod tests {
                             .unwrap(),
                             dummy_vdaf::AggregationParam(0),
                             dummy_vdaf::AggregateShare(0),
-                            0,
-                            ReportIdChecksum::default(),
+                            1,
+                            ReportIdChecksum::for_report_id(report_share_5.metadata().id()),
                         ),
                     )
                     .await?;
@@ -1641,8 +1970,14 @@ mod tests {
 
         // Create aggregator handler, send request, and parse response. Do this twice to prove that
         // the request is idempotent.
-        let handler =
-            aggregator_handler(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::clone(&datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         for _ in 0..2 {
@@ -1653,12 +1988,7 @@ mod tests {
                 &test_conn,
                 "content-type" => (AggregationJobResp::MEDIA_TYPE)
             );
-            let body_bytes = test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap();
+            let body_bytes = take_response_body(&mut test_conn).await;
             let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
             // Validate response.
@@ -1760,6 +2090,250 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    #[allow(clippy::unit_arg)]
+    async fn aggregate_init_with_reports_encrypted_by_global_key() {
+        install_test_trace_subscriber();
+
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+
+        // Insert some global HPKE keys.
+        // Same ID as the task to test having both keys to choose from.
+        let global_hpke_keypair_same_id = generate_test_hpke_config_and_private_key_with_id(
+            (*task.current_hpke_key().config().id()).into(),
+        );
+        // Different ID to test misses on the task key.
+        let global_hpke_keypair_different_id = generate_test_hpke_config_and_private_key_with_id(
+            (0..)
+                .map(HpkeConfigId::from)
+                .find(|id| !task.hpke_keys().contains_key(id))
+                .unwrap()
+                .into(),
+        );
+        datastore
+            .run_tx(|tx| {
+                let global_hpke_keypair_same_id = global_hpke_keypair_same_id.clone();
+                let global_hpke_keypair_different_id = global_hpke_keypair_different_id.clone();
+                Box::pin(async move {
+                    // Leave these in the PENDING state--they should still be decryptable.
+                    tx.put_global_hpke_keypair(&global_hpke_keypair_same_id)
+                        .await?;
+                    tx.put_global_hpke_keypair(&global_hpke_keypair_different_id)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        datastore.put_task(&task).await.unwrap();
+
+        let vdaf = dummy_vdaf::Vdaf::new();
+        let verify_key: VerifyKey<0> = task.primary_vdaf_verify_key().unwrap();
+
+        // This report was encrypted with a global HPKE config that has the same config
+        // ID as the task's HPKE config.
+        let report_metadata_same_id = ReportMetadata::new(
+            random(),
+            clock
+                .now()
+                .to_batch_interval_start(task.time_precision())
+                .unwrap(),
+        );
+        let transcript = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &dummy_vdaf::AggregationParam(0),
+            report_metadata_same_id.id(),
+            &(),
+        );
+        let report_share_same_id = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+            *task.id(),
+            report_metadata_same_id,
+            global_hpke_keypair_same_id.config(),
+            &transcript.public_share,
+            Vec::new(),
+            &transcript.input_shares[1],
+        );
+
+        // This report was encrypted with a global HPKE config that has the same config
+        // ID as the task's HPKE config, but will fail to decrypt.
+        let report_metadata_same_id_corrupted = ReportMetadata::new(
+            random(),
+            clock
+                .now()
+                .to_batch_interval_start(task.time_precision())
+                .unwrap(),
+        );
+        let transcript = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &dummy_vdaf::AggregationParam(0),
+            report_metadata_same_id_corrupted.id(),
+            &(),
+        );
+        let report_share_same_id_corrupted = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+            *task.id(),
+            report_metadata_same_id_corrupted.clone(),
+            global_hpke_keypair_same_id.config(),
+            &transcript.public_share,
+            Vec::new(),
+            &transcript.input_shares[1],
+        );
+        let encrypted_input_share = report_share_same_id_corrupted.encrypted_input_share();
+        let mut corrupted_payload = encrypted_input_share.payload().to_vec();
+        corrupted_payload[0] ^= 0xFF;
+        let corrupted_input_share = HpkeCiphertext::new(
+            *encrypted_input_share.config_id(),
+            encrypted_input_share.encapsulated_key().to_vec(),
+            corrupted_payload,
+        );
+        let encoded_public_share = transcript.public_share.get_encoded();
+        let report_share_same_id_corrupted = ReportShare::new(
+            report_metadata_same_id_corrupted,
+            encoded_public_share.clone(),
+            corrupted_input_share,
+        );
+
+        // This report was encrypted with a global HPKE config that doesn't collide
+        // with the task HPKE config's ID.
+        let report_metadata_different_id = ReportMetadata::new(
+            random(),
+            clock
+                .now()
+                .to_batch_interval_start(task.time_precision())
+                .unwrap(),
+        );
+        let transcript = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &dummy_vdaf::AggregationParam(0),
+            report_metadata_different_id.id(),
+            &(),
+        );
+        let report_share_different_id = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+            *task.id(),
+            report_metadata_different_id,
+            global_hpke_keypair_different_id.config(),
+            &transcript.public_share,
+            Vec::new(),
+            &transcript.input_shares[1],
+        );
+
+        // This report was encrypted with a global HPKE config that doesn't collide
+        // with the task HPKE config's ID, but will fail decryption.
+        let report_metadata_different_id_corrupted = ReportMetadata::new(
+            random(),
+            clock
+                .now()
+                .to_batch_interval_start(task.time_precision())
+                .unwrap(),
+        );
+        let transcript = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &dummy_vdaf::AggregationParam(0),
+            report_metadata_different_id_corrupted.id(),
+            &(),
+        );
+        let report_share_different_id_corrupted = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+            *task.id(),
+            report_metadata_different_id_corrupted.clone(),
+            global_hpke_keypair_different_id.config(),
+            &transcript.public_share,
+            Vec::new(),
+            &transcript.input_shares[1],
+        );
+        let encrypted_input_share = report_share_different_id_corrupted.encrypted_input_share();
+        let mut corrupted_payload = encrypted_input_share.payload().to_vec();
+        corrupted_payload[0] ^= 0xFF;
+        let corrupted_input_share = HpkeCiphertext::new(
+            *encrypted_input_share.config_id(),
+            encrypted_input_share.encapsulated_key().to_vec(),
+            corrupted_payload,
+        );
+        let encoded_public_share = transcript.public_share.get_encoded();
+        let report_share_different_id_corrupted = ReportShare::new(
+            report_metadata_different_id_corrupted,
+            encoded_public_share.clone(),
+            corrupted_input_share,
+        );
+
+        let handler = aggregator_handler(
+            Arc::clone(&datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
+        let aggregation_job_id: AggregationJobId = random();
+
+        let request = AggregationJobInitializeReq::new(
+            dummy_vdaf::AggregationParam(0).get_encoded(),
+            PartialBatchSelector::new_time_interval(),
+            Vec::from([
+                report_share_same_id.clone(),
+                report_share_different_id.clone(),
+                report_share_same_id_corrupted.clone(),
+                report_share_different_id_corrupted.clone(),
+            ]),
+        );
+
+        let mut test_conn =
+            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        let body_bytes = take_response_body(&mut test_conn).await;
+        let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
+
+        // Validate response.
+        assert_eq!(aggregate_resp.prepare_steps().len(), 4);
+
+        let prepare_step_same_id = aggregate_resp.prepare_steps().get(0).unwrap();
+        assert_eq!(
+            prepare_step_same_id.report_id(),
+            report_share_same_id.metadata().id()
+        );
+        assert_matches!(
+            prepare_step_same_id.result(),
+            &PrepareStepResult::Continued(..)
+        );
+
+        let prepare_step_different_id = aggregate_resp.prepare_steps().get(1).unwrap();
+        assert_eq!(
+            prepare_step_different_id.report_id(),
+            report_share_different_id.metadata().id()
+        );
+        assert_matches!(
+            prepare_step_different_id.result(),
+            &PrepareStepResult::Continued(..)
+        );
+
+        let prepare_step_same_id_corrupted = aggregate_resp.prepare_steps().get(2).unwrap();
+        assert_eq!(
+            prepare_step_same_id_corrupted.report_id(),
+            report_share_same_id_corrupted.metadata().id()
+        );
+        assert_matches!(
+            prepare_step_same_id_corrupted.result(),
+            &PrepareStepResult::Failed(ReportShareError::HpkeDecryptError)
+        );
+
+        let prepare_step_different_id_corrupted = aggregate_resp.prepare_steps().get(3).unwrap();
+        assert_eq!(
+            prepare_step_different_id_corrupted.report_id(),
+            report_share_different_id_corrupted.metadata().id()
+        );
+        assert_matches!(
+            prepare_step_different_id_corrupted.result(),
+            &PrepareStepResult::Failed(ReportShareError::HpkeDecryptError)
+        );
+    }
+
     #[allow(clippy::unit_arg)]
     #[tokio::test]
     async fn aggregate_init_change_report_timestamp() {
@@ -1793,12 +2367,7 @@ mod tests {
         let mut test_conn =
             put_aggregation_job(&test_case.task, &random(), &request, &test_case.handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
-        let body_bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
+        let body_bytes = take_response_body(&mut test_conn).await;
         let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
         assert_eq!(aggregate_resp.prepare_steps().len(), 1);
@@ -1871,8 +2440,14 @@ mod tests {
         );
 
         // Create aggregator handler, send request, and parse response.
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         let mut test_conn =
@@ -1882,12 +2457,7 @@ mod tests {
             &test_conn,
             "content-type" => (AggregationJobResp::MEDIA_TYPE)
         );
-        let body_bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
+        let body_bytes = take_response_body(&mut test_conn).await;
         let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
@@ -1940,8 +2510,14 @@ mod tests {
         );
 
         // Create aggregator filter, send request, and parse response.
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         let mut test_conn =
@@ -1951,12 +2527,7 @@ mod tests {
             &test_conn,
             "content-type" => (AggregationJobResp::MEDIA_TYPE)
         );
-        let body_bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
+        let body_bytes = take_response_body(&mut test_conn).await;
         let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
@@ -2006,25 +2577,22 @@ mod tests {
             Vec::from([report_share.clone(), report_share]),
         );
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         let mut test_conn =
             put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
 
         let want_status = 400;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
@@ -2251,8 +2819,14 @@ mod tests {
         );
 
         // Create aggregator handler, send request, and parse response.
-        let handler =
-            aggregator_handler(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::clone(&datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
 
         let aggregate_resp =
             post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
@@ -2459,18 +3033,27 @@ mod tests {
             &transcript_2.input_shares[1],
         );
 
+        let first_batch_identifier = Interval::new(
+            report_metadata_0
+                .time()
+                .to_batch_interval_start(task.time_precision())
+                .unwrap(),
+            *task.time_precision(),
+        )
+        .unwrap();
+        let second_batch_identifier = Interval::new(
+            report_metadata_2
+                .time()
+                .to_batch_interval_start(task.time_precision())
+                .unwrap(),
+            *task.time_precision(),
+        )
+        .unwrap();
         let second_batch_want_batch_aggregations =
             empty_batch_aggregations::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
                 &task,
                 BATCH_AGGREGATION_SHARD_COUNT,
-                &Interval::new(
-                    report_metadata_2
-                        .time()
-                        .to_batch_interval_start(task.time_precision())
-                        .unwrap(),
-                    *task.time_precision(),
-                )
-                .unwrap(),
+                &second_batch_identifier,
                 &(),
                 &[],
             );
@@ -2559,12 +3142,28 @@ mod tests {
                     ))
                     .await?;
 
+                    for batch_identifier in [first_batch_identifier, second_batch_identifier] {
+                        tx.put_batch(
+                            &Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                                *task.id(),
+                                batch_identifier,
+                                (),
+                                BatchState::Closed,
+                                0,
+                                batch_identifier,
+                            ),
+                        )
+                        .await
+                        .unwrap()
+                    }
+
                     try_join_all(
                         second_batch_want_batch_aggregations
                             .iter()
                             .map(|ba| tx.put_batch_aggregation(ba)),
                     )
-                    .await?;
+                    .await
+                    .unwrap();
 
                     Ok(())
                 })
@@ -2594,8 +3193,10 @@ mod tests {
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             first_batch_interval_clock.clone(),
+            &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         let _ =
@@ -2620,7 +3221,7 @@ mod tests {
                                 .time()
                                 .to_batch_interval_start(task.time_precision())
                                 .unwrap(),
-                            Duration::from_seconds(task.time_precision().as_seconds()),
+                            *task.time_precision(),
                         )
                         .unwrap(),
                         &(),
@@ -2898,8 +3499,10 @@ mod tests {
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             first_batch_interval_clock,
+            &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         let _ =
@@ -3056,25 +3659,23 @@ mod tests {
                     )
                     .await?;
 
-                    tx.put_aggregation_job(&AggregationJob::<
-                        DUMMY_VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        dummy_vdaf::Vdaf,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        dummy_vdaf::AggregationParam(0),
-                        (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    tx.put_aggregation_job(
+                        &AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            aggregation_job_id,
+                            dummy_vdaf::AggregationParam(0),
+                            (),
+                            Interval::new(
+                                Time::from_seconds_since_epoch(0),
+                                Duration::from_seconds(1),
+                            )
                             .unwrap(),
-                        AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
-                    ))
+                            AggregationJobState::InProgress,
+                            AggregationJobRound::from(0),
+                        ),
+                    )
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        DUMMY_VERIFY_KEY_LENGTH,
-                        dummy_vdaf::Vdaf,
-                    >::new(
+                    tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
                         *report_metadata.id(),
@@ -3098,8 +3699,14 @@ mod tests {
             )]),
         );
 
-        let handler =
-            aggregator_handler(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::clone(&datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
 
         post_aggregation_job_expecting_error(
             &task,
@@ -3154,25 +3761,23 @@ mod tests {
                         ),
                     )
                     .await?;
-                    tx.put_aggregation_job(&AggregationJob::<
-                        DUMMY_VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        dummy_vdaf::Vdaf,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        dummy_vdaf::AggregationParam(0),
-                        (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    tx.put_aggregation_job(
+                        &AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            aggregation_job_id,
+                            dummy_vdaf::AggregationParam(0),
+                            (),
+                            Interval::new(
+                                Time::from_seconds_since_epoch(0),
+                                Duration::from_seconds(1),
+                            )
                             .unwrap(),
-                        AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
-                    ))
+                            AggregationJobState::InProgress,
+                            AggregationJobRound::from(0),
+                        ),
+                    )
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        DUMMY_VERIFY_KEY_LENGTH,
-                        dummy_vdaf::Vdaf,
-                    >::new(
+                    tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
                         *report_metadata.id(),
@@ -3196,8 +3801,14 @@ mod tests {
             )]),
         );
 
-        let handler =
-            aggregator_handler(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::clone(&datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
 
         let aggregate_resp =
             post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
@@ -3215,11 +3826,13 @@ mod tests {
                 let (task, report_metadata) = (task.clone(), report_metadata.clone());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<DUMMY_VERIFY_KEY_LENGTH, TimeInterval, dummy_vdaf::Vdaf>(
+                        .get_aggregation_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                             task.id(),
                             &aggregation_job_id,
                         )
-                        .await.unwrap().unwrap();
+                        .await
+                        .unwrap()
+                        .unwrap();
                     let report_aggregation = tx
                         .get_report_aggregation(
                             &dummy_vdaf::Vdaf::default(),
@@ -3228,7 +3841,9 @@ mod tests {
                             &aggregation_job_id,
                             report_metadata.id(),
                         )
-                        .await.unwrap().unwrap();
+                        .await
+                        .unwrap()
+                        .unwrap();
                     Ok((aggregation_job, report_aggregation))
                 })
             })
@@ -3303,25 +3918,23 @@ mod tests {
                         ),
                     )
                     .await?;
-                    tx.put_aggregation_job(&AggregationJob::<
-                        DUMMY_VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        dummy_vdaf::Vdaf,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        dummy_vdaf::AggregationParam(0),
-                        (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    tx.put_aggregation_job(
+                        &AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            aggregation_job_id,
+                            dummy_vdaf::AggregationParam(0),
+                            (),
+                            Interval::new(
+                                Time::from_seconds_since_epoch(0),
+                                Duration::from_seconds(1),
+                            )
                             .unwrap(),
-                        AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
-                    ))
+                            AggregationJobState::InProgress,
+                            AggregationJobRound::from(0),
+                        ),
+                    )
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        DUMMY_VERIFY_KEY_LENGTH,
-                        dummy_vdaf::Vdaf,
-                    >::new(
+                    tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
                         *report_metadata.id(),
@@ -3347,8 +3960,14 @@ mod tests {
             )]),
         );
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
 
         post_aggregation_job_expecting_error(
             &task,
@@ -3423,26 +4042,24 @@ mod tests {
                     )
                     .await?;
 
-                    tx.put_aggregation_job(&AggregationJob::<
-                        DUMMY_VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        dummy_vdaf::Vdaf,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        dummy_vdaf::AggregationParam(0),
-                        (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    tx.put_aggregation_job(
+                        &AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            aggregation_job_id,
+                            dummy_vdaf::AggregationParam(0),
+                            (),
+                            Interval::new(
+                                Time::from_seconds_since_epoch(0),
+                                Duration::from_seconds(1),
+                            )
                             .unwrap(),
-                        AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
-                    ))
+                            AggregationJobState::InProgress,
+                            AggregationJobRound::from(0),
+                        ),
+                    )
                     .await?;
 
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        DUMMY_VERIFY_KEY_LENGTH,
-                        dummy_vdaf::Vdaf,
-                    >::new(
+                    tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
                         *report_metadata_0.id(),
@@ -3452,10 +4069,7 @@ mod tests {
                         ReportAggregationState::Waiting(dummy_vdaf::PrepareState::default(), None),
                     ))
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        DUMMY_VERIFY_KEY_LENGTH,
-                        dummy_vdaf::Vdaf,
-                    >::new(
+                    tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
                         *report_metadata_1.id(),
@@ -3486,8 +4100,14 @@ mod tests {
             ]),
         );
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
 
         post_aggregation_job_expecting_error(
             &task,
@@ -3538,25 +4158,23 @@ mod tests {
                         ),
                     )
                     .await?;
-                    tx.put_aggregation_job(&AggregationJob::<
-                        DUMMY_VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        dummy_vdaf::Vdaf,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        dummy_vdaf::AggregationParam(0),
-                        (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    tx.put_aggregation_job(
+                        &AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            aggregation_job_id,
+                            dummy_vdaf::AggregationParam(0),
+                            (),
+                            Interval::new(
+                                Time::from_seconds_since_epoch(0),
+                                Duration::from_seconds(1),
+                            )
                             .unwrap(),
-                        AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
-                    ))
+                            AggregationJobState::InProgress,
+                            AggregationJobRound::from(0),
+                        ),
+                    )
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        DUMMY_VERIFY_KEY_LENGTH,
-                        dummy_vdaf::Vdaf,
-                    >::new(
+                    tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
                         *report_metadata.id(),
@@ -3580,8 +4198,14 @@ mod tests {
             )]),
         );
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
 
         post_aggregation_job_expecting_error(
             &task,
@@ -3616,17 +4240,8 @@ mod tests {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
@@ -3658,17 +4273,8 @@ mod tests {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
@@ -3702,17 +4308,8 @@ mod tests {
 
         // Collect request will be rejected because the aggregation parameter can't be decoded
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
@@ -3735,8 +4332,14 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
 
         let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
@@ -3765,17 +4368,8 @@ mod tests {
 
         // Collect request will be rejected because there are no reports in the batch interval
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
@@ -3806,17 +4400,8 @@ mod tests {
             .await;
 
         let want_status = Status::BadRequest;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -3836,17 +4421,8 @@ mod tests {
             .await;
 
         let want_status = Status::BadRequest;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -3862,17 +4438,8 @@ mod tests {
             .await;
 
         let want_status = Status::BadRequest;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -3911,17 +4478,8 @@ mod tests {
             .await;
 
         let want_status = Status::BadRequest;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -3940,17 +4498,8 @@ mod tests {
             .await;
 
         let want_status = Status::BadRequest;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -3966,17 +4515,8 @@ mod tests {
             .await;
 
         let want_status = Status::BadRequest;
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
@@ -4020,6 +4560,7 @@ mod tests {
                         aggregation_param,
                         BatchState::Open,
                         1,
+                        batch_interval,
                     ))
                     .await?;
                     Ok(())
@@ -4045,6 +4586,7 @@ mod tests {
             aggregation_param,
             BatchState::Closing,
             1,
+            batch_interval,
         )]);
 
         let (got_collection_job, got_batches) = test_case
@@ -4080,57 +4622,8 @@ mod tests {
                 let task = test_case.task.clone();
                 let helper_aggregate_share_bytes = helper_aggregate_share.get_encoded();
                 Box::pin(async move {
-                    for (ord, spanned_interval) in [
-                        // These intervals fall into the first and second time-precision-length
-                        // intervals, so we expect the spanned interval in the collect result to
-                        // contain both of them.
-                        Interval::new(
-                            Time::from_seconds_since_epoch(1000),
-                            Duration::from_seconds(1000),
-                        )
-                        .unwrap(),
-                        Interval::new(
-                            Time::from_seconds_since_epoch(task.time_precision().as_seconds()),
-                            Duration::from_seconds(2000),
-                        )
-                        .unwrap(),
-                    ]
-                    .into_iter()
-                    .enumerate()
-                    {
-                        tx.put_aggregation_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                            &AggregationJob::new(
-                                *task.id(),
-                                random(),
-                                dummy_vdaf::AggregationParam::default(),
-                                (),
-                                spanned_interval,
-                                AggregationJobState::Finished,
-                                AggregationJobRound::from(1),
-                            ),
-                        )
-                        .await
-                        .unwrap();
-
-                        tx.put_batch_aggregation::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                            &BatchAggregation::new(
-                                *task.id(),
-                                batch_interval,
-                                dummy_vdaf::AggregationParam::default(),
-                                ord as u64,
-                                BatchAggregationState::Aggregating,
-                                Some(leader_aggregate_share),
-                                6,
-                                spanned_interval,
-                                ReportIdChecksum::default(),
-                            ),
-                        )
-                        .await
-                        .unwrap();
-                    }
-
                     let encrypted_helper_aggregate_share = hpke::seal(
-                        task.collector_hpke_config(),
+                        task.collector_hpke_config().unwrap(),
                         &HpkeApplicationInfo::new(
                             &Label::AggregateShare,
                             &Role::Helper,
@@ -4175,27 +4668,15 @@ mod tests {
             &test_conn,
             "content-type" => (Collection::<TimeInterval>::MEDIA_TYPE)
         );
-        let body_bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
+        let body_bytes = take_response_body(&mut test_conn).await;
         let collect_resp = Collection::<TimeInterval>::get_decoded(body_bytes.as_ref()).unwrap();
 
         assert_eq!(collect_resp.report_count(), 12);
-        assert_eq!(
-            collect_resp.interval(),
-            &Interval::new(
-                Time::from_seconds_since_epoch(0),
-                Duration::from_seconds(test_case.task.time_precision().as_seconds() * 2),
-            )
-            .unwrap()
-        );
+        assert_eq!(collect_resp.interval(), &batch_interval);
         assert_eq!(collect_resp.encrypted_aggregate_shares().len(), 2);
 
         let decrypted_leader_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_config(),
+            test_case.task.collector_hpke_config().unwrap(),
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
             &collect_resp.encrypted_aggregate_shares()[0],
@@ -4213,7 +4694,7 @@ mod tests {
         );
 
         let decrypted_helper_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_config(),
+            test_case.task.collector_hpke_config().unwrap(),
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
             &collect_resp.encrypted_aggregate_shares()[1],
@@ -4268,22 +4749,23 @@ mod tests {
             .run_tx(|tx| {
                 let task = test_case.task.clone();
                 Box::pin(async move {
-                    tx.put_batch_aggregation(&BatchAggregation::<
-                        DUMMY_VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        dummy_vdaf::Vdaf,
-                    >::new(
-                        *task.id(),
-                        Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision())
+                    tx.put_batch_aggregation(
+                        &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            Interval::new(
+                                Time::from_seconds_since_epoch(0),
+                                *task.time_precision(),
+                            )
                             .unwrap(),
-                        dummy_vdaf::AggregationParam(0),
-                        0,
-                        BatchAggregationState::Aggregating,
-                        Some(dummy_vdaf::AggregateShare(0)),
-                        10,
-                        interval,
-                        ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
-                    ))
+                            dummy_vdaf::AggregationParam(0),
+                            0,
+                            BatchAggregationState::Aggregating,
+                            Some(dummy_vdaf::AggregateShare(0)),
+                            10,
+                            interval,
+                            ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
+                        ),
+                    )
                     .await
                 })
             })
@@ -4310,17 +4792,8 @@ mod tests {
             .put_collection_job(&random(), &invalid_request)
             .await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes",
@@ -4344,21 +4817,19 @@ mod tests {
             .run_tx(|tx| {
                 let task = test_case.task.clone();
                 Box::pin(async move {
-                    tx.put_batch_aggregation(&BatchAggregation::<
-                        DUMMY_VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        dummy_vdaf::Vdaf,
-                    >::new(
-                        *task.id(),
-                        interval,
-                        dummy_vdaf::AggregationParam(0),
-                        0,
-                        BatchAggregationState::Aggregating,
-                        Some(dummy_vdaf::AggregateShare(0)),
-                        10,
-                        interval,
-                        ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
-                    ))
+                    tx.put_batch_aggregation(
+                        &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            interval,
+                            dummy_vdaf::AggregationParam(0),
+                            0,
+                            BatchAggregationState::Aggregating,
+                            Some(dummy_vdaf::AggregateShare(0)),
+                            10,
+                            interval,
+                            ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
+                        ),
+                    )
                     .await
                 })
             })
@@ -4393,17 +4864,8 @@ mod tests {
             .put_collection_job(&random(), &invalid_request)
             .await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
@@ -4494,8 +4956,14 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let handler =
-            aggregator_handler(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::new(datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
 
         let request = AggregateShareReq::new(
             BatchSelector::new_time_interval(
@@ -4520,17 +4988,8 @@ mod tests {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
@@ -4558,8 +5017,10 @@ mod tests {
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock.clone(),
+            &noop_meter(),
             default_aggregator_config(),
         )
+        .await
         .unwrap();
 
         let request = AggregateShareReq::new(
@@ -4592,17 +5053,8 @@ mod tests {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
@@ -4657,8 +5109,14 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let handler =
-            aggregator_handler(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
+        let handler = aggregator_handler(
+            Arc::clone(&datastore),
+            clock,
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
 
         // There are no batch aggregations in the datastore yet
         let request = AggregateShareReq::new(
@@ -4684,17 +5142,8 @@ mod tests {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
@@ -4717,8 +5166,18 @@ mod tests {
                             *task.time_precision(),
                         )
                         .unwrap();
+                        tx.put_batch(&Batch::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            interval_1,
+                            aggregation_param,
+                            BatchState::Closed,
+                            0,
+                            interval_1,
+                        ))
+                        .await
+                        .unwrap();
                         tx.put_batch_aggregation(&BatchAggregation::<
-                            DUMMY_VERIFY_KEY_LENGTH,
+                            0,
                             TimeInterval,
                             dummy_vdaf::Vdaf,
                         >::new(
@@ -4732,15 +5191,26 @@ mod tests {
                             interval_1,
                             ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                         ))
-                        .await?;
+                        .await
+                        .unwrap();
 
                         let interval_2 = Interval::new(
                             Time::from_seconds_since_epoch(1500),
                             *task.time_precision(),
                         )
                         .unwrap();
+                        tx.put_batch(&Batch::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            interval_2,
+                            aggregation_param,
+                            BatchState::Closed,
+                            0,
+                            interval_2,
+                        ))
+                        .await
+                        .unwrap();
                         tx.put_batch_aggregation(&BatchAggregation::<
-                            DUMMY_VERIFY_KEY_LENGTH,
+                            0,
                             TimeInterval,
                             dummy_vdaf::Vdaf,
                         >::new(
@@ -4754,15 +5224,26 @@ mod tests {
                             interval_2,
                             ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                         ))
-                        .await?;
+                        .await
+                        .unwrap();
 
                         let interval_3 = Interval::new(
                             Time::from_seconds_since_epoch(2000),
                             *task.time_precision(),
                         )
                         .unwrap();
+                        tx.put_batch(&Batch::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            interval_3,
+                            aggregation_param,
+                            BatchState::Closed,
+                            0,
+                            interval_3,
+                        ))
+                        .await
+                        .unwrap();
                         tx.put_batch_aggregation(&BatchAggregation::<
-                            DUMMY_VERIFY_KEY_LENGTH,
+                            0,
                             TimeInterval,
                             dummy_vdaf::Vdaf,
                         >::new(
@@ -4776,15 +5257,26 @@ mod tests {
                             interval_3,
                             ReportIdChecksum::get_decoded(&[4; 32]).unwrap(),
                         ))
-                        .await?;
+                        .await
+                        .unwrap();
 
                         let interval_4 = Interval::new(
                             Time::from_seconds_since_epoch(2500),
                             *task.time_precision(),
                         )
                         .unwrap();
+                        tx.put_batch(&Batch::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            interval_4,
+                            aggregation_param,
+                            BatchState::Closed,
+                            0,
+                            interval_4,
+                        ))
+                        .await
+                        .unwrap();
                         tx.put_batch_aggregation(&BatchAggregation::<
-                            DUMMY_VERIFY_KEY_LENGTH,
+                            0,
                             TimeInterval,
                             dummy_vdaf::Vdaf,
                         >::new(
@@ -4798,7 +5290,8 @@ mod tests {
                             interval_4,
                             ReportIdChecksum::get_decoded(&[8; 32]).unwrap(),
                         ))
-                        .await?;
+                        .await
+                        .unwrap();
                     }
 
                     Ok(())
@@ -4834,17 +5327,8 @@ mod tests {
             .await;
 
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
@@ -4896,17 +5380,8 @@ mod tests {
                 .await;
 
             assert_eq!(test_conn.status(), Some(Status::BadRequest));
-            let problem_details: serde_json::Value = serde_json::from_slice(
-                &test_conn
-                    .take_response_body()
-                    .unwrap()
-                    .into_bytes()
-                    .await
-                    .unwrap(),
-            )
-            .unwrap();
             assert_eq!(
-                problem_details,
+                take_problem_details(&mut test_conn).await,
                 json!({
                     "status": Status::BadRequest as u16,
                     "type": "urn:ietf:params:ppm:dap:error:batchMismatch",
@@ -4978,12 +5453,7 @@ mod tests {
                     &test_conn,
                     "content-type" => (AggregateShareMessage::MEDIA_TYPE)
                 );
-                let body_bytes = test_conn
-                    .take_response_body()
-                    .unwrap()
-                    .into_bytes()
-                    .await
-                    .unwrap();
+                let body_bytes = take_response_body(&mut test_conn).await;
                 let aggregate_share_resp = AggregateShareMessage::get_decoded(&body_bytes).unwrap();
 
                 let aggregate_share = hpke::open(
@@ -5037,17 +5507,8 @@ mod tests {
             .run_async(&handler)
             .await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        let problem_details: serde_json::Value = serde_json::from_slice(
-            &test_conn
-                .take_response_body()
-                .unwrap()
-                .into_bytes()
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
                 "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
@@ -5097,17 +5558,8 @@ mod tests {
                 .run_async(&handler)
                 .await;
             assert_eq!(test_conn.status(), Some(Status::BadRequest));
-            let problem_details: serde_json::Value = serde_json::from_slice(
-                &test_conn
-                    .take_response_body()
-                    .unwrap()
-                    .into_bytes()
-                    .await
-                    .unwrap(),
-            )
-            .unwrap();
             assert_eq!(
-                problem_details,
+                take_problem_details(&mut test_conn).await,
                 json!({
                     "status": Status::BadRequest as u16,
                     "type": "urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes",

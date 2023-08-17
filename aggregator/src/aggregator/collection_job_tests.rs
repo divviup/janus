@@ -3,13 +3,15 @@ use http::StatusCode;
 use janus_aggregator_core::{
     datastore::{
         models::{
-            AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
-            CollectionJobState, LeaderStoredReport, ReportAggregation, ReportAggregationState,
+            AggregationJob, AggregationJobState, Batch, BatchAggregation, BatchAggregationState,
+            BatchState, CollectionJobState, LeaderStoredReport, ReportAggregation,
+            ReportAggregationState,
         },
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
     },
     task::{test_util::TaskBuilder, QueryType, Task},
+    test_util::noop_meter,
 };
 use janus_core::{
     hpke::{
@@ -17,7 +19,10 @@ use janus_core::{
         HpkeKeypair, Label,
     },
     task::{AuthenticationToken, VdafInstance},
-    test_util::{dummy_vdaf, install_test_trace_subscriber},
+    test_util::{
+        dummy_vdaf::{self, AggregationParam},
+        install_test_trace_subscriber,
+    },
     time::{Clock, IntervalExt, MockClock},
 };
 use janus_messages::{
@@ -133,11 +138,13 @@ pub(crate) async fn setup_collection_job_test_case(
     let handler = aggregator_handler(
         Arc::clone(&datastore),
         clock.clone(),
+        &noop_meter(),
         Config {
             batch_aggregation_shard_count: 32,
             ..Default::default()
         },
     )
+    .await
     .unwrap();
 
     CollectionJobTestCase {
@@ -152,9 +159,14 @@ pub(crate) async fn setup_collection_job_test_case(
 
 async fn setup_fixed_size_current_batch_collection_job_test_case(
 ) -> (CollectionJobTestCase, BatchId, BatchId, Interval) {
-    let test_case =
-        setup_collection_job_test_case(Role::Leader, QueryType::FixedSize { max_batch_size: 10 })
-            .await;
+    let test_case = setup_collection_job_test_case(
+        Role::Leader,
+        QueryType::FixedSize {
+            max_batch_size: 10,
+            batch_time_window_size: None,
+        },
+    )
+    .await;
 
     // Fill the datastore with the necessary data so that there is are two outstanding batches to be
     // collected.
@@ -177,7 +189,7 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
                     tx.put_aggregation_job::<0, FixedSize, dummy_vdaf::Vdaf>(&AggregationJob::new(
                         *task.id(),
                         aggregation_job_id,
-                        dummy_vdaf::AggregationParam::default(),
+                        AggregationParam::default(),
                         batch_id,
                         interval,
                         AggregationJobState::Finished,
@@ -209,7 +221,7 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
                         &BatchAggregation::new(
                             *task.id(),
                             batch_id,
-                            dummy_vdaf::AggregationParam::default(),
+                            AggregationParam::default(),
                             0,
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(0)),
@@ -221,7 +233,18 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
                     .await
                     .unwrap();
 
-                    tx.put_outstanding_batch(task.id(), &batch_id)
+                    tx.put_batch::<0, FixedSize, dummy_vdaf::Vdaf>(&Batch::new(
+                        *task.id(),
+                        batch_id,
+                        AggregationParam::default(),
+                        BatchState::Closed,
+                        0,
+                        interval,
+                    ))
+                    .await
+                    .unwrap();
+
+                    tx.put_outstanding_batch(task.id(), &batch_id, &None)
                         .await
                         .unwrap();
                 }
@@ -250,7 +273,7 @@ async fn collection_job_success_fixed_size() {
     let helper_aggregate_share = dummy_vdaf::AggregateShare(1);
     let request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
-        dummy_vdaf::AggregationParam::default().get_encoded(),
+        AggregationParam::default().get_encoded(),
     );
 
     for _ in 0..2 {
@@ -283,7 +306,7 @@ async fn collection_job_success_fixed_size() {
                     let batch_id = *collection_job.batch_identifier();
 
                     let encrypted_helper_aggregate_share = hpke::seal(
-                        task.collector_hpke_config(),
+                        task.collector_hpke_config().unwrap(),
                         &HpkeApplicationInfo::new(
                             &Label::AggregateShare,
                             &Role::Helper,
@@ -353,7 +376,7 @@ async fn collection_job_success_fixed_size() {
         assert_eq!(collect_resp.encrypted_aggregate_shares().len(), 2);
 
         let decrypted_leader_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_config(),
+            test_case.task.collector_hpke_config().unwrap(),
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
             &collect_resp.encrypted_aggregate_shares()[0],
@@ -371,7 +394,7 @@ async fn collection_job_success_fixed_size() {
         );
 
         let decrypted_helper_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_config(),
+            test_case.task.collector_hpke_config().unwrap(),
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
             &collect_resp.encrypted_aggregate_shares()[1],
@@ -399,6 +422,13 @@ async fn collection_job_success_fixed_size() {
         .put_collection_job(&collection_job_id, &request)
         .await;
     assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(
+        test_conn
+            .response_headers()
+            .get(KnownHeaderName::ContentType)
+            .unwrap(),
+        "application/problem+json"
+    );
     let problem_details: serde_json::Value = serde_json::from_slice(
         &test_conn
             .take_response_body()
@@ -432,7 +462,7 @@ async fn collection_job_put_idempotence_time_interval() {
             )
             .unwrap(),
         ),
-        dummy_vdaf::AggregationParam::default().get_encoded(),
+        AggregationParam::default().get_encoded(),
     );
 
     for _ in 0..2 {
@@ -478,7 +508,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
             )
             .unwrap(),
         ),
-        dummy_vdaf::AggregationParam::default().get_encoded(),
+        AggregationParam::default().get_encoded(),
     );
 
     let response = test_case
@@ -494,7 +524,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
             )
             .unwrap(),
         ),
-        dummy_vdaf::AggregationParam::default().get_encoded(),
+        AggregationParam::default().get_encoded(),
     );
 
     let response = test_case
@@ -516,7 +546,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param()
             )
             .unwrap(),
         ),
-        dummy_vdaf::AggregationParam(0).get_encoded(),
+        AggregationParam(0).get_encoded(),
     );
 
     let response = test_case
@@ -532,7 +562,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param()
             )
             .unwrap(),
         ),
-        dummy_vdaf::AggregationParam(1).get_encoded(),
+        AggregationParam(1).get_encoded(),
     );
 
     let response = test_case
@@ -549,7 +579,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch() {
     let collection_job_id = random();
     let request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
-        dummy_vdaf::AggregationParam(0).get_encoded(),
+        AggregationParam(0).get_encoded(),
     );
     let mut seen_batch_id = None;
 
@@ -600,7 +630,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch_mutate_aggregat
     let collection_job_id = random();
     let request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
-        dummy_vdaf::AggregationParam(0).get_encoded(),
+        AggregationParam(0).get_encoded(),
     );
 
     let response = test_case
@@ -611,7 +641,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch_mutate_aggregat
 
     let mutated_request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
-        dummy_vdaf::AggregationParam(1).get_encoded(),
+        AggregationParam(1).get_encoded(),
     );
 
     let response = test_case
@@ -622,16 +652,46 @@ async fn collection_job_put_idempotence_fixed_size_current_batch_mutate_aggregat
 
 #[tokio::test]
 async fn collection_job_put_idempotence_fixed_size_by_batch_id() {
-    let test_case =
-        setup_collection_job_test_case(Role::Leader, QueryType::FixedSize { max_batch_size: 10 })
-            .await;
+    let test_case = setup_collection_job_test_case(
+        Role::Leader,
+        QueryType::FixedSize {
+            max_batch_size: 10,
+            batch_time_window_size: None,
+        },
+    )
+    .await;
 
     let collection_job_id = random();
+    let batch_id = random();
+
+    test_case
+        .datastore
+        .run_tx(|tx| {
+            let task_id = *test_case.task.id();
+            Box::pin(async move {
+                tx.put_batch(&Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                    task_id,
+                    batch_id,
+                    AggregationParam(0),
+                    BatchState::Closed,
+                    0,
+                    Interval::new(
+                        Time::from_seconds_since_epoch(1000),
+                        Duration::from_seconds(100),
+                    )
+                    .unwrap(),
+                ))
+                .await
+                .unwrap();
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
     let request = CollectionReq::new(
-        Query::new_fixed_size(FixedSizeQuery::ByBatchId {
-            batch_id: BatchId::try_from([1u8; 32]).unwrap(),
-        }),
-        dummy_vdaf::AggregationParam(0).get_encoded(),
+        Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
+        AggregationParam(0).get_encoded(),
     );
 
     for _ in 0..2 {
@@ -645,66 +705,135 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id() {
 
 #[tokio::test]
 async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_batch_id() {
-    let test_case =
-        setup_collection_job_test_case(Role::Leader, QueryType::FixedSize { max_batch_size: 10 })
-            .await;
+    let test_case = setup_collection_job_test_case(
+        Role::Leader,
+        QueryType::FixedSize {
+            max_batch_size: 10,
+            batch_time_window_size: None,
+        },
+    )
+    .await;
 
     let collection_job_id = random();
-    let request = CollectionReq::new(
-        Query::new_fixed_size(FixedSizeQuery::ByBatchId {
-            batch_id: BatchId::try_from([1u8; 32]).unwrap(),
-        }),
-        dummy_vdaf::AggregationParam(0).get_encoded(),
-    );
+    let first_batch_id = random();
+    let second_batch_id = random();
+
+    test_case
+        .datastore
+        .run_tx(|tx| {
+            let task_id = *test_case.task.id();
+            Box::pin(async move {
+                for batch_id in [first_batch_id, second_batch_id] {
+                    tx.put_batch(&Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                        task_id,
+                        batch_id,
+                        AggregationParam(0),
+                        BatchState::Closed,
+                        0,
+                        Interval::new(
+                            Time::from_seconds_since_epoch(1000),
+                            Duration::from_seconds(100),
+                        )
+                        .unwrap(),
+                    ))
+                    .await
+                    .unwrap();
+                }
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
 
     let response = test_case
-        .put_collection_job(&collection_job_id, &request)
+        .put_collection_job(
+            &collection_job_id,
+            &CollectionReq::new(
+                Query::new_fixed_size(FixedSizeQuery::ByBatchId {
+                    batch_id: first_batch_id,
+                }),
+                AggregationParam(0).get_encoded(),
+            ),
+        )
         .await;
-
     assert_eq!(response.status(), Some(Status::Created));
 
-    let mutated_request = CollectionReq::new(
-        Query::new_fixed_size(FixedSizeQuery::ByBatchId {
-            batch_id: BatchId::try_from([2u8; 32]).unwrap(),
-        }),
-        dummy_vdaf::AggregationParam(0).get_encoded(),
-    );
-
     let response = test_case
-        .put_collection_job(&collection_job_id, &mutated_request)
+        .put_collection_job(
+            &collection_job_id,
+            &CollectionReq::new(
+                Query::new_fixed_size(FixedSizeQuery::ByBatchId {
+                    batch_id: second_batch_id,
+                }),
+                AggregationParam(0).get_encoded(),
+            ),
+        )
         .await;
     assert_eq!(response.status(), Some(Status::Conflict));
 }
 
 #[tokio::test]
 async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_aggregation_param() {
-    let test_case =
-        setup_collection_job_test_case(Role::Leader, QueryType::FixedSize { max_batch_size: 10 })
-            .await;
+    let test_case = setup_collection_job_test_case(
+        Role::Leader,
+        QueryType::FixedSize {
+            max_batch_size: 10,
+            batch_time_window_size: None,
+        },
+    )
+    .await;
 
     let collection_job_id = random();
-    let request = CollectionReq::new(
-        Query::new_fixed_size(FixedSizeQuery::ByBatchId {
-            batch_id: BatchId::try_from([1u8; 32]).unwrap(),
-        }),
-        dummy_vdaf::AggregationParam(0).get_encoded(),
-    );
+    let batch_id = random();
+    let first_aggregation_param = AggregationParam(0);
+    let second_aggregation_param = AggregationParam(1);
+
+    test_case
+        .datastore
+        .run_tx(|tx| {
+            let task_id = *test_case.task.id();
+            Box::pin(async move {
+                for aggregation_param in [first_aggregation_param, second_aggregation_param] {
+                    tx.put_batch(&Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                        task_id,
+                        batch_id,
+                        aggregation_param,
+                        BatchState::Closed,
+                        0,
+                        Interval::new(
+                            Time::from_seconds_since_epoch(1000),
+                            Duration::from_seconds(100),
+                        )
+                        .unwrap(),
+                    ))
+                    .await
+                    .unwrap();
+                }
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
 
     let response = test_case
-        .put_collection_job(&collection_job_id, &request)
+        .put_collection_job(
+            &collection_job_id,
+            &CollectionReq::new(
+                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
+                first_aggregation_param.get_encoded(),
+            ),
+        )
         .await;
-
     assert_eq!(response.status(), Some(Status::Created));
 
-    let mutated_request = CollectionReq::new(
-        Query::new_fixed_size(FixedSizeQuery::ByBatchId {
-            batch_id: BatchId::try_from([1u8; 32]).unwrap(),
-        }),
-        dummy_vdaf::AggregationParam(1).get_encoded(),
-    );
-
     let response = test_case
-        .put_collection_job(&collection_job_id, &mutated_request)
+        .put_collection_job(
+            &collection_job_id,
+            &CollectionReq::new(
+                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
+                second_aggregation_param.get_encoded(),
+            ),
+        )
         .await;
     assert_eq!(response.status(), Some(Status::Conflict));
 }

@@ -1,24 +1,25 @@
 //! Discovery and driving of jobs scheduled elsewhere.
 
+use anyhow::Context as _;
 use chrono::NaiveDateTime;
 use janus_aggregator_core::datastore::{self, models::Lease};
 use janus_core::{time::Clock, Runtime};
 use opentelemetry::{
-    metrics::{Meter, Unit},
+    metrics::{Histogram, Meter, Unit},
     Context, KeyValue,
 };
 use std::{
-    convert::Infallible,
     fmt::{Debug, Display},
     future::Future,
     sync::Arc,
     time::Duration,
 };
 use tokio::{
-    sync::Semaphore,
+    sync::{Semaphore, SemaphorePermit},
     time::{self, Instant},
 };
 use tracing::{debug, error, info_span, Instrument};
+use trillium_tokio::Stopper;
 
 /// Periodically seeks incomplete jobs in the datastore and drives them concurrently.
 pub struct JobDriver<C: Clock, R, JobAcquirer, JobStepper> {
@@ -28,6 +29,8 @@ pub struct JobDriver<C: Clock, R, JobAcquirer, JobStepper> {
     runtime: R,
     /// Meter used to process metric values.
     meter: Meter,
+    /// Stopper to signal when to shut down the job driver.
+    stopper: Stopper,
 
     // Configuration values.
     /// Minimum delay between datastore job discovery passes.
@@ -72,29 +75,32 @@ where
         clock: C,
         runtime: R,
         meter: Meter,
+        stopper: Stopper,
         min_job_discovery_delay: Duration,
         max_job_discovery_delay: Duration,
         max_concurrent_job_workers: usize,
         worker_lease_clock_skew_allowance: Duration,
         incomplete_job_acquirer: JobAcquirer,
         job_stepper: JobStepper,
-    ) -> Self {
-        Self {
+    ) -> anyhow::Result<Self> {
+        u32::try_from(max_concurrent_job_workers)
+            .context("max_concurrent_job_workers was too large")?;
+        Ok(Self {
             clock,
             runtime,
             meter,
+            stopper,
             min_job_discovery_delay,
             max_job_discovery_delay,
             max_concurrent_job_workers,
             worker_lease_clock_skew_allowance,
             incomplete_job_acquirer,
             job_stepper,
-        }
+        })
     }
 
     /// Run this job driver, periodically seeking incomplete jobs and stepping them.
-    #[tracing::instrument(skip(self))]
-    pub async fn run(self: Arc<Self>) -> Infallible {
+    pub async fn run(self: Arc<Self>) {
         // Create metric recorders.
         let job_acquire_time_histogram = self
             .meter
@@ -115,13 +121,31 @@ where
 
         loop {
             // Wait out our job discovery delay, if any.
-            time::sleep(job_discovery_delay).await;
+            if self
+                .stopper
+                .stop_future(time::sleep(job_discovery_delay))
+                .await
+                .is_none()
+            {
+                // Shut down when signalled via the stopper. Wait for all in-flight jobs to
+                // complete by acquiring all semaphore permits.
+                //
+                // Unwrap safety: The constructor checks that max_concurrent_job_workers can be
+                // converted to a u32.
+                // Unwrap safety: Semaphore::acquire is documented as only returning an error if the
+                // semaphore is closed, and we never close this semaphore.
+                let _: SemaphorePermit<'_> = sem
+                    .acquire_many(u32::try_from(self.max_concurrent_job_workers).unwrap())
+                    .await
+                    .unwrap();
+                break;
+            }
 
             // Wait until we are able to start at least one worker. (permit will be immediately released)
             //
             // Unwrap safety: Semaphore::acquire is documented as only returning an error if the
             // semaphore is closed, and we never close this semaphore.
-            let _ = sem.acquire().await.unwrap();
+            drop(sem.acquire().await.unwrap());
 
             // Acquire some jobs which are ready to be stepped.
             //
@@ -134,45 +158,16 @@ where
             // (we'll pick up any additional jobs on the next iteration of this loop). We can't
             // overestimate since this task is the only place that permits are acquired.
             let max_acquire_count = sem.available_permits();
-            debug!(%max_acquire_count, "Acquiring jobs");
-            let start = Instant::now();
-            let leases = (self.incomplete_job_acquirer)(max_acquire_count).await;
-            let leases = match leases {
-                Ok(leases) => leases,
-                Err(error) => {
-                    error!(?error, "Couldn't acquire jobs");
 
-                    // Go ahead and step job discovery delay in this error case to ensure we don't
-                    // tightly loop running transactions that will fail without any delay.
-                    job_discovery_delay = self.step_job_discovery_delay(job_discovery_delay);
-                    job_acquire_time_histogram.record(
-                        &Context::current(),
-                        start.elapsed().as_secs_f64(),
-                        &[KeyValue::new("status", "error")],
-                    );
-                    continue;
-                }
-            };
-            job_acquire_time_histogram.record(
-                &Context::current(),
-                start.elapsed().as_secs_f64(),
-                &[KeyValue::new("status", "success")],
-            );
-            if leases.is_empty() {
-                debug!("No jobs available");
-                job_discovery_delay = self.step_job_discovery_delay(job_discovery_delay);
-                continue;
-            }
-            assert!(
-                leases.len() <= max_acquire_count,
-                "Acquired {} jobs exceeding maximum of {}",
-                leases.len(),
-                max_acquire_count
-            );
-            debug!(acquired_job_count = leases.len(), "Acquired jobs");
+            let leases = self
+                .run_job_acquisition(
+                    &mut job_discovery_delay,
+                    max_acquire_count,
+                    &job_acquire_time_histogram,
+                )
+                .await;
 
             // Start up tasks for each acquired job.
-            job_discovery_delay = Duration::ZERO;
             for lease in leases {
                 self.runtime.spawn({
                     // We acquire a semaphore in the job-discovery task rather than inside the new
@@ -222,6 +217,53 @@ where
         }
     }
 
+    #[tracing::instrument(skip(self, job_acquire_time_histogram))]
+    async fn run_job_acquisition(
+        self: &Arc<Self>,
+        job_discovery_delay: &mut Duration,
+        max_acquire_count: usize,
+        job_acquire_time_histogram: &Histogram<f64>,
+    ) -> Vec<Lease<AcquiredJob>> {
+        debug!(%max_acquire_count, "Acquiring jobs");
+        let start = Instant::now();
+        let leases = (self.incomplete_job_acquirer)(max_acquire_count).await;
+        let leases = match leases {
+            Ok(leases) => leases,
+            Err(error) => {
+                error!(?error, "Couldn't acquire jobs");
+
+                // Go ahead and step job discovery delay in this error case to ensure we don't
+                // tightly loop running transactions that will fail without any delay.
+                *job_discovery_delay = self.step_job_discovery_delay(*job_discovery_delay);
+                job_acquire_time_histogram.record(
+                    &Context::current(),
+                    start.elapsed().as_secs_f64(),
+                    &[KeyValue::new("status", "error")],
+                );
+                return Vec::new();
+            }
+        };
+        job_acquire_time_histogram.record(
+            &Context::current(),
+            start.elapsed().as_secs_f64(),
+            &[KeyValue::new("status", "success")],
+        );
+        if leases.is_empty() {
+            debug!("No jobs available");
+            *job_discovery_delay = self.step_job_discovery_delay(*job_discovery_delay);
+            return Vec::new();
+        }
+        assert!(
+            leases.len() <= max_acquire_count,
+            "Acquired {} jobs exceeding maximum of {}",
+            leases.len(),
+            max_acquire_count
+        );
+        debug!(acquired_job_count = leases.len(), "Acquired jobs");
+        *job_discovery_delay = Duration::ZERO;
+        leases
+    }
+
     fn step_job_discovery_delay(&self, delay: Duration) -> Duration {
         // A zero delay is stepped to the configured minimum delay.
         if delay == Duration::ZERO {
@@ -256,7 +298,10 @@ where
 mod tests {
     use super::JobDriver;
     use chrono::NaiveDateTime;
-    use janus_aggregator_core::datastore::{self, models::Lease};
+    use janus_aggregator_core::{
+        datastore::{self, models::Lease},
+        test_util::noop_meter,
+    };
     use janus_core::{
         task::VdafInstance,
         test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},
@@ -264,10 +309,10 @@ mod tests {
         Runtime,
     };
     use janus_messages::{AggregationJobId, TaskId};
-    use opentelemetry::global::meter;
     use rand::random;
     use std::{sync::Arc, time::Duration};
     use tokio::sync::Mutex;
+    use trillium_tokio::Stopper;
 
     #[tokio::test]
     async fn job_driver() {
@@ -281,6 +326,7 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let mut runtime_manager = TestRuntimeManager::new();
+        let stopper = Stopper::new();
 
         /// A fake incomplete job returned by the job acquirer closure.
         #[derive(Clone, Debug)]
@@ -344,78 +390,82 @@ mod tests {
         ]));
 
         // Run. Let the aggregation job driver step aggregation jobs, then kill it.
-        let job_driver = Arc::new(JobDriver::new(
-            clock,
-            runtime_manager.with_label("stepper"),
-            meter("job_driver_test"),
-            Duration::from_secs(1),
-            Duration::from_secs(1),
-            10,
-            Duration::from_secs(60),
-            {
-                let (test_state, incomplete_jobs) =
-                    (Arc::clone(&test_state), Arc::clone(&incomplete_jobs));
-                move |max_acquire_count| {
+        let job_driver = Arc::new(
+            JobDriver::new(
+                clock,
+                runtime_manager.with_label("stepper"),
+                noop_meter(),
+                stopper.clone(),
+                Duration::from_secs(1),
+                Duration::from_secs(1),
+                10,
+                Duration::from_secs(60),
+                {
                     let (test_state, incomplete_jobs) =
                         (Arc::clone(&test_state), Arc::clone(&incomplete_jobs));
-                    async move {
-                        let mut test_state = test_state.lock().await;
+                    move |max_acquire_count| {
+                        let (test_state, incomplete_jobs) =
+                            (Arc::clone(&test_state), Arc::clone(&incomplete_jobs));
+                        async move {
+                            let mut test_state = test_state.lock().await;
 
-                        assert_eq!(max_acquire_count, 10);
+                            assert_eq!(max_acquire_count, 10);
 
-                        let incomplete_jobs = incomplete_jobs
-                            .get(test_state.job_acquire_counter)
-                            // Clone here so that incomplete_jobs will be Vec<_> and not &Vec<_>, which
-                            // would be impossible to return from Option::unwrap_or_default.
-                            .cloned()
-                            .unwrap_or_default();
+                            let incomplete_jobs = incomplete_jobs
+                                .get(test_state.job_acquire_counter)
+                                // Clone here so that incomplete_jobs will be Vec<_> and not &Vec<_>, which
+                                // would be impossible to return from Option::unwrap_or_default.
+                                .cloned()
+                                .unwrap_or_default();
 
-                        let leases = incomplete_jobs
-                            .iter()
-                            .map(|job| {
-                                Lease::new_dummy(
-                                    (job.task_id, VdafInstance::Fake, job.job_id),
-                                    job.lease_expiry,
-                                )
-                            })
-                            .collect();
+                            let leases = incomplete_jobs
+                                .iter()
+                                .map(|job| {
+                                    Lease::new_dummy(
+                                        (job.task_id, VdafInstance::Fake, job.job_id),
+                                        job.lease_expiry,
+                                    )
+                                })
+                                .collect();
 
-                        test_state.job_acquire_counter += 1;
+                            test_state.job_acquire_counter += 1;
 
-                        // Create some fake incomplete jobs
-                        Ok(leases)
+                            // Create some fake incomplete jobs
+                            Ok(leases)
+                        }
                     }
-                }
-            },
-            {
-                let test_state = Arc::clone(&test_state);
-                move |lease| {
+                },
+                {
                     let test_state = Arc::clone(&test_state);
-                    async move {
-                        let mut test_state = test_state.lock().await;
-                        let job_acquire_counter = test_state.job_acquire_counter;
+                    move |lease| {
+                        let test_state = Arc::clone(&test_state);
+                        async move {
+                            let mut test_state = test_state.lock().await;
+                            let job_acquire_counter = test_state.job_acquire_counter;
 
-                        assert_eq!(lease.leased().1, VdafInstance::Fake);
+                            assert_eq!(lease.leased().1, VdafInstance::Fake);
 
-                        test_state.stepped_jobs.push(SteppedJob {
-                            observed_jobs_acquire_counter: job_acquire_counter,
-                            task_id: lease.leased().0,
-                            job_id: lease.leased().2,
-                        });
+                            test_state.stepped_jobs.push(SteppedJob {
+                                observed_jobs_acquire_counter: job_acquire_counter,
+                                task_id: lease.leased().0,
+                                job_id: lease.leased().2,
+                            });
 
-                        Ok(()) as Result<(), datastore::Error>
+                            Ok(()) as Result<(), datastore::Error>
+                        }
                     }
-                }
-            },
-        ));
-        let task_handle = runtime_manager
-            .with_label("driver")
-            .spawn(async move { job_driver.run().await });
+                },
+            )
+            .unwrap(),
+        );
+        let task_handle = runtime_manager.with_label("driver").spawn(job_driver.run());
 
         // Wait for all of the job stepper tasks to be started and for them to finish.
         runtime_manager.wait_for_completed_tasks("stepper", 4).await;
-        // Stop the job driver task.
-        task_handle.abort();
+        // Stop the job driver.
+        stopper.stop();
+        // Wait for the job driver task to complete.
+        task_handle.await.unwrap();
 
         // Verify that we got the expected calls to closures.
         let final_test_state = test_state.lock().await;

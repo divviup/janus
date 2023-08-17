@@ -6,6 +6,9 @@
 
 Janus is an experimental implementation of the [Distributed Aggregation Protocol
 (DAP) specification](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/).
+Currently it supports VDAFs with trivial aggregation parameters only, e.g.
+Prio3. VDAFs with nontrivial aggregation parameters (e.g. Poplar1) are not yet
+supported.
 
 Janus is currently in active development.
 
@@ -20,9 +23,12 @@ branch.
 | Git branch | Draft version | Conforms to protocol? | Status |
 | ---------- | ------------- | --------------------- | ------ |
 | `release/0.1` | [`draft-ietf-ppm-dap-01`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/01/) | Yes | Unmaintained as of December 7, 2022 |
-| `release/0.2` | [`draft-ietf-ppm-dap-02`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/02/) | Yes | Supported |
+| `release/0.2` | [`draft-ietf-ppm-dap-02`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/02/) | Yes | Unmaintained as of July 13, 2023 |
 | `release/0.3` | [`draft-ietf-ppm-dap-03`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/03/) | Yes | Unmaintained as of February 6, 2023 |
-| `main` | [`draft-ietf-ppm-dap-04`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/04/) | Yes | Supported |
+| `release/0.4` | [`draft-ietf-ppm-dap-04`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/04/) | Yes | Unmaintained as of May 24, 2023 |
+| `release/0.subscriber-01` | [`draft-ietf-ppm-dap-02`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/02/) plus extensions | No | Supported |
+| `release/0.5` | [`draft-ietf-ppm-dap-04`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/04/) | Yes | Supported |
+| `main` | [`draft-ietf-ppm-dap-05`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/05/) | [Partial](https://github.com/divviup/janus/issues/1669) | Supported |
 
 ## Building
 
@@ -81,8 +87,6 @@ its configuration and operation.
 
 `janus_aggregator` has the following features available.
 
-* `jaeger`: Enables tracing support and a Jaeger exporter; see the
-  [documentation](docs/CONFIGURING_TRACING.md) for configuration instructions.
 * `otlp`: Enables OTLP exporter support for both metrics and tracing. See the
   [metrics](docs/CONFIGURING_METRICS.md) and
   [tracing](docs/CONFIGURING_TRACING.md) documentation for configuration

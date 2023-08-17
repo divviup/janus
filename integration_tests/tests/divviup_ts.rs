@@ -16,11 +16,10 @@ use testcontainers::clients::Cli;
 mod common;
 
 async fn run_divviup_ts_integration_test(container_client: &Cli, vdaf: VdafInstance) {
-    let (collector_private_key, leader_task, helper_task) =
+    let (task_parameters, leader_task, helper_task) =
         test_task_builders(vdaf, QueryType::TimeInterval);
-    let leader_task = leader_task.build();
     let network = generate_network_name();
-    let leader = Janus::new(container_client, &network, &leader_task).await;
+    let leader = Janus::new(container_client, &network, &leader_task.build()).await;
     let helper = Janus::new(container_client, &network, &helper_task.build()).await;
 
     let client_backend = ClientBackend::Container {
@@ -29,16 +28,15 @@ async fn run_divviup_ts_integration_test(container_client: &Cli, vdaf: VdafInsta
         network: &network,
     };
     submit_measurements_and_verify_aggregate(
+        &task_parameters,
         (leader.port(), helper.port()),
-        &leader_task,
-        &collector_private_key,
         &client_backend,
     )
     .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divviup-ts is not yet compatible with DAP-04"]
+#[ignore = "divviup-ts does not currently support DAP-05 (issue #1669)"]
 async fn janus_divviup_ts_count() {
     install_test_trace_subscriber();
 
@@ -46,7 +44,7 @@ async fn janus_divviup_ts_count() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divviup-ts is not yet compatible with DAP-04"]
+#[ignore = "divviup-ts does not currently support DAP-05 (issue #1669)"]
 async fn janus_divviup_ts_sum() {
     install_test_trace_subscriber();
 
@@ -54,15 +52,13 @@ async fn janus_divviup_ts_sum() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divviup-ts is not yet compatible with DAP-04"]
+#[ignore = "divviup-ts does not currently support DAP-05 (issue #1669)"]
 async fn janus_divviup_ts_histogram() {
     install_test_trace_subscriber();
 
     run_divviup_ts_integration_test(
         &container_client(),
-        VdafInstance::Prio3Histogram {
-            buckets: Vec::from([1, 10, 100, 1000]),
-        },
+        VdafInstance::Prio3Histogram { length: 4 },
     )
     .await;
 }

@@ -10,7 +10,7 @@ use janus_aggregator::{
 use janus_core::{time::RealClock, TokioRuntime};
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, sync::Arc, time::Duration};
-use tokio::select;
+use trillium_tokio::Stopper;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -22,26 +22,27 @@ async fn main() -> anyhow::Result<()> {
     );
 
     janus_main::<_, Options, Config, _, _>(RealClock::default(), |ctx| async move {
-        let meter = opentelemetry::global::meter("collection_job_driver");
         let datastore = Arc::new(ctx.datastore);
         let collection_job_driver = Arc::new(CollectionJobDriver::new(
             reqwest::Client::builder()
                 .user_agent(CLIENT_USER_AGENT)
                 .build()
                 .context("couldn't create HTTP client")?,
-            &meter,
+            &ctx.meter,
             ctx.config.batch_aggregation_shard_count,
         ));
         let lease_duration =
             Duration::from_secs(ctx.config.job_driver_config.worker_lease_duration_secs);
-        let shutdown_signal =
-            setup_signal_handler().context("failed to register SIGTERM signal handler")?;
+        let stopper = Stopper::new();
+        setup_signal_handler(stopper.clone())
+            .context("failed to register SIGTERM signal handler")?;
 
         // Start running.
         let job_driver = Arc::new(JobDriver::new(
             ctx.clock,
             TokioRuntime,
-            meter,
+            ctx.meter,
+            stopper,
             Duration::from_secs(ctx.config.job_driver_config.min_job_discovery_delay_secs),
             Duration::from_secs(ctx.config.job_driver_config.max_job_discovery_delay_secs),
             ctx.config.job_driver_config.max_concurrent_job_workers,
@@ -56,11 +57,8 @@ async fn main() -> anyhow::Result<()> {
                 Arc::clone(&datastore),
                 ctx.config.job_driver_config.maximum_attempts_before_failure,
             ),
-        ));
-        select! {
-            _ = job_driver.run() => {}
-            _ = shutdown_signal => {}
-        };
+        )?);
+        job_driver.run().await;
 
         Ok(())
     })

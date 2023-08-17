@@ -24,6 +24,21 @@ jobs:
       with:
         driver: docker-container
         use: true
+    - name: Get the version
+      id: get_version
+      run: echo VERSION=${GITHUB_REF/refs\/tags\//} | tee -a $GITHUB_OUTPUT | tee -a $GITHUB_ENV
+    - name: Build
+      uses: docker/bake-action@v3.1.0
+      with:
+        files: docker-bake.hcl
+        workdir: .
+        targets: release
+        load: true
+        # Note that we can't push all tags simultaneously, since we use two
+        # different sets of credentials on us-west2-docker.pkg.dev. Instead, we
+        # save all images locally first, and then push to one repository at a
+        # time.
+
     - id: "gcp-auth-private"
       name: "Authenticate to GCP (private repositories)"
       uses: "google-github-actions/auth@v1"
@@ -33,6 +48,21 @@ jobs:
         token_format: "access_token"
         access_token_lifetime: "3600s"
         access_token_scopes: "https://www.googleapis.com/auth/cloud-platform"
+    - uses: "docker/login-action@v2"
+      with:
+        registry: "us-west2-docker.pkg.dev"
+        username: "oauth2accesstoken"
+        password: ${{ steps.gcp-auth-private.outputs.access_token }}
+
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregator:${{ steps.get_version.outputs.VERSION }}
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_creator:${{ steps.get_version.outputs.VERSION }}
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_driver:${{ steps.get_version.outputs.VERSION }}
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_collection_job_driver:${{ steps.get_version.outputs.VERSION }}
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_cli:${{ steps.get_version.outputs.VERSION }}
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_client:${{ steps.get_version.outputs.VERSION }}
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_aggregator:${{ steps.get_version.outputs.VERSION }}
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_collector:${{ steps.get_version.outputs.VERSION }}
+
     - id: "gcp-auth-public"
       name: "Authenticate to GCP (public repositories)"
       uses: "google-github-actions/auth@v1"
@@ -46,36 +76,8 @@ jobs:
       with:
         registry: "us-west2-docker.pkg.dev"
         username: "oauth2accesstoken"
-        password: ${{ steps.gcp-auth-private.outputs.access_token }}
-    - name: Get the version
-      id: get_version
-      run: echo VERSION=${GITHUB_REF/refs\/tags\//} | tee -a $GITHUB_OUTPUT | tee -a $GITHUB_ENV
-    - name: Build
-      uses: docker/bake-action@v3.0.1
-      with:
-        files: docker-bake.hcl
-        workdir: .
-        targets: release
-        load: true
-        # Note that we can't push all tags simultaneously, since we use two
-        # different sets of credentials on us-west2-docker.pkg.dev. Instead, we
-        # save all images locally first, and then push to one repository at a
-        # time.
-
-    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregator:${{ steps.get_version.outputs.VERSION }}
-    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_creator:${{ steps.get_version.outputs.VERSION }}
-    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_driver:${{ steps.get_version.outputs.VERSION }}
-    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_collection_job_driver:${{ steps.get_version.outputs.VERSION }}
-    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_cli:${{ steps.get_version.outputs.VERSION }}
-    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_client:${{ steps.get_version.outputs.VERSION }}
-    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_aggregator:${{ steps.get_version.outputs.VERSION }}
-    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_collector:${{ steps.get_version.outputs.VERSION }}
-
-    - uses: "docker/login-action@v2"
-      with:
-        registry: "us-west2-docker.pkg.dev"
-        username: "oauth2accesstoken"
         password: ${{ steps.gcp-auth-public.outputs.access_token }}
+
     - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_aggregator:${{ steps.get_version.outputs.VERSION }}
     - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_aggregation_job_creator:${{ steps.get_version.outputs.VERSION }}
     - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_aggregation_job_driver:${{ steps.get_version.outputs.VERSION }}

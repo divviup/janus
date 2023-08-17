@@ -2,10 +2,12 @@ use anyhow::{anyhow, Context, Result};
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 use clap::Parser;
 use janus_aggregator::{
-    binary_utils::{database_pool, datastore, read_config, CommonBinaryOptions},
+    binary_utils::{
+        database_pool, datastore, read_config, record_build_info_gauge, CommonBinaryOptions,
+    },
     config::{BinaryConfig, CommonConfig},
-    metrics::install_metrics_exporter,
-    trace::install_trace_subscriber,
+    metrics::{install_metrics_exporter, MetricsExporterHandle},
+    trace::{install_trace_subscriber, TraceGuards},
 };
 use janus_aggregator_core::{
     datastore::{self, Datastore},
@@ -15,6 +17,7 @@ use janus_core::time::{Clock, RealClock};
 use k8s_openapi::api::core::v1::Secret;
 use kube::api::{ObjectMeta, PostParams};
 use once_cell::sync::OnceCell;
+use opentelemetry::global::meter;
 use rand::{distributions::Standard, thread_rng, Rng};
 use ring::aead::AES_128_GCM;
 use serde::{Deserialize, Serialize};
@@ -32,9 +35,15 @@ async fn main() -> Result<()> {
     let command_line_options = CommandLineOptions::parse();
     let config_file: ConfigFile = read_config(&command_line_options.common_options)?;
 
-    install_tracing_and_metrics_handlers(config_file.common_config()).await?;
+    let _guards = install_tracing_and_metrics_handlers(config_file.common_config()).await?;
 
-    debug!(?command_line_options, ?config_file, "Starting up");
+    record_build_info_gauge(&meter("janus_aggregator"));
+
+    info!(
+        common_options = ?&command_line_options.common_options,
+        config = ?config_file,
+        "Starting up"
+    );
 
     if command_line_options.dry_run {
         info!("DRY RUN: no persistent changes will be made")
@@ -135,14 +144,15 @@ impl Command {
     }
 }
 
-async fn install_tracing_and_metrics_handlers(config: &CommonConfig) -> Result<()> {
-    install_trace_subscriber(&config.logging_config)
+async fn install_tracing_and_metrics_handlers(
+    config: &CommonConfig,
+) -> Result<(TraceGuards, MetricsExporterHandle)> {
+    let trace_guard = install_trace_subscriber(&config.logging_config)
         .context("couldn't install tracing subscriber")?;
-    let _metrics_exporter = install_metrics_exporter(&config.metrics_config)
+    let metrics_guard = install_metrics_exporter(&config.metrics_config)
         .await
         .context("failed to install metrics exporter")?;
-
-    Ok(())
+    Ok((trace_guard, metrics_guard))
 }
 
 async fn provision_tasks<C: Clock>(
@@ -305,6 +315,7 @@ async fn datastore_from_opts(
     datastore(
         pool,
         RealClock::default(),
+        &meter("janus_aggregator"),
         &kubernetes_secret_options
             .datastore_keys(&command_line_options.common_options, kube_client)
             .await?,
@@ -663,6 +674,7 @@ mod tests {
         let replacement_task = TaskBuilder::new(
             QueryType::FixedSize {
                 max_batch_size: 100,
+                batch_time_window_size: None,
             },
             VdafInstance::Prio3CountVec { length: 4 },
             Role::Leader,

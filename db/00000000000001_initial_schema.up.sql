@@ -15,6 +15,63 @@ CREATE TYPE AUTH_TOKEN_TYPE AS ENUM(
     'BEARER'    -- RFC 6750 bearer token
 );
 
+CREATE TYPE HPKE_KEY_STATE AS ENUM(
+    'ACTIVE',    -- the key should be advertised to DAP clients
+    'PENDING',   -- the key should not be advertised to DAP clients, but could be used for
+                 -- decrypting client reports depending on when aggregators pick up the state change
+    'EXPIRED'    -- the key is pending deletion. it should not be advertised, but could be used
+                 -- for decrypting client reports depending on the age of those reports
+);
+
+CREATE TABLE global_hpke_keys(
+    -- These columns should be treated as immutable.
+    config_id SMALLINT PRIMARY KEY,  -- HPKE config ID
+    config BYTEA NOT NULL,           -- HPKE config, including public key (encoded HpkeConfig message)
+    private_key BYTEA NOT NULL,      -- private key (encrypted)
+
+    -- These columns are mutable.
+    state HPKE_KEY_STATE NOT NULL DEFAULT 'PENDING',  -- state of the key
+    updated_at TIMESTAMP NOT NULL                     -- when the key state was last changed
+);
+
+-- Another DAP aggregator who we've partnered with to use the taskprov extension.
+CREATE TABLE taskprov_peer_aggregators(
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal only.
+    endpoint TEXT NOT NULL,         -- peer aggregator HTTPS endpoint
+    role AGGREGATOR_ROLE NOT NULL,  -- the role of this aggregator relative to the peer
+    verify_key_init BYTEA NOT NULL, -- the preshared key used for VDAF verify key derivation.
+
+    -- Parameters applied to every task created with this peer aggregator.
+    tolerable_clock_skew   BIGINT NOT NULL, -- the maximum acceptable clock skew to allow between client and aggregator, in seconds
+    report_expiry_age      BIGINT,          -- the maximum age of a report before it is considered expired (and acceptable for garbage collection), in seconds. NULL means that GC is disabled.
+    collector_hpke_config BYTEA NOT NULL,   -- the HPKE config of the collector (encoded HpkeConfig message)
+
+    CONSTRAINT taskprov_peer_aggregator_endpoint_and_role_unique UNIQUE(endpoint, role)
+);
+
+-- Task aggregator auth tokens that we've shared with the peer aggregator.
+CREATE TABLE taskprov_aggregator_auth_tokens(
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
+    peer_aggregator_id BIGINT NOT NULL,  -- task ID the token is associated with
+    ord BIGINT NOT NULL,                 -- a value used to specify the ordering of the authentication tokens
+    token BYTEA NOT NULL,                -- bearer token used to authenticate messages to/from the other aggregator (encrypted)
+    type AUTH_TOKEN_TYPE NOT NULL DEFAULT 'BEARER',
+
+    CONSTRAINT task_aggregator_auth_tokens_unique_peer_aggregator_id_and_ord UNIQUE(peer_aggregator_id, ord),
+    CONSTRAINT fk_peer_aggregator_id FOREIGN KEY(peer_aggregator_id) REFERENCES taskprov_peer_aggregators(id) ON DELETE CASCADE
+);
+
+-- Task collector auth tokens that we've shared with the peer aggregator.
+CREATE TABLE taskprov_collector_auth_tokens(
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
+    peer_aggregator_id BIGINT NOT NULL,  -- task ID the token is associated with
+    ord BIGINT NOT NULL,                 -- a value used to specify the ordering of the authentication tokens
+    token BYTEA NOT NULL,                -- bearer token used to authenticate messages to/from the other aggregator (encrypted)
+    type AUTH_TOKEN_TYPE NOT NULL DEFAULT 'BEARER',
+
+    CONSTRAINT task_collector_auth_tokens_unique_peer_aggregator_id_and_ord UNIQUE(peer_aggregator_id, ord),
+    CONSTRAINT fk_peer_aggregator_id FOREIGN KEY(peer_aggregator_id) REFERENCES taskprov_peer_aggregators(id) ON DELETE CASCADE
+);
 
 -- Corresponds to a DAP task, containing static data associated with the task.
 CREATE TABLE tasks(
@@ -30,7 +87,7 @@ CREATE TABLE tasks(
     min_batch_size         BIGINT NOT NULL,           -- the minimum number of reports in a batch to allow it to be collected
     time_precision         BIGINT NOT NULL,           -- the duration to which clients are expected to round their report timestamps, in seconds
     tolerable_clock_skew   BIGINT NOT NULL,           -- the maximum acceptable clock skew to allow between client and aggregator, in seconds
-    collector_hpke_config  BYTEA NOT NULL             -- the HPKE config of the collector (encoded HpkeConfig message)
+    collector_hpke_config  BYTEA                      -- the HPKE config of the collector (encoded HpkeConfig message)
 );
 CREATE INDEX task_id_index ON tasks(task_id);
 
@@ -96,7 +153,7 @@ CREATE TABLE client_reports(
     CONSTRAINT client_reports_unique_task_id_and_report_id UNIQUE(task_id, report_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
-CREATE INDEX client_reports_task_unaggregated ON client_reports(task_id) WHERE aggregation_started = FALSE;
+CREATE INDEX client_reports_task_and_timestamp_unaggregated_index ON client_reports (task_id, client_timestamp) WHERE aggregation_started = FALSE;
 CREATE INDEX client_reports_task_and_timestamp_index ON client_reports(task_id, client_timestamp);
 
 -- Specifies the possible state of an aggregation job.
@@ -144,7 +201,8 @@ CREATE TYPE REPORT_AGGREGATION_STATE AS ENUM(
 CREATE TABLE report_aggregations(
     id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     aggregation_job_id  BIGINT NOT NULL,                    -- the aggregation job ID this report aggregation is associated with
-    client_report_id    BIGINT NOT NULL,                    -- the client report ID this report aggregation is associated with
+    client_report_id    BYTEA NOT NULL,                     -- the client report ID this report aggregation is associated with
+    client_timestamp    TIMESTAMP NOT NULL,                 -- the client timestamp this report aggregation is associated with
     ord                 BIGINT NOT NULL,                    -- a value used to specify the ordering of client reports in the aggregation job
     state               REPORT_AGGREGATION_STATE NOT NULL,  -- the current state of this report aggregation
     prep_state          BYTEA,                              -- the current preparation state (opaque VDAF message, only if in state WAITING)
@@ -155,8 +213,7 @@ CREATE TABLE report_aggregations(
     last_prep_step      BYTEA,                              -- the last PreparationStep message sent to the Leader, to assist in replay (opaque VDAF message, populated for Helper only)
 
     CONSTRAINT report_aggregations_unique_ord UNIQUE(aggregation_job_id, ord),
-    CONSTRAINT fk_aggregation_job_id FOREIGN KEY(aggregation_job_id) REFERENCES aggregation_jobs(id) ON DELETE CASCADE,
-    CONSTRAINT fk_client_report_id FOREIGN KEY(client_report_id) REFERENCES client_reports(id) ON DELETE CASCADE
+    CONSTRAINT fk_aggregation_job_id FOREIGN KEY(aggregation_job_id) REFERENCES aggregation_jobs(id) ON DELETE CASCADE
 );
 CREATE INDEX report_aggregations_aggregation_job_id_index ON report_aggregations(aggregation_job_id);
 CREATE INDEX report_aggregations_client_report_id_index ON report_aggregations(client_report_id);
@@ -173,9 +230,11 @@ CREATE TABLE batches(
     id                    BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     task_id                       BIGINT NOT NULL,       -- the task ID
     batch_identifier              BYTEA NOT NULL,        -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector)
+    batch_interval                TSRANGE,
     aggregation_param             BYTEA NOT NULL,        -- the aggregation parameter (opaque VDAF message)
     state                         BATCH_STATE NOT NULL,  -- the state of aggregations for this batch
     outstanding_aggregation_jobs  BIGINT NOT NULL,       -- the number of outstanding aggregation jobs
+    client_timestamp_interval     TSRANGE NOT NULL,
 
     CONSTRAINT batches_unique_id UNIQUE(task_id, batch_identifier, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
@@ -261,7 +320,9 @@ CREATE TABLE outstanding_batches(
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     task_id BIGINT NOT NULL, -- the task ID containing the batch
     batch_id BYTEA NOT NULL, -- 32-byte BatchID as defined by the DAP specification.
+    time_bucket_start TIMESTAMP,
 
     CONSTRAINT outstanding_batches_unique_task_id_batch_id UNIQUE(task_id, batch_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
+CREATE INDEX outstanding_batches_task_and_time_bucket_index ON outstanding_batches (task_id, time_bucket_start);

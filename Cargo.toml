@@ -19,8 +19,8 @@ edition = "2021"
 homepage = "https://divviup.org"
 license = "MPL-2.0"
 repository = "https://github.com/divviup/janus"
-rust-version = "1.65.0"
-version = "0.5.1"
+rust-version = "1.67.0"
+version = "0.5.14"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -42,14 +42,19 @@ janus_messages = { version = "0.5", path = "messages" }
 k8s-openapi = { version = "0.18.0", features = ["v1_24"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
 kube = { version = "0.82.2", default-features = false, features = ["client", "rustls-tls"] }
 opentelemetry = { version = "0.19", features = ["metrics"] }
-prio = { version = "0.12.2", features = ["multithreaded"] }
-serde = { version = "1.0.163", features = ["derive"] }
+prio = { version = "0.14.0", features = ["multithreaded"] }
+serde = { version = "1.0.183", features = ["derive"] }
+serde_json = "1.0.103"
+serde_test = "1.0.175"
+serde_yaml = "0.9.25"
 rstest = "0.17.0"
+thiserror = "1.0"
+tokio = { version = "1.31", features = ["full", "tracing"] }
 trillium = "0.2.9"
-trillium-api = { version = "0.2.0-rc.3", default-features = false }
+trillium-api = { version = "0.2.0-rc.4", default-features = false }
 trillium-caching-headers = "0.2.1"
 trillium-head = "0.2.0"
-trillium-opentelemetry = "0.1.0"
+trillium-opentelemetry = "0.2.0"
 trillium-router = "0.3.5"
 trillium-testing = "0.5.0"
 trillium-tokio = "0.3.1"

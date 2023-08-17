@@ -21,7 +21,8 @@ use janus_core::{time::Clock, vdaf_dispatch};
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
-    PartialBatchSelector, PrepareStep, PrepareStepResult, ReportShare, ReportShareError, Role,
+    PartialBatchSelector, PrepareStep, PrepareStepResult, ReportId, ReportShare, ReportShareError,
+    Role,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -32,9 +33,13 @@ use prio::{
     vdaf::{self, PrepareTransition},
 };
 use reqwest::Method;
-use std::{collections::HashSet, hash::Hash, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::try_join;
-use tracing::{info, warn};
+use tracing::{info, trace_span, warn};
 
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -45,6 +50,8 @@ pub struct AggregationJobDriver {
     aggregate_step_failure_counter: Counter<u64>,
     #[derivative(Debug = "ignore")]
     job_cancel_counter: Counter<u64>,
+    #[derivative(Debug = "ignore")]
+    job_retry_counter: Counter<u64>,
     #[derivative(Debug = "ignore")]
     http_request_duration_histogram: Histogram<f64>,
 }
@@ -63,6 +70,12 @@ impl AggregationJobDriver {
             .init();
         job_cancel_counter.add(&Context::current(), 0, &[]);
 
+        let job_retry_counter = meter
+            .u64_counter("janus_job_retries")
+            .with_description("Count of retried job steps.")
+            .init();
+        job_retry_counter.add(&Context::current(), 0, &[]);
+
         let http_request_duration_histogram = meter
             .f64_histogram("janus_http_request_duration_seconds")
             .with_description(
@@ -76,6 +89,7 @@ impl AggregationJobDriver {
             http_client,
             aggregate_step_failure_counter,
             job_cancel_counter,
+            job_retry_counter,
             http_request_duration_histogram,
         }
     }
@@ -112,7 +126,7 @@ impl AggregationJobDriver {
     ) -> Result<()>
     where
         A: 'static + Send + Sync,
-        A::AggregationParam: Send + Sync + PartialEq + Eq + Hash,
+        A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::AggregateShare: Send + Sync,
         A::OutputShare: PartialEq + Eq + Send + Sync,
         for<'a> A::PrepareState:
@@ -169,7 +183,7 @@ impl AggregationJobDriver {
                     // Read client reports, but only for report aggregations in state START.
                     // TODO(#224): create "get_client_reports_for_aggregation_job" datastore
                     // operation to avoid needing to join many futures?
-                    let client_reports =
+                    let client_reports: HashMap<_, _> =
                         try_join_all(report_aggregations.iter().filter_map(|report_aggregation| {
                             if report_aggregation.state() == &ReportAggregationState::Start {
                                 Some(
@@ -184,13 +198,9 @@ impl AggregationJobDriver {
                                             *report_aggregation.report_id(),
                                             lease.leased().task_id(),
                                         ))
-                                        .and_then(|maybe_report| {
-                                            maybe_report.ok_or_else(|| {
-                                                anyhow!(
-                                                    "couldn't find report {} for task {}",
-                                                    report_aggregation.report_id(),
-                                                    lease.leased().task_id(),
-                                                )
+                                        .map(|report| {
+                                            report.map(|report| {
+                                                (*report_aggregation.report_id(), report)
                                             })
                                         })
                                         .map_err(|err| datastore::Error::User(err.into()))
@@ -200,7 +210,10 @@ impl AggregationJobDriver {
                                 None
                             }
                         }))
-                        .await?;
+                        .await?
+                        .into_iter()
+                        .flatten()
+                        .collect();
 
                     Ok((
                         Arc::new(task),
@@ -276,12 +289,12 @@ impl AggregationJobDriver {
         task: Arc<Task>,
         aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-        client_reports: Vec<LeaderStoredReport<SEED_SIZE, A>>,
+        client_reports: HashMap<ReportId, LeaderStoredReport<SEED_SIZE, A>>,
         verify_key: VerifyKey<SEED_SIZE>,
     ) -> Result<()>
     where
         A: 'static,
-        A::AggregationParam: Send + Sync + PartialEq + Eq + Hash,
+        A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::AggregateShare: Send + Sync,
         A::OutputShare: PartialEq + Eq + Send + Sync,
         A::PrepareState: PartialEq + Eq + Send + Sync + Encode,
@@ -290,25 +303,10 @@ impl AggregationJobDriver {
         A::InputShare: PartialEq + Send + Sync,
         A::PublicShare: PartialEq + Send + Sync,
     {
-        // Zip the report aggregations at start with the client reports, verifying that their IDs
-        // match. We use asserts here as the conditions we are checking should be guaranteed by the
-        // caller.
         let report_aggregations: Vec<_> = report_aggregations
             .into_iter()
             .filter(|report_aggregation| {
                 report_aggregation.state() == &ReportAggregationState::Start
-            })
-            .collect();
-        assert_eq!(report_aggregations.len(), client_reports.len());
-        let reports: Vec<_> = report_aggregations
-            .into_iter()
-            .zip(client_reports.into_iter())
-            .inspect(|(report_aggregation, client_report)| {
-                assert_eq!(report_aggregation.task_id(), client_report.task_id());
-                assert_eq!(
-                    report_aggregation.report_id(),
-                    client_report.metadata().id()
-                );
             })
             .collect();
 
@@ -317,7 +315,23 @@ impl AggregationJobDriver {
         let mut report_aggregations_to_write = Vec::new();
         let mut report_shares = Vec::new();
         let mut stepped_aggregations = Vec::new();
-        for (report_aggregation, report) in reports {
+        for report_aggregation in report_aggregations {
+            // Look up report.
+            let report = if let Some(report) = client_reports.get(report_aggregation.report_id()) {
+                report
+            } else {
+                info!(report_id = %report_aggregation.report_id(), "Attempted to aggregate missing report (most likely garbage collected)");
+                self.aggregate_step_failure_counter.add(
+                    &Context::current(),
+                    1,
+                    &[KeyValue::new("type", "missing_client_report")],
+                );
+                report_aggregations_to_write.push(report_aggregation.with_state(
+                    ReportAggregationState::Failed(ReportShareError::ReportDropped),
+                ));
+                continue;
+            };
+
             // Check for repeated extensions.
             let mut extension_types = HashSet::new();
             if !report
@@ -338,14 +352,17 @@ impl AggregationJobDriver {
             }
 
             // Initialize the leader's preparation state from the input share.
-            let (prep_state, prep_share) = match vdaf.prepare_init(
-                verify_key.as_bytes(),
-                Role::Leader.index().unwrap(),
-                aggregation_job.aggregation_parameter(),
-                report.metadata().id().as_ref(),
-                report.public_share(),
-                report.leader_input_share(),
-            ) {
+            let prepare_init_res = trace_span!("VDAF preparation").in_scope(|| {
+                vdaf.prepare_init(
+                    verify_key.as_bytes(),
+                    Role::Leader.index().unwrap(),
+                    aggregation_job.aggregation_parameter(),
+                    report.metadata().id().as_ref(),
+                    report.public_share(),
+                    report.leader_input_share(),
+                )
+            });
+            let (prep_state, prep_share) = match prepare_init_res {
                 Ok(prep_state_and_share) => prep_state_and_share,
                 Err(error) => {
                     info!(report_id = %report_aggregation.report_id(), ?error, "Couldn't initialize leader's preparation state");
@@ -423,7 +440,7 @@ impl AggregationJobDriver {
     ) -> Result<()>
     where
         A: 'static,
-        A::AggregationParam: Send + Sync + PartialEq + Eq + Hash,
+        A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::AggregateShare: Send + Sync,
         A::OutputShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
@@ -460,9 +477,9 @@ impl AggregationJobDriver {
                 };
 
                 // Step our own state.
-                let leader_transition = match vdaf
-                    .prepare_step(prep_state.clone(), prep_msg.clone())
-                {
+                let prepare_step_res = trace_span!("VDAF preparation")
+                    .in_scope(|| vdaf.prepare_step(prep_state.clone(), prep_msg.clone()));
+                let leader_transition = match prepare_step_res {
                     Ok(leader_transition) => leader_transition,
                     Err(error) => {
                         info!(report_id = %report_aggregation.report_id(), ?error, "Prepare step failed");
@@ -539,7 +556,7 @@ impl AggregationJobDriver {
     ) -> Result<()>
     where
         A: 'static,
-        A::AggregationParam: Send + Sync + Eq + PartialEq + Hash,
+        A::AggregationParam: Send + Sync + Eq + PartialEq,
         A::AggregateShare: Send + Sync,
         A::OutputShare: Send + Sync,
         A::PrepareMessage: Send + Sync,
@@ -747,7 +764,7 @@ impl AggregationJobDriver {
     where
         A: Send + Sync + 'static,
         A::AggregateShare: Send + Sync,
-        A::AggregationParam: Send + Sync + PartialEq + Eq + Hash,
+        A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::PrepareMessage: Send + Sync,
         for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
     {
@@ -857,6 +874,10 @@ impl AggregationJobDriver {
                     return this.cancel_aggregation_job(datastore, lease).await;
                 }
 
+                if lease.lease_attempts() > 1 {
+                    this.job_retry_counter.add(&Context::current(), 1, &[]);
+                }
+
                 this.step_aggregation_job(datastore, Arc::new(lease)).await
             })
         }
@@ -890,6 +911,7 @@ mod tests {
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
         task::{test_util::TaskBuilder, QueryType, VerifyKey},
+        test_util::noop_meter,
     };
     use janus_core::{
         hpke::{
@@ -908,7 +930,6 @@ mod tests {
         Interval, PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult,
         ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
     };
-    use opentelemetry::global::meter;
     use prio::{
         codec::Encode,
         vdaf::{
@@ -920,6 +941,7 @@ mod tests {
     use rand::random;
     use reqwest::Url;
     use std::{borrow::Borrow, str, sync::Arc, time::Duration as StdDuration};
+    use trillium_tokio::Stopper;
 
     #[tokio::test]
     async fn aggregation_job_driver() {
@@ -1023,6 +1045,7 @@ mod tests {
                             (),
                             BatchState::Closing,
                             1,
+                            Interval::from_time(&time).unwrap(),
                         ),
                     )
                     .await?;
@@ -1088,39 +1111,44 @@ mod tests {
             },
         ))
         .await;
-        let meter = meter("aggregation_job_driver");
         let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
             reqwest::Client::new(),
-            &meter,
+            &noop_meter(),
             32,
         ));
+        let stopper = Stopper::new();
 
         // Run. Let the aggregation job driver step aggregation jobs, then kill it.
-        let aggregation_job_driver = Arc::new(JobDriver::new(
-            clock,
-            runtime_manager.with_label("stepper"),
-            meter,
-            StdDuration::from_secs(1),
-            StdDuration::from_secs(1),
-            10,
-            StdDuration::from_secs(60),
-            aggregation_job_driver.make_incomplete_job_acquirer_callback(
-                Arc::clone(&ds),
-                StdDuration::from_secs(600),
-            ),
-            aggregation_job_driver.make_job_stepper_callback(Arc::clone(&ds), 5),
-        ));
+        let aggregation_job_driver = Arc::new(
+            JobDriver::new(
+                clock,
+                runtime_manager.with_label("stepper"),
+                noop_meter(),
+                stopper.clone(),
+                StdDuration::from_secs(1),
+                StdDuration::from_secs(1),
+                10,
+                StdDuration::from_secs(60),
+                aggregation_job_driver.make_incomplete_job_acquirer_callback(
+                    Arc::clone(&ds),
+                    StdDuration::from_secs(600),
+                ),
+                aggregation_job_driver.make_job_stepper_callback(Arc::clone(&ds), 5),
+            )
+            .unwrap(),
+        );
 
-        let task_handle = runtime_manager.with_label("driver").spawn({
-            let aggregation_job_driver = aggregation_job_driver.clone();
-            async move { aggregation_job_driver.run().await }
-        });
+        let task_handle = runtime_manager
+            .with_label("driver")
+            .spawn(aggregation_job_driver.run());
 
         tracing::info!("awaiting stepper tasks");
-        // Wait for all of the aggregate job stepper tasks to complete.
+        // Wait for all of the aggregation job stepper tasks to complete.
         runtime_manager.wait_for_completed_tasks("stepper", 2).await;
-        // Stop the aggregate job driver task.
-        task_handle.abort();
+        // Stop the aggregation job driver.
+        stopper.stop();
+        // Wait for the aggregation job driver task to complete.
+        task_handle.await.unwrap();
 
         // Verify.
         for mocked_aggregate in mocked_aggregates {
@@ -1153,6 +1181,7 @@ mod tests {
             (),
             BatchState::Closed,
             0,
+            Interval::from_time(&time).unwrap(),
         );
         let want_collection_job = collection_job.with_state(CollectionJobState::Collectable);
 
@@ -1260,6 +1289,7 @@ mod tests {
             ]),
             transcript.input_shares.clone(),
         );
+        let missing_report_id = random();
         let aggregation_job_id = random();
 
         let lease = ds
@@ -1317,6 +1347,19 @@ mod tests {
                         ReportAggregationState::Start,
                     ))
                     .await?;
+                    tx.put_report_aggregation(&ReportAggregation::<
+                        PRIO3_VERIFY_KEY_LENGTH,
+                        Prio3Count,
+                    >::new(
+                        *task.id(),
+                        aggregation_job_id,
+                        missing_report_id,
+                        time,
+                        2,
+                        None,
+                        ReportAggregationState::Start,
+                    ))
+                    .await?;
 
                     tx.put_batch(
                         &Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
@@ -1325,6 +1368,7 @@ mod tests {
                             (),
                             BatchState::Closing,
                             1,
+                            Interval::from_time(&time).unwrap(),
                         ),
                     )
                     .await?;
@@ -1393,9 +1437,11 @@ mod tests {
             .await;
 
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
-        let meter = meter("aggregation_job_driver");
-        let aggregation_job_driver =
-            AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter, 32);
+        let aggregation_job_driver = AggregationJobDriver::new(
+            reqwest::Client::builder().build().unwrap(),
+            &noop_meter(),
+            32,
+        );
         let error = aggregation_job_driver
             .step_aggregation_job(ds.clone(), Arc::new(lease.clone()))
             .await
@@ -1448,18 +1494,30 @@ mod tests {
                 None,
                 ReportAggregationState::Failed(ReportShareError::UnrecognizedMessage),
             );
+        let want_missing_report_report_aggregation =
+            ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
+                *task.id(),
+                aggregation_job_id,
+                missing_report_id,
+                time,
+                2,
+                None,
+                ReportAggregationState::Failed(ReportShareError::ReportDropped),
+            );
         let want_batch = Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
             *task.id(),
             batch_identifier,
             (),
             BatchState::Closing,
             1,
+            Interval::from_time(&time).unwrap(),
         );
 
         let (
             got_aggregation_job,
             got_report_aggregation,
             got_repeated_extension_report_aggregation,
+            got_missing_report_report_aggregation,
             got_batch,
         ) = ds
             .run_tx(|tx| {
@@ -1497,6 +1555,16 @@ mod tests {
                         )
                         .await?
                         .unwrap();
+                    let missing_report_report_aggregation = tx
+                        .get_report_aggregation(
+                            vdaf.as_ref(),
+                            &Role::Leader,
+                            task.id(),
+                            &aggregation_job_id,
+                            &missing_report_id,
+                        )
+                        .await?
+                        .unwrap();
                     let batch = tx
                         .get_batch(task.id(), &batch_identifier, &())
                         .await?
@@ -1505,6 +1573,7 @@ mod tests {
                         aggregation_job,
                         report_aggregation,
                         repeated_extension_report_aggregation,
+                        missing_report_report_aggregation,
                         batch,
                     ))
                 })
@@ -1517,6 +1586,10 @@ mod tests {
         assert_eq!(
             want_repeated_extension_report_aggregation,
             got_repeated_extension_report_aggregation
+        );
+        assert_eq!(
+            want_missing_report_report_aggregation,
+            got_missing_report_report_aggregation
         );
         assert_eq!(want_batch, got_batch);
     }
@@ -1532,7 +1605,10 @@ mod tests {
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
         let task = TaskBuilder::new(
-            QueryType::FixedSize { max_batch_size: 10 },
+            QueryType::FixedSize {
+                max_batch_size: 10,
+                batch_time_window_size: None,
+            },
             VdafInstance::Prio3Count,
             Role::Leader,
         )
@@ -1616,6 +1692,7 @@ mod tests {
                             (),
                             BatchState::Open,
                             1,
+                            Interval::from_time(report.metadata().time()).unwrap(),
                         ),
                     )
                     .await?;
@@ -1684,9 +1761,11 @@ mod tests {
             .await;
 
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
-        let meter = meter("aggregation_job_driver");
-        let aggregation_job_driver =
-            AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter, 32);
+        let aggregation_job_driver = AggregationJobDriver::new(
+            reqwest::Client::builder().build().unwrap(),
+            &noop_meter(),
+            32,
+        );
         let error = aggregation_job_driver
             .step_aggregation_job(ds.clone(), Arc::new(lease.clone()))
             .await
@@ -1736,6 +1815,7 @@ mod tests {
             (),
             BatchState::Open,
             1,
+            Interval::from_time(report.metadata().time()).unwrap(),
         );
 
         let (got_aggregation_job, got_report_aggregation, got_batch) = ds
@@ -1892,6 +1972,7 @@ mod tests {
                             (),
                             BatchState::Closing,
                             1,
+                            Interval::from_time(report.metadata().time()).unwrap(),
                         ),
                     )
                     .await?;
@@ -1902,6 +1983,7 @@ mod tests {
                             (),
                             BatchState::Closing,
                             1,
+                            Interval::EMPTY,
                         ),
                     )
                     .await?;
@@ -1976,9 +2058,11 @@ mod tests {
             .await;
 
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
-        let meter = meter("aggregation_job_driver");
-        let aggregation_job_driver =
-            AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter, 32);
+        let aggregation_job_driver = AggregationJobDriver::new(
+            reqwest::Client::builder().build().unwrap(),
+            &noop_meter(),
+            32,
+        );
         let error = aggregation_job_driver
             .step_aggregation_job(ds.clone(), Arc::new(lease.clone()))
             .await
@@ -2045,6 +2129,7 @@ mod tests {
             (),
             BatchState::Closed,
             0,
+            Interval::from_time(report.metadata().time()).unwrap(),
         );
         let want_other_batch = Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
             *task.id(),
@@ -2052,6 +2137,7 @@ mod tests {
             (),
             BatchState::Closing,
             1,
+            Interval::EMPTY,
         );
 
         let (
@@ -2171,7 +2257,10 @@ mod tests {
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
         let task = TaskBuilder::new(
-            QueryType::FixedSize { max_batch_size: 10 },
+            QueryType::FixedSize {
+                max_batch_size: 10,
+                batch_time_window_size: None,
+            },
             VdafInstance::Prio3Count,
             Role::Leader,
         )
@@ -2265,6 +2354,7 @@ mod tests {
                             (),
                             BatchState::Closing,
                             1,
+                            Interval::from_time(report.metadata().time()).unwrap(),
                         ),
                     )
                     .await?;
@@ -2339,9 +2429,11 @@ mod tests {
             .await;
 
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
-        let meter = meter("aggregation_job_driver");
-        let aggregation_job_driver =
-            AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter, 32);
+        let aggregation_job_driver = AggregationJobDriver::new(
+            reqwest::Client::builder().build().unwrap(),
+            &noop_meter(),
+            32,
+        );
         let error = aggregation_job_driver
             .step_aggregation_job(ds.clone(), Arc::new(lease.clone()))
             .await
@@ -2403,6 +2495,7 @@ mod tests {
             (),
             BatchState::Closed,
             0,
+            Interval::from_time(report.metadata().time()).unwrap(),
         );
         let want_collection_job = collection_job.with_state(CollectionJobState::Collectable);
 
@@ -2572,6 +2665,7 @@ mod tests {
                             (),
                             BatchState::Open,
                             1,
+                            Interval::from_time(report.metadata().time()).unwrap(),
                         ),
                     )
                     .await?;
@@ -2588,9 +2682,11 @@ mod tests {
         assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
 
         // Run: create an aggregation job driver & cancel the aggregation job.
-        let meter = meter("aggregation_job_driver");
-        let aggregation_job_driver =
-            AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter, 32);
+        let aggregation_job_driver = AggregationJobDriver::new(
+            reqwest::Client::builder().build().unwrap(),
+            &noop_meter(),
+            32,
+        );
         aggregation_job_driver
             .cancel_aggregation_job(Arc::clone(&ds), lease)
             .await
@@ -2607,6 +2703,7 @@ mod tests {
             (),
             BatchState::Open,
             0,
+            Interval::from_time(report.metadata().time()).unwrap(),
         );
 
         let (got_aggregation_job, got_report_aggregation, got_batch, got_leases) = ds
@@ -2703,6 +2800,7 @@ mod tests {
         let mut runtime_manager = TestRuntimeManager::new();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let stopper = Stopper::new();
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -2786,6 +2884,7 @@ mod tests {
                         (),
                         BatchState::Open,
                         1,
+                        Interval::from_time(report.metadata().time()).unwrap(),
                     ),
                 )
                 .await?;
@@ -2797,26 +2896,29 @@ mod tests {
         .unwrap();
 
         // Set up the aggregation job driver.
-        let meter = meter("aggregation_job_driver");
         let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
             reqwest::Client::new(),
-            &meter,
+            &noop_meter(),
             32,
         ));
-        let job_driver = Arc::new(JobDriver::new(
-            clock.clone(),
-            runtime_manager.with_label("stepper"),
-            meter,
-            StdDuration::from_secs(1),
-            StdDuration::from_secs(1),
-            10,
-            StdDuration::from_secs(60),
-            aggregation_job_driver.make_incomplete_job_acquirer_callback(
-                Arc::clone(&ds),
-                StdDuration::from_secs(600),
-            ),
-            aggregation_job_driver.make_job_stepper_callback(Arc::clone(&ds), 3),
-        ));
+        let job_driver = Arc::new(
+            JobDriver::new(
+                clock.clone(),
+                runtime_manager.with_label("stepper"),
+                noop_meter(),
+                stopper.clone(),
+                StdDuration::from_secs(1),
+                StdDuration::from_secs(1),
+                10,
+                StdDuration::from_secs(60),
+                aggregation_job_driver.make_incomplete_job_acquirer_callback(
+                    Arc::clone(&ds),
+                    StdDuration::from_secs(600),
+                ),
+                aggregation_job_driver.make_job_stepper_callback(Arc::clone(&ds), 3),
+            )
+            .unwrap(),
+        );
 
         // Set up three error responses from our mock helper. These will cause errors in the
         // leader, because the response body is empty and cannot be decoded.
@@ -2863,9 +2965,7 @@ mod tests {
             .await;
 
         // Start up the job driver.
-        let task_handle = runtime_manager
-            .with_label("driver")
-            .spawn(async move { job_driver.run().await });
+        let task_handle = runtime_manager.with_label("driver").spawn(job_driver.run());
 
         // Run the job driver until we try to step the collection job four times. The first three
         // attempts make network requests and fail, while the fourth attempt just marks the job
@@ -2875,9 +2975,10 @@ mod tests {
             runtime_manager.wait_for_completed_tasks("stepper", i).await;
             // Advance the clock by the lease duration, so that the job driver can pick up the job
             // and try again.
-            clock.advance(Duration::from_seconds(600));
+            clock.advance(&Duration::from_seconds(600));
         }
-        task_handle.abort();
+        stopper.stop();
+        task_handle.await.unwrap();
 
         // Check that the job driver made the HTTP requests we expected.
         failure_mock.assert_async().await;
@@ -2922,6 +3023,7 @@ mod tests {
                 (),
                 BatchState::Open,
                 0,
+                Interval::from_time(report.metadata().time()).unwrap(),
             ),
         );
     }

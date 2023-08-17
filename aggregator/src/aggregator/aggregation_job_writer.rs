@@ -13,13 +13,12 @@ use janus_aggregator_core::{
     },
     task::Task,
 };
-use janus_core::time::Clock;
-use janus_messages::{AggregationJobId, ReportId, ReportShareError};
+use janus_core::time::{Clock, IntervalExt};
+use janus_messages::{AggregationJobId, Interval, ReportId, ReportShareError};
 use prio::{codec::Encode, vdaf};
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
-    hash::Hash,
     sync::{Arc, Mutex},
 };
 use tokio::try_join;
@@ -125,7 +124,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                 Q::to_batch_identifier(
                     &self.task,
                     info.aggregation_job.partial_batch_identifier(),
-                    ra.report_metadata().time(),
+                    ra.time(),
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -153,6 +152,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
     ///
     /// A call to write, successful or not, does not change the internal state of the aggregation
     /// job writer; calling write again will cause the same set of aggregation jobs to be written.
+    #[tracing::instrument(skip(self, tx), err)]
     pub async fn write<C>(
         &self,
         tx: &Transaction<'_, C>,
@@ -161,7 +161,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
     where
         C: Clock,
         A: Send + Sync,
-        A::AggregationParam: PartialEq + Eq + Hash,
+        A::AggregationParam: PartialEq + Eq,
         A::PrepareState: Encode,
     {
         // Create a copy-on-write instance of our state to allow efficient imperative updates.
@@ -293,7 +293,8 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
         }
 
         // Update in-memory state of batches: outstanding job counts will change based on new or
-        // completed aggregation jobs affecting each batch.
+        // completed aggregation jobs affecting each batch; the client timestamp interval will
+        // change based on the report aggregations included in the batch.
         let mut newly_closed_batches = Vec::new();
         let batches: HashMap<_, _> = self
             .by_batch_identifier_index
@@ -309,6 +310,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                             aggregation_parameter.clone(),
                             BatchState::Open,
                             0,
+                            Interval::EMPTY,
                         ),
                     ),
                 };
@@ -324,10 +326,14 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                 // not touch aggregation jobs once they have reached a terminal state, and it would
                 // add code complexity & runtime cost to determine if we are in a
                 // repeated-terminal-write case.)
+                // Update the time interval too.
                 let mut outstanding_aggregation_jobs = batch.outstanding_aggregation_jobs();
-                for aggregation_job_id in by_aggregation_job_index.keys() {
+                let mut client_timestamp_interval = *batch.client_timestamp_interval();
+                for (aggregation_job_id, report_aggregation_ords) in by_aggregation_job_index.iter()
+                {
                     // unwrap safety: index lookup
-                    let (op, agg_job, _) = by_aggregation_job.get(aggregation_job_id).unwrap();
+                    let (op, agg_job, report_aggs) =
+                        by_aggregation_job.get(aggregation_job_id).unwrap();
                     if op == &Operation::Put
                         && matches!(agg_job.state(), AggregationJobState::InProgress)
                     {
@@ -336,6 +342,17 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                         && !matches!(agg_job.state(), AggregationJobState::InProgress)
                     {
                         outstanding_aggregation_jobs -= 1;
+                    }
+
+                    for ra_ord in report_aggregation_ords {
+                        // unwrap safety: index lookup
+                        let report_aggregation = report_aggs.get(*ra_ord).unwrap();
+                        client_timestamp_interval = match client_timestamp_interval
+                            .merged_with(report_aggregation.time())
+                        {
+                            Ok(client_timestamp_interval) => client_timestamp_interval,
+                            Err(err) => return Some(Err(err)),
+                        };
                     }
                 }
                 if batch.state() == &BatchState::Closing
@@ -346,15 +363,17 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                     newly_closed_batches.push(batch_identifier);
                 }
 
-                Some((
+                Some(Ok((
                     batch_identifier,
                     (
                         operation,
-                        batch.with_outstanding_aggregation_jobs(outstanding_aggregation_jobs),
+                        batch
+                            .with_outstanding_aggregation_jobs(outstanding_aggregation_jobs)
+                            .with_client_timestamp_interval(client_timestamp_interval),
                     ),
-                ))
+                )))
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
 
         // Write batches, aggregation jobs, and report aggregations.
         let (_, _, affected_collection_jobs) = try_join!(
@@ -522,7 +541,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                                         "impossible: expected batch does not exist in datastore"
                                     )
                                         .into(),
-                                    ))
+                                    ));
                                 }
                             };
                             if batch.state() != &BatchState::Closed {

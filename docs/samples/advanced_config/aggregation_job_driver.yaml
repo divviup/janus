@@ -29,16 +29,20 @@ logging_config:
     # Socket address to listen on. (optional)
     listen_address: "127.0.0.1:6669"
 
-  # OpenTelemetry tracing configuration. This can either contain the string
-  # "jaeger" or a map with an "otlp" key. (optional)
-  open_telemetry_config: "jaeger"
+  # OpenTelemetry tracing configuration. This can contain an "otlp" key with a
+  # map containing exporter configuration. (optional)
+  open_telemetry_config:
+    otlp:
+      # OTLP gRPC endpoint.
+      endpoint: "https://example.com"
+      # gRPC metadata to send with OTLP requests. (optional)
+      metadata:
+        key: "value"
 
-  ##otlp:
-  ##  # OTLP gRPC endpoint.
-  ##  endpoint: "https://example.com/"
-  ##  # gRPC metadata to send with OTLP requests. (optional)
-  ##  metadata:
-  ##    key: "value"
+  # Flag to write tracing spans and events to JSON files. This is compatible
+  # with Chrome's trace viewer, available at `chrome://tracing`, and
+  # Perfetto, at https://ui.perfetto.dev/. (optional)
+  chrome: false
 
 # Metrics configuration. (optional)
 metrics_config:
@@ -81,5 +85,11 @@ worker_lease_clock_skew_allowance_secs: 60
 maximum_attempts_before_failure: 10
 
 # Number of sharded database records per batch aggregation. Must not be greater
-# than the equivalent setting in the collection job driver.
+# than the equivalent setting in the collection job driver. (required)
 batch_aggregation_shard_count: 32
+
+# Configuration for the taskprov extension. If enabled, this changes the behavior of the
+# aggregator as described in draft-wang-ppm-dap-taskprov. (optional)
+taskprov_config:
+  # Whether to enable the taskprov extension. Defaults to false.
+  enabled: false

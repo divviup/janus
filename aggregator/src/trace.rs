@@ -3,20 +3,16 @@
 use atty::{self, Stream};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr};
+use tracing::Level;
+use tracing_chrome::{ChromeLayerBuilder, TraceStyle};
 use tracing_log::LogTracer;
-use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Layer, Registry};
+use tracing_subscriber::{filter::FromEnvError, layer::SubscriberExt, EnvFilter, Layer, Registry};
 
 #[cfg(feature = "otlp")]
 use {
-    opentelemetry::{
-        sdk::{trace, Resource},
-        KeyValue,
-    },
     opentelemetry_otlp::WithExportConfig,
-    opentelemetry_semantic_conventions::resource::SERVICE_NAME,
     std::str::FromStr,
     tonic::metadata::{MetadataKey, MetadataMap, MetadataValue},
-    tracing_subscriber::filter::{LevelFilter, Targets},
 };
 
 /// Errors from initializing trace subscriber.
@@ -26,7 +22,7 @@ pub enum Error {
     SetGlobalTracingSubscriber(#[from] tracing::subscriber::SetGlobalDefaultError),
     #[error("logging error: {0}")]
     SetGlobalLogger(#[from] tracing_log::log_tracer::SetLoggerError),
-    #[cfg(any(feature = "jaeger", feature = "otlp"))]
+    #[cfg(feature = "otlp")]
     #[error(transparent)]
     OpenTelemetry(#[from] opentelemetry::trace::TraceError),
     #[cfg(feature = "otlp")]
@@ -35,6 +31,8 @@ pub enum Error {
     #[cfg(feature = "otlp")]
     #[error(transparent)]
     TonicMetadataValue(#[from] tonic::metadata::errors::InvalidMetadataValue),
+    #[error("bad log/trace filter: {0}")]
+    FromEnv(#[from] FromEnvError),
     #[error("{0}")]
     Other(&'static str),
 }
@@ -63,6 +61,10 @@ pub struct TraceConfiguration {
     /// Configuration for OpenTelemetry traces, with a choice of exporters.
     #[serde(default, with = "serde_yaml::with::singleton_map")]
     pub open_telemetry_config: Option<OpenTelemetryTraceConfiguration>,
+    /// Flag to write tracing spans and events to JSON files. This is compatible with Chrome's
+    /// trace viewer, available at `chrome://tracing`, and [Perfetto](https://ui.perfetto.dev).
+    #[serde(default)]
+    pub chrome: bool,
 }
 
 /// Configuration related to tokio-console.
@@ -85,7 +87,6 @@ pub struct TokioConsoleConfiguration {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OpenTelemetryTraceConfiguration {
-    Jaeger,
     Otlp(OtlpTraceConfiguration),
 }
 
@@ -109,17 +110,26 @@ fn base_layer<S>() -> tracing_subscriber::fmt::Layer<S> {
         .with_line_number(true)
 }
 
+/// Construct a filter to be used with tracing-opentelemetry and tracing-chrome, based on the
+/// contents of the `RUST_TRACE` environment variable.
+fn make_trace_filter() -> Result<EnvFilter, FromEnvError> {
+    EnvFilter::builder()
+        .with_default_directive(Level::INFO.into())
+        .with_env_var("RUST_TRACE")
+        .from_env()
+}
+
 /// Configures and installs a tracing subscriber, to capture events logged with
 /// [`tracing::info`] and the like. Captured events are written to stdout, with
 /// formatting affected by the provided [`TraceConfiguration`].
-pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error> {
+pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<TraceGuards, Error> {
     // If stdout is not a tty or if forced by config, output logs as JSON
     // structures
     let output_json = atty::isnt(Stream::Stdout) || config.force_json_output;
 
     // Configure filters with RUST_LOG env var. Format discussed at
     // https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html
-    let stdout_filter = EnvFilter::from_default_env();
+    let stdout_filter = EnvFilter::builder().from_env()?;
 
     let mut layers = Vec::new();
     match (
@@ -174,25 +184,6 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
         ));
     }
 
-    #[cfg(feature = "jaeger")]
-    if let Some(OpenTelemetryTraceConfiguration::Jaeger) = &config.open_telemetry_config {
-        let tracer = opentelemetry_jaeger::new_agent_pipeline()
-            .with_service_name("janus_aggregator")
-            .install_batch(opentelemetry::runtime::Tokio)?;
-        let telemetry = tracing_opentelemetry::layer()
-            .with_threads(true)
-            .with_tracer(tracer);
-        layers.push(telemetry.boxed());
-    }
-
-    #[cfg(not(feature = "jaeger"))]
-    if let Some(OpenTelemetryTraceConfiguration::Jaeger) = &config.open_telemetry_config {
-        return Err(Error::Other(
-            "The OpenTelemetry Jaeger subscriber was enabled in the configuration file, but \
-             support was not enabled at compile time. Rebuild with `--features jaeger`.",
-        ));
-    }
-
     #[cfg(feature = "otlp")]
     if let Some(OpenTelemetryTraceConfiguration::Otlp(otlp_config)) = &config.open_telemetry_config
     {
@@ -209,23 +200,12 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
                     .with_endpoint(otlp_config.endpoint.clone())
                     .with_metadata(map),
             )
-            .with_trace_config(trace::config().with_resource(Resource::new(Vec::from([
-                KeyValue::new(SERVICE_NAME, "janus_aggregator"),
-            ]))))
             .install_batch(opentelemetry::runtime::Tokio)?;
-
-        // Filter out some spans from h2, internal to the OTLP exporter (via tonic). These spans
-        // would otherwise drown out root spans from the application.
-        let filter = Targets::new()
-            .with_default(LevelFilter::TRACE)
-            .with_target("h2::proto::streams::prioritize", LevelFilter::OFF)
-            .with_target("h2::proto::streams::store", LevelFilter::OFF)
-            .with_target("h2::codec::framed_write", LevelFilter::OFF);
 
         let telemetry = tracing_opentelemetry::layer()
             .with_threads(true)
             .with_tracer(tracer)
-            .with_filter(filter);
+            .with_filter(make_trace_filter()?);
         layers.push(telemetry.boxed());
     }
 
@@ -237,6 +217,16 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
         ));
     }
 
+    let mut chrome_guard = None;
+    if config.chrome {
+        let (layer, guard) = ChromeLayerBuilder::new()
+            .trace_style(TraceStyle::Async)
+            .include_args(true)
+            .build();
+        chrome_guard = Some(guard);
+        layers.push(layer.with_filter(make_trace_filter()?).boxed());
+    }
+
     let subscriber = Registry::default().with(layers);
 
     tracing::subscriber::set_global_default(subscriber)?;
@@ -244,13 +234,22 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
     // Install a logger that converts logs into tracing events
     LogTracer::init()?;
 
-    Ok(())
+    Ok(TraceGuards {
+        uses_otel_tracer: config.open_telemetry_config.is_some(),
+        _chrome_guard: chrome_guard,
+    })
 }
 
-pub(crate) fn cleanup_trace_subscriber(_config: &TraceConfiguration) {
-    #[cfg(any(feature = "jaeger", feature = "otlp"))]
-    if _config.open_telemetry_config.is_some() {
-        // Flush buffered traces in the OpenTelemetry pipeline.
-        opentelemetry::global::shutdown_tracer_provider();
+pub struct TraceGuards {
+    uses_otel_tracer: bool,
+    _chrome_guard: Option<tracing_chrome::FlushGuard>,
+}
+
+impl Drop for TraceGuards {
+    fn drop(&mut self) {
+        if self.uses_otel_tracer {
+            // Flush buffered traces in the OpenTelemetry pipeline.
+            opentelemetry::global::shutdown_tracer_provider();
+        }
     }
 }

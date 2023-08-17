@@ -29,16 +29,20 @@ logging_config:
     # Socket address to listen on. (optional)
     listen_address: "127.0.0.1:6669"
 
-  # OpenTelemetry tracing configuration. This can either contain the string
-  # "jaeger" or a map with an "otlp" key. (optional)
-  open_telemetry_config: "jaeger"
+  # OpenTelemetry tracing configuration. This can contain an "otlp" key with a
+  # map containing exporter configuration. (optional)
+  open_telemetry_config:
+    otlp:
+      # OTLP gRPC endpoint.
+      endpoint: "https://example.com"
+      # gRPC metadata to send with OTLP requests. (optional)
+      metadata:
+        key: "value"
 
-  ##otlp:
-  ##  # OTLP gRPC endpoint.
-  ##  endpoint: "https://example.com/"
-  ##  # gRPC metadata to send with OTLP requests. (optional)
-  ##  metadata:
-  ##    key: "value"
+  # Flag to write tracing spans and events to JSON files. This is compatible
+  # with Chrome's trace viewer, available at `chrome://tracing`, and
+  # Perfetto, at https://ui.perfetto.dev/. (optional)
+  chrome: false
 
 # Metrics configuration. (optional)
 metrics_config:

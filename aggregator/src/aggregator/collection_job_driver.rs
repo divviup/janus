@@ -73,6 +73,7 @@ impl CollectionJobDriver {
     /// will not yield a result. The collection job lease will eventually expire, allowing a later run
     /// of the collection job driver to try again. Both aggregate shares will be recomputed at that
     /// time.
+    #[tracing::instrument(skip(self, datastore), err)]
     pub async fn step_collection_job<C: Clock>(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -104,7 +105,6 @@ impl CollectionJobDriver {
         }
     }
 
-    #[tracing::instrument(skip(self, datastore), err)]
     async fn step_collection_job_generic<
         const SEED_SIZE: usize,
         C: Clock,
@@ -301,7 +301,6 @@ impl CollectionJobDriver {
                 })
             })
             .await?;
-
         Ok(())
     }
 
@@ -426,6 +425,12 @@ impl CollectionJobDriver {
                         .await;
                 }
 
+                if collection_job_lease.lease_attempts() > 1 {
+                    this.metrics
+                        .job_steps_retried_counter
+                        .add(&Context::current(), 1, &[]);
+                }
+
                 this.step_collection_job(datastore, Arc::new(collection_job_lease))
                     .await
             })
@@ -442,6 +447,7 @@ struct CollectionJobDriverMetrics {
     jobs_already_finished_counter: Counter<u64>,
     deleted_jobs_encountered_counter: Counter<u64>,
     unexpected_job_state_counter: Counter<u64>,
+    job_steps_retried_counter: Counter<u64>,
 }
 
 impl CollectionJobDriverMetrics {
@@ -493,6 +499,12 @@ impl CollectionJobDriverMetrics {
             .init();
         unexpected_job_state_counter.add(&Context::current(), 0, &[]);
 
+        let job_steps_retried_counter = meter
+            .u64_counter("janus_job_retries")
+            .with_description("Count of retried job steps.")
+            .init();
+        job_steps_retried_counter.add(&Context::current(), 0, &[]);
+
         Self {
             jobs_finished_counter,
             http_request_duration_histogram,
@@ -500,6 +512,7 @@ impl CollectionJobDriverMetrics {
             jobs_already_finished_counter,
             deleted_jobs_encountered_counter,
             unexpected_job_state_counter,
+            job_steps_retried_counter,
         }
     }
 }
@@ -515,14 +528,16 @@ mod tests {
     use janus_aggregator_core::{
         datastore::{
             models::{
-                AcquiredCollectionJob, AggregationJob, AggregationJobState, BatchAggregation,
-                BatchAggregationState, CollectionJob, CollectionJobState, LeaderStoredReport,
-                Lease, ReportAggregation, ReportAggregationState,
+                AcquiredCollectionJob, AggregationJob, AggregationJobState, Batch,
+                BatchAggregation, BatchAggregationState, BatchState, CollectionJob,
+                CollectionJobState, LeaderStoredReport, Lease, ReportAggregation,
+                ReportAggregationState,
             },
             test_util::ephemeral_datastore,
             Datastore,
         },
         task::{test_util::TaskBuilder, QueryType, Task},
+        test_util::noop_meter,
     };
     use janus_core::{
         task::VdafInstance,
@@ -538,10 +553,10 @@ mod tests {
         query_type::TimeInterval, AggregateShare, AggregateShareReq, AggregationJobRound,
         BatchSelector, Duration, HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum, Role,
     };
-    use opentelemetry::global::meter;
     use prio::codec::{Decode, Encode};
     use rand::random;
     use std::{str, sync::Arc, time::Duration as StdDuration};
+    use trillium_tokio::Stopper;
     use url::Url;
 
     async fn setup_collection_job_test_case(
@@ -601,6 +616,23 @@ mod tests {
                         ),
                     )
                     .await?;
+
+                    for offset in [0, 500, 1000, 1500] {
+                        tx.put_batch(&Batch::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            Interval::new(
+                                clock.now().add(&Duration::from_seconds(offset)).unwrap(),
+                                time_precision,
+                            )
+                            .unwrap(),
+                            aggregation_param,
+                            BatchState::Closed,
+                            0,
+                            Interval::from_time(&report_timestamp).unwrap(),
+                        ))
+                        .await
+                        .unwrap();
+                    }
 
                     let report = LeaderStoredReport::new_dummy(*task.id(), report_timestamp);
 
@@ -698,8 +730,26 @@ mod tests {
         let (collection_job_id, lease) = ds
             .run_tx(|tx| {
                 let task = task.clone();
+                let clock = clock.clone();
                 Box::pin(async move {
                     tx.put_task(&task).await?;
+
+                    for offset in [0, 500, 1000, 1500] {
+                        tx.put_batch(&Batch::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            Interval::new(
+                                clock.now().add(&Duration::from_seconds(offset)).unwrap(),
+                                time_precision,
+                            )
+                            .unwrap(),
+                            aggregation_param,
+                            BatchState::Closed,
+                            0,
+                            Interval::from_time(&report_timestamp).unwrap(),
+                        ))
+                        .await
+                        .unwrap();
+                    }
 
                     let collection_job_id = random();
                     tx.put_collection_job(
@@ -759,7 +809,7 @@ mod tests {
 
         let collection_job_driver = CollectionJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
-            &meter("collection_job_driver"),
+            &noop_meter(),
             1,
         );
 
@@ -789,7 +839,8 @@ mod tests {
                         ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                     ),
                 )
-                .await?;
+                .await
+                .unwrap();
 
                 tx.update_batch_aggregation(
                     &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
@@ -808,7 +859,8 @@ mod tests {
                         ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                     ),
                 )
-                .await?;
+                .await
+                .unwrap();
 
                 Ok(())
             })
@@ -950,7 +1002,7 @@ mod tests {
 
         let collection_job_driver = CollectionJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
-            &meter("collection_job_driver"),
+            &noop_meter(),
             1,
         );
 
@@ -997,29 +1049,36 @@ mod tests {
         let mut runtime_manager = TestRuntimeManager::new();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let stopper = Stopper::new();
 
         let (task, _, collection_job) =
             setup_collection_job_test_case(&mut server, clock.clone(), Arc::clone(&ds), false)
                 .await;
 
         // Set up the collection job driver
-        let meter = meter("collection_job_driver");
-        let collection_job_driver =
-            Arc::new(CollectionJobDriver::new(reqwest::Client::new(), &meter, 1));
-        let job_driver = Arc::new(JobDriver::new(
-            clock.clone(),
-            runtime_manager.with_label("stepper"),
-            meter,
-            StdDuration::from_secs(1),
-            StdDuration::from_secs(1),
-            10,
-            StdDuration::from_secs(60),
-            collection_job_driver.make_incomplete_job_acquirer_callback(
-                Arc::clone(&ds),
-                StdDuration::from_secs(600),
-            ),
-            collection_job_driver.make_job_stepper_callback(Arc::clone(&ds), 3),
+        let collection_job_driver = Arc::new(CollectionJobDriver::new(
+            reqwest::Client::new(),
+            &noop_meter(),
+            1,
         ));
+        let job_driver = Arc::new(
+            JobDriver::new(
+                clock.clone(),
+                runtime_manager.with_label("stepper"),
+                noop_meter(),
+                stopper.clone(),
+                StdDuration::from_secs(1),
+                StdDuration::from_secs(1),
+                10,
+                StdDuration::from_secs(60),
+                collection_job_driver.make_incomplete_job_acquirer_callback(
+                    Arc::clone(&ds),
+                    StdDuration::from_secs(600),
+                ),
+                collection_job_driver.make_job_stepper_callback(Arc::clone(&ds), 3),
+            )
+            .unwrap(),
+        );
 
         // Set up three error responses from our mock helper. These will cause errors in the
         // leader, because the response body is empty and cannot be decoded.
@@ -1040,9 +1099,7 @@ mod tests {
             .await;
 
         // Start up the job driver.
-        let task_handle = runtime_manager
-            .with_label("driver")
-            .spawn(async move { job_driver.run().await });
+        let task_handle = runtime_manager.with_label("driver").spawn(job_driver.run());
 
         // Run the job driver until we try to step the collection job four times. The first three
         // attempts make network requests and fail, while the fourth attempt just marks the job
@@ -1052,10 +1109,11 @@ mod tests {
             runtime_manager.wait_for_completed_tasks("stepper", i).await;
             // Advance the clock by the lease duration, so that the job driver can pick up the job
             // and try again.
-            clock.advance(Duration::from_seconds(600));
+            clock.advance(&Duration::from_seconds(600));
         }
         // Shut down the job driver.
-        task_handle.abort();
+        stopper.stop();
+        task_handle.await.unwrap();
 
         // Check that the job driver made the HTTP requests we expected.
         failure_mock.assert_async().await;
@@ -1122,11 +1180,8 @@ mod tests {
             .create_async()
             .await;
 
-        let collection_job_driver = CollectionJobDriver::new(
-            reqwest::Client::builder().build().unwrap(),
-            &meter("collection_job_driver"),
-            1,
-        );
+        let collection_job_driver =
+            CollectionJobDriver::new(reqwest::Client::new(), &noop_meter(), 1);
 
         // Step the collection job. The driver should successfully run the job, but then discard the
         // results when it notices the job has been deleted.
