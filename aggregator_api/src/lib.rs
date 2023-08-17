@@ -1,6 +1,5 @@
 //! This crate implements the Janus Aggregator API.
 
-use crate::models::{GetTaskIdsResp, PostTaskReq};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
@@ -13,11 +12,15 @@ use janus_core::{
     hpke::generate_hpke_config_and_private_key, http::extract_bearer_token,
     task::AuthenticationToken, time::Clock,
 };
+use janus_messages::HpkeConfigId;
 use janus_messages::{
     query_type::Code as SupportedQueryType, Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, Role,
     TaskId,
 };
-use models::{AggregatorApiConfig, AggregatorRole, GetTaskMetricsResp, SupportedVdaf, TaskResp};
+use models::{
+    AggregatorApiConfig, AggregatorRole, GetTaskIdsResp, GetTaskMetricsResp, GlobalHpkeConfigResp,
+    PatchGlobalHpkeConfigReq, PostTaskReq, PutGlobalHpkeConfigReq, SupportedVdaf, TaskResp,
+};
 use querystring::querify;
 use rand::random;
 use ring::{
@@ -100,6 +103,26 @@ pub fn aggregator_api_handler<C: Clock>(ds: Arc<Datastore<C>>, cfg: Config) -> i
             .get(
                 "/tasks/:task_id/metrics",
                 instrumented(api(get_task_metrics::<C>)),
+            )
+            .get(
+                "/hpke_configs",
+                instrumented(api(get_global_hpke_configs::<C>)),
+            )
+            .get(
+                "/hpke_configs/:config_id",
+                instrumented(api(get_global_hpke_config::<C>)),
+            )
+            .put(
+                "/hpke_configs",
+                instrumented(api(put_global_hpke_config::<C>)),
+            )
+            .patch(
+                "/hpke_configs/:config_id",
+                instrumented(api(patch_global_hpke_config::<C>)),
+            )
+            .delete(
+                "/hpke_configs/:config_id",
+                instrumented(api(delete_global_hpke_config::<C>)),
             ),
     )
 }
@@ -435,12 +458,153 @@ async fn get_task_metrics<C: Clock>(
     }))
 }
 
+async fn get_global_hpke_configs<C: Clock>(
+    _: &mut Conn,
+    State(ds): State<Arc<Datastore<C>>>,
+) -> Result<Json<Vec<GlobalHpkeConfigResp>>, Status> {
+    Ok(Json(
+        ds.run_tx_with_name("get_global_hpke_configs", |tx| {
+            Box::pin(async move { tx.get_global_hpke_keypairs().await })
+        })
+        .await
+        .map_err(|err| {
+            error!(err = %err, "Database transaction error");
+            Status::InternalServerError
+        })?
+        .into_iter()
+        .map(GlobalHpkeConfigResp::from)
+        .collect::<Vec<_>>(),
+    ))
+}
+
+async fn get_global_hpke_config<C: Clock>(
+    conn: &mut Conn,
+    State(ds): State<Arc<Datastore<C>>>,
+) -> Result<Json<GlobalHpkeConfigResp>, Status> {
+    let config_id = conn.hpke_config_id_param()?;
+    Ok(Json(GlobalHpkeConfigResp::from(
+        ds.run_tx_with_name("get_global_hpke_config", |tx| {
+            Box::pin(async move { tx.get_global_hpke_keypair(&config_id).await })
+        })
+        .await
+        .map_err(|err| {
+            error!(err = %err, "Database transaction error");
+            Status::InternalServerError
+        })?
+        .ok_or(Status::NotFound)?,
+    )))
+}
+
+async fn put_global_hpke_config<C: Clock>(
+    _: &mut Conn,
+    (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PutGlobalHpkeConfigReq>),
+) -> Result<(Status, Json<GlobalHpkeConfigResp>), Status> {
+    let existing_keypairs = ds
+        .run_tx_with_name("put_global_hpke_config_determine_id", |tx| {
+            Box::pin(async move { tx.get_global_hpke_keypairs().await })
+        })
+        .await
+        .map_err(|err| {
+            error!(err = %err, "Database transaction error");
+            Status::InternalServerError
+        })?
+        .iter()
+        .map(|keypair| u8::from(*keypair.hpke_keypair().config().id()))
+        .collect::<Vec<_>>();
+
+    let config_id = HpkeConfigId::from(
+        (0..=u8::MAX)
+            .find(|i| !existing_keypairs.contains(i))
+            .ok_or_else(|| {
+                warn!("All possible IDs for global HPKE key have been taken");
+                Status::Conflict
+            })?,
+    );
+    let keypair = generate_hpke_config_and_private_key(
+        config_id,
+        req.kem_id.unwrap_or(HpkeKemId::X25519HkdfSha256),
+        req.kdf_id.unwrap_or(HpkeKdfId::HkdfSha256),
+        req.aead_id.unwrap_or(HpkeAeadId::Aes128Gcm),
+    );
+
+    let inserted_keypair = ds
+        .run_tx_with_name("put_global_hpke_config", |tx| {
+            let keypair = keypair.clone();
+            Box::pin(async move {
+                tx.put_global_hpke_keypair(&keypair).await?;
+                tx.get_global_hpke_keypair(&config_id).await
+            })
+        })
+        .await
+        .map_err(|err| {
+            error!(err = %err, "Database transaction error");
+            Status::InternalServerError
+        })?
+        .ok_or_else(|| {
+            error!(config_id = %config_id, "Newly inserted key disappeared");
+            Status::InternalServerError
+        })?;
+
+    Ok((
+        Status::Created,
+        Json(GlobalHpkeConfigResp::from(inserted_keypair)),
+    ))
+}
+
+async fn patch_global_hpke_config<C: Clock>(
+    conn: &mut Conn,
+    (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PatchGlobalHpkeConfigReq>),
+) -> Result<Status, Status> {
+    let config_id = conn.hpke_config_id_param()?;
+
+    ds.run_tx_with_name("patch_hpke_global_keypair", |tx| {
+        let config_id = config_id;
+        Box::pin(async move {
+            tx.set_global_hpke_keypair_state(&config_id, &req.state)
+                .await
+        })
+    })
+    .await
+    .map_err(|err| match err {
+        datastore::Error::MutationTargetNotFound => Status::NotFound,
+        _ => {
+            error!(err = %err, "Database transaction error");
+            Status::InternalServerError
+        }
+    })?;
+
+    Ok(Status::Ok)
+}
+
+async fn delete_global_hpke_config<C: Clock>(
+    conn: &mut Conn,
+    State(ds): State<Arc<Datastore<C>>>,
+) -> Result<Status, Status> {
+    let config_id = conn.hpke_config_id_param()?;
+    ds.run_tx_with_name("delete_global_hpke_config", |tx| {
+        Box::pin(async move { tx.delete_global_hpke_keypair(&config_id).await })
+    })
+    .await
+    .map_err(|err| match err {
+        datastore::Error::MutationTargetNotFound => Status::NotFound,
+        _ => {
+            error!(err = %err, "Database transaction error");
+            Status::InternalServerError
+        }
+    })?;
+    Ok(Status::NoContent)
+}
+
 mod models {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-    use janus_aggregator_core::task::{QueryType, Task};
+    use janus_aggregator_core::{
+        datastore::models::{GlobalHpkeKeypair, HpkeKeyState},
+        task::{QueryType, Task},
+    };
     use janus_core::task::{AuthenticationToken, VdafInstance};
     use janus_messages::{
-        query_type::Code as SupportedQueryType, Duration, HpkeConfig, Role, TaskId, Time,
+        query_type::Code as SupportedQueryType, Duration, HpkeAeadId, HpkeConfig, HpkeKdfId,
+        HpkeKemId, Role, TaskId, Time,
     };
     use serde::{Deserialize, Serialize};
     use url::Url;
@@ -616,7 +780,10 @@ mod models {
                 tolerable_clock_skew: *task.tolerable_clock_skew(),
                 aggregator_auth_token: task.primary_aggregator_auth_token().clone(),
                 collector_auth_token,
-                collector_hpke_config: task.collector_hpke_config().clone(),
+                collector_hpke_config: task
+                    .collector_hpke_config()
+                    .ok_or("collector_hpke_config is required")?
+                    .clone(),
                 aggregator_hpke_configs,
             })
         }
@@ -627,10 +794,38 @@ mod models {
         pub(crate) reports: u64,
         pub(crate) report_aggregations: u64,
     }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    pub(crate) struct GlobalHpkeConfigResp {
+        pub(crate) config: HpkeConfig,
+        pub(crate) state: HpkeKeyState,
+    }
+
+    impl From<GlobalHpkeKeypair> for GlobalHpkeConfigResp {
+        fn from(value: GlobalHpkeKeypair) -> Self {
+            Self {
+                config: value.hpke_keypair().config().clone(),
+                state: *value.state(),
+            }
+        }
+    }
+
+    #[derive(Serialize, Deserialize)]
+    pub(crate) struct PutGlobalHpkeConfigReq {
+        pub(crate) kem_id: Option<HpkeKemId>,
+        pub(crate) kdf_id: Option<HpkeKdfId>,
+        pub(crate) aead_id: Option<HpkeAeadId>,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    pub(crate) struct PatchGlobalHpkeConfigReq {
+        pub(crate) state: HpkeKeyState,
+    }
 }
 
 trait ConnExt {
     fn task_id_param(&self) -> Result<TaskId, Status>;
+    fn hpke_config_id_param(&self) -> Result<HpkeConfigId, Status>;
 }
 
 impl ConnExt for Conn {
@@ -644,13 +839,31 @@ impl ConnExt for Conn {
             Status::BadRequest
         })
     }
+
+    fn hpke_config_id_param(&self) -> Result<HpkeConfigId, Status> {
+        Ok(HpkeConfigId::from(
+            self.param("config_id")
+                .ok_or_else(|| {
+                    error!("No config_id parameter");
+                    Status::InternalServerError
+                })?
+                .parse::<u8>()
+                .map_err(|err| {
+                    warn!(err = ?err, "Couldn't parse config_id parameter");
+                    Status::BadRequest
+                })?,
+        ))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
         aggregator_api_handler,
-        models::{GetTaskIdsResp, GetTaskMetricsResp, PostTaskReq, TaskResp},
+        models::{
+            GetTaskIdsResp, GetTaskMetricsResp, GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq,
+            PostTaskReq, PutGlobalHpkeConfigReq, TaskResp,
+        },
         Config, CONTENT_TYPE,
     };
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -658,8 +871,8 @@ mod tests {
     use janus_aggregator_core::{
         datastore::{
             models::{
-                AggregationJob, AggregationJobState, LeaderStoredReport, ReportAggregation,
-                ReportAggregationState,
+                AggregationJob, AggregationJobState, HpkeKeyState, LeaderStoredReport,
+                ReportAggregation, ReportAggregationState,
             },
             test_util::{ephemeral_datastore, EphemeralDatastore},
             Datastore,
@@ -668,7 +881,10 @@ mod tests {
         SecretBytes,
     };
     use janus_core::{
-        hpke::{generate_hpke_config_and_private_key, HpkeKeypair, HpkePrivateKey},
+        hpke::{
+            generate_hpke_config_and_private_key,
+            test_util::generate_test_hpke_config_and_private_key, HpkeKeypair, HpkePrivateKey,
+        },
         task::{AuthenticationToken, VdafInstance},
         test_util::{
             dummy_vdaf::{self, AggregationParam},
@@ -686,7 +902,7 @@ mod tests {
     use trillium::{Handler, Status};
     use trillium_testing::{
         assert_response, assert_status,
-        prelude::{delete, get, post},
+        prelude::{delete, get, patch, post, put},
     };
 
     const AUTH_TOKEN: &str = "Y29sbGVjdG9yLWFiY2RlZjAw";
@@ -973,7 +1189,10 @@ mod tests {
         assert_eq!(req.min_batch_size, got_task.min_batch_size());
         assert_eq!(&req.time_precision, got_task.time_precision());
         assert_eq!(1, got_task.aggregator_auth_tokens().len());
-        assert_eq!(&req.collector_hpke_config, got_task.collector_hpke_config());
+        assert_eq!(
+            &req.collector_hpke_config,
+            got_task.collector_hpke_config().unwrap()
+        );
 
         // ...and the response.
         assert_eq!(got_task_resp, TaskResp::try_from(&got_task).unwrap());
@@ -1178,7 +1397,10 @@ mod tests {
         assert_eq!(req.task_expiration.as_ref(), got_task.task_expiration());
         assert_eq!(req.min_batch_size, got_task.min_batch_size());
         assert_eq!(&req.time_precision, got_task.time_precision());
-        assert_eq!(&req.collector_hpke_config, got_task.collector_hpke_config());
+        assert_eq!(
+            &req.collector_hpke_config,
+            got_task.collector_hpke_config().unwrap()
+        );
         assert_eq!(1, got_task.aggregator_auth_tokens().len());
         assert_eq!(
             aggregator_auth_token.as_ref(),
@@ -1471,6 +1693,419 @@ mod tests {
                 .await,
             Status::Unauthorized,
             "",
+        );
+    }
+
+    #[tokio::test]
+    async fn get_global_hpke_configs() {
+        let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
+
+        let mut conn = get("/hpke_configs")
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .with_request_header("Content-Type", CONTENT_TYPE)
+            .run_async(&handler)
+            .await;
+        assert_response!(conn, Status::Ok);
+        let resp: Vec<GlobalHpkeConfigResp> = serde_json::from_slice(
+            &conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(resp, vec![]);
+
+        let keypair1 = generate_test_hpke_config_and_private_key();
+        let keypair2 = generate_hpke_config_and_private_key(
+            random(),
+            HpkeKemId::P256HkdfSha256,
+            HpkeKdfId::HkdfSha384,
+            HpkeAeadId::Aes128Gcm,
+        );
+        ds.run_tx(|tx| {
+            let keypair1 = keypair1.clone();
+            let keypair2 = keypair2.clone();
+            Box::pin(async move {
+                tx.put_global_hpke_keypair(&keypair1).await?;
+                tx.put_global_hpke_keypair(&keypair2).await?;
+                tx.set_global_hpke_keypair_state(keypair2.config().id(), &HpkeKeyState::Active)
+                    .await?;
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        let mut conn = get("/hpke_configs")
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .with_request_header("Content-Type", CONTENT_TYPE)
+            .run_async(&handler)
+            .await;
+        assert_response!(conn, Status::Ok);
+        let mut resp: Vec<GlobalHpkeConfigResp> = serde_json::from_slice(
+            &conn
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        resp.sort_by(|a, b| a.config.id().cmp(b.config.id()));
+
+        let mut expected = vec![
+            GlobalHpkeConfigResp {
+                config: keypair1.config().clone(),
+                state: HpkeKeyState::Pending,
+            },
+            GlobalHpkeConfigResp {
+                config: keypair2.config().clone(),
+                state: HpkeKeyState::Active,
+            },
+        ];
+        expected.sort_by(|a, b| a.config.id().cmp(b.config.id()));
+
+        assert_eq!(resp, expected);
+
+        // Verify: unauthorized requests are denied appropriately.
+        assert_response!(
+            put("/hpke_configs")
+                .with_request_header("Accept", CONTENT_TYPE)
+                .run_async(&handler)
+                .await,
+            Status::Unauthorized,
+            "",
+        );
+    }
+
+    #[tokio::test]
+    async fn get_global_hpke_config() {
+        let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
+
+        // Verify: non-existent key.
+        assert_response!(
+            get("/hpke_configs/123")
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+                .with_request_header("Accept", CONTENT_TYPE)
+                .with_request_header("Content-Type", CONTENT_TYPE)
+                .run_async(&handler)
+                .await,
+            Status::NotFound
+        );
+
+        // Verify: overflow u8.
+        assert_response!(
+            get("/hpke_configs/1234310294")
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+                .with_request_header("Accept", CONTENT_TYPE)
+                .with_request_header("Content-Type", CONTENT_TYPE)
+                .run_async(&handler)
+                .await,
+            Status::BadRequest
+        );
+
+        // Verify: unauthorized requests are denied appropriately.
+        assert_response!(
+            put("/hpke_configs/123")
+                .with_request_header("Accept", CONTENT_TYPE)
+                .run_async(&handler)
+                .await,
+            Status::Unauthorized,
+            "",
+        );
+
+        let keypair1 = generate_test_hpke_config_and_private_key();
+        let keypair2 = generate_hpke_config_and_private_key(
+            random(),
+            HpkeKemId::P256HkdfSha256,
+            HpkeKdfId::HkdfSha384,
+            HpkeAeadId::Aes128Gcm,
+        );
+        ds.run_tx(|tx| {
+            let keypair1 = keypair1.clone();
+            let keypair2 = keypair2.clone();
+            Box::pin(async move {
+                tx.put_global_hpke_keypair(&keypair1).await?;
+                tx.put_global_hpke_keypair(&keypair2).await?;
+                tx.set_global_hpke_keypair_state(keypair2.config().id(), &HpkeKeyState::Active)
+                    .await?;
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        for (key, state) in [
+            (keypair1, HpkeKeyState::Pending),
+            (keypair2, HpkeKeyState::Active),
+        ] {
+            let mut conn = get(&format!("/hpke_configs/{}", key.config().id()))
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+                .with_request_header("Accept", CONTENT_TYPE)
+                .with_request_header("Content-Type", CONTENT_TYPE)
+                .run_async(&handler)
+                .await;
+            assert_response!(conn, Status::Ok);
+            let resp: GlobalHpkeConfigResp = serde_json::from_slice(
+                &conn
+                    .take_response_body()
+                    .unwrap()
+                    .into_bytes()
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                resp,
+                GlobalHpkeConfigResp {
+                    config: key.config().clone(),
+                    state,
+                },
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn put_global_hpke_config() {
+        let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
+
+        // No custom parameters.
+        let mut key1_resp = put("/hpke_configs")
+            .with_request_body("{}")
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .with_request_header("Content-Type", CONTENT_TYPE)
+            .run_async(&handler)
+            .await;
+
+        assert_response!(key1_resp, Status::Created);
+        let key1: GlobalHpkeConfigResp = serde_json::from_slice(
+            &key1_resp
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+
+        // Choose some custom non-default ciphers.
+        let key2_req = PutGlobalHpkeConfigReq {
+            kem_id: Some(HpkeKemId::X25519HkdfSha256),
+            kdf_id: Some(HpkeKdfId::HkdfSha512),
+            aead_id: Some(HpkeAeadId::ChaCha20Poly1305),
+        };
+        let mut key2_resp = put("/hpke_configs")
+            .with_request_body(serde_json::to_vec(&key2_req).unwrap())
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .with_request_header("Content-Type", CONTENT_TYPE)
+            .run_async(&handler)
+            .await;
+
+        assert_response!(key1_resp, Status::Created);
+        let key2: GlobalHpkeConfigResp = serde_json::from_slice(
+            &key2_resp
+                .take_response_body()
+                .unwrap()
+                .into_bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+
+        let (got_key1, got_key2) = ds
+            .run_tx(|tx| {
+                let key1 = key1.config.clone();
+                let key2 = key2.config.clone();
+                Box::pin(async move {
+                    Ok((
+                        tx.get_global_hpke_keypair(key1.id()).await?,
+                        tx.get_global_hpke_keypair(key2.id()).await?,
+                    ))
+                })
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            key1,
+            GlobalHpkeConfigResp {
+                config: got_key1.unwrap().hpke_keypair().config().clone(),
+                state: HpkeKeyState::Pending,
+            }
+        );
+
+        assert_eq!(
+            key2,
+            GlobalHpkeConfigResp {
+                config: got_key2.unwrap().hpke_keypair().config().clone(),
+                state: HpkeKeyState::Pending,
+            }
+        );
+
+        // Verify: unauthorized requests are denied appropriately.
+        assert_response!(
+            put("/hpke_configs")
+                .with_request_header("Accept", CONTENT_TYPE)
+                .run_async(&handler)
+                .await,
+            Status::Unauthorized,
+            "",
+        );
+    }
+
+    #[tokio::test]
+    async fn patch_global_hpke_config() {
+        let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
+
+        let req = PatchGlobalHpkeConfigReq {
+            state: HpkeKeyState::Active,
+        };
+
+        // Verify: non-existent key.
+        assert_response!(
+            patch("/hpke_configs/123")
+                .with_request_body(serde_json::to_vec(&req).unwrap())
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+                .with_request_header("Accept", CONTENT_TYPE)
+                .with_request_header("Content-Type", CONTENT_TYPE)
+                .run_async(&handler)
+                .await,
+            Status::NotFound
+        );
+
+        // Verify: overflow u8.
+        assert_response!(
+            patch("/hpke_configs/1234310294")
+                .with_request_body(serde_json::to_vec(&req).unwrap())
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+                .with_request_header("Accept", CONTENT_TYPE)
+                .with_request_header("Content-Type", CONTENT_TYPE)
+                .run_async(&handler)
+                .await,
+            Status::BadRequest
+        );
+
+        // Verify: invalid body.
+        assert_response!(
+            patch("/hpke_configs/1234310294")
+                .with_request_body("{}")
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+                .with_request_header("Accept", CONTENT_TYPE)
+                .with_request_header("Content-Type", CONTENT_TYPE)
+                .run_async(&handler)
+                .await,
+            Status::UnprocessableEntity
+        );
+
+        // Verify: unauthorized requests are denied appropriately.
+        assert_response!(
+            patch("/hpke_configs/123")
+                .with_request_body(serde_json::to_vec(&req).unwrap())
+                .with_request_header("Accept", CONTENT_TYPE)
+                .run_async(&handler)
+                .await,
+            Status::Unauthorized,
+            "",
+        );
+
+        let keypair = generate_test_hpke_config_and_private_key();
+        ds.run_tx(|tx| {
+            let keypair = keypair.clone();
+            Box::pin(async move { tx.put_global_hpke_keypair(&keypair).await })
+        })
+        .await
+        .unwrap();
+
+        let conn = patch(&format!("/hpke_configs/{}", keypair.config().id()))
+            .with_request_body(serde_json::to_vec(&req).unwrap())
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .with_request_header("Content-Type", CONTENT_TYPE)
+            .run_async(&handler)
+            .await;
+        assert_response!(conn, Status::Ok);
+
+        let got_key = ds
+            .run_tx(|tx| {
+                let keypair = keypair.clone();
+                Box::pin(async move { tx.get_global_hpke_keypair(keypair.config().id()).await })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(got_key.state(), &HpkeKeyState::Active);
+    }
+
+    #[tokio::test]
+    async fn delete_global_hpke_config() {
+        let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
+
+        let req = PatchGlobalHpkeConfigReq {
+            state: HpkeKeyState::Active,
+        };
+
+        // Verify: non-existent key.
+        assert_response!(
+            delete("/hpke_configs/123")
+                .with_request_body(serde_json::to_vec(&req).unwrap())
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+                .with_request_header("Accept", CONTENT_TYPE)
+                .with_request_header("Content-Type", CONTENT_TYPE)
+                .run_async(&handler)
+                .await,
+            Status::NotFound
+        );
+
+        // Verify: overflow u8.
+        assert_response!(
+            delete("/hpke_configs/1234310294")
+                .with_request_body(serde_json::to_vec(&req).unwrap())
+                .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+                .with_request_header("Accept", CONTENT_TYPE)
+                .with_request_header("Content-Type", CONTENT_TYPE)
+                .run_async(&handler)
+                .await,
+            Status::BadRequest
+        );
+
+        // Verify: unauthorized requests are denied appropriately.
+        assert_response!(
+            delete("/hpke_configs/123")
+                .with_request_body(serde_json::to_vec(&req).unwrap())
+                .with_request_header("Accept", CONTENT_TYPE)
+                .run_async(&handler)
+                .await,
+            Status::Unauthorized,
+            "",
+        );
+
+        let keypair = generate_test_hpke_config_and_private_key();
+        ds.run_tx(|tx| {
+            let keypair = keypair.clone();
+            Box::pin(async move { tx.put_global_hpke_keypair(&keypair).await })
+        })
+        .await
+        .unwrap();
+
+        let conn = delete(&format!("/hpke_configs/{}", keypair.config().id()))
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .with_request_header("Content-Type", CONTENT_TYPE)
+            .run_async(&handler)
+            .await;
+        assert_response!(conn, Status::NoContent);
+
+        assert_eq!(
+            ds.run_tx(|tx| Box::pin(async move { tx.get_global_hpke_keypairs().await }))
+                .await
+                .unwrap(),
+            vec![]
         );
     }
 

@@ -2,7 +2,7 @@
 //!
 //! [1]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
 
-use crate::{Duration, Error, Time, Url};
+use crate::{Duration, Error, Role, Time, Url};
 use anyhow::anyhow;
 use derivative::Derivative;
 use prio::codec::{
@@ -73,6 +73,12 @@ impl TaskConfig {
 
     pub fn vdaf_config(&self) -> &VdafConfig {
         &self.vdaf_config
+    }
+
+    /// Returns the [`Url`] relative to which the server performing `role` serves its API.
+    pub fn aggregator_url(&self, role: &Role) -> Result<&Url, Error> {
+        let index = role.index().ok_or(Error::InvalidParameter(role.as_str()))?;
+        Ok(&self.aggregator_endpoints[index])
     }
 }
 
@@ -210,6 +216,7 @@ impl Decode for QueryConfig {
 ///     directly adjacent to its associated parameters. This is not the case
 ///     in taskprov.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Query {
     Reserved,
     TimeInterval,
@@ -231,7 +238,7 @@ pub struct VdafConfig {
 
 impl VdafConfig {
     pub fn new(dp_config: DpConfig, vdaf_type: VdafType) -> Result<Self, Error> {
-        if let VdafType::Prio3Histogram { buckets } = &vdaf_type {
+        if let VdafType::Prio3Aes128Histogram { buckets } = &vdaf_type {
             if buckets.is_empty() {
                 return Err(Error::InvalidParameter(
                     "buckets must not be empty for Prio3Histogram",
@@ -266,7 +273,7 @@ impl Decode for VdafConfig {
             dp_config: DpConfig::decode(bytes)?,
             vdaf_type: VdafType::decode(bytes)?,
         };
-        if let VdafType::Prio3Histogram { buckets } = &ret.vdaf_type {
+        if let VdafType::Prio3Aes128Histogram { buckets } = &ret.vdaf_type {
             if buckets.is_empty() {
                 return Err(CodecError::Other(
                     anyhow!("buckets must not be empty for Prio3Histogram").into(),
@@ -282,12 +289,12 @@ impl Decode for VdafConfig {
 #[repr(u32)]
 #[non_exhaustive]
 pub enum VdafType {
-    Prio3Count,
-    Prio3Sum {
+    Prio3Aes128Count,
+    Prio3Aes128Sum {
         /// Bit length of the summand.
         bits: u8,
     },
-    Prio3Histogram {
+    Prio3Aes128Histogram {
         /// List of buckets.
         #[derivative(Debug(format_with = "fmt_histogram"))]
         buckets: Vec<u64>,
@@ -299,9 +306,9 @@ pub enum VdafType {
 }
 
 impl VdafType {
-    const PRIO3COUNT: u32 = 0x00000000;
-    const PRIO3SUM: u32 = 0x00000001;
-    const PRIO3HISTOGRAM: u32 = 0x00000002;
+    const PRIO3_AES128_COUNT: u32 = 0x00000000;
+    const PRIO3_AES128_SUM: u32 = 0x00000001;
+    const PRIO3_AES128_HISTOGRAM: u32 = 0x00000002;
     const POPLAR1: u32 = 0x00001000;
 }
 
@@ -312,13 +319,13 @@ fn fmt_histogram(buckets: &Vec<u64>, f: &mut Formatter) -> Result<(), fmt::Error
 impl Encode for VdafType {
     fn encode(&self, bytes: &mut Vec<u8>) {
         match self {
-            Self::Prio3Count => Self::PRIO3COUNT.encode(bytes),
-            Self::Prio3Sum { bits } => {
-                Self::PRIO3SUM.encode(bytes);
+            Self::Prio3Aes128Count => Self::PRIO3_AES128_COUNT.encode(bytes),
+            Self::Prio3Aes128Sum { bits } => {
+                Self::PRIO3_AES128_SUM.encode(bytes);
                 bits.encode(bytes);
             }
-            Self::Prio3Histogram { buckets } => {
-                Self::PRIO3HISTOGRAM.encode(bytes);
+            Self::Prio3Aes128Histogram { buckets } => {
+                Self::PRIO3_AES128_HISTOGRAM.encode(bytes);
                 encode_u24_items(bytes, &(), buckets);
             }
             Self::Poplar1 { bits } => {
@@ -332,11 +339,11 @@ impl Encode for VdafType {
 impl Decode for VdafType {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         match u32::decode(bytes)? {
-            Self::PRIO3COUNT => Ok(Self::Prio3Count),
-            Self::PRIO3SUM => Ok(Self::Prio3Sum {
+            Self::PRIO3_AES128_COUNT => Ok(Self::Prio3Aes128Count),
+            Self::PRIO3_AES128_SUM => Ok(Self::Prio3Aes128Sum {
                 bits: u8::decode(bytes)?,
             }),
-            Self::PRIO3HISTOGRAM => Ok(Self::Prio3Histogram {
+            Self::PRIO3_AES128_HISTOGRAM => Ok(Self::Prio3Aes128Histogram {
                 buckets: decode_u24_items(&(), bytes)?,
             }),
             Self::POPLAR1 => Ok(Self::Poplar1 {
@@ -433,18 +440,21 @@ mod tests {
     #[test]
     fn roundtrip_vdaf_type() {
         roundtrip_encoding(&[
-            (VdafType::Prio3Count, "00000000"),
+            (VdafType::Prio3Aes128Count, "00000000"),
             (
-                VdafType::Prio3Sum { bits: u8::MIN },
+                VdafType::Prio3Aes128Sum { bits: u8::MIN },
                 concat!("00000001", "00"),
             ),
-            (VdafType::Prio3Sum { bits: 0x80 }, concat!("00000001", "80")),
             (
-                VdafType::Prio3Sum { bits: u8::MAX },
+                VdafType::Prio3Aes128Sum { bits: 0x80 },
+                concat!("00000001", "80"),
+            ),
+            (
+                VdafType::Prio3Aes128Sum { bits: u8::MAX },
                 concat!("00000001", "FF"),
             ),
             (
-                VdafType::Prio3Histogram {
+                VdafType::Prio3Aes128Histogram {
                     buckets: vec![0x00ABCDEF, 0x40404040, 0xDEADBEEF],
                 },
                 concat!(
@@ -456,7 +466,7 @@ mod tests {
                 ),
             ),
             (
-                VdafType::Prio3Histogram {
+                VdafType::Prio3Aes128Histogram {
                     buckets: vec![u64::MIN, u64::MAX],
                 },
                 concat!(
@@ -485,13 +495,14 @@ mod tests {
     fn roundtrip_vdaf_config() {
         roundtrip_encoding(&[
             (
-                VdafConfig::new(DpConfig::new(DpMechanism::None), VdafType::Prio3Count).unwrap(),
+                VdafConfig::new(DpConfig::new(DpMechanism::None), VdafType::Prio3Aes128Count)
+                    .unwrap(),
                 concat!("01", "00000000"),
             ),
             (
                 VdafConfig::new(
                     DpConfig::new(DpMechanism::None),
-                    VdafType::Prio3Sum { bits: 0x42 },
+                    VdafType::Prio3Aes128Sum { bits: 0x42 },
                 )
                 .unwrap(),
                 concat!("01", concat!("00000001", "42")),
@@ -499,7 +510,7 @@ mod tests {
             (
                 VdafConfig::new(
                     DpConfig::new(DpMechanism::None),
-                    VdafType::Prio3Histogram {
+                    VdafType::Prio3Aes128Histogram {
                         buckets: vec![0xAAAAAAAA],
                     },
                 )
@@ -607,7 +618,7 @@ mod tests {
                         },
                     ),
                     Time::from_seconds_since_epoch(0xEEEE),
-                    VdafConfig::new(DpConfig::new(DpMechanism::None), VdafType::Prio3Count)
+                    VdafConfig::new(DpConfig::new(DpMechanism::None), VdafType::Prio3Aes128Count)
                         .unwrap(),
                 )
                 .unwrap(),
@@ -658,7 +669,7 @@ mod tests {
                     Time::from_seconds_since_epoch(0xEEEE),
                     VdafConfig::new(
                         DpConfig::new(DpMechanism::None),
-                        VdafType::Prio3Histogram {
+                        VdafType::Prio3Aes128Histogram {
                             buckets: vec![0xFFFF],
                         },
                     )

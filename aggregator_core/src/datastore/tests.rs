@@ -16,6 +16,7 @@ use crate::{
     },
     query_type::CollectableQueryType,
     task::{self, test_util::TaskBuilder, Task},
+    taskprov::test_util::PeerAggregatorBuilder,
     test_util::noop_meter,
 };
 
@@ -55,6 +56,7 @@ use std::{
     time::Duration as StdDuration,
 };
 use tokio::time::timeout;
+use url::Url;
 
 const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
 const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
@@ -2502,7 +2504,7 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
             assert_eq!(&second_collection_job_id, second_collection_job.id());
 
             let encrypted_helper_aggregate_share = hpke::seal(
-                task.collector_hpke_config(),
+                task.collector_hpke_config().unwrap(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
                 &[0, 1, 2, 3, 4, 5],
                 &aggregate_share_aad(
@@ -6645,6 +6647,7 @@ async fn roundtrip_interval_sql(ephemeral_datastore: EphemeralDatastore) {
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
 async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
     let datastore = ephemeral_datastore.datastore(MockClock::default()).await;
     let clock = datastore.clock.clone();
     let keypair = generate_test_hpke_config_and_private_key();
@@ -6717,6 +6720,81 @@ async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) 
                 assert_matches!(
                     tx.get_global_hpke_keypair(keypair.config().id()).await?,
                     None
+                );
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
+    let datastore = ephemeral_datastore.datastore(MockClock::default()).await;
+
+    // Basic aggregator.
+    let example_leader_peer_aggregator =
+        PeerAggregatorBuilder::new().with_role(Role::Leader).build();
+    let example_helper_peer_aggregator = PeerAggregatorBuilder::new()
+        .with_role(Role::Helper)
+        .with_aggregator_auth_tokens(vec![random(), random()])
+        .with_collector_auth_tokens(vec![])
+        .build();
+    let another_example_leader_peer_aggregator = PeerAggregatorBuilder::new()
+        .with_endpoint(Url::parse("https://another.example.com/").unwrap())
+        .with_aggregator_auth_tokens(vec![])
+        .with_collector_auth_tokens(vec![random(), random()])
+        .build();
+
+    datastore
+        .run_tx(|tx| {
+            let example_leader_peer_aggregator = example_leader_peer_aggregator.clone();
+            let example_helper_peer_aggregator = example_helper_peer_aggregator.clone();
+            let another_example_leader_peer_aggregator =
+                another_example_leader_peer_aggregator.clone();
+            Box::pin(async move {
+                tx.put_taskprov_peer_aggregator(&example_leader_peer_aggregator)
+                    .await?;
+                tx.put_taskprov_peer_aggregator(&example_helper_peer_aggregator)
+                    .await?;
+                tx.put_taskprov_peer_aggregator(&another_example_leader_peer_aggregator)
+                    .await?;
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+    // Should not be able to put an aggregator with the same endpoint and role.
+    assert_matches!(
+        datastore
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    let colliding_peer_aggregator = PeerAggregatorBuilder::new().build();
+                    tx.put_taskprov_peer_aggregator(&colliding_peer_aggregator)
+                        .await
+                })
+            })
+            .await,
+        Err(Error::MutationTargetAlreadyExists)
+    );
+
+    datastore
+        .run_tx(|tx| {
+            let example_leader_peer_aggregator = example_leader_peer_aggregator.clone();
+            let example_helper_peer_aggregator = example_helper_peer_aggregator.clone();
+            let another_example_leader_peer_aggregator =
+                another_example_leader_peer_aggregator.clone();
+            Box::pin(async move {
+                assert_eq!(
+                    tx.get_taskprov_peer_aggregators().await.unwrap(),
+                    vec![
+                        example_leader_peer_aggregator.clone(),
+                        example_helper_peer_aggregator.clone(),
+                        another_example_leader_peer_aggregator.clone(),
+                    ]
                 );
                 Ok(())
             })
