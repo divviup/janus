@@ -48,14 +48,10 @@ use janus_messages::{
     Role, TaskId, Time,
 };
 use prio::{
-    field::Field64,
-    flp::types::Count,
     idpf::IdpfInput,
     vdaf::{
         poplar1::{Poplar1, Poplar1AggregationParam},
         prg::PrgSha3,
-        prio3::{Prio3, Prio3Count},
-        AggregateShare, OutputShare,
     },
 };
 use rand::random;

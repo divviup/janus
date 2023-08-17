@@ -14,7 +14,7 @@ use janus_aggregator_core::{
     task::Task,
 };
 use janus_core::time::{Clock, IntervalExt};
-use janus_messages::{AggregationJobId, Interval, ReportId, PrepareError};
+use janus_messages::{AggregationJobId, Interval, PrepareError, ReportId};
 use prio::{codec::Encode, vdaf};
 use std::{
     borrow::Cow,
