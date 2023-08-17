@@ -292,7 +292,7 @@ impl<C: Clock> Aggregator<C> {
         let task_aggregator = self
             .task_aggregator_for(report.task_id())
             .await?
-            .ok_or(Error::UnrecognizedTask(*report.task_id()))?;
+            .ok_or_else(|| Error::UnrecognizedTask(*report.task_id()))?;
         if task_aggregator.task.role() != &Role::Leader {
             return Err(Arc::new(Error::UnrecognizedTask(*report.task_id())));
         }
