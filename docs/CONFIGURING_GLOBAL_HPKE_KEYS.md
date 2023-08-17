@@ -16,7 +16,7 @@ A global keypair has three states:
 - `pending`: The key is in the database, but is not being advertised to clients.
 - `active`: The key is used by clients, and clients should use it to encrypt
   reports.
-- `expired`: The key is not advertised to client and will eventually be deleted.
+- `expired`: The key is not advertised to clients and will eventually be deleted.
 
 These states are to facilitate key caching and rotation. The lifecycle of a key
 is as follows:
