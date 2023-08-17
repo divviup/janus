@@ -2,17 +2,15 @@
 
 #[cfg(any(not(feature = "prometheus"), not(feature = "otlp")))]
 use anyhow::anyhow;
-use opentelemetry::{
-    global::set_meter_provider,
-    sdk::metrics::{reader::AggregationSelector, Aggregation, InstrumentKind},
-};
-use prometheus::Registry;
+use opentelemetry::sdk::metrics::{reader::AggregationSelector, Aggregation, InstrumentKind};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::AddrParseError};
 
 #[cfg(feature = "prometheus")]
 use {
     anyhow::Context,
+    opentelemetry::global::set_meter_provider,
+    prometheus::Registry,
     std::net::{IpAddr, Ipv4Addr},
     tokio::{sync::oneshot, task::JoinHandle},
     trillium::{Info, Init},
