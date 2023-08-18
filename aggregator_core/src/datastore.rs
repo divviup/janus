@@ -30,7 +30,7 @@ use janus_messages::{
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter},
-    Context, KeyValue,
+    KeyValue,
 };
 use postgres_types::{FromSql, Json, ToSql};
 use prio::vdaf;
@@ -217,11 +217,8 @@ impl<C: Clock> Datastore<C> {
             let before = Instant::now();
             let (rslt, retry) = self.run_tx_once(&f).await;
             let elapsed = before.elapsed();
-            self.transaction_duration_histogram.record(
-                &Context::current(),
-                elapsed.as_secs_f64(),
-                &[KeyValue::new("tx", name)],
-            );
+            self.transaction_duration_histogram
+                .record(elapsed.as_secs_f64(), &[KeyValue::new("tx", name)]);
             let status = match (rslt.as_ref(), retry) {
                 (_, true) => "retry",
                 (Ok(_), _) => "success",
@@ -229,7 +226,6 @@ impl<C: Clock> Datastore<C> {
                 (Err(_), _) => "error_other",
             };
             self.transaction_status_counter.add(
-                &Context::current(),
                 1,
                 &[KeyValue::new("status", status), KeyValue::new("tx", name)],
             );
@@ -283,7 +279,6 @@ impl<C: Clock> Datastore<C> {
                 if let Err(rollback_err) = check_error(&retry, raw_tx.rollback().await) {
                     error!("Couldn't roll back transaction: {rollback_err}");
                     self.rollback_error_counter.add(
-                        &Context::current(),
                         1,
                         &[KeyValue::new(
                             "code",

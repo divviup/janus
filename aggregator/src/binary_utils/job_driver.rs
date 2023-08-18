@@ -6,7 +6,7 @@ use janus_aggregator_core::datastore::{self, models::Lease};
 use janus_core::{time::Clock, Runtime};
 use opentelemetry::{
     metrics::{Histogram, Meter, Unit},
-    Context, KeyValue,
+    KeyValue,
 };
 use std::{
     fmt::{Debug, Display},
@@ -205,7 +205,6 @@ where
                             }
                         }
                         job_step_time_histogram.record(
-                            &Context::current(),
                             start.elapsed().as_secs_f64(),
                             &[KeyValue::new("status", status)],
                         );
@@ -236,7 +235,6 @@ where
                 // tightly loop running transactions that will fail without any delay.
                 *job_discovery_delay = self.step_job_discovery_delay(*job_discovery_delay);
                 job_acquire_time_histogram.record(
-                    &Context::current(),
                     start.elapsed().as_secs_f64(),
                     &[KeyValue::new("status", "error")],
                 );
@@ -244,7 +242,6 @@ where
             }
         };
         job_acquire_time_histogram.record(
-            &Context::current(),
             start.elapsed().as_secs_f64(),
             &[KeyValue::new("status", "success")],
         );

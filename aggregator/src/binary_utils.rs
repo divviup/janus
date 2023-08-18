@@ -17,7 +17,7 @@ use futures::StreamExt;
 use git_version::git_version;
 use janus_aggregator_core::datastore::{Crypter, Datastore};
 use janus_core::time::Clock;
-use opentelemetry::{metrics::Meter, Context, KeyValue};
+use opentelemetry::{metrics::Meter, KeyValue};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::{
     fmt::{self, Debug, Formatter},
@@ -417,7 +417,6 @@ pub fn record_build_info_gauge(meter: &Meter) {
         }
     }
     gauge.observe(
-        &Context::current(),
         1,
         &[
             KeyValue::new("version", env!("CARGO_PKG_VERSION")),
