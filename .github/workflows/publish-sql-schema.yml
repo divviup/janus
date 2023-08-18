@@ -25,36 +25,56 @@ jobs:
       with:
         workload_identity_provider: ${{ vars.GCP_ARTIFACT_PUBLISHER_WORKLOAD_IDENTITY_PROVIDER }}
         service_account: ${{ vars.GCP_ARTIFACT_PUBLISHER_DEPLOY_SERVICE_ACCOUNT }}
+        create_credentials_file: true
+        export_environment_variables: true
+    - name: Configure rclone
+      run: |
+        sudo apt-get install rclone
+        mkdir -p ~/.config/rclone
+        cat >~/.config/rclone/rclone.conf <<-EOF
+          [gs]
+          type = google cloud storage
+          env_auth = true
+          bucket_policy_only = true
+        EOF
     - name: Get the version
       id: get_version
       run: |
-        VERSION=${GITHUB_REF/refs\/tags\//}
-        echo "minor_version=$(echo ${VERSION} | awk -F'.' '{if (NF != 3) {exit 1}; printf "%s.%s", $1, $2}')" >> $GITHUB_OUTPUT
+        if grep -P "^refs/tags/" <<<"$GITHUB_REF" >/dev/null; then
+          VERSION=${GITHUB_REF/refs\/tags\//}
+          MINOR_VERSION="$(echo "$VERSION" | awk -F'.' '{if (NF != 3) {exit 1}; printf "%s.%s", $1, $2}')"
+          echo "version=$MINOR_VERSION" >>"$GITHUB_OUTPUT"
+        elif grep -P "^refs/heads/" <<<"$GITHUB_REF" >/dev/null; then
+          BRANCH=${GITHUB_REF/refs\/heads\//}
+          echo "version=$BRANCH" >>"$GITHUB_OUTPUT"
+        else
+          echo "Unable to parse version information"
+          exit 1
+        fi
     - name: Check validity of migrations
       uses: "./.github/actions/validate-migrations"
     - name: Check that existing migrations have not changed
       if: '!inputs.force'
       run: |
         TEMP=$(mktemp -d)
-        gcloud alpha storage cp --recursive \
-          "gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.minor_version }}/db" \
+        rclone copy --verbose \
+          "gs:/janus-artifacts-sql-schemas/${{ steps.get_version.outputs.version }}/db/" \
           "$TEMP"
 
         # --diff-filter=a includes all differences except added files.
-        if ! git diff --no-index --diff-filter=a "$TEMP/db" "./db"; then
+        if ! git diff --no-index --diff-filter=a "$TEMP/" "./db"; then
           echo "fatal: migrations cannot be modified or removed, only added"
           exit 1
         fi
     - name: "Upload schema file(s)"
       if: '!inputs.force'
       run: |-
-        gcloud alpha storage cp --recursive --no-clobber \
-          db \
-          gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.minor_version }}/
+        rclone copy --ignore-existing --verbose \
+          "db/" \
+          "gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.version }}/db/"
     - name: "Overwrite schema file(s)"
       if: inputs.force
       run: |-
-        gcloud alpha storage rm --recursive gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.minor_version }}/
-        gcloud alpha storage cp --recursive \
-          db \
-          gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.minor_version }}/
+        rclone sync --verbose \
+          "db/" \
+          "gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.version }}/db/"
