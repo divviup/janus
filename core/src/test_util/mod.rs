@@ -81,7 +81,7 @@ pub fn run_vdaf<
         )
         .unwrap();
 
-    leader_prepare_transitions.push((leader_state.clone(), leader_message.clone()));
+    leader_prepare_transitions.push((leader_state, leader_message.clone()));
 
     let (helper_state, helper_message) = vdaf
         .helper_initialize(
@@ -94,7 +94,7 @@ pub fn run_vdaf<
         )
         .unwrap();
 
-    helper_prepare_transitions.push((helper_state.clone(), helper_message.clone()));
+    helper_prepare_transitions.push((helper_state, helper_message.clone()));
 
     // Repeatedly step the VDAF until we reach a terminal state
     let mut leader_output_share = None;

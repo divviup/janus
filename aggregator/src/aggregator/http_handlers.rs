@@ -1603,7 +1603,7 @@ mod tests {
         );
 
         // prepare_init_0 is a "happy path" report.
-        let (prepare_init_0, _) = prep_init_generator.next(&measurement);
+        let (prepare_init_0, transcript_0) = prep_init_generator.next(&measurement);
 
         // report_share_1 fails decryption.
         let (prepare_init_1, transcript_1) = prep_init_generator.next(&measurement);
@@ -1767,7 +1767,7 @@ mod tests {
 
         // prepare_init_8 has already been aggregated in another aggregation job, with a different
         // aggregation parameter.
-        let (prepare_init_8, _) = prep_init_generator.next(&measurement);
+        let (prepare_init_8, transcript_8) = prep_init_generator.next(&measurement);
 
         let (conflicting_aggregation_job, non_conflicting_aggregation_job) = datastore
             .run_tx(|tx| {
@@ -1915,7 +1915,9 @@ mod tests {
                 prepare_step_0.report_id(),
                 prepare_init_0.report_share().metadata().id()
             );
-            assert_matches!(prepare_step_0.result(), &PrepareStepResult::Finished);
+            assert_matches!(prepare_step_0.result(), PrepareStepResult::Continue { message } => {
+                assert_eq!(message, &transcript_0.helper_prepare_transitions[0].1);
+            });
 
             let prepare_step_1 = aggregate_resp.prepare_resps().get(1).unwrap();
             assert_eq!(
@@ -1992,7 +1994,9 @@ mod tests {
                 prepare_step_8.report_id(),
                 prepare_init_8.report_share().metadata().id()
             );
-            assert_matches!(prepare_step_8.result(), &PrepareStepResult::Finished);
+            assert_matches!(prepare_step_8.result(), PrepareStepResult::Continue { message } => {
+                assert_eq!(message, &transcript_8.helper_prepare_transitions[0].1);
+            });
 
             // Check aggregation job in datastore.
             let aggregation_jobs = datastore
@@ -2084,7 +2088,7 @@ mod tests {
 
         // This report was encrypted with a global HPKE config that has the same config
         // ID as the task's HPKE config.
-        let (prepare_init_same_id, _) = prep_init_generator.next(&1);
+        let (prepare_init_same_id, transcript_same_id) = prep_init_generator.next(&1);
 
         // This report was encrypted with a global HPKE config that has the same config
         // ID as the task's HPKE config, but will fail to decrypt.
@@ -2226,7 +2230,9 @@ mod tests {
             prepare_step_same_id.report_id(),
             prepare_init_same_id.report_share().metadata().id()
         );
-        assert_matches!(prepare_step_same_id.result(), &PrepareStepResult::Finished);
+        assert_matches!(prepare_step_same_id.result(), PrepareStepResult::Continue { message } => {
+            assert_eq!(message, &transcript_same_id.helper_prepare_transitions[0].1);
+        });
 
         let prepare_step_different_id = aggregate_resp.prepare_resps().get(1).unwrap();
         assert_eq!(
@@ -2235,7 +2241,9 @@ mod tests {
         );
         assert_matches!(
             prepare_step_different_id.result(),
-            &PrepareStepResult::Finished
+            PrepareStepResult::Continue { message } => {
+                assert_eq!(message, &transcript_different_id.helper_prepare_transitions[0].1);
+            }
         );
 
         let prepare_step_same_id_corrupted = aggregate_resp.prepare_resps().get(2).unwrap();

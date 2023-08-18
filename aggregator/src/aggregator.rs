@@ -1811,7 +1811,7 @@ impl VdafOps {
                             // advance to the next round.
                             saw_continue = true;
                             (
-                                ReportAggregationState::<SEED_SIZE, A>::Waiting(state, None),
+                                ReportAggregationState::Waiting(state, None),
                                 PrepareStepResult::Continue {
                                     message: outgoing_message,
                                 },
@@ -1822,8 +1822,10 @@ impl VdafOps {
                             // Helper finished. Unlike the Leader, the Helper does not wait for
                             // confirmation that the Leader finished before accumulating its
                             // output share.
-                            ReportAggregationState::<SEED_SIZE, A>::Finished,
-                            PrepareStepResult::Finished,
+                            ReportAggregationState::Finished,
+                            PrepareStepResult::Continue {
+                                message: outgoing_message,
+                            },
                             // Smuggle the output share out of this scope so we can call
                             // Accumulator::update in a scope where ? works
                             Some(output_share),
