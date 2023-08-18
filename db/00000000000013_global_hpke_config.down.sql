@@ -1,2 +1,0 @@
-DROP TABLE global_hpke_keys;
-DROP TYPE HPKE_KEY_STATE;
