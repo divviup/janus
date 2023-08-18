@@ -1,15 +1,20 @@
+use crate::{
+    task::{self, Error, QueryType},
+    SecretBytes,
+};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use janus_core::task::{AuthenticationToken, VdafInstance};
 use janus_messages::{Duration, HpkeConfig, Role, TaskId, Time};
 use lazy_static::lazy_static;
 use rand::{distributions::Standard, prelude::Distribution};
 use ring::hkdf::{KeyType, Salt, HKDF_SHA256};
-use url::Url;
-
-use crate::{
-    task::{self, Error, QueryType},
-    SecretBytes,
+use serde::{
+    de::{self, Visitor},
+    Deserialize, Serialize, Serializer,
 };
+use std::fmt;
+use url::Url;
 
 #[derive(Derivative, Clone, Copy, PartialEq, Eq)]
 #[derivative(Debug)]
@@ -32,6 +37,47 @@ impl TryFrom<&[u8]> for VerifyKeyInit {
 impl AsRef<[u8; Self::LEN]> for VerifyKeyInit {
     fn as_ref(&self) -> &[u8; Self::LEN] {
         &self.0
+    }
+}
+
+impl Serialize for VerifyKeyInit {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let encoded = URL_SAFE_NO_PAD.encode(self.as_ref());
+        serializer.serialize_str(&encoded)
+    }
+}
+
+struct VerifyKeyInitVisitor;
+
+impl<'de> Visitor<'de> for VerifyKeyInitVisitor {
+    type Value = VerifyKeyInit;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a base64url-encoded string")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<VerifyKeyInit, E>
+    where
+        E: de::Error,
+    {
+        let decoded = URL_SAFE_NO_PAD
+            .decode(value)
+            .map_err(|_| E::custom("invalid base64url value"))?;
+        VerifyKeyInit::try_from(decoded.as_ref()).map_err(|err| E::custom(err.to_string()))
+    }
+}
+
+/// This customized implementation deserializes a [`VerifyKeyInit`] as a base64url-encoded string,
+/// instead of as a byte array. This is more compact and ergonomic when serialized to YAML.
+impl<'de> Deserialize<'de> for VerifyKeyInit {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_str(VerifyKeyInitVisitor)
     }
 }
 
