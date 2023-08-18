@@ -29,6 +29,7 @@ use janus_core::{
         self, aggregate_share_aad, test_util::generate_test_hpke_config_and_private_key,
         HpkeApplicationInfo, HpkeKeypair, Label,
     },
+    report_id::ReportIdChecksumExt,
     task::PRIO3_VERIFY_KEY_LENGTH,
     taskprov::TASKPROV_HEADER,
     test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
@@ -188,7 +189,7 @@ async fn setup_taskprov_test() -> TaskprovTestCase {
         report_metadata.id(),
         &1,
     );
-    let report_share = generate_helper_report_share::<Prio3Aes128Count>(
+    let report_share = generate_helper_report_share::<TestVdaf>(
         task_id,
         report_metadata.clone(),
         global_hpke_key.config(),
@@ -708,7 +709,7 @@ async fn taskprov_aggregate_continue() {
                 tx.put_aggregation_job(&AggregationJob::<
                     PRIO3_VERIFY_KEY_LENGTH,
                     FixedSize,
-                    Prio3Aes128Count,
+                    TestVdaf,
                 >::new(
                     *task.id(),
                     aggregation_job_id,
@@ -720,7 +721,7 @@ async fn taskprov_aggregate_continue() {
                 ))
                 .await?;
 
-                tx.put_report_aggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                tx.put_report_aggregation::<PRIO3_VERIFY_KEY_LENGTH, TestVdaf>(
                     &ReportAggregation::new(
                         *task.id(),
                         aggregation_job_id,
@@ -732,7 +733,7 @@ async fn taskprov_aggregate_continue() {
                 )
                 .await?;
 
-                tx.put_aggregate_share_job::<PRIO3_VERIFY_KEY_LENGTH, FixedSize, Prio3Aes128Count>(
+                tx.put_aggregate_share_job::<PRIO3_VERIFY_KEY_LENGTH, FixedSize, TestVdaf>(
                     &AggregateShareJob::new(
                         *task.id(),
                         batch_id,
@@ -940,4 +941,131 @@ async fn taskprov_aggregate_share() {
         &aggregate_share_aad(&test.task_id, request.batch_selector()),
     )
     .unwrap();
+}
+
+/// This runs aggregate init, aggregate continue, and aggregate share requests against a
+/// taskprov-enabled helper, and confirms that correct results are returned.
+#[tokio::test]
+async fn end_to_end() {
+    let test = setup_taskprov_test().await;
+    let (auth_header_name, auth_header_value) = test
+        .peer_aggregator
+        .primary_aggregator_auth_token()
+        .request_authentication();
+
+    let batch_id = random();
+    let aggregation_job_id = random();
+
+    let aggregate_init_request = AggregateInitializeReq::new(
+        *test.task.id(),
+        aggregation_job_id,
+        ().get_encoded(),
+        PartialBatchSelector::new_fixed_size(batch_id),
+        Vec::from([test.report_share.clone()]),
+    );
+
+    let mut test_conn = post(test.task.aggregation_job_uri().unwrap().path())
+        .with_request_header(auth_header_name, auth_header_value.clone())
+        .with_request_header(
+            KnownHeaderName::ContentType,
+            AggregateInitializeReq::<FixedSize>::MEDIA_TYPE,
+        )
+        .with_request_header(
+            TASKPROV_HEADER,
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
+        )
+        .with_request_body(aggregate_init_request.get_encoded())
+        .run_async(&test.handler)
+        .await;
+
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_headers!(&test_conn, "content-type" => (AggregateInitializeResp::MEDIA_TYPE));
+    let body_bytes = take_response_body(&mut test_conn).await;
+    let aggregate_resp = AggregateInitializeResp::get_decoded(&body_bytes).unwrap();
+
+    assert_eq!(aggregate_resp.prepare_steps().len(), 1);
+    let prepare_step = &aggregate_resp.prepare_steps()[0];
+    assert_eq!(prepare_step.report_id(), test.report_metadata.id());
+    let encoded_prep_share = assert_matches!(
+        prepare_step.result(),
+        PrepareStepResult::Continued(payload) => payload.clone()
+    );
+    assert_eq!(
+        encoded_prep_share,
+        test.transcript.helper_prep_state(0).1.get_encoded()
+    );
+
+    let aggregate_continue_request = AggregateContinueReq::new(
+        *test.task.id(),
+        aggregation_job_id,
+        Vec::from([PrepareStep::new(
+            *test.report_metadata.id(),
+            PrepareStepResult::Continued(test.transcript.prepare_messages[0].get_encoded()),
+        )]),
+    );
+
+    let mut test_conn = post(test.task.aggregation_job_uri().unwrap().path())
+        .with_request_header(auth_header_name, auth_header_value.clone())
+        .with_request_header(
+            KnownHeaderName::ContentType,
+            AggregateContinueReq::MEDIA_TYPE,
+        )
+        .with_request_header(
+            TASKPROV_HEADER,
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
+        )
+        .with_request_body(aggregate_continue_request.get_encoded())
+        .run_async(&test.handler)
+        .await;
+
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_headers!(&test_conn, "content-type" => (AggregateContinueResp::MEDIA_TYPE));
+    let body_bytes = take_response_body(&mut test_conn).await;
+    let aggregate_resp = AggregateContinueResp::get_decoded(&body_bytes).unwrap();
+
+    assert_eq!(aggregate_resp.prepare_steps().len(), 1);
+    let prepare_step = &aggregate_resp.prepare_steps()[0];
+    assert_eq!(prepare_step.report_id(), test.report_metadata.id());
+    assert_matches!(prepare_step.result(), PrepareStepResult::Finished);
+
+    let checksum = ReportIdChecksum::for_report_id(test.report_metadata.id());
+    let aggregate_share_request = AggregateShareReq::new(
+        *test.task.id(),
+        BatchSelector::new_fixed_size(batch_id),
+        ().get_encoded(),
+        1,
+        checksum,
+    );
+
+    let mut test_conn = post(test.task.aggregate_shares_uri().unwrap().path())
+        .with_request_header(auth_header_name, auth_header_value.clone())
+        .with_request_header(
+            KnownHeaderName::ContentType,
+            AggregateShareReq::<FixedSize>::MEDIA_TYPE,
+        )
+        .with_request_header(
+            TASKPROV_HEADER,
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
+        )
+        .with_request_body(aggregate_share_request.get_encoded())
+        .run_async(&test.handler)
+        .await;
+
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_headers!(&test_conn, "content-type" => (AggregateShareResp::MEDIA_TYPE));
+    let body_bytes = take_response_body(&mut test_conn).await;
+    let aggregate_share_resp = AggregateShareResp::get_decoded(&body_bytes).unwrap();
+
+    let plaintext = hpke::open(
+        test.collector_hpke_keypair.config(),
+        test.collector_hpke_keypair.private_key(),
+        &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
+        aggregate_share_resp.encrypted_aggregate_share(),
+        &aggregate_share_aad(&test.task_id, aggregate_share_request.batch_selector()),
+    )
+    .unwrap();
+    assert_eq!(
+        plaintext,
+        Vec::<u8>::from(&test.transcript.aggregate_shares[1])
+    );
 }
