@@ -448,7 +448,7 @@ impl CollectionJobDriverMetrics {
             .with_description(
                 "The amount of time elapsed while making an HTTP request to a helper.",
             )
-            .with_unit(Unit::new("seconds"))
+            .with_unit(Unit::new("s"))
             .init();
 
         let jobs_abandoned_counter = meter
