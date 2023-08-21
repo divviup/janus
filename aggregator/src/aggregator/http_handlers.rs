@@ -710,6 +710,9 @@ mod tests {
         TestConn,
     };
 
+    /// Returns structures necessary for completing an HTTP handler test. The returned
+    /// [`EphemeralDatastore`] should be given a variable binding to prevent it being prematurely
+    /// dropped.
     async fn setup_http_handler_test() -> (
         MockClock,
         EphemeralDatastore,
@@ -734,7 +737,7 @@ mod tests {
 
     #[tokio::test]
     async fn hpke_config() {
-        let (_, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -813,7 +816,7 @@ mod tests {
 
     #[tokio::test]
     async fn global_hpke_config() {
-        let (clock, _ds, datastore, _) = setup_http_handler_test().await;
+        let (clock, _ephemeral_datastore, datastore, _) = setup_http_handler_test().await;
 
         // Insert an HPKE config, i.e. start the application with a keypair already
         // in the database.
@@ -957,7 +960,7 @@ mod tests {
 
     #[tokio::test]
     async fn global_hpke_config_with_taskprov() {
-        let (clock, _ds, datastore, _) = setup_http_handler_test().await;
+        let (clock, _ephemeral_datastore, datastore, _) = setup_http_handler_test().await;
 
         // Insert an HPKE config, i.e. start the application with a keypair already
         // in the database.
@@ -1058,7 +1061,7 @@ mod tests {
 
     #[tokio::test]
     async fn hpke_config_cors_headers() {
-        let (_, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -1119,7 +1122,7 @@ mod tests {
             )
         }
 
-        let (clock, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         const REPORT_EXPIRY_AGE: u64 = 1_000_000;
         let task = TaskBuilder::new(
@@ -1352,7 +1355,7 @@ mod tests {
     // Helper should not expose /upload endpoint
     #[tokio::test]
     async fn upload_handler_helper() {
-        let (clock, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -1394,7 +1397,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_leader() {
-        let (_, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -1469,7 +1472,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_wrong_agg_auth_token() {
-        let (_, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -1534,7 +1537,7 @@ mod tests {
     // type is ()).
     #[allow(clippy::unit_arg)]
     async fn aggregate_init() {
-        let (clock, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task =
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
@@ -2019,7 +2022,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::unit_arg)]
     async fn aggregate_init_with_reports_encrypted_by_global_key() {
-        let (clock, _ds, datastore, _) = setup_http_handler_test().await;
+        let (clock, _ephemeral_datastore, datastore, _) = setup_http_handler_test().await;
 
         let task =
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
@@ -2326,7 +2329,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_init_prep_init_failed() {
-        let (clock, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -2382,7 +2385,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_init_prep_step_failed() {
-        let (clock, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -2437,7 +2440,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_init_duplicated_report_id() {
-        let (_, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -2486,7 +2489,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_continue() {
-        let (clock, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let aggregation_job_id = random();
         let task = TaskBuilder::new(
@@ -2794,7 +2797,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_continue_accumulate_batch_aggregation() {
-        let (_, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -3471,7 +3474,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_continue_leader_sends_non_continue_transition() {
-        let (_, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
         let task =
@@ -3555,7 +3558,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_continue_prep_step_fails() {
-        let (_, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
         let task = TaskBuilder::new(
@@ -3703,7 +3706,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_continue_unexpected_transition() {
-        let (_, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
         let task =
@@ -3790,7 +3793,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_continue_out_of_order_transition() {
-        let (_, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
         let task =
@@ -3915,7 +3918,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_continue_for_non_waiting_aggregation() {
-        let (_, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
         let task =
@@ -4097,7 +4100,7 @@ mod tests {
 
     #[tokio::test]
     async fn collection_job_put_request_invalid_batch_size() {
-        let (_, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
@@ -4709,7 +4712,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_share_request_to_leader() {
-        let (_, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
         let task =
@@ -4752,7 +4755,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_share_request_invalid_batch_interval() {
-        let (clock, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
         const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(3600);
@@ -4831,7 +4834,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_share_request() {
-        let (_, _ds, datastore, handler) = setup_http_handler_test().await;
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let collector_hpke_keypair = generate_test_hpke_config_and_private_key();
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper)
