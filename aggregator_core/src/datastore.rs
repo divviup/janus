@@ -28,7 +28,7 @@ use janus_messages::{
     Role, TaskId, Time,
 };
 use opentelemetry::{
-    metrics::{Counter, Histogram, Meter},
+    metrics::{Counter, Histogram, Meter, Unit},
     KeyValue,
 };
 use postgres_types::{FromSql, Json, ToSql};
@@ -175,8 +175,9 @@ impl<C: Clock> Datastore<C> {
             ))
             .init();
         let transaction_duration_histogram = meter
-            .f64_histogram("janus_database_transaction_duration_seconds")
+            .f64_histogram("janus_database_transaction_duration")
             .with_description("Duration of database transactions.")
+            .with_unit(Unit::new("s"))
             .init();
 
         Self {
