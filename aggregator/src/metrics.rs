@@ -18,13 +18,13 @@ use {
 
 #[cfg(feature = "otlp")]
 use {
-    opentelemetry::{runtime::Tokio, sdk::metrics::MeterProvider},
+    opentelemetry::runtime::Tokio,
     opentelemetry_otlp::WithExportConfig,
     tonic::metadata::{MetadataKey, MetadataMap, MetadataValue},
 };
 
 #[cfg(any(feature = "otlp", feature = "prometheus"))]
-use std::str::FromStr;
+use {opentelemetry::sdk::metrics::MeterProvider, std::str::FromStr};
 
 /// Errors from initializing metrics provider, registry, and exporter.
 #[derive(Debug, thiserror::Error)]
