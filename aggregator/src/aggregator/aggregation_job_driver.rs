@@ -62,12 +62,14 @@ impl AggregationJobDriver {
         let job_cancel_counter = meter
             .u64_counter("janus_job_cancellations")
             .with_description("Count of cancelled jobs.")
+            .with_unit(Unit::new("{job}"))
             .init();
         job_cancel_counter.add(0, &[]);
 
         let job_retry_counter = meter
             .u64_counter("janus_job_retries")
             .with_description("Count of retried job steps.")
+            .with_unit(Unit::new("{step}"))
             .init();
         job_retry_counter.add(0, &[]);
 
