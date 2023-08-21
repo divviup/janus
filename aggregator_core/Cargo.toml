@@ -33,7 +33,7 @@ k8s-openapi.workspace = true
 kube.workspace = true
 lazy_static = { version = "1" }
 opentelemetry = { workspace = true, features = ["rt-tokio"] }
-postgres-protocol = "0.6.5"
+postgres-protocol = "0.6.6"
 postgres-types = { version = "0.2.5", features = ["derive", "array-impls"] }
 prio = { workspace = true }
 rand = { version = "0.8", features = ["min_const_gen"] }
