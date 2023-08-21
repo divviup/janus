@@ -57,7 +57,7 @@ impl EphemeralDatabase {
                 // Start an instance of Postgres running in a container.
                 let container_client = testcontainers::clients::Cli::default();
                 let db_container = container_client
-                    .run(RunnableImage::from(Postgres::default()).with_tag("14-alpine"));
+                    .run(RunnableImage::from(Postgres::default()).with_tag("15-alpine"));
                 const POSTGRES_DEFAULT_PORT: u16 = 5432;
                 let port_number = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT);
                 trace!("Postgres container is up with port {port_number}");

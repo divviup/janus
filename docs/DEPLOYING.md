@@ -96,7 +96,7 @@ file](samples/basic_config/collection_job_driver.yaml) for details.
 
 ## Database
 
-Janus currently requires PostgreSQL 14. The schema is defined by SQL migration
+Janus currently requires PostgreSQL 15. The schema is defined by SQL migration
 scripts in the [`db`](../db) directory, which are applied using
 [`sqlx`][sqlx-cli]. Initial database setup can be done with `sqlx migrate run`,
 using the `--source` argument to point to `janus/db` and providing database
