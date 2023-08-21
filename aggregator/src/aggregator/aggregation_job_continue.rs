@@ -278,6 +278,7 @@ impl VdafOps {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
+    use crate::aggregator::http_handlers::test_util::{take_problem_details, take_response_body};
     use janus_aggregator_core::task::Task;
     use janus_messages::{AggregationJobContinueReq, AggregationJobId, AggregationJobResp};
     use prio::codec::{Decode, Encode};
@@ -321,12 +322,7 @@ pub mod test_util {
                 .unwrap(),
             AggregationJobResp::MEDIA_TYPE
         );
-        let body_bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
+        let body_bytes = take_response_body(&mut test_conn).await;
         AggregationJobResp::get_decoded(&body_bytes).unwrap()
     }
 
@@ -369,13 +365,8 @@ pub mod test_util {
                 .unwrap(),
             "application/problem+json"
         );
-
-        let body = test_conn.take_response_body();
-
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body.unwrap().into_bytes().await.unwrap()).unwrap();
         assert_eq!(
-            problem_details,
+            take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status as u16,
                 "type": want_error_type,
