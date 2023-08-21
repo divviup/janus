@@ -65,7 +65,7 @@ opentelemetry = { workspace = true, features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.13", optional = true, features = ["metrics"] }  # ensure that the version of tonic below matches what this uses
 opentelemetry-prometheus = { version = "0.13", optional = true }
 opentelemetry-semantic-conventions = { version = "0.12", optional = true }
-postgres-protocol = "0.6.5"
+postgres-protocol = "0.6.6"
 postgres-types = { version = "0.2.6", features = ["derive", "array-impls"] }
 prio.workspace = true
 prometheus = { version = "0.13.3", optional = true }
