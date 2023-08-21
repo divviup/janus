@@ -16,7 +16,7 @@ use janus_messages::{
     HpkeConfigList, Report, TaskId,
 };
 use opentelemetry::{
-    metrics::{Counter, Meter},
+    metrics::{Counter, Meter, Unit},
     KeyValue,
 };
 use prio::codec::Encode;
@@ -157,6 +157,7 @@ impl StatusCounter {
                 .with_description(
                     "Count of requests handled by the aggregator, by method, route, and response status.",
                 )
+                .with_unit(Unit::new("{request}"))
                 .init(),
         )
     }

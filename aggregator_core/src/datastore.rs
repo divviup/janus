@@ -166,6 +166,7 @@ impl<C: Clock> Datastore<C> {
         let transaction_status_counter = meter
             .u64_counter("janus_database_transactions")
             .with_description("Count of database transactions run, with their status.")
+            .with_unit(Unit::new("{transaction}"))
             .init();
         let rollback_error_counter = meter
             .u64_counter("janus_database_rollback_errors")
@@ -173,6 +174,7 @@ impl<C: Clock> Datastore<C> {
                 "Count of errors received when rolling back a database transaction, ",
                 "with their PostgreSQL error code.",
             ))
+            .with_unit(Unit::new("{error}"))
             .init();
         let transaction_duration_histogram = meter
             .f64_histogram("janus_database_transaction_duration")
