@@ -56,7 +56,7 @@ use janus_messages::{
     TaskId,
 };
 use opentelemetry::{
-    metrics::{Counter, Histogram, Meter},
+    metrics::{Counter, Histogram, Meter, Unit},
     KeyValue,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -112,6 +112,7 @@ pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
             "Failures while stepping aggregation jobs; these failures are ",
             "related to individual client reports rather than entire aggregation jobs."
         ))
+        .with_unit(Unit::new("{error}"))
         .init();
 
     // Initialize counters with desired status labels. This causes Prometheus to see the first
@@ -222,12 +223,14 @@ impl<C: Clock> Aggregator<C> {
         let upload_decrypt_failure_counter = meter
             .u64_counter("janus_upload_decrypt_failures")
             .with_description("Number of decryption failures in the /upload endpoint.")
+            .with_unit(Unit::new("{error}"))
             .init();
         upload_decrypt_failure_counter.add(0, &[]);
 
         let upload_decode_failure_counter = meter
             .u64_counter("janus_upload_decode_failures")
             .with_description("Number of message decode failures in the /upload endpoint.")
+            .with_unit(Unit::new("{error}"))
             .init();
         upload_decode_failure_counter.add(0, &[]);
 
