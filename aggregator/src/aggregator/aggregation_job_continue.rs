@@ -278,13 +278,13 @@ impl VdafOps {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use crate::aggregator::http_handlers::test_util::{take_problem_details, take_response_body};
+    use crate::aggregator::http_handlers::test_util::{decode_response_body, take_problem_details};
     use janus_aggregator_core::task::Task;
     use janus_messages::{AggregationJobContinueReq, AggregationJobId, AggregationJobResp};
-    use prio::codec::{Decode, Encode};
+    use prio::codec::Encode;
     use serde_json::json;
     use trillium::{Handler, KnownHeaderName, Status};
-    use trillium_testing::{prelude::post, TestConn};
+    use trillium_testing::{assert_headers, prelude::post, TestConn};
 
     async fn post_aggregation_job(
         task: &Task,
@@ -315,15 +315,8 @@ pub mod test_util {
         let mut test_conn = post_aggregation_job(task, aggregation_job_id, request, handler).await;
 
         assert_eq!(test_conn.status(), Some(Status::Ok));
-        assert_eq!(
-            test_conn
-                .response_headers()
-                .get(KnownHeaderName::ContentType)
-                .unwrap(),
-            AggregationJobResp::MEDIA_TYPE
-        );
-        let body_bytes = take_response_body(&mut test_conn).await;
-        AggregationJobResp::get_decoded(&body_bytes).unwrap()
+        assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
+        decode_response_body::<AggregationJobResp>(&mut test_conn).await
     }
 
     pub async fn post_aggregation_job_expecting_status(
@@ -358,13 +351,6 @@ pub mod test_util {
         )
         .await;
 
-        assert_eq!(
-            test_conn
-                .response_headers()
-                .get(KnownHeaderName::ContentType)
-                .unwrap(),
-            "application/problem+json"
-        );
         assert_eq!(
             take_problem_details(&mut test_conn).await,
             json!({
