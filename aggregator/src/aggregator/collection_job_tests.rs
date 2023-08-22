@@ -1,4 +1,10 @@
-use crate::aggregator::{http_handlers::aggregator_handler, Config};
+use crate::aggregator::{
+    http_handlers::{
+        aggregator_handler,
+        test_util::{take_problem_details, take_response_body},
+    },
+    Config,
+};
 use http::StatusCode;
 use janus_aggregator_core::{
     datastore::{
@@ -355,12 +361,7 @@ async fn collection_job_success_fixed_size() {
                 .unwrap(),
             Collection::<FixedSize>::MEDIA_TYPE
         );
-        let body_bytes = test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap();
+        let body_bytes = take_response_body(&mut test_conn).await;
         let collect_resp = Collection::<FixedSize>::get_decoded(body_bytes.as_ref()).unwrap();
 
         assert_eq!(
@@ -429,17 +430,8 @@ async fn collection_job_success_fixed_size() {
             .unwrap(),
         "application/problem+json"
     );
-    let problem_details: serde_json::Value = serde_json::from_slice(
-        &test_conn
-            .take_response_body()
-            .unwrap()
-            .into_bytes()
-            .await
-            .unwrap(),
-    )
-    .unwrap();
     assert_eq!(
-        problem_details,
+        take_problem_details(&mut test_conn).await,
         json!({
             "status": StatusCode::BAD_REQUEST.as_u16(),
             "type": "urn:ietf:params:ppm:dap:error:batchInvalid",

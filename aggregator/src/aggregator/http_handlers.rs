@@ -661,7 +661,8 @@ mod tests {
                 BatchAggregationState, BatchState, CollectionJob, CollectionJobState, HpkeKeyState,
                 ReportAggregation, ReportAggregationState,
             },
-            test_util::ephemeral_datastore,
+            test_util::{ephemeral_datastore, EphemeralDatastore},
+            Datastore,
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
         task::{test_util::TaskBuilder, QueryType, VerifyKey},
@@ -702,16 +703,41 @@ mod tests {
     use rand::random;
     use serde_json::json;
     use std::{collections::HashMap, io::Cursor, sync::Arc, time::Duration as StdDuration};
-    use trillium::{KnownHeaderName, Status};
+    use trillium::{Handler, KnownHeaderName, Status};
     use trillium_testing::{
         assert_headers,
         prelude::{delete, get, post, put},
         TestConn,
     };
 
+    /// Returns structures necessary for completing an HTTP handler test. The returned
+    /// [`EphemeralDatastore`] should be given a variable binding to prevent it being prematurely
+    /// dropped.
+    async fn setup_http_handler_test() -> (
+        MockClock,
+        EphemeralDatastore,
+        Arc<Datastore<MockClock>>,
+        impl Handler,
+    ) {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let handler = aggregator_handler(
+            datastore.clone(),
+            clock.clone(),
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
+
+        (clock, ephemeral_datastore, datastore, handler)
+    }
+
     #[tokio::test]
     async fn hpke_config() {
-        install_test_trace_subscriber();
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -719,23 +745,10 @@ mod tests {
             Role::Leader,
         )
         .build();
-        let unknown_task_id: TaskId = random();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
-
         datastore.put_task(&task).await.unwrap();
 
+        let unknown_task_id: TaskId = random();
         let want_hpke_key = task.current_hpke_key().clone();
-
-        let handler = aggregator_handler(
-            Arc::new(datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
 
         // No task ID provided and no global keys are configured.
         let mut test_conn = get("/hpke_config").run_async(&handler).await;
@@ -803,10 +816,7 @@ mod tests {
 
     #[tokio::test]
     async fn global_hpke_config() {
-        install_test_trace_subscriber();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let (clock, _ephemeral_datastore, datastore, _) = setup_http_handler_test().await;
 
         // Insert an HPKE config, i.e. start the application with a keypair already
         // in the database.
@@ -950,10 +960,7 @@ mod tests {
 
     #[tokio::test]
     async fn global_hpke_config_with_taskprov() {
-        install_test_trace_subscriber();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let (clock, _ephemeral_datastore, datastore, _) = setup_http_handler_test().await;
 
         // Insert an HPKE config, i.e. start the application with a keypair already
         // in the database.
@@ -1054,7 +1061,7 @@ mod tests {
 
     #[tokio::test]
     async fn hpke_config_cors_headers() {
-        install_test_trace_subscriber();
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -1062,20 +1069,7 @@ mod tests {
             Role::Leader,
         )
         .build();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
-
         datastore.put_task(&task).await.unwrap();
-
-        let handler = aggregator_handler(
-            Arc::new(datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
 
         // Check for appropriate CORS headers in response to a preflight request.
         let test_conn = TestConn::build(
@@ -1128,7 +1122,7 @@ mod tests {
             )
         }
 
-        install_test_trace_subscriber();
+        let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         const REPORT_EXPIRY_AGE: u64 = 1_000_000;
         let task = TaskBuilder::new(
@@ -1138,20 +1132,9 @@ mod tests {
         )
         .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
         .build();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-
         datastore.put_task(&task).await.unwrap();
+
         let report = create_report(&task, clock.now());
-        let handler = aggregator_handler(
-            Arc::clone(&datastore),
-            clock.clone(),
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
 
         // Upload a report. Do this twice to prove that PUT is idempotent.
         for _ in 0..2 {
@@ -1372,11 +1355,7 @@ mod tests {
     // Helper should not expose /upload endpoint
     #[tokio::test]
     async fn upload_handler_helper() {
-        install_test_trace_subscriber();
-
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+        let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -1386,15 +1365,6 @@ mod tests {
         .build();
         datastore.put_task(&task).await.unwrap();
         let report = create_report(&task, clock.now());
-
-        let handler = aggregator_handler(
-            Arc::new(datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
 
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
@@ -1427,7 +1397,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_leader() {
-        install_test_trace_subscriber();
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -1435,10 +1405,6 @@ mod tests {
             Role::Leader,
         )
         .build();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
-
         datastore.put_task(&task).await.unwrap();
 
         let request = AggregationJobInitializeReq::new(
@@ -1446,15 +1412,6 @@ mod tests {
             PartialBatchSelector::new_time_interval(),
             Vec::new(),
         );
-
-        let handler = aggregator_handler(
-            Arc::new(datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         let mut test_conn =
@@ -1515,7 +1472,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_wrong_agg_auth_token() {
-        install_test_trace_subscriber();
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -1523,10 +1480,6 @@ mod tests {
             Role::Helper,
         )
         .build();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
-
         datastore.put_task(&task).await.unwrap();
 
         let request = AggregationJobInitializeReq::new(
@@ -1534,15 +1487,6 @@ mod tests {
             PartialBatchSelector::new_time_interval(),
             Vec::new(),
         );
-
-        let handler = aggregator_handler(
-            Arc::new(datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         let wrong_token_value = random();
@@ -1593,14 +1537,10 @@ mod tests {
     // type is ()).
     #[allow(clippy::unit_arg)]
     async fn aggregate_init() {
-        // Prepare datastore & request.
-        install_test_trace_subscriber();
+        let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task =
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         let vdaf = dummy_vdaf::Vdaf::new();
         let verify_key: VerifyKey<0> = task.primary_vdaf_verify_key().unwrap();
@@ -1967,18 +1907,8 @@ mod tests {
             ]),
         );
 
-        // Create aggregator handler, send request, and parse response. Do this twice to prove that
-        // the request is idempotent.
-        let handler = aggregator_handler(
-            Arc::clone(&datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
+        // Send request, parse response. Do this twice to prove that the request is idempotent.
         let aggregation_job_id: AggregationJobId = random();
-
         for _ in 0..2 {
             let mut test_conn =
                 put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
@@ -2092,13 +2022,11 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::unit_arg)]
     async fn aggregate_init_with_reports_encrypted_by_global_key() {
-        install_test_trace_subscriber();
+        let (clock, _ephemeral_datastore, datastore, _) = setup_http_handler_test().await;
 
         let task =
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        datastore.put_task(&task).await.unwrap();
 
         // Insert some global HPKE keys.
         // Same ID as the task to test having both keys to choose from.
@@ -2129,7 +2057,15 @@ mod tests {
             .await
             .unwrap();
 
-        datastore.put_task(&task).await.unwrap();
+        // Create new handler _after_ the keys have been inserted so that they come pre-cached.
+        let handler = aggregator_handler(
+            datastore.clone(),
+            clock.clone(),
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
 
         let vdaf = dummy_vdaf::Vdaf::new();
         let verify_key: VerifyKey<0> = task.primary_vdaf_verify_key().unwrap();
@@ -2262,16 +2198,7 @@ mod tests {
             corrupted_input_share,
         );
 
-        let handler = aggregator_handler(
-            Arc::clone(&datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
         let aggregation_job_id: AggregationJobId = random();
-
         let request = AggregationJobInitializeReq::new(
             dummy_vdaf::AggregationParam(0).get_encoded(),
             PartialBatchSelector::new_time_interval(),
@@ -2402,8 +2329,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_init_prep_init_failed() {
-        // Prepare datastore & request.
-        install_test_trace_subscriber();
+        let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -2411,12 +2337,8 @@ mod tests {
             Role::Helper,
         )
         .build();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
-        let hpke_key = task.current_hpke_key();
-
         datastore.put_task(&task).await.unwrap();
+        let hpke_key = task.current_hpke_key();
 
         let report_share = generate_helper_report_share::<dummy_vdaf::Vdaf>(
             *task.id(),
@@ -2438,17 +2360,8 @@ mod tests {
             Vec::from([report_share.clone()]),
         );
 
-        // Create aggregator handler, send request, and parse response.
-        let handler = aggregator_handler(
-            Arc::new(datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
+        // Send request, and parse response.
         let aggregation_job_id: AggregationJobId = random();
-
         let mut test_conn =
             put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
@@ -2472,8 +2385,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_init_prep_step_failed() {
-        // Prepare datastore & request.
-        install_test_trace_subscriber();
+        let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -2481,11 +2393,7 @@ mod tests {
             Role::Helper,
         )
         .build();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
         let hpke_key = task.current_hpke_key();
-
         datastore.put_task(&task).await.unwrap();
 
         let report_share = generate_helper_report_share::<dummy_vdaf::Vdaf>(
@@ -2508,17 +2416,7 @@ mod tests {
             Vec::from([report_share.clone()]),
         );
 
-        // Create aggregator filter, send request, and parse response.
-        let handler = aggregator_handler(
-            Arc::new(datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
         let aggregation_job_id: AggregationJobId = random();
-
         let mut test_conn =
             put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
@@ -2542,7 +2440,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_init_duplicated_report_id() {
-        install_test_trace_subscriber();
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -2550,10 +2448,6 @@ mod tests {
             Role::Helper,
         )
         .build();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
-
         datastore.put_task(&task).await.unwrap();
 
         let report_share = ReportShare::new(
@@ -2575,15 +2469,6 @@ mod tests {
             PartialBatchSelector::new_time_interval(),
             Vec::from([report_share.clone(), report_share]),
         );
-
-        let handler = aggregator_handler(
-            Arc::new(datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         let mut test_conn =
@@ -2604,8 +2489,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_continue() {
-        // Prepare datastore & request.
-        install_test_trace_subscriber();
+        let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let aggregation_job_id = random();
         let task = TaskBuilder::new(
@@ -2614,9 +2498,6 @@ mod tests {
             Role::Helper,
         )
         .build();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
@@ -2817,16 +2698,7 @@ mod tests {
             ]),
         );
 
-        // Create aggregator handler, send request, and parse response.
-        let handler = aggregator_handler(
-            Arc::clone(&datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
-
+        // Send request, and parse response.
         let aggregate_resp =
             post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
 
@@ -2925,7 +2797,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_continue_accumulate_batch_aggregation() {
-        install_test_trace_subscriber();
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -2935,8 +2807,6 @@ mod tests {
         .build();
         let aggregation_job_id_0 = random();
         let aggregation_job_id_1 = random();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(MockClock::default()).await);
         let first_batch_interval_clock = MockClock::default();
         let second_batch_interval_clock = MockClock::new(
             first_batch_interval_clock
@@ -3188,16 +3058,7 @@ mod tests {
             ]),
         );
 
-        // Create aggregator handler, send request, and parse response.
-        let handler = aggregator_handler(
-            Arc::clone(&datastore),
-            first_batch_interval_clock.clone(),
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
-
+        // Send request, and parse response.
         let _ =
             post_aggregation_job_and_decode(&task, &aggregation_job_id_0, &request, &handler).await;
 
@@ -3494,16 +3355,6 @@ mod tests {
             ]),
         );
 
-        // Create aggregator handler, send request, and parse response.
-        let handler = aggregator_handler(
-            Arc::clone(&datastore),
-            first_batch_interval_clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
-
         let _ =
             post_aggregation_job_and_decode(&task, &aggregation_job_id_1, &request, &handler).await;
 
@@ -3623,8 +3474,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_continue_leader_sends_non_continue_transition() {
-        // Prepare datastore & request.
-        install_test_trace_subscriber();
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
         let task =
@@ -3634,9 +3484,6 @@ mod tests {
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             Time::from_seconds_since_epoch(54321),
         );
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         // Setup datastore.
         datastore
@@ -3697,16 +3544,6 @@ mod tests {
                 PrepareStepResult::Finished,
             )]),
         );
-
-        let handler = aggregator_handler(
-            Arc::clone(&datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
-
         post_aggregation_job_expecting_error(
             &task,
             &aggregation_job_id,
@@ -3721,8 +3558,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_continue_prep_step_fails() {
-        // Prepare datastore & request.
-        install_test_trace_subscriber();
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
         let task = TaskBuilder::new(
@@ -3736,9 +3572,6 @@ mod tests {
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             Time::from_seconds_since_epoch(54321),
         );
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         // Setup datastore.
         datastore
@@ -3799,15 +3632,6 @@ mod tests {
                 PrepareStepResult::Continued(Vec::new()),
             )]),
         );
-
-        let handler = aggregator_handler(
-            Arc::clone(&datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
 
         let aggregate_resp =
             post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
@@ -3882,8 +3706,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_continue_unexpected_transition() {
-        // Prepare datastore & request.
-        install_test_trace_subscriber();
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
         let task =
@@ -3893,9 +3716,6 @@ mod tests {
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             Time::from_seconds_since_epoch(54321),
         );
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         // Setup datastore.
         datastore
@@ -3959,15 +3779,6 @@ mod tests {
             )]),
         );
 
-        let handler = aggregator_handler(
-            Arc::new(datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
-
         post_aggregation_job_expecting_error(
             &task,
             &aggregation_job_id,
@@ -3982,8 +3793,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_continue_out_of_order_transition() {
-        // Prepare datastore & request.
-        install_test_trace_subscriber();
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
         let task =
@@ -3997,10 +3807,6 @@ mod tests {
             ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
             Time::from_seconds_since_epoch(54321),
         );
-
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         // Setup datastore.
         datastore
@@ -4098,16 +3904,6 @@ mod tests {
                 ),
             ]),
         );
-
-        let handler = aggregator_handler(
-            Arc::new(datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
-
         post_aggregation_job_expecting_error(
             &task,
             &aggregation_job_id,
@@ -4122,8 +3918,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_continue_for_non_waiting_aggregation() {
-        // Prepare datastore & request.
-        install_test_trace_subscriber();
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
         let task =
@@ -4133,10 +3928,6 @@ mod tests {
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             Time::from_seconds_since_epoch(54321),
         );
-
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         // Setup datastore.
         datastore
@@ -4196,16 +3987,6 @@ mod tests {
                 PrepareStepResult::Continued(Vec::new()),
             )]),
         );
-
-        let handler = aggregator_handler(
-            Arc::new(datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
-
         post_aggregation_job_expecting_error(
             &task,
             &aggregation_job_id,
@@ -4319,26 +4100,13 @@ mod tests {
 
     #[tokio::test]
     async fn collection_job_put_request_invalid_batch_size() {
-        install_test_trace_subscriber();
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
             .with_min_batch_size(1)
             .build();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
-
         datastore.put_task(&task).await.unwrap();
-
-        let handler = aggregator_handler(
-            Arc::new(datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
 
         let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
@@ -4944,25 +4712,12 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_share_request_to_leader() {
-        install_test_trace_subscriber();
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
         let task =
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
-
         datastore.put_task(&task).await.unwrap();
-
-        let handler = aggregator_handler(
-            Arc::new(datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
 
         let request = AggregateShareReq::new(
             BatchSelector::new_time_interval(
@@ -5000,27 +4755,14 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_share_request_invalid_batch_interval() {
-        install_test_trace_subscriber();
+        let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
         const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(3600);
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper)
             .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
             .build();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
-
         datastore.put_task(&task).await.unwrap();
-
-        let handler = aggregator_handler(
-            Arc::new(datastore),
-            clock.clone(),
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
 
         let request = AggregateShareReq::new(
             BatchSelector::new_time_interval(
@@ -5092,7 +4834,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_share_request() {
-        install_test_trace_subscriber();
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let collector_hpke_keypair = generate_test_hpke_config_and_private_key();
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper)
@@ -5101,21 +4843,7 @@ mod tests {
             .with_min_batch_size(10)
             .with_collector_hpke_config(collector_hpke_keypair.config().clone())
             .build();
-
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-
         datastore.put_task(&task).await.unwrap();
-
-        let handler = aggregator_handler(
-            Arc::clone(&datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
 
         // There are no batch aggregations in the datastore yet
         let request = AggregateShareReq::new(
