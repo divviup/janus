@@ -804,13 +804,7 @@ async fn taskprov_aggregate_continue() {
     .await;
 
     assert_eq!(test_conn.status(), Some(Status::Ok));
-    assert_eq!(
-        test_conn
-            .response_headers()
-            .get(KnownHeaderName::ContentType)
-            .unwrap(),
-        AggregationJobResp::MEDIA_TYPE
-    );
+    assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
     let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
 
     // We'll only validate the response. Taskprov doesn't touch functionality beyond the authorization

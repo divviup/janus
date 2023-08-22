@@ -284,7 +284,7 @@ pub mod test_util {
     use prio::codec::Encode;
     use serde_json::json;
     use trillium::{Handler, KnownHeaderName, Status};
-    use trillium_testing::{prelude::post, TestConn};
+    use trillium_testing::{assert_headers, prelude::post, TestConn};
 
     async fn post_aggregation_job(
         task: &Task,
@@ -315,13 +315,7 @@ pub mod test_util {
         let mut test_conn = post_aggregation_job(task, aggregation_job_id, request, handler).await;
 
         assert_eq!(test_conn.status(), Some(Status::Ok));
-        assert_eq!(
-            test_conn
-                .response_headers()
-                .get(KnownHeaderName::ContentType)
-                .unwrap(),
-            AggregationJobResp::MEDIA_TYPE
-        );
+        assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
         decode_response_body::<AggregationJobResp>(&mut test_conn).await
     }
 
@@ -357,13 +351,6 @@ pub mod test_util {
         )
         .await;
 
-        assert_eq!(
-            test_conn
-                .response_headers()
-                .get(KnownHeaderName::ContentType)
-                .unwrap(),
-            "application/problem+json"
-        );
         assert_eq!(
             take_problem_details(&mut test_conn).await,
             json!({
