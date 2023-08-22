@@ -440,6 +440,7 @@ impl CollectionJobDriverMetrics {
         let jobs_finished_counter = meter
             .u64_counter("janus_collection_jobs_finished")
             .with_description("Count of finished collection jobs.")
+            .with_unit(Unit::new("{job}"))
             .init();
         jobs_finished_counter.add(0, &[]);
 
@@ -448,12 +449,13 @@ impl CollectionJobDriverMetrics {
             .with_description(
                 "The amount of time elapsed while making an HTTP request to a helper.",
             )
-            .with_unit(Unit::new("seconds"))
+            .with_unit(Unit::new("s"))
             .init();
 
         let jobs_abandoned_counter = meter
             .u64_counter("janus_collection_jobs_abandoned")
             .with_description("Count of abandoned collection jobs.")
+            .with_unit(Unit::new("{job}"))
             .init();
         jobs_abandoned_counter.add(0, &[]);
 
@@ -463,6 +465,7 @@ impl CollectionJobDriverMetrics {
                 "Count of collection jobs for which a lease was acquired but were already \
                  finished.",
             )
+            .with_unit(Unit::new("{job}"))
             .init();
         jobs_already_finished_counter.add(0, &[]);
 
@@ -472,6 +475,7 @@ impl CollectionJobDriverMetrics {
                 "Count of collection jobs that were run to completion but found to have been \
                  deleted.",
             )
+            .with_unit(Unit::new("{job}"))
             .init();
         deleted_jobs_encountered_counter.add(0, &[]);
 
@@ -481,12 +485,14 @@ impl CollectionJobDriverMetrics {
                 "Count of collection jobs that were run to completion but found in an unexpected \
                  state.",
             )
+            .with_unit(Unit::new("{job}"))
             .init();
         unexpected_job_state_counter.add(0, &[]);
 
         let job_steps_retried_counter = meter
             .u64_counter("janus_job_retries")
             .with_description("Count of retried job steps.")
+            .with_unit(Unit::new("{step}"))
             .init();
         job_steps_retried_counter.add(0, &[]);
 

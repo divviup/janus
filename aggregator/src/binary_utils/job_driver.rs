@@ -106,13 +106,13 @@ where
             .meter
             .f64_histogram("janus_job_acquire_time")
             .with_description("Time spent acquiring jobs.")
-            .with_unit(Unit::new("seconds"))
+            .with_unit(Unit::new("s"))
             .init();
         let job_step_time_histogram = self
             .meter
             .f64_histogram("janus_job_step_time")
             .with_description("Time spent stepping jobs.")
-            .with_unit(Unit::new("seconds"))
+            .with_unit(Unit::new("s"))
             .init();
 
         // Set up state for the job driver run.
