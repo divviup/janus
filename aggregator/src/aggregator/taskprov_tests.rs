@@ -2,7 +2,7 @@ use crate::{
     aggregator::{
         http_handlers::{
             aggregator_handler,
-            test_util::{take_problem_details, take_response_body},
+            test_util::{decode_response_body, take_problem_details},
         },
         tests::generate_helper_report_share,
         Config,
@@ -287,8 +287,7 @@ async fn taskprov_aggregate_init() {
         &test_conn,
         "content-type" => (AggregationJobResp::MEDIA_TYPE)
     );
-    let body_bytes = take_response_body(&mut test_conn).await;
-    let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
+    let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
 
     assert_eq!(aggregate_resp.prepare_steps().len(), 1);
     let prepare_step = aggregate_resp.prepare_steps().get(0).unwrap();
@@ -812,8 +811,7 @@ async fn taskprov_aggregate_continue() {
             .unwrap(),
         AggregationJobResp::MEDIA_TYPE
     );
-    let body_bytes = take_response_body(&mut test_conn).await;
-    let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
+    let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
 
     // We'll only validate the response. Taskprov doesn't touch functionality beyond the authorization
     // of the request.
@@ -931,8 +929,7 @@ async fn taskprov_aggregate_share() {
         &test_conn,
         "content-type" => (AggregateShareMessage::MEDIA_TYPE)
     );
-    let body_bytes = take_response_body(&mut test_conn).await;
-    let aggregate_share_resp = AggregateShareMessage::get_decoded(&body_bytes).unwrap();
+    let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut test_conn).await;
 
     hpke::open(
         test.collector_hpke_keypair.config(),
@@ -983,8 +980,7 @@ async fn end_to_end() {
 
     assert_eq!(test_conn.status(), Some(Status::Ok));
     assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
-    let body_bytes = take_response_body(&mut test_conn).await;
-    let aggregation_job_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
+    let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
 
     assert_eq!(aggregation_job_resp.prepare_steps().len(), 1);
     let prepare_step = &aggregation_job_resp.prepare_steps()[0];
@@ -1027,8 +1023,7 @@ async fn end_to_end() {
 
     assert_eq!(test_conn.status(), Some(Status::Ok));
     assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
-    let body_bytes = take_response_body(&mut test_conn).await;
-    let aggregation_job_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
+    let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
 
     assert_eq!(aggregation_job_resp.prepare_steps().len(), 1);
     let prepare_step = &aggregation_job_resp.prepare_steps()[0];
@@ -1059,8 +1054,7 @@ async fn end_to_end() {
 
     assert_eq!(test_conn.status(), Some(Status::Ok));
     assert_headers!(&test_conn, "content-type" => (AggregateShareMessage::MEDIA_TYPE));
-    let body_bytes = take_response_body(&mut test_conn).await;
-    let aggregate_share_resp = AggregateShareMessage::get_decoded(&body_bytes).unwrap();
+    let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut test_conn).await;
 
     let plaintext = hpke::open(
         test.collector_hpke_keypair.config(),

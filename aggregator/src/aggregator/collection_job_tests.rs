@@ -1,7 +1,7 @@
 use crate::aggregator::{
     http_handlers::{
         aggregator_handler,
-        test_util::{take_problem_details, take_response_body},
+        test_util::{decode_response_body, take_problem_details},
     },
     Config,
 };
@@ -361,8 +361,7 @@ async fn collection_job_success_fixed_size() {
                 .unwrap(),
             Collection::<FixedSize>::MEDIA_TYPE
         );
-        let body_bytes = take_response_body(&mut test_conn).await;
-        let collect_resp = Collection::<FixedSize>::get_decoded(body_bytes.as_ref()).unwrap();
+        let collect_resp: Collection<FixedSize> = decode_response_body(&mut test_conn).await;
 
         assert_eq!(
             collect_resp.report_count(),

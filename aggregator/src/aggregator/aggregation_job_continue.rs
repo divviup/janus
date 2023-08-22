@@ -278,10 +278,10 @@ impl VdafOps {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use crate::aggregator::http_handlers::test_util::{take_problem_details, take_response_body};
+    use crate::aggregator::http_handlers::test_util::{decode_response_body, take_problem_details};
     use janus_aggregator_core::task::Task;
     use janus_messages::{AggregationJobContinueReq, AggregationJobId, AggregationJobResp};
-    use prio::codec::{Decode, Encode};
+    use prio::codec::Encode;
     use serde_json::json;
     use trillium::{Handler, KnownHeaderName, Status};
     use trillium_testing::{prelude::post, TestConn};
@@ -322,8 +322,7 @@ pub mod test_util {
                 .unwrap(),
             AggregationJobResp::MEDIA_TYPE
         );
-        let body_bytes = take_response_body(&mut test_conn).await;
-        AggregationJobResp::get_decoded(&body_bytes).unwrap()
+        decode_response_body::<AggregationJobResp>(&mut test_conn).await
     }
 
     pub async fn post_aggregation_job_expecting_status(
