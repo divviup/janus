@@ -1084,6 +1084,11 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         &self.aggregation_parameter
     }
 
+    /// Takes the aggregation parameter associated with this collection job, consuming the job.
+    pub fn take_aggregation_parameter(self) -> A::AggregationParam {
+        self.aggregation_parameter
+    }
+
     /// Returns the state associated with this collection job.
     pub fn state(&self) -> &CollectionJobState<SEED_SIZE, A> {
         &self.state
@@ -1301,6 +1306,11 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
     /// Gets the aggregation parameter associated with this aggregate share job.
     pub fn aggregation_parameter(&self) -> &A::AggregationParam {
         &self.aggregation_parameter
+    }
+
+    /// Takes the aggregation parameter associated with this aggregate share job, consuming the job.
+    pub fn take_aggregation_parameter(self) -> A::AggregationParam {
+        self.aggregation_parameter
     }
 
     /// Gets the helper aggregate share associated with this aggregate share job.

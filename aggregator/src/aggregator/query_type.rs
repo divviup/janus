@@ -11,6 +11,7 @@ use janus_messages::{
     Role,
 };
 use prio::vdaf;
+use std::{collections::HashSet, hash::Hash};
 
 #[async_trait]
 pub trait UploadableQueryType: QueryType {
@@ -100,7 +101,10 @@ pub trait CollectableQueryType: CoreCollectableQueryType + AccumulableQueryType 
         vdaf: &A,
         task: &Task,
         batch_identifier: &Self::BatchIdentifier,
-    ) -> Result<(), datastore::Error>;
+        aggregation_param: &A::AggregationParam,
+    ) -> Result<(), datastore::Error>
+    where
+        A::AggregationParam: Send + Sync + Eq + Hash;
 }
 
 #[async_trait]
@@ -114,11 +118,16 @@ impl CollectableQueryType for TimeInterval {
         vdaf: &A,
         task: &Task,
         collect_interval: &Self::BatchIdentifier,
-    ) -> Result<(), datastore::Error> {
-        // Check how many rows in the relevant table have an intersecting batch interval.
-        // Each such row consumes one unit of query count.
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
-        let intersecting_intervals: Vec<_> = match task.role() {
+        aggregation_param: &A::AggregationParam,
+    ) -> Result<(), datastore::Error>
+    where
+        A::AggregationParam: Send + Sync + Eq + Hash,
+    {
+        // Check how distinct aggregation parameters appear in rows in the relevant table with an
+        // intersecting batch interval. Each distinct aggregation parameter consumes one unit of
+        // query count. https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
+        let mut found_overlapping_nonequal_interval = false;
+        let agg_params = match task.role() {
             Role::Leader => tx
                 .get_collection_jobs_intersecting_interval::<SEED_SIZE, A>(
                     vdaf,
@@ -127,8 +136,13 @@ impl CollectableQueryType for TimeInterval {
                 )
                 .await?
                 .into_iter()
-                .map(|job| *job.batch_interval())
-                .collect(),
+                .map(|job| {
+                    if job.batch_interval() != collect_interval {
+                        found_overlapping_nonequal_interval = true;
+                    }
+                    job.take_aggregation_parameter()
+                })
+                .collect::<HashSet<_>>(),
 
             Role::Helper => tx
                 .get_aggregate_share_jobs_intersecting_interval::<SEED_SIZE, A>(
@@ -138,18 +152,20 @@ impl CollectableQueryType for TimeInterval {
                 )
                 .await?
                 .into_iter()
-                .map(|job| *job.batch_interval())
-                .collect(),
+                .map(|job| {
+                    if job.batch_interval() != collect_interval {
+                        found_overlapping_nonequal_interval = true;
+                    };
+                    job.take_aggregation_parameter()
+                })
+                .collect::<HashSet<_>>(),
 
             _ => panic!("Unexpected task role {:?}", task.role()),
         };
 
         // Check that all intersecting collect intervals are equal to this collect interval.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6-5
-        if intersecting_intervals
-            .iter()
-            .any(|interval| interval != collect_interval)
-        {
+        if found_overlapping_nonequal_interval {
             return Err(datastore::Error::User(
                 Error::BatchOverlap(*task.id(), *collect_interval).into(),
             ));
@@ -158,10 +174,15 @@ impl CollectableQueryType for TimeInterval {
         // Check that the batch query count is being consumed appropriately.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
         let max_batch_query_count: usize = task.max_batch_query_count().try_into()?;
-        if intersecting_intervals.len() >= max_batch_query_count {
+        let query_count = agg_params.len()
+            + if agg_params.contains(aggregation_param) {
+                0
+            } else {
+                1
+            };
+        if query_count > max_batch_query_count {
             return Err(datastore::Error::User(
-                Error::BatchQueriedTooManyTimes(*task.id(), intersecting_intervals.len() as u64)
-                    .into(),
+                Error::BatchQueriedTooManyTimes(*task.id(), query_count as u64).into(),
             ));
         }
         Ok(())
@@ -179,17 +200,25 @@ impl CollectableQueryType for FixedSize {
         vdaf: &A,
         task: &Task,
         batch_id: &Self::BatchIdentifier,
-    ) -> Result<(), datastore::Error> {
-        let query_count = match task.role() {
+        aggregation_param: &A::AggregationParam,
+    ) -> Result<(), datastore::Error>
+    where
+        A::AggregationParam: Send + Sync + Eq + Hash,
+    {
+        let agg_params = match task.role() {
             Role::Leader => tx
                 .get_collection_jobs_by_batch_id::<SEED_SIZE, A>(vdaf, task.id(), batch_id)
                 .await?
-                .len(),
+                .into_iter()
+                .map(|job| job.take_aggregation_parameter())
+                .collect::<HashSet<_>>(),
 
             Role::Helper => tx
                 .get_aggregate_share_jobs_by_batch_id::<SEED_SIZE, A>(vdaf, task.id(), batch_id)
                 .await?
-                .len(),
+                .into_iter()
+                .map(|job| job.take_aggregation_parameter())
+                .collect::<HashSet<_>>(),
 
             _ => panic!("Unexpected task role {:?}", task.role()),
         };
@@ -197,7 +226,13 @@ impl CollectableQueryType for FixedSize {
         // Check that the batch query count is being consumed appropriately.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
         let max_batch_query_count: usize = task.max_batch_query_count().try_into()?;
-        if query_count >= max_batch_query_count {
+        let query_count = agg_params.len()
+            + if agg_params.contains(aggregation_param) {
+                0
+            } else {
+                1
+            };
+        if query_count > max_batch_query_count {
             return Err(datastore::Error::User(
                 Error::BatchQueriedTooManyTimes(*task.id(), query_count as u64).into(),
             ));

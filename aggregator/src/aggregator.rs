@@ -76,6 +76,7 @@ use std::{
     borrow::Borrow,
     collections::{hash_map::Entry, HashMap, HashSet},
     fmt::Debug,
+    hash::Hash,
     panic,
     sync::Arc,
     time::{Duration as StdDuration, Instant},
@@ -2165,7 +2166,7 @@ impl VdafOps {
         req_bytes: &[u8],
     ) -> Result<(), Error>
     where
-        A::AggregationParam: 'static + Send + Sync + PartialEq + Eq,
+        A::AggregationParam: 'static + Send + Sync + PartialEq + Eq + Hash,
         A::AggregateShare: Send + Sync,
     {
         let req = Arc::new(CollectionReq::<Q>::get_decoded(req_bytes)?);
@@ -2236,7 +2237,8 @@ impl VdafOps {
                             tx,
                             &vdaf,
                             &task,
-                            &collection_identifier
+                            &collection_identifier,
+                            &aggregation_param,
                         ),
                         Q::count_client_reports(tx, &task, &collection_identifier),
                         try_join_all(
@@ -2729,7 +2731,7 @@ impl VdafOps {
         collector_hpke_config: &HpkeConfig,
     ) -> Result<AggregateShare, Error>
     where
-        A::AggregationParam: Send + Sync,
+        A::AggregationParam: Send + Sync + Eq + Hash,
         A::AggregateShare: Send + Sync,
     {
         // Decode request, and verify that it is for the current task. We use an assert to check
@@ -2816,6 +2818,7 @@ impl VdafOps {
                                     vdaf.as_ref(),
                                     &task,
                                     aggregate_share_req.batch_selector().batch_identifier(),
+                                    &aggregation_param,
                                 )
                             )?;
 
