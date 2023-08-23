@@ -2111,8 +2111,7 @@ impl<C: Clock> Transaction<'_, C> {
                 "SELECT
                     report_aggregations.client_timestamp, report_aggregations.ord,
                     report_aggregations.state, report_aggregations.prep_state,
-                    report_aggregations.prep_msg, report_aggregations.error_code,
-                    report_aggregations.last_prep_step
+                    report_aggregations.error_code, report_aggregations.last_prep_step
                 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id
@@ -2139,7 +2138,6 @@ impl<C: Clock> Transaction<'_, C> {
                 task_id,
                 aggregation_job_id,
                 report_id,
-                aggregation_param,
                 &row,
             )
         })
@@ -2168,8 +2166,8 @@ impl<C: Clock> Transaction<'_, C> {
                 "SELECT
                     report_aggregations.client_report_id, report_aggregations.client_timestamp,
                     report_aggregations.ord, report_aggregations.state,
-                    report_aggregations.prep_state, report_aggregations.prep_msg,
-                    report_aggregations.error_code, report_aggregations.last_prep_step
+                    report_aggregations.prep_state, report_aggregations.error_code,
+                    report_aggregations.last_prep_step
                 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id
@@ -2196,7 +2194,6 @@ impl<C: Clock> Transaction<'_, C> {
                 task_id,
                 aggregation_job_id,
                 &row.get_bytea_and_convert::<ReportId>("client_report_id")?,
-                aggregation_param,
                 &row,
             )
         })
@@ -2214,7 +2211,6 @@ impl<C: Clock> Transaction<'_, C> {
         vdaf: &A,
         role: &Role,
         task_id: &TaskId,
-        aggregation_param: &A::AggregationParam,
     ) -> Result<Vec<ReportAggregation<SEED_SIZE, A>>, Error>
     where
         for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
@@ -2225,8 +2221,7 @@ impl<C: Clock> Transaction<'_, C> {
                     aggregation_jobs.aggregation_job_id, report_aggregations.client_report_id,
                     report_aggregations.client_timestamp, report_aggregations.ord,
                     report_aggregations.state, report_aggregations.prep_state,
-                    report_aggregations.prep_msg, report_aggregations.error_code,
-                    report_aggregations.last_prep_step
+                    report_aggregations.error_code, report_aggregations.last_prep_step
                 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id
@@ -2250,7 +2245,6 @@ impl<C: Clock> Transaction<'_, C> {
                 task_id,
                 &row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?,
                 &row.get_bytea_and_convert::<ReportId>("client_report_id")?,
-                aggregation_param,
                 &row,
             )
         })
@@ -2263,7 +2257,6 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
         report_id: &ReportId,
-        aggregation_param: &A::AggregationParam,
         row: &Row,
     ) -> Result<ReportAggregation<SEED_SIZE, A>, Error>
     where
@@ -2273,7 +2266,6 @@ impl<C: Clock> Transaction<'_, C> {
         let ord: u64 = row.get_bigint_and_convert("ord")?;
         let state: ReportAggregationStateCode = row.get("state");
         let prep_state_bytes: Option<Vec<u8>> = row.get("prep_state");
-        let prep_msg_bytes: Option<Vec<u8>> = row.get("prep_msg");
         let error_code: Option<i16> = row.get("error_code");
         let last_prep_step_bytes: Option<Vec<u8>> = row.get("last_prep_step");
 
@@ -2300,11 +2292,8 @@ impl<C: Clock> Transaction<'_, C> {
                 let agg_index = role.index().ok_or_else(|| {
                     Error::User(anyhow!("unexpected role: {}", role.as_str()).into())
                 })?;
-                let ping_pong_state = ping_pong::State::get_decoded_with_param(
-                    &ping_pong::StateDecodingParam {
-                        prep_state: &(vdaf, agg_index),
-                        output_share: &(vdaf, aggregation_param),
-                    },
+                let ping_pong_transition = ping_pong::Transition::get_decoded_with_param(
+                    &(vdaf, agg_index),
                     &prep_state_bytes.ok_or_else(|| {
                         Error::DbState(
                             "report aggregation in state WAITING but prep_state is NULL"
@@ -2312,11 +2301,8 @@ impl<C: Clock> Transaction<'_, C> {
                         )
                     })?,
                 )?;
-                let prep_msg = prep_msg_bytes
-                    .map(|bytes| ping_pong::Message::get_decoded(&bytes))
-                    .transpose()?;
 
-                ReportAggregationState::Waiting(ping_pong_state, prep_msg)
+                ReportAggregationState::Waiting(ping_pong_transition)
             }
 
             ReportAggregationStateCode::Finished => ReportAggregationState::Finished,

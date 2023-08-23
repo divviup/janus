@@ -19,7 +19,7 @@ use janus_messages::{
 use opentelemetry::metrics::Counter;
 use prio::{
     codec::{Encode, ParameterizedDecode},
-    topology::ping_pong::{self, PingPongTopology},
+    topology::ping_pong::{self, Message, PingPongError, PingPongTopology},
     vdaf,
 };
 use std::sync::Arc;
@@ -29,6 +29,57 @@ use tracing::trace_span;
 use super::error::handle_ping_pong_error;
 
 impl VdafOps {
+    fn continue_individual_report<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>(
+        vdaf: &A,
+        transition: &ping_pong::Transition<SEED_SIZE, 16, A>,
+        inbound: &Message,
+    ) -> Result<
+        (
+            ReportAggregationState<SEED_SIZE, A>,
+            PrepareStepResult,
+            Option<A::OutputShare>,
+        ),
+        PingPongError,
+    > {
+        let (state, _) = transition.evaluate(vdaf)?;
+        let state_and_message = vdaf.continued(ping_pong::Role::Helper, state, inbound)?;
+
+        match state_and_message {
+            ping_pong::ContinuedValue::WithMessage {
+                transition: new_transition,
+            } => {
+                let (state, message) = new_transition.evaluate(vdaf)?;
+                let (report_aggregation_state, output_share) = match state {
+                    // Helper did not finish. Store the new transition and await the next message
+                    // from the Leader to advance preparation.
+                    ping_pong::State::Continued(_) => {
+                        (ReportAggregationState::Waiting(new_transition), None)
+                    }
+                    // Helper finished. Commit the output share.
+                    ping_pong::State::Finished(output_share) => {
+                        (ReportAggregationState::Finished, Some(output_share))
+                    }
+                };
+
+                Ok((
+                    report_aggregation_state,
+                    // Helper has an outgoing message for Leader
+                    PrepareStepResult::Continue { message },
+                    output_share,
+                ))
+            }
+            ping_pong::ContinuedValue::FinishedNoMessage { output_share } => {
+                // Helper finished and we have no outgoing ping-pong message. Commit the
+                // output share and respond with a finished message.
+                Ok((
+                    ReportAggregationState::Finished,
+                    PrepareStepResult::Finished,
+                    Some(output_share),
+                ))
+            }
+        }
+    }
+
     /// Step the helper's aggregation job to the next round of VDAF preparation using the round `n`
     /// prepare state in `report_aggregations` with the round `n+1` broadcast prepare messages in
     /// `leader_aggregation_job`.
@@ -73,7 +124,7 @@ impl VdafOps {
                 if report_agg.report_id() != prep_step.report_id() {
                     // This report was omitted by the leader because of a prior failure. Note that
                     // the report was dropped (if it's not already in an error state) and continue.
-                    if matches!(report_agg.state(), ReportAggregationState::Waiting(_, _)) {
+                    if matches!(report_agg.state(), ReportAggregationState::Waiting(_)) {
                         *report_agg = report_agg
                             .clone()
                             .with_state(ReportAggregationState::Failed(PrepareError::ReportDropped))
@@ -104,8 +155,8 @@ impl VdafOps {
                 continue;
             }
 
-            let prep_state = match report_aggregation.state() {
-                ReportAggregationState::Waiting(prep_state, _) => prep_state,
+            let transition = match report_aggregation.state() {
+                ReportAggregationState::Waiting(transition) => transition,
                 _ => {
                     return Err(datastore::Error::User(
                         Error::UnrecognizedMessage(
@@ -120,57 +171,25 @@ impl VdafOps {
             // Compute the next transition; if we're finished, we terminate here. Otherwise,
             // retrieve our updated state as well as the leader & helper prepare shares.
             let (report_aggregation_state, prepare_step_result, output_share) =
-                match trace_span!("VDAF preparation continuation").in_scope(|| {
-                    vdaf.continued_enum(
-                        ping_pong::Role::Helper,
-                        prep_state.clone(),
-                        prep_step.payload(),
-                    )
-                    .map_err(|error| {
-                        handle_ping_pong_error(
-                            task.id(),
-                            Role::Leader,
-                            prep_step.report_id(),
-                            error,
-                            &aggregate_step_failure_counter,
-                        )
-                    })
-                }) {
-                    Ok(ping_pong::StateAndMessage::WithMessage { state, message }) => {
-                        let (report_aggregation_state, output_share) = match state {
-                            // Helper did not finish. Store the state and await the next message
-                            // from the Leader to advance the state.
-                            state @ ping_pong::State::Continued(_) => {
-                                (ReportAggregationState::Waiting(state, None), None)
-                            }
-                            // Helper finished. Commit the output share.
-                            ping_pong::State::Finished(output_share) => {
-                                (ReportAggregationState::Finished, Some(output_share))
-                            }
-                        };
-
-                        (
-                            report_aggregation_state,
-                            // Helper has an outgoing message for Leader
-                            PrepareStepResult::Continue { message },
-                            output_share,
-                        )
-                    }
-                    Ok(ping_pong::StateAndMessage::FinishedNoMessage { output_share }) => {
-                        // Helper finished and we have no outgoing ping-pong message. Commit the
-                        // output share and respond with a finished message.
-                        (
-                            ReportAggregationState::Finished,
-                            PrepareStepResult::Finished,
-                            Some(output_share),
-                        )
-                    }
-                    Err(prepare_error) => (
-                        ReportAggregationState::Failed(prepare_error),
-                        PrepareStepResult::Reject(prepare_error),
-                        None,
-                    ),
-                };
+                trace_span!("VDAF preparation continuation").in_scope(|| {
+                    Self::continue_individual_report(vdaf.as_ref(), transition, prep_step.payload())
+                        .map_err(|error| {
+                            handle_ping_pong_error(
+                                task.id(),
+                                Role::Leader,
+                                prep_step.report_id(),
+                                error,
+                                &aggregate_step_failure_counter,
+                            )
+                        })
+                        .unwrap_or_else(|prepare_error| {
+                            (
+                                ReportAggregationState::Failed(prepare_error),
+                                PrepareStepResult::Reject(prepare_error),
+                                None,
+                            )
+                        })
+                });
 
             *report_aggregation = report_aggregation
                 .clone()
@@ -192,7 +211,7 @@ impl VdafOps {
         for report_agg in report_aggregations_iter {
             // This report was omitted by the leader because of a prior failure. Note that the
             // report was dropped (if it's not already in an error state) and continue.
-            if matches!(report_agg.state(), ReportAggregationState::Waiting(_, _)) {
+            if matches!(report_agg.state(), ReportAggregationState::Waiting(_)) {
                 *report_agg = report_agg
                     .clone()
                     .with_state(ReportAggregationState::Failed(PrepareError::ReportDropped))
@@ -507,7 +526,7 @@ mod tests {
                     .await
                     .unwrap();
 
-                    let (ping_pong_state, _) = &transcript.helper_prepare_transitions[0];
+                    let (transition, _, _) = &transcript.helper_prepare_transitions[0];
                     tx.put_report_aggregation::<VERIFY_KEY_LEN, Poplar1<PrgSha3, 16>>(
                         &ReportAggregation::new(
                             *task.id(),
@@ -516,7 +535,7 @@ mod tests {
                             *prepare_init.report_share().metadata().time(),
                             0,
                             None,
-                            ReportAggregationState::Waiting(ping_pong_state.clone(), None),
+                            ReportAggregationState::Waiting(transition.clone()),
                         ),
                     )
                     .await
@@ -532,7 +551,7 @@ mod tests {
             AggregationJobRound::from(1),
             Vec::from([PrepareContinue::new(
                 *prepare_init.report_share().metadata().id(),
-                transcript.leader_prepare_transitions[1].1.clone(),
+                transcript.leader_prepare_transitions[1].2.clone(),
             )]),
         );
 
@@ -686,7 +705,7 @@ mod tests {
             test_case.first_continue_request.round(),
             Vec::from([PrepareContinue::new(
                 *unrelated_prepare_init.report_share().metadata().id(),
-                unrelated_transcript.leader_prepare_transitions[1].1.clone(),
+                unrelated_transcript.leader_prepare_transitions[1].2.clone(),
             )]),
         );
 

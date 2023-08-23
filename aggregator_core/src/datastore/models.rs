@@ -708,8 +708,7 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED
         /// Current state of this report aggregation, which could either be A::PrepareState (we're
         /// awaiting another prepare message from the peer aggregator) or A::OutputShare (we have
         /// finished, but are waiting for the peer to finish before we commit the output share).
-        ping_pong::State<A::PrepareState, A::OutputShare>,
-        Option<ping_pong::Message>,
+        ping_pong::Transition<SEED_SIZE, 16, A>,
     ),
     Finished,
     Failed(PrepareError),
@@ -721,7 +720,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     pub fn state_code(&self) -> ReportAggregationStateCode {
         match self {
             ReportAggregationState::Start => ReportAggregationStateCode::Start,
-            ReportAggregationState::Waiting(_, _) => ReportAggregationStateCode::Waiting,
+            ReportAggregationState::Waiting(_) => ReportAggregationStateCode::Waiting,
             ReportAggregationState::Finished => ReportAggregationStateCode::Finished,
             ReportAggregationState::Failed(_) => ReportAggregationStateCode::Failed,
         }
@@ -736,13 +735,10 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     {
         match self {
             ReportAggregationState::Start => EncodedReportAggregationStateValues::default(),
-            ReportAggregationState::Waiting(prep_state, prep_msg) => {
-                EncodedReportAggregationStateValues {
-                    prep_state: Some(prep_state.get_encoded()),
-                    prep_msg: prep_msg.as_ref().map(Encode::get_encoded),
-                    ..Default::default()
-                }
-            }
+            ReportAggregationState::Waiting(prep_state) => EncodedReportAggregationStateValues {
+                prep_state: Some(prep_state.get_encoded()),
+                ..Default::default()
+            },
             ReportAggregationState::Finished => EncodedReportAggregationStateValues::default(),
             ReportAggregationState::Failed(report_share_err) => {
                 EncodedReportAggregationStateValues {
@@ -781,17 +777,14 @@ pub enum ReportAggregationStateCode {
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
     for ReportAggregationState<SEED_SIZE, A>
 where
-    A::PrepareState: PartialEq,
-    A::PrepareMessage: PartialEq,
     A::PrepareShare: PartialEq,
     A::OutputShare: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (
-                Self::Waiting(lhs_prep_state, lhs_prep_msg),
-                Self::Waiting(rhs_prep_state, rhs_prep_msg),
-            ) => lhs_prep_state == rhs_prep_state && lhs_prep_msg == rhs_prep_msg,
+            (Self::Waiting(lhs_prep_state), Self::Waiting(rhs_prep_state)) => {
+                lhs_prep_state == rhs_prep_state
+            }
             (Self::Failed(lhs_report_share_err), Self::Failed(rhs_report_share_err)) => {
                 lhs_report_share_err == rhs_report_share_err
             }

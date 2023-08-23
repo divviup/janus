@@ -1882,14 +1882,10 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
     let vdaf = Arc::new(Prio3::new_count(2).unwrap());
     let verify_key: [u8; VERIFY_KEY_LEN] = random();
     let vdaf_transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), &report_id, &0);
-    let (leader_prep_state, leader_message) = assert_matches!(
-        &vdaf_transcript.leader_prepare_transitions[0],
-        (state @ ping_pong::State::Continued(_), message) => (state, message)
-    );
 
     for (ord, state) in [
         ReportAggregationState::<VERIFY_KEY_LEN, Prio3Count>::Start,
-        ReportAggregationState::Waiting(leader_prep_state.clone(), Some(leader_message.clone())),
+        ReportAggregationState::Waiting(vdaf_transcript.helper_prepare_transitions[0].0.clone()),
         ReportAggregationState::Finished,
         ReportAggregationState::Failed(PrepareError::VdafPrepError),
     ]
@@ -1902,7 +1898,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
             VdafInstance::Prio3Count,
-            Role::Leader,
+            Role::Helper,
         )
         .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
         .build();
@@ -1976,7 +1972,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
                 Box::pin(async move {
                     tx.get_report_aggregation(
                         vdaf.as_ref(),
-                        &Role::Leader,
+                        &Role::Helper,
                         task.id(),
                         &aggregation_job_id,
                         &(),
@@ -2022,7 +2018,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
                 Box::pin(async move {
                     tx.get_report_aggregation(
                         vdaf.as_ref(),
-                        &Role::Leader,
+                        &Role::Helper,
                         task.id(),
                         &aggregation_job_id,
                         &(),
@@ -2044,7 +2040,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
                 Box::pin(async move {
                     tx.get_report_aggregation(
                         vdaf.as_ref(),
-                        &Role::Leader,
+                        &Role::Helper,
                         task.id(),
                         &aggregation_job_id,
                         &(),
@@ -2274,7 +2270,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
     let task = TaskBuilder::new(
         task::QueryType::TimeInterval,
         VdafInstance::Prio3Count,
-        Role::Leader,
+        Role::Helper,
     )
     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
     .build();
@@ -2299,15 +2295,12 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                 )
                 .await?;
 
-                let (leader_state, message) = assert_matches!(
-                    &vdaf_transcript.leader_prepare_transitions[0],
-                    (state @ ping_pong::State::Continued(_), message) => (state, message)
-                );
-
                 let mut want_report_aggregations = Vec::new();
                 for (ord, state) in [
                     ReportAggregationState::<VERIFY_KEY_LEN, Prio3Count>::Start,
-                    ReportAggregationState::Waiting(leader_state.clone(), Some(message.clone())),
+                    ReportAggregationState::Waiting(
+                        vdaf_transcript.helper_prepare_transitions[0].0.clone(),
+                    ),
                     ReportAggregationState::Finished,
                     ReportAggregationState::Failed(PrepareError::VdafPrepError),
                 ]
@@ -2356,7 +2349,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
             Box::pin(async move {
                 tx.get_report_aggregations_for_aggregation_job(
                     vdaf.as_ref(),
-                    &Role::Leader,
+                    &Role::Helper,
                     task.id(),
                     &aggregation_job_id,
                     &(),
@@ -2377,7 +2370,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
             Box::pin(async move {
                 tx.get_report_aggregations_for_aggregation_job(
                     vdaf.as_ref(),
-                    &Role::Leader,
+                    &Role::Helper,
                     task.id(),
                     &aggregation_job_id,
                     &(),
@@ -4685,13 +4678,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     clock.now(),
                     1,
                     None,
-                    ReportAggregationState::Waiting(
-                        ping_pong::State::Continued(dummy_vdaf::PrepareState::default()),
-                        Some(ping_pong::Message::Continue {
-                            prep_msg: ().get_encoded(),
-                            prep_share: ().get_encoded(),
-                        }),
-                    ), // Counted among max_size.
+                    ReportAggregationState::Waiting(ping_pong::Transition::default()), // Counted among max_size.
                 );
                 let report_aggregation_0_2 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                     *task_1.id(),
@@ -5651,7 +5638,6 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         &vdaf,
                         &Role::Leader,
                         &leader_time_interval_task_id,
-                        &dummy_vdaf::AggregationParam::default(),
                     )
                     .await
                     .unwrap();
@@ -5660,7 +5646,6 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         &vdaf,
                         &Role::Helper,
                         &helper_time_interval_task_id,
-                        &dummy_vdaf::AggregationParam::default(),
                     )
                     .await
                     .unwrap();
@@ -5669,7 +5654,6 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         &vdaf,
                         &Role::Leader,
                         &leader_fixed_size_task_id,
-                        &dummy_vdaf::AggregationParam::default(),
                     )
                     .await
                     .unwrap();
@@ -5678,7 +5662,6 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         &vdaf,
                         &Role::Helper,
                         &helper_fixed_size_task_id,
-                        &dummy_vdaf::AggregationParam::default(),
                     )
                     .await
                     .unwrap();

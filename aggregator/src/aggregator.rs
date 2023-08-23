@@ -1575,11 +1575,6 @@ impl VdafOps {
             .zip(existing_report_aggregations)
             .any(
                 |(incoming_report_share_data, existing_report_aggregation)| {
-                    tracing::info!(
-                        ?existing_report_aggregation,
-                        ?incoming_report_share_data,
-                        "checking report share"
-                    );
                     !existing_report_aggregation
                         .report_metadata()
                         .eq(incoming_report_share_data.report_share.metadata())
@@ -1780,65 +1775,74 @@ impl VdafOps {
             // Next, the aggregator runs the preparation-state initialization algorithm for the VDAF
             // associated with the task and computes the first state transition. [...] If either
             // step fails, then the aggregator MUST fail with error `vdaf-prep-error`. (§4.4.2.2)
-            let (report_aggregation_state, prep_step_result, output_share) = shares
-                .and_then(|(public_share, input_share)| {
-                    trace_span!("VDAF preparation")
-                        .in_scope(|| {
-                            vdaf.helper_initialize(
-                                verify_key.as_bytes(),
-                                &agg_param,
-                                /* report ID is used as VDAF nonce */
-                                prepare_init.report_share().metadata().id().as_ref(),
-                                &public_share,
-                                &input_share,
-                                prepare_init.payload(),
-                            )
-                        })
-                        .map_err(|error| {
-                            handle_ping_pong_error(
-                                task.id(),
-                                Role::Leader,
-                                prepare_init.report_share().metadata().id(),
-                                error,
-                                aggregate_step_failure_counter,
-                            )
-                        })
-                })
-                .map(
-                    |(ping_pong_state, outgoing_message)| match ping_pong_state {
-                        state @ ping_pong::State::Continued(_) => {
-                            // Helper is not finished. Await the next message from the Leader to
-                            // advance to the next round.
-                            saw_continue = true;
-                            (
-                                ReportAggregationState::Waiting(state, None),
-                                PrepareStepResult::Continue {
-                                    message: outgoing_message,
-                                },
-                                None,
-                            )
-                        }
-                        ping_pong::State::Finished(output_share) => (
-                            // Helper finished. Unlike the Leader, the Helper does not wait for
-                            // confirmation that the Leader finished before accumulating its
-                            // output share.
-                            ReportAggregationState::Finished,
+            let prepare_one_share = |public_share, input_share| -> Result<_, _> {
+                let transition = vdaf.helper_initialize(
+                    verify_key.as_bytes(),
+                    &agg_param,
+                    /* report ID is used as VDAF nonce */
+                    prepare_init.report_share().metadata().id().as_ref(),
+                    &public_share,
+                    &input_share,
+                    prepare_init.payload(),
+                )?;
+
+                let (ping_pong_state, outgoing_message) = transition.evaluate(vdaf)?;
+
+                Ok(match ping_pong_state {
+                    ping_pong::State::Continued(_) => {
+                        // Helper is not finished. Await the next message from the Leader to
+                        // advance to the next round.
+                        (
+                            true, // saw continue
+                            ReportAggregationState::Waiting(transition),
                             PrepareStepResult::Continue {
                                 message: outgoing_message,
                             },
-                            // Smuggle the output share out of this scope so we can call
-                            // Accumulator::update in a scope where ? works
-                            Some(output_share),
-                        ),
-                    },
-                )
-                .unwrap_or_else(|err| {
-                    (
-                        ReportAggregationState::<SEED_SIZE, A>::Failed(err),
-                        PrepareStepResult::Reject(err),
-                        None,
-                    )
-                });
+                            None,
+                        )
+                    }
+                    ping_pong::State::Finished(output_share) => (
+                        false, // did not see continue
+                        // Helper finished. Unlike the Leader, the Helper does not wait for
+                        // confirmation that the Leader finished before accumulating its
+                        // output share.
+                        ReportAggregationState::Finished,
+                        PrepareStepResult::Continue {
+                            message: outgoing_message,
+                        },
+                        // Smuggle the output share out of this scope so we can call
+                        // Accumulator::update in a scope where ? works
+                        Some(output_share),
+                    ),
+                })
+            };
+
+            let (saw_continue_this_time, report_aggregation_state, prep_step_result, output_share) =
+                shares
+                    .and_then(|(public_share, input_share)| {
+                        trace_span!("VDAF preparation")
+                            .in_scope(|| prepare_one_share(public_share, input_share))
+                            .map_err(|error| {
+                                handle_ping_pong_error(
+                                    task.id(),
+                                    Role::Leader,
+                                    prepare_init.report_share().metadata().id(),
+                                    error,
+                                    aggregate_step_failure_counter,
+                                )
+                            })
+                    })
+                    .unwrap_or_else(|err| {
+                        (
+                            false,
+                            ReportAggregationState::<SEED_SIZE, A>::Failed(err),
+                            PrepareStepResult::Reject(err),
+                            None,
+                        )
+                    });
+            if saw_continue_this_time {
+                saw_continue = true;
+            }
 
             if let Some(output_share) = output_share {
                 accumulator.update(

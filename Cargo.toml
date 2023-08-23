@@ -43,8 +43,8 @@ k8s-openapi = { version = "0.18.0", features = ["v1_24"] }  # keep this version 
 kube = { version = "0.82.2", default-features = false, features = ["client", "rustls-tls"] }
 opentelemetry = { version = "0.19", features = ["metrics"] }
 # TODO(timg): go back to a released version of prio
-#prio = { path = "/home/timg/source/libprio-rs", features = ["multithreaded", "experimental"] }
-prio = { git = "https://github.com/divviup/libprio-rs", branch = "timg/ping-pong-topology", features = ["multithreaded", "experimental"] }
+prio = { path = "/home/timg/source/libprio-rs", features = ["multithreaded", "experimental"] }
+#prio = { git = "https://github.com/divviup/libprio-rs", branch = "timg/ping-pong-topology", features = ["multithreaded", "experimental"] }
 serde = { version = "1.0.183", features = ["derive"] }
 serde_json = "1.0.103"
 serde_test = "1.0.175"

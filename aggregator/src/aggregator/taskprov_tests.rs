@@ -236,7 +236,7 @@ async fn taskprov_aggregate_init() {
         PartialBatchSelector::new_fixed_size(batch_id),
         Vec::from([PrepareInit::new(
             test.report_share.clone(),
-            test.transcript.leader_prepare_transitions[0].1.clone(),
+            test.transcript.leader_prepare_transitions[0].2.clone(),
         )]),
     );
 
@@ -344,7 +344,7 @@ async fn taskprov_opt_out_task_expired() {
         PartialBatchSelector::new_fixed_size(batch_id),
         Vec::from([PrepareInit::new(
             test.report_share.clone(),
-            test.transcript.leader_prepare_transitions[0].1.clone(),
+            test.transcript.leader_prepare_transitions[0].2.clone(),
         )]),
     );
 
@@ -397,7 +397,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
         PartialBatchSelector::new_fixed_size(batch_id),
         Vec::from([PrepareInit::new(
             test.report_share.clone(),
-            test.transcript.leader_prepare_transitions[0].1.clone(),
+            test.transcript.leader_prepare_transitions[0].2.clone(),
         )]),
     );
 
@@ -478,7 +478,7 @@ async fn taskprov_opt_out_missing_aggregator() {
         PartialBatchSelector::new_fixed_size(batch_id),
         Vec::from([PrepareInit::new(
             test.report_share.clone(),
-            test.transcript.leader_prepare_transitions[0].1.clone(),
+            test.transcript.leader_prepare_transitions[0].2.clone(),
         )]),
     );
 
@@ -557,7 +557,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
         PartialBatchSelector::new_fixed_size(batch_id),
         Vec::from([PrepareInit::new(
             test.report_share.clone(),
-            test.transcript.leader_prepare_transitions[0].1.clone(),
+            test.transcript.leader_prepare_transitions[0].2.clone(),
         )]),
     );
 
@@ -640,7 +640,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
         PartialBatchSelector::new_fixed_size(batch_id),
         Vec::from([PrepareInit::new(
             test.report_share.clone(),
-            test.transcript.leader_prepare_transitions[0].1.clone(),
+            test.transcript.leader_prepare_transitions[0].2.clone(),
         )]),
     );
 
@@ -757,7 +757,6 @@ async fn taskprov_aggregate_continue() {
                     None,
                     ReportAggregationState::Waiting(
                         transcript.helper_prepare_transitions[0].0.clone(),
-                        None,
                     ),
                 ))
                 .await?;
@@ -782,7 +781,7 @@ async fn taskprov_aggregate_continue() {
         AggregationJobRound::from(1),
         Vec::from([PrepareContinue::new(
             *test.report_metadata.id(),
-            test.transcript.leader_prepare_transitions[1].1.clone(),
+            test.transcript.leader_prepare_transitions[1].2.clone(),
         )]),
     );
 

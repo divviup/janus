@@ -30,7 +30,7 @@ use opentelemetry::{
 };
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
-    topology::ping_pong::{self, PingPongTopology},
+    topology::ping_pong::{self, Message, PingPongError, PingPongTopology},
     vdaf,
 };
 use reqwest::Method;
@@ -235,7 +235,7 @@ impl AggregationJobDriver {
         for report_aggregation in &report_aggregations {
             match report_aggregation.state() {
                 ReportAggregationState::Start => saw_start = true,
-                ReportAggregationState::Waiting(_, _) => saw_waiting = true,
+                ReportAggregationState::Waiting(_) => saw_waiting = true,
                 ReportAggregationState::Finished => saw_finished = true,
                 ReportAggregationState::Failed(_) => (), // ignore failed aggregations
             }
@@ -463,21 +463,24 @@ impl AggregationJobDriver {
         let mut prepare_continues = Vec::new();
         let mut stepped_aggregations = Vec::new();
         for report_aggregation in report_aggregations {
-            if let ReportAggregationState::Waiting(prep_state, prep_msg) =
-                report_aggregation.state()
-            {
-                let prep_msg = match prep_msg.as_ref() {
-                    Some(prep_msg) => prep_msg,
-                    None => {
-                        // This error indicates programmer/system error (i.e. it cannot possibly be
-                        // the fault of our co-aggregator). We still record this failure against a
-                        // single report, rather than failing the entire request, to minimize impact
-                        // if we ever encounter this bug.
-                        info!(report_id = %report_aggregation.report_id(), "Report aggregation is missing prepare message");
+            if let ReportAggregationState::Waiting(transition) = report_aggregation.state() {
+                let (prep_state, message) = match transition.evaluate(vdaf.as_ref()) {
+                    Ok((state, message)) => (state, message),
+                    Err(error) => {
+                        // This shouldn't ever happen, because we'd never store a transition that
+                        // can't be evaluated. Most likely this indicates a programmer error (e.g.,
+                        // using the wrong VDAF) but we still record this failure against a single
+                        // report, rather than failing the entire request, to minimize impact if we
+                        // ever encounter this bug.
+                        info!(
+                            report_id = %report_aggregation.report_id(),
+                            error = ?error,
+                            "Stored transition cannot be evaluated",
+                        );
                         self.aggregate_step_failure_counter.add(
                             &Context::current(),
                             1,
-                            &[KeyValue::new("type", "missing_prepare_message")],
+                            &[KeyValue::new("type", "invalid_ping_pong_transition")],
                         );
                         report_aggregations_to_write.push(report_aggregation.with_state(
                             ReportAggregationState::Failed(PrepareError::VdafPrepError),
@@ -488,7 +491,7 @@ impl AggregationJobDriver {
 
                 prepare_continues.push(PrepareContinue::new(
                     *report_aggregation.report_id(),
-                    prep_msg.clone(),
+                    message,
                 ));
                 stepped_aggregations.push(SteppedAggregation {
                     report_aggregation: report_aggregation.clone(),
@@ -526,6 +529,62 @@ impl AggregationJobDriver {
             resp.prepare_resps(),
         )
         .await
+    }
+
+    fn continue_individual_report<
+        const SEED_SIZE: usize,
+        Q: CollectableQueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+    >(
+        &self,
+        vdaf: &A,
+        stepped_aggregation: &SteppedAggregation<SEED_SIZE, A>,
+        inbound: &Message,
+        partial_batch_identifier: &Q::PartialBatchIdentifier,
+        accumulator: &mut Accumulator<SEED_SIZE, Q, A>,
+    ) -> Result<ReportAggregationState<SEED_SIZE, A>, PingPongError> {
+        let state_and_message = vdaf.continued(
+            ping_pong::Role::Leader,
+            stepped_aggregation.leader_state.clone(),
+            inbound,
+        )?;
+
+        // TODO(timg) I think I can put this back where it was now
+        match state_and_message {
+            ping_pong::ContinuedValue::WithMessage { transition } => {
+                // Leader did not finish. Store our state and outgoing message for the
+                // next round.
+                // n.b. it's possible we finished and recovered an output share at the
+                // VDAF level (i.e., state may be ping_pong::State::Finished) but we
+                // cannot finish at the DAP layer and commit the output share until we
+                // get confirmation from the Helper that they finished, too.
+                Ok(ReportAggregationState::Waiting(transition))
+            }
+            ping_pong::ContinuedValue::FinishedNoMessage { output_share } => {
+                // We finished and have no outgoing message, meaning the Helper was
+                // already finished. Commit the output share.
+                if let Err(err) = accumulator.update(
+                    partial_batch_identifier,
+                    stepped_aggregation.report_aggregation.report_id(),
+                    stepped_aggregation.report_aggregation.time(),
+                    &output_share,
+                ) {
+                    warn!(
+                        report_id = %stepped_aggregation.report_aggregation.report_id(),
+                        ?err,
+                        "Could not update batch aggregation",
+                    );
+                    self.aggregate_step_failure_counter.add(
+                        &Context::current(),
+                        1,
+                        &[KeyValue::new("type", "accumulate_failure")],
+                    );
+                    return Ok(ReportAggregationState::Failed(PrepareError::VdafPrepError));
+                }
+
+                Ok(ReportAggregationState::Finished)
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -580,56 +639,23 @@ impl AggregationJobDriver {
                 } => {
                     // Leader and Helper both continued. Use the Helper response to compute the next
                     // ping-pong Message.
-                    match vdaf
-                        .continued_enum(
-                            ping_pong::Role::Leader,
-                            stepped_aggregation.leader_state.clone(),
-                            helper_prep_msg,
+                    self.continue_individual_report(
+                        vdaf.as_ref(),
+                        stepped_aggregation,
+                        helper_prep_msg,
+                        aggregation_job.partial_batch_identifier(),
+                        &mut accumulator,
+                    )
+                    .map_err(|ping_pong_error| {
+                        handle_ping_pong_error(
+                            task.id(),
+                            Role::Helper,
+                            stepped_aggregation.report_aggregation.report_id(),
+                            ping_pong_error,
+                            &self.aggregate_step_failure_counter,
                         )
-                        .map_err(|ping_pong_error| {
-                            handle_ping_pong_error(
-                                task.id(),
-                                Role::Helper,
-                                stepped_aggregation.report_aggregation.report_id(),
-                                ping_pong_error,
-                                &self.aggregate_step_failure_counter,
-                            )
-                        }) {
-                        Ok(ping_pong::StateAndMessage::WithMessage { state, message }) => {
-                            // Leader did not finish. Store our state and outgoing message for the
-                            // next round.
-                            // n.b. it's possible we finished and recovered an output share at the
-                            // VDAF level (i.e., state may be ping_pong::State::Finished) but we
-                            // cannot finish at the DAP layer and commit the output share until we
-                            // get confirmation from the Helper that they finished, too.
-                            ReportAggregationState::Waiting(state, Some(message))
-                        }
-                        Ok(ping_pong::StateAndMessage::FinishedNoMessage { output_share }) => {
-                            // We finished and have no outgoing message, meaning the Helper was
-                            // already finished. Commit the output share.
-                            if let Err(err) = accumulator.update(
-                                aggregation_job.partial_batch_identifier(),
-                                stepped_aggregation.report_aggregation.report_id(),
-                                stepped_aggregation.report_aggregation.time(),
-                                &output_share,
-                            ) {
-                                warn!(
-                                    report_id = %stepped_aggregation.report_aggregation.report_id(),
-                                    ?err,
-                                    "Could not update batch aggregation",
-                                );
-                                self.aggregate_step_failure_counter.add(
-                                    &Context::current(),
-                                    1,
-                                    &[KeyValue::new("type", "accumulate_failure")],
-                                );
-                                return ReportAggregationState::Failed(PrepareError::VdafPrepError);
-                            }
-
-                            ReportAggregationState::Finished
-                        }
-                        Err(prep_error) => ReportAggregationState::Failed(prep_error),
-                    }
+                    })
+                    .unwrap_or_else(|prep_error| ReportAggregationState::Failed(prep_error))
                 }
 
                 PrepareStepResult::Finished => {
@@ -907,7 +933,7 @@ impl AggregationJobDriver {
 /// transition representing the next step for the leader.
 struct SteppedAggregation<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
     report_aggregation: ReportAggregation<SEED_SIZE, A>,
-    leader_state: ping_pong::State<A::PrepareState, A::OutputShare>,
+    leader_state: ping_pong::State<SEED_SIZE, 16, A>,
 }
 
 #[cfg(test)]
@@ -1103,7 +1129,7 @@ mod tests {
                 AggregationJobResp::new(Vec::from([PrepareResp::new(
                     *report.metadata().id(),
                     PrepareStepResult::Continue {
-                        message: transcript.helper_prepare_transitions[0].1.clone(),
+                        message: transcript.helper_prepare_transitions[0].2.clone(),
                     },
                 )]))
                 .get_encoded(),
@@ -1426,13 +1452,13 @@ mod tests {
                     report.public_share().get_encoded(),
                     report.helper_encrypted_input_share().clone(),
                 ),
-                transcript.leader_prepare_transitions[0].1.clone(),
+                transcript.leader_prepare_transitions[0].2.clone(),
             )]),
         );
         let helper_response = AggregationJobResp::new(Vec::from([PrepareResp::new(
             *report.metadata().id(),
             PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0].1.clone(),
+                message: transcript.helper_prepare_transitions[0].2.clone(),
             },
         )]));
         let mocked_aggregate_failure = server
@@ -1755,13 +1781,13 @@ mod tests {
                     report.public_share().get_encoded(),
                     report.helper_encrypted_input_share().clone(),
                 ),
-                transcript.leader_prepare_transitions[0].1.clone(),
+                transcript.leader_prepare_transitions[0].2.clone(),
             )]),
         );
         let helper_response = AggregationJobResp::new(Vec::from([PrepareResp::new(
             *report.metadata().id(),
             PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0].1.clone(),
+                message: transcript.helper_prepare_transitions[0].2.clone(),
             },
         )]));
         let mocked_aggregate_success = server
@@ -1820,8 +1846,7 @@ mod tests {
                 0,
                 None,
                 ReportAggregationState::Waiting(
-                    transcript.leader_prepare_transitions[1].0.clone(),
-                    Some(transcript.leader_prepare_transitions[1].1.clone()),
+                    transcript.leader_prepare_transitions[1].0.clone().unwrap(),
                 ),
             );
         let want_batch = Batch::<VERIFY_KEY_LEN, TimeInterval, Poplar1<PrgSha3, 16>>::new(
@@ -1998,13 +2023,13 @@ mod tests {
                     report.public_share().get_encoded(),
                     report.helper_encrypted_input_share().clone(),
                 ),
-                transcript.leader_prepare_transitions[0].1.clone(),
+                transcript.leader_prepare_transitions[0].2.clone(),
             )]),
         );
         let helper_response = AggregationJobResp::new(Vec::from([PrepareResp::new(
             *report.metadata().id(),
             PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0].1.clone(),
+                message: transcript.helper_prepare_transitions[0].2.clone(),
             },
         )]));
         let mocked_aggregate_failure = server
@@ -2263,13 +2288,13 @@ mod tests {
                     report.public_share().get_encoded(),
                     report.helper_encrypted_input_share().clone(),
                 ),
-                transcript.leader_prepare_transitions[0].1.clone(),
+                transcript.leader_prepare_transitions[0].2.clone(),
             )]),
         );
         let helper_response = AggregationJobResp::new(Vec::from([PrepareResp::new(
             *report.metadata().id(),
             PrepareStepResult::Continue {
-                message: transcript.helper_prepare_transitions[0].1.clone(),
+                message: transcript.helper_prepare_transitions[0].2.clone(),
             },
         )]));
         let mocked_aggregate_success = server
@@ -2328,8 +2353,7 @@ mod tests {
                 0,
                 None,
                 ReportAggregationState::Waiting(
-                    transcript.leader_prepare_transitions[1].0.clone(),
-                    Some(transcript.leader_prepare_transitions[1].1.clone()),
+                    transcript.leader_prepare_transitions[1].0.clone().unwrap(),
                 ),
             );
         let want_batch = Batch::<VERIFY_KEY_LEN, FixedSize, Poplar1<PrgSha3, 16>>::new(
@@ -2482,8 +2506,7 @@ mod tests {
                     ))
                     .await?;
 
-                    let (leader_ping_pong_state, leader_ping_pong_message) =
-                        &transcript.leader_prepare_transitions[1];
+                    let (leader_ping_pong_state, _, _) = &transcript.leader_prepare_transitions[1];
 
                     tx.put_report_aggregation(&ReportAggregation::<
                         VERIFY_KEY_LEN,
@@ -2495,10 +2518,7 @@ mod tests {
                         *report.metadata().time(),
                         0,
                         None,
-                        ReportAggregationState::Waiting(
-                            leader_ping_pong_state.clone(),
-                            Some(leader_ping_pong_message.clone()),
-                        ),
+                        ReportAggregationState::Waiting(leader_ping_pong_state.clone().unwrap()),
                     ))
                     .await?;
 
@@ -2552,7 +2572,7 @@ mod tests {
         // (This is fragile in that it expects the leader request to be deterministically encoded.
         // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
         // verification -- but mockito does not expose this functionality at time of writing.)
-        let (_, prepare_message) = &transcript.leader_prepare_transitions[1];
+        let (_, _, prepare_message) = &transcript.leader_prepare_transitions[1];
         let leader_request = AggregationJobContinueReq::new(
             AggregationJobRound::from(1),
             Vec::from([PrepareContinue::new(
@@ -2876,7 +2896,7 @@ mod tests {
                     ))
                     .await?;
 
-                    let (leader_ping_pong_state, leader_ping_pong_message) =
+                    let (leader_ping_pong_transition, _, _) =
                         &transcript.leader_prepare_transitions[1];
                     tx.put_report_aggregation(&ReportAggregation::<
                         VERIFY_KEY_LEN,
@@ -2889,8 +2909,7 @@ mod tests {
                         0,
                         None,
                         ReportAggregationState::Waiting(
-                            leader_ping_pong_state.clone(),
-                            Some(leader_ping_pong_message.clone()),
+                            leader_ping_pong_transition.clone().unwrap(),
                         ),
                     ))
                     .await?;
@@ -2938,7 +2957,7 @@ mod tests {
             AggregationJobRound::from(1),
             Vec::from([PrepareContinue::new(
                 *report.metadata().id(),
-                transcript.leader_prepare_transitions[1].1.clone(),
+                transcript.leader_prepare_transitions[1].2.clone(),
             )]),
         );
         let helper_response = AggregationJobResp::new(Vec::from([PrepareResp::new(

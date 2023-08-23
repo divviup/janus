@@ -98,7 +98,7 @@ where
         (
             PrepareInit::new(
                 report_share,
-                transcript.leader_prepare_transitions[0].1.clone(),
+                transcript.leader_prepare_transitions[0].2.clone(),
             ),
             transcript,
         )

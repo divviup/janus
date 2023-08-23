@@ -3035,7 +3035,6 @@ checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
 [[package]]
 name = "prio"
 version = "0.14.0"
-source = "git+https://github.com/divviup/libprio-rs?branch=timg/ping-pong-topology#fb36f002281efba6a360dde439fd3c4c3affb024"
 dependencies = [
  "aes",
  "base64 0.21.2",
@@ -3043,7 +3042,6 @@ dependencies = [
  "byteorder",
  "cmac",
  "ctr",
- "derivative",
  "fiat-crypto",
  "fixed",
  "getrandom",

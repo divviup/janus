@@ -1701,7 +1701,7 @@ mod tests {
 
         let prepare_init_5 = PrepareInit::new(
             report_share_5,
-            transcript_5.leader_prepare_transitions[0].1.clone(),
+            transcript_5.leader_prepare_transitions[0].2.clone(),
         );
 
         // prepare_init_6 fails decoding due to an issue with the public share.
@@ -1730,7 +1730,7 @@ mod tests {
 
         let prepare_init_6 = PrepareInit::new(
             report_share_6,
-            transcript_6.leader_prepare_transitions[0].1.clone(),
+            transcript_6.leader_prepare_transitions[0].2.clone(),
         );
 
         // prepare_init_7 fails due to having repeated extensions.
@@ -1762,7 +1762,7 @@ mod tests {
 
         let prepare_init_7 = PrepareInit::new(
             report_share_7,
-            transcript_7.leader_prepare_transitions[0].1.clone(),
+            transcript_7.leader_prepare_transitions[0].2.clone(),
         );
 
         // prepare_init_8 has already been aggregated in another aggregation job, with a different
@@ -1916,7 +1916,7 @@ mod tests {
                 prepare_init_0.report_share().metadata().id()
             );
             assert_matches!(prepare_step_0.result(), PrepareStepResult::Continue { message } => {
-                assert_eq!(message, &transcript_0.helper_prepare_transitions[0].1);
+                assert_eq!(message, &transcript_0.helper_prepare_transitions[0].2);
             });
 
             let prepare_step_1 = aggregate_resp.prepare_resps().get(1).unwrap();
@@ -1995,7 +1995,7 @@ mod tests {
                 prepare_init_8.report_share().metadata().id()
             );
             assert_matches!(prepare_step_8.result(), PrepareStepResult::Continue { message } => {
-                assert_eq!(message, &transcript_8.helper_prepare_transitions[0].1);
+                assert_eq!(message, &transcript_8.helper_prepare_transitions[0].2);
             });
 
             // Check aggregation job in datastore.
@@ -2146,7 +2146,7 @@ mod tests {
         let prepare_init_different_id = PrepareInit::new(
             report_share_different_id,
             transcript_different_id.leader_prepare_transitions[0]
-                .1
+                .2
                 .clone(),
         );
 
@@ -2191,7 +2191,7 @@ mod tests {
                 corrupted_input_share,
             ),
             transcript_different_id_corrupted.leader_prepare_transitions[0]
-                .1
+                .2
                 .clone(),
         );
 
@@ -2231,7 +2231,7 @@ mod tests {
             prepare_init_same_id.report_share().metadata().id()
         );
         assert_matches!(prepare_step_same_id.result(), PrepareStepResult::Continue { message } => {
-            assert_eq!(message, &transcript_same_id.helper_prepare_transitions[0].1);
+            assert_eq!(message, &transcript_same_id.helper_prepare_transitions[0].2);
         });
 
         let prepare_step_different_id = aggregate_resp.prepare_resps().get(1).unwrap();
@@ -2242,7 +2242,7 @@ mod tests {
         assert_matches!(
             prepare_step_different_id.result(),
             PrepareStepResult::Continue { message } => {
-                assert_eq!(message, &transcript_different_id.helper_prepare_transitions[0].1);
+                assert_eq!(message, &transcript_different_id.helper_prepare_transitions[0].2);
             }
         );
 
@@ -2568,8 +2568,8 @@ mod tests {
             report_metadata_0.id(),
             &measurement,
         );
-        let (ping_pong_state_0, _) = &transcript_0.helper_prepare_transitions[0];
-        let (_, leader_prep_message_0) = &transcript_0.leader_prepare_transitions[1];
+        let (ping_pong_transition_0, _, _) = &transcript_0.helper_prepare_transitions[0];
+        let (_, _, leader_prep_message_0) = &transcript_0.leader_prepare_transitions[1];
         let report_share_0 = generate_helper_report_share::<Poplar1<PrgSha3, 16>>(
             *task.id(),
             report_metadata_0.clone(),
@@ -2595,7 +2595,7 @@ mod tests {
             &measurement,
         );
 
-        let (ping_pong_state_1, _) = &transcript_1.helper_prepare_transitions[0];
+        let (ping_pong_transition_1, _, _) = &transcript_1.helper_prepare_transitions[0];
         let report_share_1 = generate_helper_report_share::<Poplar1<PrgSha3, 16>>(
             *task.id(),
             report_metadata_1.clone(),
@@ -2623,8 +2623,8 @@ mod tests {
             report_metadata_2.id(),
             &measurement,
         );
-        let (ping_pong_state_2, _) = &transcript_2.helper_prepare_transitions[0];
-        let (_, leader_prep_message_2) = &transcript_2.leader_prepare_transitions[1];
+        let (ping_pong_transition_2, _, _) = &transcript_2.helper_prepare_transitions[0];
+        let (_, _, leader_prep_message_2) = &transcript_2.leader_prepare_transitions[1];
         let report_share_2 = generate_helper_report_share::<Poplar1<PrgSha3, 16>>(
             *task.id(),
             report_metadata_2.clone(),
@@ -2642,10 +2642,10 @@ mod tests {
                     report_share_1.clone(),
                     report_share_2.clone(),
                 );
-                let (ping_pong_state_0, ping_pong_state_1, ping_pong_state_2) = (
-                    ping_pong_state_0.clone(),
-                    ping_pong_state_1.clone(),
-                    ping_pong_state_2.clone(),
+                let (ping_pong_transition_0, ping_pong_transition_1, ping_pong_transition_2) = (
+                    ping_pong_transition_0.clone(),
+                    ping_pong_transition_1.clone(),
+                    ping_pong_transition_2.clone(),
                 );
                 let (report_metadata_0, report_metadata_1, report_metadata_2) = (
                     report_metadata_0.clone(),
@@ -2686,7 +2686,7 @@ mod tests {
                             *report_metadata_0.time(),
                             0,
                             None,
-                            ReportAggregationState::Waiting(ping_pong_state_0, None),
+                            ReportAggregationState::Waiting(ping_pong_transition_0),
                         ),
                     )
                     .await?;
@@ -2698,7 +2698,7 @@ mod tests {
                             *report_metadata_1.time(),
                             1,
                             None,
-                            ReportAggregationState::Waiting(ping_pong_state_1, None),
+                            ReportAggregationState::Waiting(ping_pong_transition_1),
                         ),
                     )
                     .await?;
@@ -2710,7 +2710,7 @@ mod tests {
                             *report_metadata_2.time(),
                             2,
                             None,
-                            ReportAggregationState::Waiting(ping_pong_state_2, None),
+                            ReportAggregationState::Waiting(ping_pong_transition_2),
                         ),
                     )
                     .await?;
@@ -2896,8 +2896,8 @@ mod tests {
             report_metadata_0.id(),
             &measurement,
         );
-        let (ping_pong_state_0, _) = &transcript_0.helper_prepare_transitions[0];
-        let (_, ping_pong_leader_message_0) = &transcript_0.leader_prepare_transitions[1];
+        let (ping_pong_transition_0, _, _) = &transcript_0.helper_prepare_transitions[0];
+        let (_, _, ping_pong_leader_message_0) = &transcript_0.leader_prepare_transitions[1];
         let report_share_0 = generate_helper_report_share::<Poplar1<PrgSha3, 16>>(
             *task.id(),
             report_metadata_0.clone(),
@@ -2923,8 +2923,8 @@ mod tests {
             report_metadata_1.id(),
             &measurement,
         );
-        let (ping_pong_state_1, _) = &transcript_1.helper_prepare_transitions[0];
-        let (_, ping_pong_leader_message_1) = &transcript_1.leader_prepare_transitions[1];
+        let (ping_pong_transition_1, _, _) = &transcript_1.helper_prepare_transitions[0];
+        let (_, _, ping_pong_leader_message_1) = &transcript_1.leader_prepare_transitions[1];
         let report_share_1 = generate_helper_report_share::<Poplar1<PrgSha3, 16>>(
             *task.id(),
             report_metadata_1.clone(),
@@ -2950,8 +2950,8 @@ mod tests {
             report_metadata_2.id(),
             &measurement,
         );
-        let (ping_pong_state_2, _) = &transcript_2.helper_prepare_transitions[0];
-        let (_, ping_pong_leader_message_2) = &transcript_2.leader_prepare_transitions[1];
+        let (ping_pong_transition_2, _, _) = &transcript_2.helper_prepare_transitions[0];
+        let (_, _, ping_pong_leader_message_2) = &transcript_2.leader_prepare_transitions[1];
         let report_share_2 = generate_helper_report_share::<Poplar1<PrgSha3, 16>>(
             *task.id(),
             report_metadata_2.clone(),
@@ -2994,10 +2994,10 @@ mod tests {
                     report_share_1.clone(),
                     report_share_2.clone(),
                 );
-                let (ping_pong_state_0, ping_pong_state_1, ping_pong_state_2) = (
-                    ping_pong_state_0.clone(),
-                    ping_pong_state_1.clone(),
-                    ping_pong_state_2.clone(),
+                let (ping_pong_transition_0, ping_pong_transition_1, ping_pong_transition_2) = (
+                    ping_pong_transition_0.clone(),
+                    ping_pong_transition_1.clone(),
+                    ping_pong_transition_2.clone(),
                 );
                 let (report_metadata_0, report_metadata_1, report_metadata_2) = (
                     report_metadata_0.clone(),
@@ -3041,7 +3041,7 @@ mod tests {
                         *report_metadata_0.time(),
                         0,
                         None,
-                        ReportAggregationState::Waiting(ping_pong_state_0, None),
+                        ReportAggregationState::Waiting(ping_pong_transition_0),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -3054,7 +3054,7 @@ mod tests {
                         *report_metadata_1.time(),
                         1,
                         None,
-                        ReportAggregationState::Waiting(ping_pong_state_1, None),
+                        ReportAggregationState::Waiting(ping_pong_transition_1),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -3067,7 +3067,7 @@ mod tests {
                         *report_metadata_2.time(),
                         2,
                         None,
-                        ReportAggregationState::Waiting(ping_pong_state_2, None),
+                        ReportAggregationState::Waiting(ping_pong_transition_2),
                     ))
                     .await?;
 
@@ -3259,8 +3259,8 @@ mod tests {
             report_metadata_3.id(),
             &measurement,
         );
-        let (ping_pong_state_3, _) = &transcript_3.helper_prepare_transitions[0];
-        let (_, ping_pong_leader_message_3) = &transcript_3.leader_prepare_transitions[1];
+        let (ping_pong_transition_3, _, _) = &transcript_3.helper_prepare_transitions[0];
+        let (_, _, ping_pong_leader_message_3) = &transcript_3.leader_prepare_transitions[1];
         let report_share_3 = generate_helper_report_share::<Poplar1<PrgSha3, 16>>(
             *task.id(),
             report_metadata_3.clone(),
@@ -3286,8 +3286,8 @@ mod tests {
             report_metadata_4.id(),
             &measurement,
         );
-        let (ping_pong_state_4, _) = &transcript_4.helper_prepare_transitions[0];
-        let (_, ping_pong_leader_message_4) = &transcript_4.leader_prepare_transitions[1];
+        let (ping_pong_transition_4, _, _) = &transcript_4.helper_prepare_transitions[0];
+        let (_, _, ping_pong_leader_message_4) = &transcript_4.leader_prepare_transitions[1];
         let report_share_4 = generate_helper_report_share::<Poplar1<PrgSha3, 16>>(
             *task.id(),
             report_metadata_4.clone(),
@@ -3313,8 +3313,8 @@ mod tests {
             report_metadata_5.id(),
             &measurement,
         );
-        let (ping_pong_state_5, _) = &transcript_5.helper_prepare_transitions[0];
-        let (_, ping_pong_leader_message_5) = &transcript_5.leader_prepare_transitions[1];
+        let (ping_pong_transition_5, _, _) = &transcript_5.helper_prepare_transitions[0];
+        let (_, _, ping_pong_leader_message_5) = &transcript_5.leader_prepare_transitions[1];
         let report_share_5 = generate_helper_report_share::<Poplar1<PrgSha3, 16>>(
             *task.id(),
             report_metadata_5.clone(),
@@ -3332,10 +3332,10 @@ mod tests {
                     report_share_4.clone(),
                     report_share_5.clone(),
                 );
-                let (ping_pong_state_3, ping_pong_state_4, ping_pong_state_5) = (
-                    ping_pong_state_3.clone(),
-                    ping_pong_state_4.clone(),
-                    ping_pong_state_5.clone(),
+                let (ping_pong_transition_3, ping_pong_transition_4, ping_pong_transition_5) = (
+                    ping_pong_transition_3.clone(),
+                    ping_pong_transition_4.clone(),
+                    ping_pong_transition_5.clone(),
                 );
                 let (report_metadata_3, report_metadata_4, report_metadata_5) = (
                     report_metadata_3.clone(),
@@ -3375,7 +3375,7 @@ mod tests {
                         *report_metadata_3.time(),
                         3,
                         None,
-                        ReportAggregationState::Waiting(ping_pong_state_3, None),
+                        ReportAggregationState::Waiting(ping_pong_transition_3),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -3388,7 +3388,7 @@ mod tests {
                         *report_metadata_4.time(),
                         4,
                         None,
-                        ReportAggregationState::Waiting(ping_pong_state_4, None),
+                        ReportAggregationState::Waiting(ping_pong_transition_4),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -3401,7 +3401,7 @@ mod tests {
                         *report_metadata_5.time(),
                         5,
                         None,
-                        ReportAggregationState::Waiting(ping_pong_state_5, None),
+                        ReportAggregationState::Waiting(ping_pong_transition_5),
                     ))
                     .await?;
 
@@ -3621,10 +3621,7 @@ mod tests {
                         *report_metadata.time(),
                         0,
                         None,
-                        ReportAggregationState::Waiting(
-                            ping_pong::State::Continued(dummy_vdaf::PrepareState::default()),
-                            None,
-                        ),
+                        ReportAggregationState::Waiting(ping_pong::Transition::default()),
                     ))
                     .await
                 })
@@ -3729,10 +3726,7 @@ mod tests {
                         *report_metadata.time(),
                         0,
                         None,
-                        ReportAggregationState::Waiting(
-                            ping_pong::State::Continued(dummy_vdaf::PrepareState::default()),
-                            None,
-                        ),
+                        ReportAggregationState::Waiting(ping_pong::Transition::default()),
                     ))
                     .await
                 })
@@ -3893,10 +3887,7 @@ mod tests {
                         *report_metadata.time(),
                         0,
                         None,
-                        ReportAggregationState::Waiting(
-                            ping_pong::State::Continued(dummy_vdaf::PrepareState::default()),
-                            None,
-                        ),
+                        ReportAggregationState::Waiting(ping_pong::Transition::default()),
                     ))
                     .await
                 })
@@ -4024,10 +4015,7 @@ mod tests {
                         *report_metadata_0.time(),
                         0,
                         None,
-                        ReportAggregationState::Waiting(
-                            ping_pong::State::Continued(dummy_vdaf::PrepareState::default()),
-                            None,
-                        ),
+                        ReportAggregationState::Waiting(ping_pong::Transition::default()),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -4037,10 +4025,7 @@ mod tests {
                         *report_metadata_1.time(),
                         1,
                         None,
-                        ReportAggregationState::Waiting(
-                            ping_pong::State::Continued(dummy_vdaf::PrepareState::default()),
-                            None,
-                        ),
+                        ReportAggregationState::Waiting(ping_pong::Transition::default()),
                     ))
                     .await
                 })

@@ -2119,7 +2119,7 @@ impl Decode for ReportShare {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrepareInit {
     report_share: ReportShare,
-    payload: Message,
+    ping_pong_message: Message,
 }
 
 impl PrepareInit {
@@ -2127,7 +2127,7 @@ impl PrepareInit {
     pub fn new(report_share: ReportShare, payload: Message) -> Self {
         Self {
             report_share,
-            payload,
+            ping_pong_message: payload,
         }
     }
 
@@ -2138,18 +2138,18 @@ impl PrepareInit {
 
     /// Gets the opaque payload associated with this prep init.
     pub fn payload(&self) -> &Message {
-        &self.payload
+        &self.ping_pong_message
     }
 }
 
 impl Encode for PrepareInit {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.report_share.encode(bytes);
-        self.payload.encode(bytes);
+        self.ping_pong_message.encode(bytes);
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        Some(self.report_share.encoded_len()? + self.payload.encoded_len()?)
+        Some(self.report_share.encoded_len()? + self.ping_pong_message.encoded_len()?)
     }
 }
 
@@ -2160,7 +2160,7 @@ impl Decode for PrepareInit {
 
         Ok(Self {
             report_share,
-            payload,
+            ping_pong_message: payload,
         })
     }
 }
@@ -4088,7 +4088,7 @@ mod tests {
                             Vec::from("543210"),
                         ),
                     },
-                    payload: Message::Initialize {
+                    ping_pong_message: Message::Initialize {
                         prep_share: Vec::from("012345"),
                     },
                 },
@@ -4144,7 +4144,7 @@ mod tests {
                             Vec::from("abfd"),
                         ),
                     },
-                    payload: Message::Finish {
+                    ping_pong_message: Message::Finish {
                         prep_msg: Vec::new(),
                     },
                 },
@@ -4281,7 +4281,7 @@ mod tests {
                                 Vec::from("543210"),
                             ),
                         },
-                        payload: Message::Initialize {
+                        ping_pong_message: Message::Initialize {
                             prep_share: Vec::from("012345"),
                         },
                     },
@@ -4300,7 +4300,7 @@ mod tests {
                                 Vec::from("abfd"),
                             ),
                         },
-                        payload: Message::Finish {
+                        ping_pong_message: Message::Finish {
                             prep_msg: Vec::new(),
                         },
                     },
@@ -4419,7 +4419,7 @@ mod tests {
                                 Vec::from("543210"),
                             ),
                         },
-                        payload: Message::Initialize {
+                        ping_pong_message: Message::Initialize {
                             prep_share: Vec::from("012345"),
                         },
                     },
@@ -4438,7 +4438,7 @@ mod tests {
                                 Vec::from("abfd"),
                             ),
                         },
-                        payload: Message::Finish {
+                        ping_pong_message: Message::Finish {
                             prep_msg: Vec::new(),
                         },
                     },
