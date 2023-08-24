@@ -555,6 +555,60 @@ async fn collection_job_put_idempotence_time_interval_varied_collection_id() {
 }
 
 #[tokio::test]
+async fn collection_job_put_idempotence_fixed_size_varied_collection_id() {
+    // This test sends repeated, identical collection requests with differing collection job IDs and
+    // validates that they are accepted. They should be accepted because calculation of the query
+    // count for max_batch_query_count testing is based on the number of distinct aggregation
+    // parameters that the batch has been collected against.
+
+    let (test_case, batch_id, _, _) =
+        setup_fixed_size_current_batch_collection_job_test_case().await;
+
+    let collection_job_ids = HashSet::from(random::<[CollectionJobId; 2]>());
+    let request = CollectionReq::new(
+        Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
+        AggregationParam::default().get_encoded(),
+    );
+
+    for collection_job_id in &collection_job_ids {
+        let response = test_case
+            .put_collection_job(collection_job_id, &request)
+            .await;
+        assert_eq!(response.status(), Some(Status::Created));
+    }
+
+    test_case
+        .datastore
+        .run_tx(|tx| {
+            let task_id = *test_case.task.id();
+            let collection_job_ids = collection_job_ids.clone();
+
+            Box::pin(async move {
+                let collection_jobs = tx
+                    .get_collection_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        &dummy_vdaf::Vdaf::new(),
+                        &task_id,
+                    )
+                    .await
+                    .unwrap();
+
+                assert_eq!(collection_jobs.len(), 2);
+                assert_eq!(
+                    collection_jobs
+                        .into_iter()
+                        .map(|job| *job.id())
+                        .collect::<HashSet<_>>(),
+                    collection_job_ids
+                );
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
     let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
 

@@ -125,7 +125,9 @@ impl CollectableQueryType for TimeInterval {
     {
         // Check how distinct aggregation parameters appear in rows in the relevant table with an
         // intersecting batch interval. Each distinct aggregation parameter consumes one unit of
-        // query count. https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
+        // query count.
+        //
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-05.html#section-4.6.6
         let mut found_overlapping_nonequal_interval = false;
         let agg_params = match task.role() {
             Role::Leader => tx
@@ -164,7 +166,6 @@ impl CollectableQueryType for TimeInterval {
         };
 
         // Check that all intersecting collect intervals are equal to this collect interval.
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6-5
         if found_overlapping_nonequal_interval {
             return Err(datastore::Error::User(
                 Error::BatchOverlap(*task.id(), *collect_interval).into(),
@@ -172,7 +173,6 @@ impl CollectableQueryType for TimeInterval {
         }
 
         // Check that the batch query count is being consumed appropriately.
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
         let max_batch_query_count: usize = task.max_batch_query_count().try_into()?;
         let query_count = agg_params.len()
             + if agg_params.contains(aggregation_param) {
@@ -205,6 +205,11 @@ impl CollectableQueryType for FixedSize {
     where
         A::AggregationParam: Send + Sync + Eq + Hash,
     {
+        // Check how distinct aggregation parameters appear in rows in the relevant table with an
+        // intersecting batch interval. Each distinct aggregation parameter consumes one unit of
+        // query count.
+        //
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-05.html#section-4.6.6
         let agg_params = match task.role() {
             Role::Leader => tx
                 .get_collection_jobs_by_batch_id::<SEED_SIZE, A>(vdaf, task.id(), batch_id)
@@ -223,8 +228,6 @@ impl CollectableQueryType for FixedSize {
             _ => panic!("Unexpected task role {:?}", task.role()),
         };
 
-        // Check that the batch query count is being consumed appropriately.
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
         let max_batch_query_count: usize = task.max_batch_query_count().try_into()?;
         let query_count = agg_params.len()
             + if agg_params.contains(aggregation_param) {
