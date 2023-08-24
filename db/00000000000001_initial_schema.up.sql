@@ -291,6 +291,7 @@ CREATE TABLE collection_jobs(
     lease_token             BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
     lease_attempts          BIGINT NOT NULL DEFAULT 0,                         -- the number of lease acquiries since the last successful lease release
 
+    CONSTRAINT collection_jobs_unique_id UNIQUE(collection_job_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 CREATE INDEX collection_jobs_task_id_batch_id ON collection_jobs(task_id, batch_identifier);
