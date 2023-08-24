@@ -4,6 +4,7 @@ DROP INDEX aggregate_share_jobs_interval_containment_index CASCADE;
 DROP TABLE aggregate_share_jobs CASCADE;
 DROP INDEX collection_jobs_interval_containment_index CASCADE;
 DROP INDEX collection_jobs_state_and_lease_expiry CASCADE;
+DROP INDEX collection_jobs_task_id_batch_id CASCADE;
 DROP TABLE collection_jobs CASCADE;
 DROP TYPE COLLECTION_JOB_STATE CASCADE;
 DROP TABLE batch_aggregations CASCADE;

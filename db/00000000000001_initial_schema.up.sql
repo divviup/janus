@@ -291,9 +291,9 @@ CREATE TABLE collection_jobs(
     lease_token             BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
     lease_attempts          BIGINT NOT NULL DEFAULT 0,                         -- the number of lease acquiries since the last successful lease release
 
-    CONSTRAINT collection_jobs_unique_task_id_batch_id_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
+CREATE INDEX collection_jobs_task_id_batch_id ON collection_jobs(task_id, batch_identifier);
 -- TODO(#224): verify that this index is optimal for purposes of acquiring collection jobs.
 CREATE INDEX collection_jobs_state_and_lease_expiry ON collection_jobs(state, lease_expiry) WHERE state = 'COLLECTABLE';
 CREATE INDEX collection_jobs_interval_containment_index ON collection_jobs USING gist (task_id, batch_interval);
