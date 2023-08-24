@@ -1,0 +1,1 @@
+ALTER TABLE collection_jobs DROP CONSTRAINT collection_jobs_unique_id;
