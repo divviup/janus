@@ -175,6 +175,7 @@ CREATE TABLE aggregation_jobs(
     round                      INTEGER NOT NULL,                -- current round of the VDAF preparation protocol
     last_continue_request_hash BYTEA,                           -- SHA-256 hash of the most recently received AggregationJobContinueReq
                                                                 -- (helper only and only after the first round of the job)
+    trace_context              JSONB,                           -- distributed tracing metadata
 
     lease_expiry             TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this aggregation job expires; -infinity implies no current lease
     lease_token              BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
@@ -286,6 +287,7 @@ CREATE TABLE collection_jobs(
     report_count            BIGINT,                      -- the number of reports included in this collection job (only if in state FINISHED)
     helper_aggregate_share  BYTEA,                       -- the helper's encrypted aggregate share (HpkeCiphertext, only if in state FINISHED)
     leader_aggregate_share  BYTEA,                       -- the leader's unencrypted aggregate share (opaque VDAF message, only if in state FINISHED)
+    trace_context           JSONB,                       -- distributed tracing metadata
 
     lease_expiry            TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this collection job expires; -infinity implies no current lease
     lease_token             BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
