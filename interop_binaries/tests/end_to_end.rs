@@ -2,7 +2,7 @@ use backoff::{backoff::Backoff, ExponentialBackoffBuilder};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use futures::future::join_all;
 use janus_core::{
-    task::PRIO3_VERIFY_KEY_LENGTH,
+    task::VERIFY_KEY_LENGTH,
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
     time::{Clock, RealClock, TimeExt},
 };
@@ -110,7 +110,7 @@ async fn run(
     let task_id: TaskId = random();
     let aggregator_auth_token = URL_SAFE_NO_PAD.encode(random::<[u8; 16]>());
     let collector_auth_token = URL_SAFE_NO_PAD.encode(random::<[u8; 16]>());
-    let vdaf_verify_key = rand::random::<[u8; PRIO3_VERIFY_KEY_LENGTH]>();
+    let vdaf_verify_key = rand::random::<[u8; VERIFY_KEY_LENGTH]>();
 
     let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
     let vdaf_verify_key_encoded = URL_SAFE_NO_PAD.encode(vdaf_verify_key);

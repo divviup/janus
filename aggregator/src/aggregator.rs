@@ -41,7 +41,7 @@ use janus_core::test_util::dummy_vdaf;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     http::response_to_problem_details,
-    task::{AuthenticationToken, VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
+    task::{AuthenticationToken, VdafInstance, VERIFY_KEY_LENGTH},
     time::{Clock, DurationExt, IntervalExt, TimeExt},
 };
 use janus_messages::{
@@ -50,8 +50,8 @@ use janus_messages::{
     taskprov::TaskConfig,
     AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobRound,
-    BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, HpkeCiphertext,
-    HpkeConfig, HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
+    BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, HpkeConfig,
+    HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
     PrepareStep, PrepareStepResult, Report, ReportIdChecksum, ReportShare, ReportShareError, Role,
     TaskId,
 };
@@ -67,6 +67,8 @@ use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     vdaf::{
         self,
+        poplar1::Poplar1,
+        prg::PrgSha3,
         prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVecMultithreaded},
     },
 };
@@ -544,7 +546,7 @@ impl<C: Clock> Aggregator<C> {
         // have to use the peer aggregator's collector config rather than the main task.
         let collector_hpke_config =
             if self.cfg.taskprov_config.enabled && taskprov_task_config.is_some() {
-                let (peer_aggregator, _) = self
+                let (peer_aggregator, _, _) = self
                     .taskprov_authorize_request(
                         &Role::Leader,
                         task_id,
@@ -635,7 +637,7 @@ impl<C: Clock> Aggregator<C> {
         task_config: &TaskConfig,
         aggregator_auth_token: Option<&AuthenticationToken>,
     ) -> Result<(), Error> {
-        let (peer_aggregator, aggregator_urls) = self
+        let (peer_aggregator, leader_url, helper_url) = self
             .taskprov_authorize_request(peer_role, task_id, task_config, aggregator_auth_token)
             .await?;
 
@@ -666,7 +668,8 @@ impl<C: Clock> Aggregator<C> {
 
         let task = taskprov::Task::new(
             *task_id,
-            aggregator_urls,
+            leader_url,
+            helper_url,
             task_config.query_config().query().try_into()?,
             vdaf_instance,
             our_role,
@@ -716,13 +719,13 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         task_config: &TaskConfig,
         aggregator_auth_token: Option<&AuthenticationToken>,
-    ) -> Result<(&PeerAggregator, Vec<Url>), Error> {
+    ) -> Result<(&PeerAggregator, Url, Url), Error> {
         let aggregator_urls = task_config
             .aggregator_endpoints()
             .iter()
             .map(|url| url.try_into())
             .collect::<Result<Vec<Url>, _>>()?;
-        if aggregator_urls.len() < 2 {
+        if aggregator_urls.len() != 2 {
             return Err(Error::UnrecognizedMessage(
                 Some(*task_id),
                 "taskprov configuration is missing one or both aggregators",
@@ -755,7 +758,11 @@ impl<C: Clock> Aggregator<C> {
             ?peer_aggregator,
             "taskprov: authorized request"
         );
-        Ok((peer_aggregator, aggregator_urls))
+        Ok((
+            peer_aggregator,
+            aggregator_urls[Role::Leader.index().unwrap()].clone(),
+            aggregator_urls[Role::Helper.index().unwrap()].clone(),
+        ))
     }
 
     #[cfg(feature = "test-util")]
@@ -833,6 +840,12 @@ impl<C: Clock> TaskAggregator<C> {
                     Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, *length)?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3FixedPoint64BitBoundedL2VecSum(Arc::new(vdaf), verify_key)
+            }
+
+            VdafInstance::Poplar1 { bits } => {
+                let vdaf = Poplar1::new_sha3(*bits);
+                let verify_key = task.primary_vdaf_verify_key()?;
+                VdafOps::Poplar1(Arc::new(vdaf), verify_key)
             }
 
             #[cfg(feature = "test-util")]
@@ -1005,32 +1018,27 @@ impl<C: Clock> TaskAggregator<C> {
 /// VdafOps stores VDAF-specific operations for a TaskAggregator in a non-generic way.
 #[allow(clippy::enum_variant_names)]
 enum VdafOps {
-    Prio3Count(Arc<Prio3Count>, VerifyKey<PRIO3_VERIFY_KEY_LENGTH>),
-    Prio3CountVec(
-        Arc<Prio3SumVecMultithreaded>,
-        VerifyKey<PRIO3_VERIFY_KEY_LENGTH>,
-    ),
-    Prio3Sum(Arc<Prio3Sum>, VerifyKey<PRIO3_VERIFY_KEY_LENGTH>),
-    Prio3SumVec(
-        Arc<Prio3SumVecMultithreaded>,
-        VerifyKey<PRIO3_VERIFY_KEY_LENGTH>,
-    ),
-    Prio3Histogram(Arc<Prio3Histogram>, VerifyKey<PRIO3_VERIFY_KEY_LENGTH>),
+    Prio3Count(Arc<Prio3Count>, VerifyKey<VERIFY_KEY_LENGTH>),
+    Prio3CountVec(Arc<Prio3SumVecMultithreaded>, VerifyKey<VERIFY_KEY_LENGTH>),
+    Prio3Sum(Arc<Prio3Sum>, VerifyKey<VERIFY_KEY_LENGTH>),
+    Prio3SumVec(Arc<Prio3SumVecMultithreaded>, VerifyKey<VERIFY_KEY_LENGTH>),
+    Prio3Histogram(Arc<Prio3Histogram>, VerifyKey<VERIFY_KEY_LENGTH>),
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3FixedPoint16BitBoundedL2VecSum(
         Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>>,
-        VerifyKey<PRIO3_VERIFY_KEY_LENGTH>,
+        VerifyKey<VERIFY_KEY_LENGTH>,
     ),
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3FixedPoint32BitBoundedL2VecSum(
         Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>>,
-        VerifyKey<PRIO3_VERIFY_KEY_LENGTH>,
+        VerifyKey<VERIFY_KEY_LENGTH>,
     ),
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3FixedPoint64BitBoundedL2VecSum(
         Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>>,
-        VerifyKey<PRIO3_VERIFY_KEY_LENGTH>,
+        VerifyKey<VERIFY_KEY_LENGTH>,
     ),
+    Poplar1(Arc<Poplar1<PrgSha3, 16>>, VerifyKey<VERIFY_KEY_LENGTH>),
 
     #[cfg(feature = "test-util")]
     Fake(Arc<dummy_vdaf::Vdaf>),
@@ -1048,7 +1056,7 @@ macro_rules! vdaf_ops_dispatch {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Count;
-                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -1056,7 +1064,7 @@ macro_rules! vdaf_ops_dispatch {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
-                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -1064,7 +1072,7 @@ macro_rules! vdaf_ops_dispatch {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Sum;
-                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -1072,7 +1080,7 @@ macro_rules! vdaf_ops_dispatch {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
-                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -1080,7 +1088,7 @@ macro_rules! vdaf_ops_dispatch {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Histogram;
-                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -1090,7 +1098,7 @@ macro_rules! vdaf_ops_dispatch {
                 let $verify_key = verify_key;
                 type $Vdaf =
                     ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>;
-                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -1100,7 +1108,7 @@ macro_rules! vdaf_ops_dispatch {
                 let $verify_key = verify_key;
                 type $Vdaf =
                     ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>;
-                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -1110,7 +1118,15 @@ macro_rules! vdaf_ops_dispatch {
                 let $verify_key = verify_key;
                 type $Vdaf =
                     ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>;
-                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::VERIFY_KEY_LENGTH;
+                $body
+            }
+
+            crate::aggregator::VdafOps::Poplar1(vdaf, verify_key) => {
+                let $vdaf = vdaf;
+                let $verify_key = verify_key;
+                type $Vdaf = ::prio::vdaf::poplar1::Poplar1<::prio::vdaf::prg::PrgSha3, 16>;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -1302,17 +1318,6 @@ impl VdafOps {
         C: Clock,
         Q: UploadableQueryType,
     {
-        // The leader's report is the first one.
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
-        if report.encrypted_input_shares().len() != 2 {
-            return Err(Arc::new(Error::UnrecognizedMessage(
-                Some(*task.id()),
-                "unexpected number of encrypted shares in report",
-            )));
-        }
-        let leader_encrypted_input_share =
-            &report.encrypted_input_shares()[Role::Leader.index().unwrap()];
-
         let report_deadline = clock
             .now()
             .add(task.tolerable_clock_skew())
@@ -1381,7 +1386,7 @@ impl VdafOps {
                 hpke_keypair.config(),
                 hpke_keypair.private_key(),
                 &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, task.role()),
-                leader_encrypted_input_share,
+                report.leader_encrypted_input_share(),
                 &InputShareAad::new(
                     *task.id(),
                     report.metadata().clone(),
@@ -1392,11 +1397,11 @@ impl VdafOps {
         };
 
         let global_hpke_keypair =
-            global_hpke_keypairs.keypair(leader_encrypted_input_share.config_id());
+            global_hpke_keypairs.keypair(report.leader_encrypted_input_share().config_id());
 
         let task_hpke_keypair = task
             .hpke_keys()
-            .get(leader_encrypted_input_share.config_id());
+            .get(report.leader_encrypted_input_share().config_id());
 
         let decryption_result = match (task_hpke_keypair, global_hpke_keypair) {
             // Verify that the report's HPKE config ID is known.
@@ -1404,7 +1409,7 @@ impl VdafOps {
             (None, None) => {
                 return Err(Arc::new(Error::OutdatedHpkeConfig(
                     *task.id(),
-                    *leader_encrypted_input_share.config_id(),
+                    *report.leader_encrypted_input_share().config_id(),
                 )));
             }
             (None, Some(global_hpke_keypair)) => try_hpke_open(&global_hpke_keypair),
@@ -1454,16 +1459,13 @@ impl VdafOps {
             }
         };
 
-        let helper_encrypted_input_share =
-            &report.encrypted_input_shares()[Role::Helper.index().unwrap()];
-
         let report = LeaderStoredReport::new(
             *task.id(),
             report.metadata().clone(),
             public_share,
             Vec::from(leader_plaintext_input_share.extensions()),
             leader_input_share,
-            helper_encrypted_input_share.clone(),
+            report.helper_encrypted_input_share().clone(),
         );
 
         report_writer
@@ -2579,10 +2581,8 @@ impl VdafOps {
                         ),
                         *report_count,
                         spanned_interval,
-                        Vec::<HpkeCiphertext>::from([
-                            encrypted_leader_aggregate_share,
-                            encrypted_helper_aggregate_share.clone(),
-                        ]),
+                        encrypted_leader_aggregate_share,
+                        encrypted_helper_aggregate_share.clone(),
                     )
                     .get_encoded(),
                 ))
@@ -3069,7 +3069,7 @@ mod tests {
             self, test_util::generate_test_hpke_config_and_private_key_with_id,
             HpkeApplicationInfo, HpkeKeypair, Label,
         },
-        task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
+        task::{VdafInstance, VERIFY_KEY_LENGTH},
         test_util::install_test_trace_subscriber,
         time::{Clock, MockClock, TimeExt},
     };
@@ -3135,7 +3135,8 @@ mod tests {
         Report::new(
             report_metadata,
             public_share.get_encoded(),
-            Vec::from([leader_ciphertext, helper_ciphertext]),
+            leader_ciphertext,
+            helper_ciphertext,
         )
     }
 
@@ -3279,29 +3280,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upload_wrong_number_of_encrypted_shares() {
-        install_test_trace_subscriber();
-
-        let (_, aggregator, clock, task, _, _ephemeral_datastore) =
-            setup_upload_test(default_aggregator_config()).await;
-        let report = create_report(&task, clock.now());
-        let report = Report::new(
-            report.metadata().clone(),
-            report.public_share().to_vec(),
-            Vec::from([report.encrypted_input_shares()[0].clone()]),
-        );
-
-        assert_matches!(
-            aggregator
-                .handle_upload(task.id(), &report.get_encoded())
-                .await
-                .unwrap_err()
-                .as_ref(),
-            Error::UnrecognizedMessage(_, _)
-        );
-    }
-
-    #[tokio::test]
     async fn upload_wrong_hpke_config_id() {
         install_test_trace_subscriber();
 
@@ -3317,16 +3295,15 @@ mod tests {
         let report = Report::new(
             report.metadata().clone(),
             report.public_share().to_vec(),
-            Vec::from([
-                HpkeCiphertext::new(
-                    unused_hpke_config_id,
-                    report.encrypted_input_shares()[0]
-                        .encapsulated_key()
-                        .to_vec(),
-                    report.encrypted_input_shares()[0].payload().to_vec(),
-                ),
-                report.encrypted_input_shares()[1].clone(),
-            ]),
+            HpkeCiphertext::new(
+                unused_hpke_config_id,
+                report
+                    .leader_encrypted_input_share()
+                    .encapsulated_key()
+                    .to_vec(),
+                report.leader_encrypted_input_share().payload().to_vec(),
+            ),
+            report.helper_encrypted_input_share().clone(),
         );
 
         assert_matches!(aggregator.handle_upload(task.id(), &report.get_encoded()).await.unwrap_err().as_ref(), Error::OutdatedHpkeConfig(task_id, config_id) => {
@@ -3412,7 +3389,7 @@ mod tests {
                 let task = task.clone();
                 Box::pin(async move {
                     tx.put_collection_job(&CollectionJob::<
-                        PRIO3_VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Count,
                     >::new(

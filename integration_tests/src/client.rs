@@ -216,12 +216,13 @@ where
         (leader_port, helper_port): (u16, u16),
         vdaf: V,
     ) -> Result<ClientImplementation<'static, V>, janus_client::Error> {
-        let aggregator_endpoints = task_parameters
+        let (leader_aggregator_endpoint, helper_aggregator_endpoint) = task_parameters
             .endpoint_fragments
             .port_forwarded_endpoints(leader_port, helper_port);
         let client_parameters = ClientParameters::new(
             task_parameters.task_id,
-            aggregator_endpoints,
+            leader_aggregator_endpoint,
+            helper_aggregator_endpoint,
             task_parameters.time_precision,
         );
         let http_client = default_http_client()?;
@@ -267,13 +268,13 @@ where
         let container = ContainerLogsDropGuard::new(container);
         let host_port = container.get_host_port_ipv4(8080);
         let http_client = reqwest::Client::new();
-        let aggregator_endpoints = task_parameters
+        let (leader_aggregator_endpoint, helper_aggregator_endpoint) = task_parameters
             .endpoint_fragments
             .container_network_endpoints();
         ClientImplementation::Container(Box::new(ContainerClientImplementation {
             _container: container,
-            leader: aggregator_endpoints[Role::Leader.index().unwrap()].clone(),
-            helper: aggregator_endpoints[Role::Helper.index().unwrap()].clone(),
+            leader: leader_aggregator_endpoint,
+            helper: helper_aggregator_endpoint,
             task_id: task_parameters.task_id,
             time_precision: task_parameters.time_precision,
             vdaf,

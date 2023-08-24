@@ -1,10 +1,4 @@
-use crate::aggregator::{
-    http_handlers::{
-        aggregator_handler,
-        test_util::{decode_response_body, take_problem_details},
-    },
-    Config,
-};
+use crate::aggregator::{http_handlers::aggregator_handler, Config};
 use http::StatusCode;
 use janus_aggregator_core::{
     datastore::{
@@ -42,7 +36,6 @@ use serde_json::json;
 use std::{collections::HashSet, sync::Arc};
 use trillium::{Handler, KnownHeaderName, Status};
 use trillium_testing::{
-    assert_headers,
     prelude::{post, put},
     TestConn,
 };
@@ -353,10 +346,23 @@ async fn collection_job_success_fixed_size() {
         }
 
         let mut test_conn = test_case.post_collection_job(&collection_job_id).await;
-        assert_eq!(test_conn.status(), Some(Status::Ok));
-        assert_headers!(&test_conn, "content-type" => (Collection::<FixedSize>::MEDIA_TYPE));
 
-        let collect_resp: Collection<FixedSize> = decode_response_body(&mut test_conn).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert_eq!(
+            test_conn
+                .response_headers()
+                .get(KnownHeaderName::ContentType)
+                .unwrap(),
+            Collection::<FixedSize>::MEDIA_TYPE
+        );
+        let body_bytes = test_conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap();
+        let collect_resp = Collection::<FixedSize>::get_decoded(body_bytes.as_ref()).unwrap();
+
         assert_eq!(
             collect_resp.report_count(),
             test_case.task.min_batch_size() + 1
@@ -367,13 +373,12 @@ async fn collection_job_success_fixed_size() {
                 .align_to_time_precision(test_case.task.time_precision())
                 .unwrap(),
         );
-        assert_eq!(collect_resp.encrypted_aggregate_shares().len(), 2);
 
         let decrypted_leader_aggregate_share = hpke::open(
             test_case.task.collector_hpke_config().unwrap(),
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
-            &collect_resp.encrypted_aggregate_shares()[0],
+            collect_resp.leader_encrypted_aggregate_share(),
             &AggregateShareAad::new(
                 *test_case.task.id(),
                 BatchSelector::new_fixed_size(batch_id),
@@ -391,7 +396,7 @@ async fn collection_job_success_fixed_size() {
             test_case.task.collector_hpke_config().unwrap(),
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
-            &collect_resp.encrypted_aggregate_shares()[1],
+            collect_resp.helper_encrypted_aggregate_share(),
             &AggregateShareAad::new(
                 *test_case.task.id(),
                 BatchSelector::new_fixed_size(batch_id),
@@ -417,7 +422,23 @@ async fn collection_job_success_fixed_size() {
         .await;
     assert_eq!(test_conn.status(), Some(Status::BadRequest));
     assert_eq!(
-        take_problem_details(&mut test_conn).await,
+        test_conn
+            .response_headers()
+            .get(KnownHeaderName::ContentType)
+            .unwrap(),
+        "application/problem+json"
+    );
+    let problem_details: serde_json::Value = serde_json::from_slice(
+        &test_conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        problem_details,
         json!({
             "status": StatusCode::BAD_REQUEST.as_u16(),
             "type": "urn:ietf:params:ppm:dap:error:batchInvalid",

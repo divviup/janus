@@ -93,9 +93,9 @@ pub(super) async fn post_task<C: Clock>(
     // TODO(#1524): clean this up with `aggregator_core::task::Task` changes
     // unwrap safety: this fake URL is valid
     let fake_aggregator_url = Url::parse("http://never-used.example.com").unwrap();
-    let aggregator_endpoints = match req.role {
-        Role::Leader => Vec::from([fake_aggregator_url, req.peer_aggregator_endpoint]),
-        Role::Helper => Vec::from([req.peer_aggregator_endpoint, fake_aggregator_url]),
+    let (leader_aggregator_endpoint, helper_aggregator_endpoint) = match req.role {
+        Role::Leader => (fake_aggregator_url, req.peer_aggregator_endpoint),
+        Role::Helper => (req.peer_aggregator_endpoint, fake_aggregator_url),
         _ => unreachable!(),
     };
 
@@ -155,7 +155,8 @@ pub(super) async fn post_task<C: Clock>(
     let task = Arc::new(
         Task::new(
             task_id,
-            aggregator_endpoints,
+            leader_aggregator_endpoint,
+            helper_aggregator_endpoint,
             /* query_type */ req.query_type,
             /* vdaf */ req.vdaf,
             /* role */ req.role,
@@ -182,7 +183,8 @@ pub(super) async fn post_task<C: Clock>(
             if let Some(existing_task) = tx.get_task(task.id()).await? {
             // Check whether the existing task in the DB corresponds to the incoming task, ignoring
             // those fields that are randomly generated.
-            if existing_task.aggregator_endpoints() == task.aggregator_endpoints()
+            if existing_task.leader_aggregator_endpoint() == task.leader_aggregator_endpoint()
+                && existing_task.helper_aggregator_endpoint() == task.helper_aggregator_endpoint()
                 && existing_task.query_type() == task.query_type()
                 && existing_task.vdaf() == task.vdaf()
                 && existing_task.vdaf_verify_keys() == task.vdaf_verify_keys()

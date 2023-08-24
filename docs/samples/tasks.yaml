@@ -6,10 +6,9 @@
   # DAP's recommendation.
   task_id: "G9YKXjoEjfoU7M_fi_o2H0wmzavRb2sBFHeykeRhDMk"
 
-  # HTTPS endpoints of the leader and helper aggregators, in a list.
-  aggregator_endpoints:
-  - "https://example.com/"
-  - "https://example.net/"
+  # HTTPS endpoints of the leader and helper aggregators.
+  leader_aggregator_endpoint: "https://example.com/"
+  helper_aggregator_endpoint: "https://example.net/"
 
   # The DAP query type. See below for an example of a fixed-size task
   query_type: TimeInterval
@@ -102,9 +101,8 @@
     private_key: wFRYwiypcHC-mkGP1u3XQgIvtnlkQlUfZjgtM_zRsnI
 
 - task_id: "D-hCKPuqL2oTf7ZVRVyMP5VGt43EAEA8q34mDf6p1JE"
-  aggregator_endpoints:
-  - "https://example.org/"
-  - "https://example.com/"
+  leader_aggregator_endpoint: "https://example.org/"
+  helper_aggregator_endpoint: "https://example.com/"
   # For tasks using the fixed size query type, an additional `max_batch_size`
   # parameter must be provided.
   query_type: !FixedSize

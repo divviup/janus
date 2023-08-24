@@ -30,7 +30,7 @@ use janus_core::{
         HpkeKeypair, Label,
     },
     report_id::ReportIdChecksumExt,
-    task::PRIO3_VERIFY_KEY_LENGTH,
+    task::VERIFY_KEY_LENGTH,
     taskprov::TASKPROV_HEADER,
     test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
     time::{Clock, DurationExt, MockClock, TimeExt},
@@ -159,10 +159,8 @@ async fn setup_taskprov_test() -> TaskprovTestCase {
 
     let task = janus_aggregator_core::taskprov::Task::new(
         task_id,
-        Vec::from([
-            url::Url::parse("https://leader.example.com/").unwrap(),
-            url::Url::parse("https://helper.example.com/").unwrap(),
-        ]),
+        url::Url::parse("https://leader.example.com/").unwrap(),
+        url::Url::parse("https://helper.example.com/").unwrap(),
         QueryType::FixedSize {
             max_batch_size: max_batch_size as u64,
             batch_time_window_size: None,
@@ -696,36 +694,32 @@ async fn taskprov_aggregate_continue() {
 
                 tx.put_report_share(task.id(), &report_share).await?;
 
-                tx.put_aggregation_job(&AggregationJob::<
-                    PRIO3_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    TestVdaf,
-                >::new(
-                    *task.id(),
-                    aggregation_job_id,
-                    (),
-                    batch_id,
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
-                    AggregationJobState::InProgress,
-                    AggregationJobRound::from(0),
-                ))
-                .await?;
-
-                tx.put_report_aggregation::<PRIO3_VERIFY_KEY_LENGTH, TestVdaf>(
-                    &ReportAggregation::new(
+                tx.put_aggregation_job(
+                    &AggregationJob::<VERIFY_KEY_LENGTH, FixedSize, TestVdaf>::new(
                         *task.id(),
                         aggregation_job_id,
-                        *report_metadata.id(),
-                        *report_metadata.time(),
-                        0,
-                        None,
-                        ReportAggregationState::Waiting(prep_state, None),
+                        (),
+                        batch_id,
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
+                        AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
                     ),
                 )
                 .await?;
 
-                tx.put_aggregate_share_job::<PRIO3_VERIFY_KEY_LENGTH, FixedSize, TestVdaf>(
+                tx.put_report_aggregation::<VERIFY_KEY_LENGTH, TestVdaf>(&ReportAggregation::new(
+                    *task.id(),
+                    aggregation_job_id,
+                    *report_metadata.id(),
+                    *report_metadata.time(),
+                    0,
+                    None,
+                    ReportAggregationState::Waiting(prep_state, None),
+                ))
+                .await?;
+
+                tx.put_aggregate_share_job::<VERIFY_KEY_LENGTH, FixedSize, TestVdaf>(
                     &AggregateShareJob::new(
                         *task.id(),
                         batch_id,

@@ -1986,6 +1986,7 @@ dependencies = [
  "derivative",
  "http",
  "http-api-problem",
+ "itertools",
  "janus_core",
  "janus_messages",
  "mockito",

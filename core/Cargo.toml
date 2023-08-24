@@ -49,7 +49,7 @@ k8s-openapi = { workspace = true, optional = true }
 lazy_static = { version = "1", optional = true }
 prio.workspace = true
 rand = "0.8"
-reqwest = { version = "0.11.19", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.11.18", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.16.20"
 serde.workspace = true
 serde_json = { workspace = true, optional = true }
@@ -64,13 +64,12 @@ tracing = "0.1.37"
 tracing-log = { version = "0.1.3", optional = true }
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"], optional = true }
 trillium.workspace = true
+url = "2.4.0"
 
 [dev-dependencies]
 fixed = "1.23"
 hex = { version = "0.4", features = ["serde"] }  # ensure this remains compatible with the non-dev dependency
 janus_core = { path = ".", features = ["test-util"] }
-kube.workspace = true
 mockito = "1.1.0"
 rstest.workspace = true
 serde_test.workspace = true
-url = "2.4.0"

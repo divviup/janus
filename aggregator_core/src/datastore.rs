@@ -526,20 +526,15 @@ impl<C: Clock> Transaction<'_, C> {
     /// Writes a task into the datastore.
     #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     pub async fn put_task(&self, task: &Task) -> Result<(), Error> {
-        let endpoints: Vec<_> = task
-            .aggregator_endpoints()
-            .iter()
-            .map(Url::as_str)
-            .collect();
-
         // Main task insert.
         let stmt = self
             .prepare_cached(
                 "INSERT INTO tasks (
-                    task_id, aggregator_role, aggregator_endpoints, query_type, vdaf,
-                    max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
-                    time_precision, tolerable_clock_skew, collector_hpke_config)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    task_id, aggregator_role, leader_aggregator_endpoint,
+                    helper_aggregator_endpoint, query_type, vdaf, max_batch_query_count,
+                    task_expiration, report_expiry_age, min_batch_size, time_precision,
+                    tolerable_clock_skew, collector_hpke_config)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 ON CONFLICT DO NOTHING",
             )
             .await?;
@@ -549,7 +544,10 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* task_id */ &task.id().as_ref(),
                     /* aggregator_role */ &AggregatorRole::from_role(*task.role())?,
-                    /* aggregator_endpoints */ &endpoints,
+                    /* leader_aggregator_endpoint */
+                    &task.leader_aggregator_endpoint().as_str(),
+                    /* helper_aggregator_endpoint */
+                    &task.helper_aggregator_endpoint().as_str(),
                     /* query_type */ &Json(task.query_type()),
                     /* vdaf */ &Json(task.vdaf()),
                     /* max_batch_query_count */
@@ -746,9 +744,9 @@ impl<C: Clock> Transaction<'_, C> {
         let params: &[&(dyn ToSql + Sync)] = &[&task_id.as_ref()];
         let stmt = self
             .prepare_cached(
-                "SELECT aggregator_role, aggregator_endpoints, query_type, vdaf,
-                    max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
-                    time_precision, tolerable_clock_skew, collector_hpke_config
+                "SELECT aggregator_role, leader_aggregator_endpoint, helper_aggregator_endpoint,
+                    query_type, vdaf, max_batch_query_count, task_expiration, report_expiry_age,
+                    min_batch_size, time_precision, tolerable_clock_skew, collector_hpke_config
                 FROM tasks WHERE task_id = $1",
             )
             .await?;
@@ -818,9 +816,10 @@ impl<C: Clock> Transaction<'_, C> {
     pub async fn get_tasks(&self) -> Result<Vec<Task>, Error> {
         let stmt = self
             .prepare_cached(
-                "SELECT task_id, aggregator_role, aggregator_endpoints, query_type, vdaf,
-                    max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
-                    time_precision, tolerable_clock_skew, collector_hpke_config
+                "SELECT task_id, aggregator_role, leader_aggregator_endpoint,
+                    helper_aggregator_endpoint, query_type, vdaf, max_batch_query_count,
+                    task_expiration, report_expiry_age, min_batch_size, time_precision,
+                    tolerable_clock_skew, collector_hpke_config
                 FROM tasks",
             )
             .await?;
@@ -955,11 +954,10 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<Task, Error> {
         // Scalar task parameters.
         let aggregator_role: AggregatorRole = row.get("aggregator_role");
-        let endpoints = row
-            .get::<_, Vec<String>>("aggregator_endpoints")
-            .into_iter()
-            .map(|endpoint| Ok(Url::parse(&endpoint)?))
-            .collect::<Result<_, Error>>()?;
+        let leader_aggregator_endpoint =
+            row.get::<_, String>("leader_aggregator_endpoint").parse()?;
+        let helper_aggregator_endpoint =
+            row.get::<_, String>("helper_aggregator_endpoint").parse()?;
         let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
         let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
         let max_batch_query_count = row.get_bigint_and_convert("max_batch_query_count")?;
@@ -1056,7 +1054,8 @@ impl<C: Clock> Transaction<'_, C> {
 
         let task = Task::new_without_validation(
             *task_id,
-            endpoints,
+            leader_aggregator_endpoint,
+            helper_aggregator_endpoint,
             query_type,
             vdaf,
             aggregator_role.as_role(),

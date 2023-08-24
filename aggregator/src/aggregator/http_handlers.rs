@@ -686,7 +686,7 @@ mod tests {
             HpkeApplicationInfo, HpkeKeypair, Label,
         },
         report_id::ReportIdChecksumExt,
-        task::{AuthenticationToken, VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
+        task::{AuthenticationToken, VdafInstance, VERIFY_KEY_LENGTH},
         test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf},
         time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
     };
@@ -976,7 +976,8 @@ mod tests {
         let task_id = *task.id();
         let task = taskprov::Task::new(
             task_id,
-            task.aggregator_endpoints().to_vec(),
+            task.leader_aggregator_endpoint().clone(),
+            task.helper_aggregator_endpoint().clone(),
             *task.query_type(),
             task.vdaf().clone(),
             *task.role(),
@@ -1169,7 +1170,8 @@ mod tests {
                     .unwrap(),
             ),
             report.public_share().to_vec(),
-            report.encrypted_input_shares().to_vec(),
+            report.leader_encrypted_input_share().clone(),
+            report.helper_encrypted_input_share().clone(),
         );
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
@@ -1185,26 +1187,6 @@ mod tests {
         )
         .await;
 
-        // should reject a report with only one share with the unrecognizedMessage type.
-        let bad_report = Report::new(
-            report.metadata().clone(),
-            report.public_share().to_vec(),
-            Vec::from([report.encrypted_input_shares()[0].clone()]),
-        );
-        let mut test_conn = put(task.report_upload_uri().unwrap().path())
-            .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-            .with_request_body(bad_report.get_encoded())
-            .run_async(&handler)
-            .await;
-        check_response(
-            &mut test_conn,
-            Status::BadRequest,
-            "unrecognizedMessage",
-            "The message type for a response was incorrect or the payload was malformed.",
-            task.id(),
-        )
-        .await;
-
         // should reject a report using the wrong HPKE config for the leader, and reply with
         // the error type outdatedConfig.
         let unused_hpke_config_id = (0..)
@@ -1214,16 +1196,15 @@ mod tests {
         let bad_report = Report::new(
             report.metadata().clone(),
             report.public_share().to_vec(),
-            Vec::from([
-                HpkeCiphertext::new(
-                    unused_hpke_config_id,
-                    report.encrypted_input_shares()[0]
-                        .encapsulated_key()
-                        .to_vec(),
-                    report.encrypted_input_shares()[0].payload().to_vec(),
-                ),
-                report.encrypted_input_shares()[1].clone(),
-            ]),
+            HpkeCiphertext::new(
+                unused_hpke_config_id,
+                report
+                    .leader_encrypted_input_share()
+                    .encapsulated_key()
+                    .to_vec(),
+                report.leader_encrypted_input_share().payload().to_vec(),
+            ),
+            report.helper_encrypted_input_share().clone(),
         );
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
@@ -1249,7 +1230,8 @@ mod tests {
         let bad_report = Report::new(
             ReportMetadata::new(*report.metadata().id(), bad_report_time),
             report.public_share().to_vec(),
-            report.encrypted_input_shares().to_vec(),
+            report.leader_encrypted_input_share().clone(),
+            report.helper_encrypted_input_share().clone(),
         );
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
@@ -1326,7 +1308,8 @@ mod tests {
                             .unwrap(),
                     ),
                     report.public_share().to_vec(),
-                    report.encrypted_input_shares().to_vec(),
+                    report.leader_encrypted_input_share().clone(),
+                    report.helper_encrypted_input_share().clone(),
                 )
                 .get_encoded(),
             )
@@ -1976,6 +1959,7 @@ mod tests {
             let mut saw_conflicting_aggregation_job = false;
             let mut saw_non_conflicting_aggregation_job = false;
             let mut saw_new_aggregation_job = false;
+
             for aggregation_job in aggregation_jobs {
                 if aggregation_job.eq(&conflicting_aggregation_job) {
                     saw_conflicting_aggregation_job = true;
@@ -2473,8 +2457,7 @@ mod tests {
         .build();
 
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
-        let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
-            task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
         let hpke_key = task.current_hpke_key();
 
         // report_share_0 is a "happy path" report.
@@ -2585,7 +2568,7 @@ mod tests {
                     tx.put_report_share(task.id(), &report_share_2).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Count,
                     >::new(
@@ -2600,7 +2583,7 @@ mod tests {
                     ))
                     .await?;
 
-                    tx.put_report_aggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(
+                    tx.put_report_aggregation::<VERIFY_KEY_LENGTH, Prio3Count>(
                         &ReportAggregation::new(
                             *task.id(),
                             aggregation_job_id,
@@ -2612,7 +2595,7 @@ mod tests {
                         ),
                     )
                     .await?;
-                    tx.put_report_aggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(
+                    tx.put_report_aggregation::<VERIFY_KEY_LENGTH, Prio3Count>(
                         &ReportAggregation::new(
                             *task.id(),
                             aggregation_job_id,
@@ -2624,7 +2607,7 @@ mod tests {
                         ),
                     )
                     .await?;
-                    tx.put_report_aggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(
+                    tx.put_report_aggregation::<VERIFY_KEY_LENGTH, Prio3Count>(
                         &ReportAggregation::new(
                             *task.id(),
                             aggregation_job_id,
@@ -2637,7 +2620,7 @@ mod tests {
                     )
                     .await?;
 
-                    tx.put_aggregate_share_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                    tx.put_aggregate_share_job::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
                         &AggregateShareJob::new(
                             *task.id(),
                             Interval::new(
@@ -2688,31 +2671,32 @@ mod tests {
         );
 
         // Validate datastore.
-        let (aggregation_job, report_aggregations) =
-            datastore
-                .run_tx(|tx| {
-                    let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
-                    Box::pin(async move {
-                        let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+        let (aggregation_job, report_aggregations) = datastore
+            .run_tx(|tx| {
+                let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
+                Box::pin(async move {
+                    let aggregation_job = tx
+                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
-                        .await.unwrap().unwrap();
-                        let report_aggregations = tx
-                            .get_report_aggregations_for_aggregation_job(
-                                vdaf.as_ref(),
-                                &Role::Helper,
-                                task.id(),
-                                &aggregation_job_id,
-                            )
-                            .await
-                            .unwrap();
-                        Ok((aggregation_job, report_aggregations))
-                    })
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    let report_aggregations = tx
+                        .get_report_aggregations_for_aggregation_job(
+                            vdaf.as_ref(),
+                            &Role::Helper,
+                            task.id(),
+                            &aggregation_job_id,
+                        )
+                        .await
+                        .unwrap();
+                    Ok((aggregation_job, report_aggregations))
                 })
-                .await
-                .unwrap();
+            })
+            .await
+            .unwrap();
 
         assert_eq!(
             aggregation_job,
@@ -2789,8 +2773,7 @@ mod tests {
         );
 
         let vdaf = Prio3::new_count(2).unwrap();
-        let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
-            task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
         let hpke_key = task.current_hpke_key();
 
         // report_share_0 is a "happy path" report.
@@ -2892,7 +2875,7 @@ mod tests {
         )
         .unwrap();
         let second_batch_want_batch_aggregations =
-            empty_batch_aggregations::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+            empty_batch_aggregations::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
                 &task,
                 BATCH_AGGREGATION_SHARD_COUNT,
                 &second_batch_identifier,
@@ -2929,7 +2912,7 @@ mod tests {
                     tx.put_report_share(task.id(), &report_share_2).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Count,
                     >::new(
@@ -2944,57 +2927,52 @@ mod tests {
                     ))
                     .await?;
 
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id_0,
-                        *report_metadata_0.id(),
-                        *report_metadata_0.time(),
-                        0,
-                        None,
-                        ReportAggregationState::Waiting(prep_state_0, None),
-                    ))
+                    tx.put_report_aggregation(
+                        &ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
+                            *task.id(),
+                            aggregation_job_id_0,
+                            *report_metadata_0.id(),
+                            *report_metadata_0.time(),
+                            0,
+                            None,
+                            ReportAggregationState::Waiting(prep_state_0, None),
+                        ),
+                    )
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id_0,
-                        *report_metadata_1.id(),
-                        *report_metadata_1.time(),
-                        1,
-                        None,
-                        ReportAggregationState::Waiting(prep_state_1, None),
-                    ))
+                    tx.put_report_aggregation(
+                        &ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
+                            *task.id(),
+                            aggregation_job_id_0,
+                            *report_metadata_1.id(),
+                            *report_metadata_1.time(),
+                            1,
+                            None,
+                            ReportAggregationState::Waiting(prep_state_1, None),
+                        ),
+                    )
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id_0,
-                        *report_metadata_2.id(),
-                        *report_metadata_2.time(),
-                        2,
-                        None,
-                        ReportAggregationState::Waiting(prep_state_2, None),
-                    ))
+                    tx.put_report_aggregation(
+                        &ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
+                            *task.id(),
+                            aggregation_job_id_0,
+                            *report_metadata_2.id(),
+                            *report_metadata_2.time(),
+                            2,
+                            None,
+                            ReportAggregationState::Waiting(prep_state_2, None),
+                        ),
+                    )
                     .await?;
 
                     for batch_identifier in [first_batch_identifier, second_batch_identifier] {
-                        tx.put_batch(
-                            &Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
-                                *task.id(),
-                                batch_identifier,
-                                (),
-                                BatchState::Closed,
-                                0,
-                                batch_identifier,
-                            ),
-                        )
+                        tx.put_batch(&Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                            *task.id(),
+                            batch_identifier,
+                            (),
+                            BatchState::Closed,
+                            0,
+                            batch_identifier,
+                        ))
                         .await
                         .unwrap()
                     }
@@ -3042,7 +3020,7 @@ mod tests {
                     (task.clone(), vdaf.clone(), report_metadata_0.clone());
                 Box::pin(async move {
                     TimeInterval::get_batch_aggregations_for_collection_identifier::<
-                        PRIO3_VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LENGTH,
                         Prio3Count,
                         _,
                     >(
@@ -3066,7 +3044,7 @@ mod tests {
             .unwrap()
             .into_iter()
             .map(|agg| {
-                BatchAggregation::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                BatchAggregation::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
                     *agg.task_id(),
                     *agg.batch_identifier(),
                     (),
@@ -3114,7 +3092,7 @@ mod tests {
                     (task.clone(), vdaf.clone(), report_metadata_2.clone());
                 Box::pin(async move {
                     TimeInterval::get_batch_aggregations_for_collection_identifier::<
-                        PRIO3_VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LENGTH,
                         Prio3Count,
                         _,
                     >(
@@ -3249,7 +3227,7 @@ mod tests {
                     tx.put_report_share(task.id(), &report_share_5).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Count,
                     >::new(
@@ -3264,44 +3242,41 @@ mod tests {
                     ))
                     .await?;
 
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id_1,
-                        *report_metadata_3.id(),
-                        *report_metadata_3.time(),
-                        3,
-                        None,
-                        ReportAggregationState::Waiting(prep_state_3, None),
-                    ))
+                    tx.put_report_aggregation(
+                        &ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
+                            *task.id(),
+                            aggregation_job_id_1,
+                            *report_metadata_3.id(),
+                            *report_metadata_3.time(),
+                            3,
+                            None,
+                            ReportAggregationState::Waiting(prep_state_3, None),
+                        ),
+                    )
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id_1,
-                        *report_metadata_4.id(),
-                        *report_metadata_4.time(),
-                        4,
-                        None,
-                        ReportAggregationState::Waiting(prep_state_4, None),
-                    ))
+                    tx.put_report_aggregation(
+                        &ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
+                            *task.id(),
+                            aggregation_job_id_1,
+                            *report_metadata_4.id(),
+                            *report_metadata_4.time(),
+                            4,
+                            None,
+                            ReportAggregationState::Waiting(prep_state_4, None),
+                        ),
+                    )
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id_1,
-                        *report_metadata_5.id(),
-                        *report_metadata_5.time(),
-                        5,
-                        None,
-                        ReportAggregationState::Waiting(prep_state_5, None),
-                    ))
+                    tx.put_report_aggregation(
+                        &ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
+                            *task.id(),
+                            aggregation_job_id_1,
+                            *report_metadata_5.id(),
+                            *report_metadata_5.time(),
+                            5,
+                            None,
+                            ReportAggregationState::Waiting(prep_state_5, None),
+                        ),
+                    )
                     .await?;
 
                     Ok(())
@@ -3340,7 +3315,7 @@ mod tests {
                     (task.clone(), vdaf.clone(), report_metadata_0.clone());
                 Box::pin(async move {
                     TimeInterval::get_batch_aggregations_for_collection_identifier::<
-                        PRIO3_VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LENGTH,
                         Prio3Count,
                         _,
                     >(
@@ -3364,7 +3339,7 @@ mod tests {
             .unwrap()
             .into_iter()
             .map(|agg| {
-                BatchAggregation::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                BatchAggregation::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
                     *agg.task_id(),
                     *agg.batch_identifier(),
                     (),
@@ -3417,7 +3392,7 @@ mod tests {
                     (task.clone(), vdaf.clone(), report_metadata_2.clone());
                 Box::pin(async move {
                     TimeInterval::get_batch_aggregations_for_collection_identifier::<
-                        PRIO3_VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LENGTH,
                         Prio3Count,
                         _,
                     >(
@@ -4412,13 +4387,12 @@ mod tests {
 
         assert_eq!(collect_resp.report_count(), 12);
         assert_eq!(collect_resp.interval(), &batch_interval);
-        assert_eq!(collect_resp.encrypted_aggregate_shares().len(), 2);
 
         let decrypted_leader_aggregate_share = hpke::open(
             test_case.task.collector_hpke_config().unwrap(),
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
-            &collect_resp.encrypted_aggregate_shares()[0],
+            collect_resp.leader_encrypted_aggregate_share(),
             &AggregateShareAad::new(
                 *test_case.task.id(),
                 BatchSelector::new_time_interval(batch_interval),
@@ -4436,7 +4410,7 @@ mod tests {
             test_case.task.collector_hpke_config().unwrap(),
             test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
-            &collect_resp.encrypted_aggregate_shares()[1],
+            collect_resp.helper_encrypted_aggregate_share(),
             &AggregateShareAad::new(
                 *test_case.task.id(),
                 BatchSelector::new_time_interval(batch_interval),
