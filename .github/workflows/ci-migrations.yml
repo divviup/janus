@@ -14,7 +14,9 @@ jobs:
       with:
         fetch-depth: 0
     - name: Check that existing migrations have not changed
-      if: github.event_name == 'pull_request'
+      if: |
+        github.event_name == 'pull_request' && 
+        !contains(github.event.pull_request.labels.*.name, 'allow-changed-migrations')
       env:
         BASE_SHA: "${{ github.event.pull_request.base.sha }}"
       run: |
