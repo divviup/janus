@@ -2275,18 +2275,20 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
             );
             Box::pin(async move {
                 tx.put_task(&task).await?;
-                tx.put_aggregation_job(
-                    &AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        (),
-                        (),
-                        Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
-                            .unwrap(),
-                        AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
-                    ),
-                )
+                tx.put_aggregation_job(&AggregationJob::<
+                    VERIFY_KEY_LENGTH,
+                    TimeInterval,
+                    Prio3Count,
+                >::new(
+                    *task.id(),
+                    aggregation_job_id,
+                    (),
+                    (),
+                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
+                        .unwrap(),
+                    AggregationJobState::InProgress,
+                    AggregationJobRound::from(0),
+                ))
                 .await?;
 
                 let mut want_report_aggregations = Vec::new();
