@@ -890,7 +890,7 @@ mod tests {
             self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
         report_id::ReportIdChecksumExt,
-        task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
+        task::{VdafInstance, VERIFY_KEY_LENGTH},
         test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
         time::{Clock, IntervalExt, MockClock, TimeExt},
         Runtime,
@@ -936,10 +936,7 @@ mod tests {
             VdafInstance::Prio3Count,
             Role::Leader,
         )
-        .with_aggregator_endpoints(Vec::from([
-            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-            Url::parse(&server.url()).unwrap(),
-        ]))
+        .with_helper_aggregator_endpoint(Url::parse(&server.url()).unwrap())
         .build();
 
         let time = clock
@@ -948,8 +945,7 @@ mod tests {
             .unwrap();
         let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
-        let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
-            task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
 
         let transcript = run_vdaf(
             vdaf.as_ref(),
@@ -961,7 +957,7 @@ mod tests {
 
         let agg_auth_token = task.primary_aggregator_auth_token().clone();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(
+        let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -982,7 +978,7 @@ mod tests {
                         .await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Count,
                     >::new(
@@ -996,34 +992,31 @@ mod tests {
                         AggregationJobRound::from(0),
                     ))
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        *report.metadata().id(),
-                        *report.metadata().time(),
-                        0,
-                        None,
-                        ReportAggregationState::Start,
-                    ))
-                    .await?;
-
-                    tx.put_batch(
-                        &Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                    tx.put_report_aggregation(
+                        &ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
                             *task.id(),
-                            batch_identifier,
-                            (),
-                            BatchState::Closing,
-                            1,
-                            Interval::from_time(&time).unwrap(),
+                            aggregation_job_id,
+                            *report.metadata().id(),
+                            *report.metadata().time(),
+                            0,
+                            None,
+                            ReportAggregationState::Start,
                         ),
                     )
                     .await?;
 
+                    tx.put_batch(&Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                        *task.id(),
+                        batch_identifier,
+                        (),
+                        BatchState::Closing,
+                        1,
+                        Interval::from_time(&time).unwrap(),
+                    ))
+                    .await?;
+
                     let collection_job =
-                        CollectionJob::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                        CollectionJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
                             *task.id(),
                             random(),
                             batch_identifier,
@@ -1128,7 +1121,7 @@ mod tests {
         }
 
         let want_aggregation_job =
-            AggregationJob::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+            AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 (),
@@ -1138,7 +1131,7 @@ mod tests {
                 AggregationJobState::Finished,
                 AggregationJobRound::from(2),
             );
-        let want_report_aggregation = ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
+        let want_report_aggregation = ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
             *task.id(),
             aggregation_job_id,
             *report.metadata().id(),
@@ -1147,7 +1140,7 @@ mod tests {
             None,
             ReportAggregationState::Finished,
         );
-        let want_batch = Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+        let want_batch = Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
             *task.id(),
             batch_identifier,
             (),
@@ -1166,7 +1159,7 @@ mod tests {
 
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -1217,10 +1210,7 @@ mod tests {
             VdafInstance::Prio3Count,
             Role::Leader,
         )
-        .with_aggregator_endpoints(Vec::from([
-            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-            Url::parse(&server.url()).unwrap(),
-        ]))
+        .with_helper_aggregator_endpoint(Url::parse(&server.url()).unwrap())
         .build();
 
         let time = clock
@@ -1229,8 +1219,7 @@ mod tests {
             .unwrap();
         let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
-        let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
-            task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
 
         let transcript = run_vdaf(
             vdaf.as_ref(),
@@ -1242,7 +1231,7 @@ mod tests {
 
         let agg_auth_token = task.primary_aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(
+        let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -1250,7 +1239,7 @@ mod tests {
             Vec::new(),
             transcript.input_shares.clone(),
         );
-        let repeated_extension_report = generate_report::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(
+        let repeated_extension_report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
             *task.id(),
             ReportMetadata::new(random(), time),
             helper_hpke_keypair.config(),
@@ -1279,7 +1268,7 @@ mod tests {
                         .await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Count,
                     >::new(
@@ -1293,56 +1282,51 @@ mod tests {
                         AggregationJobRound::from(0),
                     ))
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        *report.metadata().id(),
-                        *report.metadata().time(),
-                        0,
-                        None,
-                        ReportAggregationState::Start,
-                    ))
-                    .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        *repeated_extension_report.metadata().id(),
-                        *repeated_extension_report.metadata().time(),
-                        1,
-                        None,
-                        ReportAggregationState::Start,
-                    ))
-                    .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        missing_report_id,
-                        time,
-                        2,
-                        None,
-                        ReportAggregationState::Start,
-                    ))
-                    .await?;
-
-                    tx.put_batch(
-                        &Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                    tx.put_report_aggregation(
+                        &ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
                             *task.id(),
-                            batch_identifier,
-                            (),
-                            BatchState::Closing,
-                            1,
-                            Interval::from_time(&time).unwrap(),
+                            aggregation_job_id,
+                            *report.metadata().id(),
+                            *report.metadata().time(),
+                            0,
+                            None,
+                            ReportAggregationState::Start,
                         ),
                     )
+                    .await?;
+                    tx.put_report_aggregation(
+                        &ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
+                            *task.id(),
+                            aggregation_job_id,
+                            *repeated_extension_report.metadata().id(),
+                            *repeated_extension_report.metadata().time(),
+                            1,
+                            None,
+                            ReportAggregationState::Start,
+                        ),
+                    )
+                    .await?;
+                    tx.put_report_aggregation(
+                        &ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
+                            *task.id(),
+                            aggregation_job_id,
+                            missing_report_id,
+                            time,
+                            2,
+                            None,
+                            ReportAggregationState::Start,
+                        ),
+                    )
+                    .await?;
+
+                    tx.put_batch(&Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                        *task.id(),
+                        batch_identifier,
+                        (),
+                        BatchState::Closing,
+                        1,
+                        Interval::from_time(&time).unwrap(),
+                    ))
                     .await?;
 
                     Ok(tx
@@ -1435,7 +1419,7 @@ mod tests {
         mocked_aggregate_success.assert_async().await;
 
         let want_aggregation_job =
-            AggregationJob::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+            AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 (),
@@ -1447,7 +1431,7 @@ mod tests {
             );
         let leader_prep_state = transcript.leader_prep_state(0).clone();
         let prep_msg = transcript.prepare_messages[0].clone();
-        let want_report_aggregation = ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
+        let want_report_aggregation = ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
             *task.id(),
             aggregation_job_id,
             *report.metadata().id(),
@@ -1457,7 +1441,7 @@ mod tests {
             ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
         );
         let want_repeated_extension_report_aggregation =
-            ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
+            ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 *repeated_extension_report.metadata().id(),
@@ -1467,7 +1451,7 @@ mod tests {
                 ReportAggregationState::Failed(ReportShareError::UnrecognizedMessage),
             );
         let want_missing_report_report_aggregation =
-            ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
+            ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 missing_report_id,
@@ -1476,7 +1460,7 @@ mod tests {
                 None,
                 ReportAggregationState::Failed(ReportShareError::ReportDropped),
             );
-        let want_batch = Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+        let want_batch = Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
             *task.id(),
             batch_identifier,
             (),
@@ -1501,7 +1485,7 @@ mod tests {
                 );
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -1584,10 +1568,7 @@ mod tests {
             VdafInstance::Prio3Count,
             Role::Leader,
         )
-        .with_aggregator_endpoints(Vec::from([
-            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-            Url::parse(&server.url()).unwrap(),
-        ]))
+        .with_helper_aggregator_endpoint(Url::parse(&server.url()).unwrap())
         .build();
 
         let report_metadata = ReportMetadata::new(
@@ -1597,8 +1578,7 @@ mod tests {
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
         );
-        let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
-            task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
 
         let transcript = run_vdaf(
             vdaf.as_ref(),
@@ -1610,7 +1590,7 @@ mod tests {
 
         let agg_auth_token = task.primary_aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(
+        let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -1629,7 +1609,7 @@ mod tests {
                     tx.put_client_report(vdaf.borrow(), &report).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LENGTH,
                         FixedSize,
                         Prio3Count,
                     >::new(
@@ -1643,30 +1623,27 @@ mod tests {
                         AggregationJobRound::from(0),
                     ))
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        *report.metadata().id(),
-                        *report.metadata().time(),
-                        0,
-                        None,
-                        ReportAggregationState::Start,
-                    ))
-                    .await?;
-
-                    tx.put_batch(
-                        &Batch::<PRIO3_VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
+                    tx.put_report_aggregation(
+                        &ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
                             *task.id(),
-                            batch_id,
-                            (),
-                            BatchState::Open,
-                            1,
-                            Interval::from_time(report.metadata().time()).unwrap(),
+                            aggregation_job_id,
+                            *report.metadata().id(),
+                            *report.metadata().time(),
+                            0,
+                            None,
+                            ReportAggregationState::Start,
                         ),
                     )
+                    .await?;
+
+                    tx.put_batch(&Batch::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
+                        *task.id(),
+                        batch_id,
+                        (),
+                        BatchState::Open,
+                        1,
+                        Interval::from_time(report.metadata().time()).unwrap(),
+                    ))
                     .await?;
 
                     Ok(tx
@@ -1758,18 +1735,16 @@ mod tests {
         mocked_aggregate_failure.assert_async().await;
         mocked_aggregate_success.assert_async().await;
 
-        let want_aggregation_job =
-            AggregationJob::<PRIO3_VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
-                *task.id(),
-                aggregation_job_id,
-                (),
-                batch_id,
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                    .unwrap(),
-                AggregationJobState::InProgress,
-                AggregationJobRound::from(1),
-            );
-        let want_report_aggregation = ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
+        let want_aggregation_job = AggregationJob::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
+            *task.id(),
+            aggregation_job_id,
+            (),
+            batch_id,
+            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+            AggregationJobState::InProgress,
+            AggregationJobRound::from(1),
+        );
+        let want_report_aggregation = ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
             *task.id(),
             aggregation_job_id,
             *report.metadata().id(),
@@ -1781,7 +1756,7 @@ mod tests {
                 Some(transcript.prepare_messages[0].clone()),
             ),
         );
-        let want_batch = Batch::<PRIO3_VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
+        let want_batch = Batch::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
             *task.id(),
             batch_id,
             (),
@@ -1796,7 +1771,7 @@ mod tests {
                     (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, FixedSize, Prio3Count>(
+                        .get_aggregation_job::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -1840,10 +1815,7 @@ mod tests {
             VdafInstance::Prio3Count,
             Role::Leader,
         )
-        .with_aggregator_endpoints(Vec::from([
-            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-            Url::parse(&server.url()).unwrap(),
-        ]))
+        .with_helper_aggregator_endpoint(Url::parse(&server.url()).unwrap())
         .build();
         let time = clock
             .now()
@@ -1864,8 +1836,7 @@ mod tests {
         )
         .unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
-        let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
-            task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
 
         let transcript = run_vdaf(
             vdaf.as_ref(),
@@ -1877,7 +1848,7 @@ mod tests {
 
         let agg_auth_token = task.primary_aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(
+        let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -1909,7 +1880,7 @@ mod tests {
                         .await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Count,
                     >::new(
@@ -1923,45 +1894,40 @@ mod tests {
                         AggregationJobRound::from(1),
                     ))
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
-                    >::new(
+                    tx.put_report_aggregation(
+                        &ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
+                            *task.id(),
+                            aggregation_job_id,
+                            *report.metadata().id(),
+                            *report.metadata().time(),
+                            0,
+                            None,
+                            ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
+                        ),
+                    )
+                    .await?;
+
+                    tx.put_batch(&Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
                         *task.id(),
-                        aggregation_job_id,
-                        *report.metadata().id(),
-                        *report.metadata().time(),
-                        0,
-                        None,
-                        ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
+                        active_batch_identifier,
+                        (),
+                        BatchState::Closing,
+                        1,
+                        Interval::from_time(report.metadata().time()).unwrap(),
+                    ))
+                    .await?;
+                    tx.put_batch(&Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                        *task.id(),
+                        other_batch_identifier,
+                        (),
+                        BatchState::Closing,
+                        1,
+                        Interval::EMPTY,
                     ))
                     .await?;
 
-                    tx.put_batch(
-                        &Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
-                            *task.id(),
-                            active_batch_identifier,
-                            (),
-                            BatchState::Closing,
-                            1,
-                            Interval::from_time(report.metadata().time()).unwrap(),
-                        ),
-                    )
-                    .await?;
-                    tx.put_batch(
-                        &Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
-                            *task.id(),
-                            other_batch_identifier,
-                            (),
-                            BatchState::Closing,
-                            1,
-                            Interval::EMPTY,
-                        ),
-                    )
-                    .await?;
-
                     let collection_job =
-                        CollectionJob::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                        CollectionJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
                             *task.id(),
                             random(),
                             collection_identifier,
@@ -2056,7 +2022,7 @@ mod tests {
         mocked_aggregate_success.assert_async().await;
 
         let want_aggregation_job =
-            AggregationJob::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+            AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 (),
@@ -2066,7 +2032,7 @@ mod tests {
                 AggregationJobState::Finished,
                 AggregationJobRound::from(2),
             );
-        let want_report_aggregation = ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
+        let want_report_aggregation = ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
             *task.id(),
             aggregation_job_id,
             *report.metadata().id(),
@@ -2081,7 +2047,7 @@ mod tests {
             .to_batch_interval_start(task.time_precision())
             .unwrap();
         let want_batch_aggregations = Vec::from([BatchAggregation::<
-            PRIO3_VERIFY_KEY_LENGTH,
+            VERIFY_KEY_LENGTH,
             TimeInterval,
             Prio3Count,
         >::new(
@@ -2095,7 +2061,7 @@ mod tests {
             Interval::from_time(report.metadata().time()).unwrap(),
             ReportIdChecksum::for_report_id(report.metadata().id()),
         )]);
-        let want_active_batch = Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+        let want_active_batch = Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
             *task.id(),
             active_batch_identifier,
             (),
@@ -2103,7 +2069,7 @@ mod tests {
             0,
             Interval::from_time(report.metadata().time()).unwrap(),
         );
-        let want_other_batch = Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+        let want_other_batch = Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
             *task.id(),
             other_batch_identifier,
             (),
@@ -2128,7 +2094,7 @@ mod tests {
 
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -2146,7 +2112,7 @@ mod tests {
                         .unwrap();
                     let batch_aggregations =
                         TimeInterval::get_batch_aggregations_for_collection_identifier::<
-                            PRIO3_VERIFY_KEY_LENGTH,
+                            VERIFY_KEY_LENGTH,
                             Prio3Count,
                             _,
                         >(
@@ -2236,10 +2202,7 @@ mod tests {
             VdafInstance::Prio3Count,
             Role::Leader,
         )
-        .with_aggregator_endpoints(Vec::from([
-            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-            Url::parse(&server.url()).unwrap(),
-        ]))
+        .with_helper_aggregator_endpoint(Url::parse(&server.url()).unwrap())
         .build();
         let report_metadata = ReportMetadata::new(
             random(),
@@ -2248,8 +2211,7 @@ mod tests {
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
         );
-        let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
-            task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
 
         let transcript = run_vdaf(
             vdaf.as_ref(),
@@ -2261,7 +2223,7 @@ mod tests {
 
         let agg_auth_token = task.primary_aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(
+        let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -2291,7 +2253,7 @@ mod tests {
                     tx.put_client_report(vdaf.borrow(), &report).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LENGTH,
                         FixedSize,
                         Prio3Count,
                     >::new(
@@ -2305,34 +2267,31 @@ mod tests {
                         AggregationJobRound::from(1),
                     ))
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_VERIFY_KEY_LENGTH,
-                        Prio3Count,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        *report.metadata().id(),
-                        *report.metadata().time(),
-                        0,
-                        None,
-                        ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
-                    ))
-                    .await?;
-
-                    tx.put_batch(
-                        &Batch::<PRIO3_VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
+                    tx.put_report_aggregation(
+                        &ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
                             *task.id(),
-                            batch_id,
-                            (),
-                            BatchState::Closing,
-                            1,
-                            Interval::from_time(report.metadata().time()).unwrap(),
+                            aggregation_job_id,
+                            *report.metadata().id(),
+                            *report.metadata().time(),
+                            0,
+                            None,
+                            ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
                         ),
                     )
                     .await?;
 
+                    tx.put_batch(&Batch::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
+                        *task.id(),
+                        batch_id,
+                        (),
+                        BatchState::Closing,
+                        1,
+                        Interval::from_time(report.metadata().time()).unwrap(),
+                    ))
+                    .await?;
+
                     let collection_job =
-                        CollectionJob::<PRIO3_VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
+                        CollectionJob::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
                             *task.id(),
                             random(),
                             batch_id,
@@ -2426,18 +2385,16 @@ mod tests {
         mocked_aggregate_failure.assert_async().await;
         mocked_aggregate_success.assert_async().await;
 
-        let want_aggregation_job =
-            AggregationJob::<PRIO3_VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
-                *task.id(),
-                aggregation_job_id,
-                (),
-                batch_id,
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                    .unwrap(),
-                AggregationJobState::Finished,
-                AggregationJobRound::from(2),
-            );
-        let want_report_aggregation = ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
+        let want_aggregation_job = AggregationJob::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
+            *task.id(),
+            aggregation_job_id,
+            (),
+            batch_id,
+            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+            AggregationJobState::Finished,
+            AggregationJobRound::from(2),
+        );
+        let want_report_aggregation = ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
             *task.id(),
             aggregation_job_id,
             *report.metadata().id(),
@@ -2446,22 +2403,21 @@ mod tests {
             None,
             ReportAggregationState::Finished,
         );
-        let want_batch_aggregations = Vec::from([BatchAggregation::<
-            PRIO3_VERIFY_KEY_LENGTH,
-            FixedSize,
-            Prio3Count,
-        >::new(
-            *task.id(),
-            batch_id,
-            (),
-            0,
-            BatchAggregationState::Aggregating,
-            Some(leader_aggregate_share),
-            1,
-            Interval::from_time(report.metadata().time()).unwrap(),
-            ReportIdChecksum::for_report_id(report.metadata().id()),
-        )]);
-        let want_batch = Batch::<PRIO3_VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
+        let want_batch_aggregations =
+            Vec::from([
+                BatchAggregation::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
+                    *task.id(),
+                    batch_id,
+                    (),
+                    0,
+                    BatchAggregationState::Aggregating,
+                    Some(leader_aggregate_share),
+                    1,
+                    Interval::from_time(report.metadata().time()).unwrap(),
+                    ReportIdChecksum::for_report_id(report.metadata().id()),
+                ),
+            ]);
+        let want_batch = Batch::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
             *task.id(),
             batch_id,
             (),
@@ -2486,7 +2442,7 @@ mod tests {
 
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, FixedSize, Prio3Count>(
+                        .get_aggregation_job::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -2504,7 +2460,7 @@ mod tests {
                         .unwrap();
                     let batch_aggregations =
                         FixedSize::get_batch_aggregations_for_collection_identifier::<
-                            PRIO3_VERIFY_KEY_LENGTH,
+                            VERIFY_KEY_LENGTH,
                             Prio3Count,
                             _,
                         >(tx, &task, &vdaf, &batch_id, &())
@@ -2572,8 +2528,7 @@ mod tests {
             .unwrap();
         let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
-        let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
-            task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
 
         let transcript = run_vdaf(
             vdaf.as_ref(),
@@ -2584,7 +2539,7 @@ mod tests {
         );
 
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(
+        let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -2594,18 +2549,16 @@ mod tests {
         );
         let aggregation_job_id = random();
 
-        let aggregation_job =
-            AggregationJob::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
-                *task.id(),
-                aggregation_job_id,
-                (),
-                (),
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                    .unwrap(),
-                AggregationJobState::InProgress,
-                AggregationJobRound::from(0),
-            );
-        let report_aggregation = ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
+        let aggregation_job = AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+            *task.id(),
+            aggregation_job_id,
+            (),
+            (),
+            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+            AggregationJobState::InProgress,
+            AggregationJobRound::from(0),
+        );
+        let report_aggregation = ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
             *task.id(),
             aggregation_job_id,
             *report.metadata().id(),
@@ -2630,16 +2583,14 @@ mod tests {
                     tx.put_aggregation_job(&aggregation_job).await?;
                     tx.put_report_aggregation(&report_aggregation).await?;
 
-                    tx.put_batch(
-                        &Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
-                            *task.id(),
-                            batch_identifier,
-                            (),
-                            BatchState::Open,
-                            1,
-                            Interval::from_time(report.metadata().time()).unwrap(),
-                        ),
-                    )
+                    tx.put_batch(&Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                        *task.id(),
+                        batch_identifier,
+                        (),
+                        BatchState::Open,
+                        1,
+                        Interval::from_time(report.metadata().time()).unwrap(),
+                    ))
                     .await?;
 
                     Ok(tx
@@ -2669,7 +2620,7 @@ mod tests {
         // longer be acquired.
         let want_aggregation_job = aggregation_job.with_state(AggregationJobState::Abandoned);
         let want_report_aggregation = report_aggregation;
-        let want_batch = Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+        let want_batch = Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
             *task.id(),
             batch_identifier,
             (),
@@ -2684,7 +2635,7 @@ mod tests {
                     (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -2779,15 +2730,11 @@ mod tests {
             VdafInstance::Prio3Count,
             Role::Leader,
         )
-        .with_aggregator_endpoints(Vec::from([
-            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-            Url::parse(&server.url()).unwrap(),
-        ]))
+        .with_helper_aggregator_endpoint(Url::parse(&server.url()).unwrap())
         .build();
         let agg_auth_token = task.primary_aggregator_auth_token();
         let aggregation_job_id = random();
-        let verify_key: VerifyKey<PRIO3_VERIFY_KEY_LENGTH> =
-            task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
 
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
 
@@ -2799,7 +2746,7 @@ mod tests {
         let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
         let transcript = run_vdaf(&vdaf, verify_key.as_bytes(), &(), report_metadata.id(), &0);
-        let report = generate_report::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(
+        let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -2821,7 +2768,7 @@ mod tests {
                 tx.put_client_report(&vdaf, &report).await?;
 
                 tx.put_aggregation_job(&AggregationJob::<
-                    PRIO3_VERIFY_KEY_LENGTH,
+                    VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Count,
                 >::new(
@@ -2837,7 +2784,7 @@ mod tests {
                 .await?;
 
                 tx.put_report_aggregation(
-                    &ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
+                    &ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
                         *task.id(),
                         aggregation_job_id,
                         *report.metadata().id(),
@@ -2849,16 +2796,14 @@ mod tests {
                 )
                 .await?;
 
-                tx.put_batch(
-                    &Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
-                        *task.id(),
-                        batch_identifier,
-                        (),
-                        BatchState::Open,
-                        1,
-                        Interval::from_time(report.metadata().time()).unwrap(),
-                    ),
-                )
+                tx.put_batch(&Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                    *task.id(),
+                    batch_identifier,
+                    (),
+                    BatchState::Open,
+                    1,
+                    Interval::from_time(report.metadata().time()).unwrap(),
+                ))
                 .await?;
 
                 Ok(())
@@ -2976,7 +2921,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_aggregation_job,
-            AggregationJob::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+            AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 (),
@@ -2989,7 +2934,7 @@ mod tests {
         );
         assert_eq!(
             got_batch,
-            Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+            Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
                 *task.id(),
                 batch_identifier,
                 (),

@@ -12,7 +12,7 @@ use janus_aggregator_core::{
     task::{self, Task},
 };
 use janus_core::{
-    task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
+    task::{VdafInstance, VERIFY_KEY_LENGTH},
     time::{Clock, DurationExt as _, TimeExt as _},
 };
 use janus_messages::{
@@ -264,33 +264,33 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         match (task.query_type(), task.vdaf()) {
             (task::QueryType::TimeInterval, VdafInstance::Prio3Count) => {
                 let vdaf = Arc::new(Prio3::new_count(2)?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>(task, vdaf)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3Count>(task, vdaf)
                     .await
             }
 
             (task::QueryType::TimeInterval, VdafInstance::Prio3CountVec { length }) => {
                 let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(2, 1, *length)?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<
-                    PRIO3_VERIFY_KEY_LENGTH,
+                    VERIFY_KEY_LENGTH,
                     Prio3SumVecMultithreaded
                 >(task, vdaf).await
             }
 
             (task::QueryType::TimeInterval, VdafInstance::Prio3Sum { bits }) => {
                 let vdaf = Arc::new(Prio3::new_sum(2, *bits)?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Sum>(task, vdaf)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3Sum>(task, vdaf)
                     .await
             }
 
             (task::QueryType::TimeInterval, VdafInstance::Prio3SumVec { bits, length }) => {
                 let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(2, *bits, *length)?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3SumVecMultithreaded>(task, vdaf)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3SumVecMultithreaded>(task, vdaf)
                     .await
             }
 
             (task::QueryType::TimeInterval, VdafInstance::Prio3Histogram { length }) => {
                 let vdaf = Arc::new(Prio3::new_histogram(2, *length)?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Histogram>(task, vdaf)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3Histogram>(task, vdaf)
                     .await
             }
 
@@ -303,7 +303,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
                         2, *length,
                     )?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>>(task, vdaf)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>>(task, vdaf)
                     .await
             }
 
@@ -316,7 +316,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
                         2, *length,
                     )?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>>(task, vdaf)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>>(task, vdaf)
                     .await
             }
 
@@ -329,7 +329,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
                         2, *length,
                     )?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>>(task, vdaf)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>>(task, vdaf)
                     .await
             }
 
@@ -344,7 +344,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
-                    PRIO3_VERIFY_KEY_LENGTH,
+                    VERIFY_KEY_LENGTH,
                     Prio3Count,
                 >(task, vdaf, max_batch_size, batch_time_window_size).await
             }
@@ -360,7 +360,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
-                    PRIO3_VERIFY_KEY_LENGTH,
+                    VERIFY_KEY_LENGTH,
                     Prio3SumVecMultithreaded
                 >(task, vdaf, max_batch_size, batch_time_window_size).await
             }
@@ -376,7 +376,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
-                    PRIO3_VERIFY_KEY_LENGTH,
+                    VERIFY_KEY_LENGTH,
                     Prio3Sum,
                 >(task, vdaf, max_batch_size, batch_time_window_size).await
             }
@@ -392,7 +392,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
-                    PRIO3_VERIFY_KEY_LENGTH,
+                    VERIFY_KEY_LENGTH,
                     Prio3SumVecMultithreaded,
                 >(task, vdaf, max_batch_size, batch_time_window_size).await
             }
@@ -408,7 +408,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
-                    PRIO3_VERIFY_KEY_LENGTH,
+                    VERIFY_KEY_LENGTH,
                     Prio3Histogram,
                 >(task, vdaf, max_batch_size, batch_time_window_size).await
             }
@@ -428,7 +428,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
-                    PRIO3_VERIFY_KEY_LENGTH,
+                    VERIFY_KEY_LENGTH,
                     Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>,
                 >(task, vdaf, max_batch_size, batch_time_window_size).await
             }
@@ -448,7 +448,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
-                    PRIO3_VERIFY_KEY_LENGTH,
+                    VERIFY_KEY_LENGTH,
                     Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>,
                 >(task, vdaf, max_batch_size, batch_time_window_size).await
             }
@@ -468,7 +468,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
-                    PRIO3_VERIFY_KEY_LENGTH,
+                    VERIFY_KEY_LENGTH,
                     Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>,
                 >(task, vdaf, max_batch_size, batch_time_window_size).await
             }
@@ -657,7 +657,7 @@ mod tests {
         test_util::noop_meter,
     };
     use janus_core::{
-        task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
+        task::{VdafInstance, VERIFY_KEY_LENGTH},
         test_util::{dummy_vdaf, install_test_trace_subscriber},
         time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
     };
@@ -749,7 +749,7 @@ mod tests {
                     Box::pin(async move {
                         let (leader_aggregations, leader_batches) =
                             read_aggregate_info_for_task::<
-                                PRIO3_VERIFY_KEY_LENGTH,
+                                VERIFY_KEY_LENGTH,
                                 TimeInterval,
                                 Prio3Count,
                                 _,
@@ -757,7 +757,7 @@ mod tests {
                             .await;
                         let (helper_aggregations, helper_batches) =
                             read_aggregate_info_for_task::<
-                                PRIO3_VERIFY_KEY_LENGTH,
+                                VERIFY_KEY_LENGTH,
                                 TimeInterval,
                                 Prio3Count,
                                 _,
@@ -860,22 +860,23 @@ mod tests {
             .unwrap();
 
         // Verify.
-        let (agg_jobs, batches) = job_creator
-            .datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move {
-                    Ok(read_aggregate_info_for_task::<
-                        PRIO3_VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        Prio3Count,
-                        _,
-                    >(tx, task.id())
-                    .await)
+        let (agg_jobs, batches) =
+            job_creator
+                .datastore
+                .run_tx(|tx| {
+                    let task = task.clone();
+                    Box::pin(async move {
+                        Ok(read_aggregate_info_for_task::<
+                            VERIFY_KEY_LENGTH,
+                            TimeInterval,
+                            Prio3Count,
+                            _,
+                        >(tx, task.id())
+                        .await)
+                    })
                 })
-            })
-            .await
-            .unwrap();
+                .await
+                .unwrap();
         let mut seen_report_ids = HashSet::new();
         for (agg_job, report_ids) in &agg_jobs {
             // Jobs are created in round 0
@@ -957,22 +958,23 @@ mod tests {
             .unwrap();
 
         // Verify -- we haven't received enough reports yet, so we don't create anything.
-        let (agg_jobs, batches) = job_creator
-            .datastore
-            .run_tx(|tx| {
-                let task = Arc::clone(&task);
-                Box::pin(async move {
-                    Ok(read_aggregate_info_for_task::<
-                        PRIO3_VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        Prio3Count,
-                        _,
-                    >(tx, task.id())
-                    .await)
+        let (agg_jobs, batches) =
+            job_creator
+                .datastore
+                .run_tx(|tx| {
+                    let task = Arc::clone(&task);
+                    Box::pin(async move {
+                        Ok(read_aggregate_info_for_task::<
+                            VERIFY_KEY_LENGTH,
+                            TimeInterval,
+                            Prio3Count,
+                            _,
+                        >(tx, task.id())
+                        .await)
+                    })
                 })
-            })
-            .await
-            .unwrap();
+                .await
+                .unwrap();
         assert!(agg_jobs.is_empty());
         assert!(batches.is_empty());
 
@@ -996,22 +998,23 @@ mod tests {
             .unwrap();
 
         // Verify -- the additional report we wrote allows an aggregation job to be created.
-        let (agg_jobs, batches) = job_creator
-            .datastore
-            .run_tx(|tx| {
-                let task = Arc::clone(&task);
-                Box::pin(async move {
-                    Ok(read_aggregate_info_for_task::<
-                        PRIO3_VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        Prio3Count,
-                        _,
-                    >(tx, task.id())
-                    .await)
+        let (agg_jobs, batches) =
+            job_creator
+                .datastore
+                .run_tx(|tx| {
+                    let task = Arc::clone(&task);
+                    Box::pin(async move {
+                        Ok(read_aggregate_info_for_task::<
+                            VERIFY_KEY_LENGTH,
+                            TimeInterval,
+                            Prio3Count,
+                            _,
+                        >(tx, task.id())
+                        .await)
+                    })
                 })
-            })
-            .await
-            .unwrap();
+                .await
+                .unwrap();
         assert_eq!(agg_jobs.len(), 1);
         let report_ids: HashSet<_> = agg_jobs.into_iter().next().unwrap().1.into_iter().collect();
         assert_eq!(
@@ -1074,16 +1077,14 @@ mod tests {
                     tx.put_client_report(&dummy_vdaf::Vdaf::new(), report)
                         .await?;
                 }
-                tx.put_batch(
-                    &Batch::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
-                        *task.id(),
-                        batch_identifier,
-                        (),
-                        BatchState::Closed,
-                        0,
-                        Interval::from_time(&report_time).unwrap(),
-                    ),
-                )
+                tx.put_batch(&Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                    *task.id(),
+                    batch_identifier,
+                    (),
+                    BatchState::Closed,
+                    0,
+                    Interval::from_time(&report_time).unwrap(),
+                ))
                 .await?;
                 Ok(())
             })
@@ -1106,22 +1107,23 @@ mod tests {
             .unwrap();
 
         // Verify.
-        let (agg_jobs, batches) = job_creator
-            .datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move {
-                    Ok(read_aggregate_info_for_task::<
-                        PRIO3_VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        Prio3Count,
-                        _,
-                    >(tx, task.id())
-                    .await)
+        let (agg_jobs, batches) =
+            job_creator
+                .datastore
+                .run_tx(|tx| {
+                    let task = task.clone();
+                    Box::pin(async move {
+                        Ok(read_aggregate_info_for_task::<
+                            VERIFY_KEY_LENGTH,
+                            TimeInterval,
+                            Prio3Count,
+                            _,
+                        >(tx, task.id())
+                        .await)
+                    })
                 })
-            })
-            .await
-            .unwrap();
+                .await
+                .unwrap();
         let mut seen_report_ids = HashSet::new();
         for (agg_job, report_ids) in &agg_jobs {
             // Job immediately finished since all reports are in a closed batch.
@@ -1228,25 +1230,26 @@ mod tests {
             .unwrap();
 
         // Verify.
-        let (outstanding_batches, (agg_jobs, batches)) = job_creator
-            .datastore
-            .run_tx(|tx| {
-                let task = Arc::clone(&task);
-                Box::pin(async move {
-                    Ok((
-                        tx.get_outstanding_batches(task.id(), &None).await?,
-                        read_aggregate_info_for_task::<
-                            PRIO3_VERIFY_KEY_LENGTH,
-                            FixedSize,
-                            Prio3Count,
-                            _,
-                        >(tx, task.id())
-                        .await,
-                    ))
+        let (outstanding_batches, (agg_jobs, batches)) =
+            job_creator
+                .datastore
+                .run_tx(|tx| {
+                    let task = Arc::clone(&task);
+                    Box::pin(async move {
+                        Ok((
+                            tx.get_outstanding_batches(task.id(), &None).await?,
+                            read_aggregate_info_for_task::<
+                                VERIFY_KEY_LENGTH,
+                                FixedSize,
+                                Prio3Count,
+                                _,
+                            >(tx, task.id())
+                            .await,
+                        ))
+                    })
                 })
-            })
-            .await
-            .unwrap();
+                .await
+                .unwrap();
 
         // Verify outstanding batches.
         let mut total_max_size = 0;
@@ -1388,25 +1391,26 @@ mod tests {
             .unwrap();
 
         // Verify.
-        let (outstanding_batches, (agg_jobs, batches)) = job_creator
-            .datastore
-            .run_tx(|tx| {
-                let task = Arc::clone(&task);
-                Box::pin(async move {
-                    Ok((
-                        tx.get_outstanding_batches(task.id(), &None).await?,
-                        read_aggregate_info_for_task::<
-                            PRIO3_VERIFY_KEY_LENGTH,
-                            FixedSize,
-                            Prio3Count,
-                            _,
-                        >(tx, task.id())
-                        .await,
-                    ))
+        let (outstanding_batches, (agg_jobs, batches)) =
+            job_creator
+                .datastore
+                .run_tx(|tx| {
+                    let task = Arc::clone(&task);
+                    Box::pin(async move {
+                        Ok((
+                            tx.get_outstanding_batches(task.id(), &None).await?,
+                            read_aggregate_info_for_task::<
+                                VERIFY_KEY_LENGTH,
+                                FixedSize,
+                                Prio3Count,
+                                _,
+                            >(tx, task.id())
+                            .await,
+                        ))
+                    })
                 })
-            })
-            .await
-            .unwrap();
+                .await
+                .unwrap();
 
         // Verify outstanding batches and aggregation jobs.
         assert_eq!(outstanding_batches.len(), 0);
@@ -1503,25 +1507,26 @@ mod tests {
             .unwrap();
 
         // Verify.
-        let (outstanding_batches, (agg_jobs, _batches)) = job_creator
-            .datastore
-            .run_tx(|tx| {
-                let task = Arc::clone(&task);
-                Box::pin(async move {
-                    Ok((
-                        tx.get_outstanding_batches(task.id(), &None).await?,
-                        read_aggregate_info_for_task::<
-                            PRIO3_VERIFY_KEY_LENGTH,
-                            FixedSize,
-                            Prio3Count,
-                            _,
-                        >(tx, task.id())
-                        .await,
-                    ))
+        let (outstanding_batches, (agg_jobs, _batches)) =
+            job_creator
+                .datastore
+                .run_tx(|tx| {
+                    let task = Arc::clone(&task);
+                    Box::pin(async move {
+                        Ok((
+                            tx.get_outstanding_batches(task.id(), &None).await?,
+                            read_aggregate_info_for_task::<
+                                VERIFY_KEY_LENGTH,
+                                FixedSize,
+                                Prio3Count,
+                                _,
+                            >(tx, task.id())
+                            .await,
+                        ))
+                    })
                 })
-            })
-            .await
-            .unwrap();
+                .await
+                .unwrap();
 
         // Verify sizes of batches and aggregation jobs.
         let mut outstanding_batch_sizes = outstanding_batches
@@ -1559,25 +1564,26 @@ mod tests {
             .unwrap();
 
         // Verify.
-        let (outstanding_batches, (agg_jobs, _batches)) = job_creator
-            .datastore
-            .run_tx(|tx| {
-                let task = Arc::clone(&task);
-                Box::pin(async move {
-                    Ok((
-                        tx.get_outstanding_batches(task.id(), &None).await?,
-                        read_aggregate_info_for_task::<
-                            PRIO3_VERIFY_KEY_LENGTH,
-                            FixedSize,
-                            Prio3Count,
-                            _,
-                        >(tx, task.id())
-                        .await,
-                    ))
+        let (outstanding_batches, (agg_jobs, _batches)) =
+            job_creator
+                .datastore
+                .run_tx(|tx| {
+                    let task = Arc::clone(&task);
+                    Box::pin(async move {
+                        Ok((
+                            tx.get_outstanding_batches(task.id(), &None).await?,
+                            read_aggregate_info_for_task::<
+                                VERIFY_KEY_LENGTH,
+                                FixedSize,
+                                Prio3Count,
+                                _,
+                            >(tx, task.id())
+                            .await,
+                        ))
+                    })
                 })
-            })
-            .await
-            .unwrap();
+                .await
+                .unwrap();
         let batch_ids: HashSet<_> = outstanding_batches
             .iter()
             .map(|outstanding_batch| *outstanding_batch.id())
@@ -1682,25 +1688,26 @@ mod tests {
             .unwrap();
 
         // Verify.
-        let (outstanding_batches, (agg_jobs, _batches)) = job_creator
-            .datastore
-            .run_tx(|tx| {
-                let task = Arc::clone(&task);
-                Box::pin(async move {
-                    Ok((
-                        tx.get_outstanding_batches(task.id(), &None).await?,
-                        read_aggregate_info_for_task::<
-                            PRIO3_VERIFY_KEY_LENGTH,
-                            FixedSize,
-                            Prio3Count,
-                            _,
-                        >(tx, task.id())
-                        .await,
-                    ))
+        let (outstanding_batches, (agg_jobs, _batches)) =
+            job_creator
+                .datastore
+                .run_tx(|tx| {
+                    let task = Arc::clone(&task);
+                    Box::pin(async move {
+                        Ok((
+                            tx.get_outstanding_batches(task.id(), &None).await?,
+                            read_aggregate_info_for_task::<
+                                VERIFY_KEY_LENGTH,
+                                FixedSize,
+                                Prio3Count,
+                                _,
+                            >(tx, task.id())
+                            .await,
+                        ))
+                    })
                 })
-            })
-            .await
-            .unwrap();
+                .await
+                .unwrap();
 
         // Verify sizes of batches and aggregation jobs.
         let mut outstanding_batch_sizes = outstanding_batches
@@ -1745,25 +1752,26 @@ mod tests {
             .unwrap();
 
         // Verify.
-        let (outstanding_batches, (agg_jobs, _batches)) = job_creator
-            .datastore
-            .run_tx(|tx| {
-                let task = Arc::clone(&task);
-                Box::pin(async move {
-                    Ok((
-                        tx.get_outstanding_batches(task.id(), &None).await?,
-                        read_aggregate_info_for_task::<
-                            PRIO3_VERIFY_KEY_LENGTH,
-                            FixedSize,
-                            Prio3Count,
-                            _,
-                        >(tx, task.id())
-                        .await,
-                    ))
+        let (outstanding_batches, (agg_jobs, _batches)) =
+            job_creator
+                .datastore
+                .run_tx(|tx| {
+                    let task = Arc::clone(&task);
+                    Box::pin(async move {
+                        Ok((
+                            tx.get_outstanding_batches(task.id(), &None).await?,
+                            read_aggregate_info_for_task::<
+                                VERIFY_KEY_LENGTH,
+                                FixedSize,
+                                Prio3Count,
+                                _,
+                            >(tx, task.id())
+                            .await,
+                        ))
+                    })
                 })
-            })
-            .await
-            .unwrap();
+                .await
+                .unwrap();
         let batch_ids: HashSet<_> = outstanding_batches
             .iter()
             .map(|outstanding_batch| *outstanding_batch.id())
@@ -1892,7 +1900,7 @@ mod tests {
                             tx.get_outstanding_batches(task.id(), &Some(time_bucket_start_2))
                                 .await?,
                             read_aggregate_info_for_task::<
-                                PRIO3_VERIFY_KEY_LENGTH,
+                                VERIFY_KEY_LENGTH,
                                 FixedSize,
                                 Prio3Count,
                                 _,

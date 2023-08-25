@@ -28,7 +28,7 @@ use janus_core::{
     hpke::{
         self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
     },
-    task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
+    task::{VdafInstance, VERIFY_KEY_LENGTH},
     test_util::{
         dummy_vdaf::{self, AggregateShare, AggregationParam},
         install_test_trace_subscriber, run_vdaf,
@@ -1420,7 +1420,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                 let task_id = *task.id();
                 async move {
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Count,
                     >::new(
@@ -1446,36 +1446,33 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
             .await?;
 
             // Write an aggregation job that is finished. We don't want to retrieve this one.
-            tx.put_aggregation_job(&AggregationJob::<
-                PRIO3_VERIFY_KEY_LENGTH,
-                TimeInterval,
-                Prio3Count,
-            >::new(
-                *task.id(),
-                random(),
-                (),
-                (),
-                Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1)).unwrap(),
-                AggregationJobState::Finished,
-                AggregationJobRound::from(1),
-            ))
+            tx.put_aggregation_job(
+                &AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                    *task.id(),
+                    random(),
+                    (),
+                    (),
+                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
+                        .unwrap(),
+                    AggregationJobState::Finished,
+                    AggregationJobRound::from(1),
+                ),
+            )
             .await?;
 
             // Write an expired aggregation job. We don't want to retrieve this one, either.
-            tx.put_aggregation_job(&AggregationJob::<
-                PRIO3_VERIFY_KEY_LENGTH,
-                TimeInterval,
-                Prio3Count,
-            >::new(
-                *task.id(),
-                random(),
-                (),
-                (),
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                    .unwrap(),
-                AggregationJobState::InProgress,
-                AggregationJobRound::from(0),
-            ))
+            tx.put_aggregation_job(
+                &AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                    *task.id(),
+                    random(),
+                    (),
+                    (),
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                        .unwrap(),
+                    AggregationJobState::InProgress,
+                    AggregationJobRound::from(0),
+                ),
+            )
             .await?;
 
             // Write an aggregation job for a task that we are taking on the helper role for.
@@ -1487,20 +1484,18 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
             )
             .build();
             tx.put_task(&helper_task).await?;
-            tx.put_aggregation_job(&AggregationJob::<
-                PRIO3_VERIFY_KEY_LENGTH,
-                TimeInterval,
-                Prio3Count,
-            >::new(
-                *helper_task.id(),
-                random(),
-                (),
-                (),
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                    .unwrap(),
-                AggregationJobState::InProgress,
-                AggregationJobRound::from(0),
-            ))
+            tx.put_aggregation_job(
+                &AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                    *helper_task.id(),
+                    random(),
+                    (),
+                    (),
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                        .unwrap(),
+                    AggregationJobState::InProgress,
+                    AggregationJobRound::from(0),
+                ),
+            )
             .await
         })
     })
@@ -1739,7 +1734,7 @@ async fn aggregation_job_not_found(ephemeral_datastore: EphemeralDatastore) {
     let rslt = ds
         .run_tx(|tx| {
             Box::pin(async move {
-                tx.get_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                tx.get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
                     &random(),
                     &random(),
                 )
@@ -1753,7 +1748,7 @@ async fn aggregation_job_not_found(ephemeral_datastore: EphemeralDatastore) {
     let rslt = ds
         .run_tx(|tx| {
             Box::pin(async move {
-                tx.update_aggregation_job::<PRIO3_VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
+                tx.update_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
                     &AggregationJob::new(
                         random(),
                         random(),
@@ -1884,12 +1879,12 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
 
     let report_id = random();
     let vdaf = Arc::new(Prio3::new_count(2).unwrap());
-    let verify_key: [u8; PRIO3_VERIFY_KEY_LENGTH] = random();
+    let verify_key: [u8; VERIFY_KEY_LENGTH] = random();
     let vdaf_transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), &report_id, &0);
     let leader_prep_state = vdaf_transcript.leader_prep_state(0);
 
     for (ord, state) in [
-        ReportAggregationState::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::Start,
+        ReportAggregationState::<VERIFY_KEY_LENGTH, Prio3Count>::Start,
         ReportAggregationState::Waiting(
             leader_prep_state.clone(),
             Some(vdaf_transcript.prepare_messages[0].clone()),
@@ -1920,7 +1915,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
                 Box::pin(async move {
                     tx.put_task(&task).await?;
                     tx.put_aggregation_job(&AggregationJob::<
-                        PRIO3_VERIFY_KEY_LENGTH,
+                        VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Count,
                     >::new(
@@ -2259,7 +2254,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
 
     let report_id = random();
     let vdaf = Arc::new(Prio3::new_count(2).unwrap());
-    let verify_key: [u8; PRIO3_VERIFY_KEY_LENGTH] = random();
+    let verify_key: [u8; VERIFY_KEY_LENGTH] = random();
     let vdaf_transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), &report_id, &0);
 
     let task = TaskBuilder::new(
@@ -2281,7 +2276,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
             Box::pin(async move {
                 tx.put_task(&task).await?;
                 tx.put_aggregation_job(&AggregationJob::<
-                    PRIO3_VERIFY_KEY_LENGTH,
+                    VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Count,
                 >::new(
@@ -2298,7 +2293,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
 
                 let mut want_report_aggregations = Vec::new();
                 for (ord, state) in [
-                    ReportAggregationState::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::Start,
+                    ReportAggregationState::<VERIFY_KEY_LENGTH, Prio3Count>::Start,
                     ReportAggregationState::Waiting(prep_state.clone(), Some(prep_msg)),
                     ReportAggregationState::Finished,
                     ReportAggregationState::Failed(ReportShareError::VdafPrepError),

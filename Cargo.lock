@@ -1986,6 +1986,7 @@ dependencies = [
  "derivative",
  "http",
  "http-api-problem",
+ "itertools",
  "janus_core",
  "janus_messages",
  "mockito",
@@ -2979,9 +2980,9 @@ checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
 
 [[package]]
 name = "prio"
-version = "0.14.0"
+version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1139097c0aa90a7e476953f358c0cc25a627ede8ac0dd47e05594a37d665273"
+checksum = "e4a65c4a557b2fecb8518c105aafadf33a86d7513a3f599bcfe542c17553cc61"
 dependencies = [
  "aes",
  "base64 0.21.2",
@@ -2992,6 +2993,7 @@ dependencies = [
  "fiat-crypto",
  "fixed",
  "getrandom",
+ "rand_core 0.6.4",
  "rayon",
  "serde",
  "sha3",
