@@ -2980,8 +2980,9 @@ checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
 
 [[package]]
 name = "prio"
-version = "0.14.0"
-source = "git+https://github.com/divviup/libprio-rs?branch=timg/poplar1-agg-param-hash#c3864a68950e312884834b4c23590fb000b3c965"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4a65c4a557b2fecb8518c105aafadf33a86d7513a3f599bcfe542c17553cc61"
 dependencies = [
  "aes",
  "base64 0.21.2",
