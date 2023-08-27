@@ -1,9 +1,7 @@
 use backoff::{future::retry, ExponentialBackoffBuilder};
 use itertools::Itertools;
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
-use janus_collector::{
-    test_util::collect_with_rewritten_url, Collection, Collector, CollectorParameters,
-};
+use janus_collector::{Collection, Collector, CollectorParameters};
 use janus_core::{
     hpke::test_util::generate_test_hpke_config_and_private_key,
     retries::test_http_request_exponential_backoff,
@@ -82,8 +80,6 @@ pub async fn collect_generic<'a, V, Q>(
     collector: &Collector<V>,
     query: Query<Q>,
     aggregation_parameter: &V::AggregationParam,
-    host: &str,
-    port: u16,
 ) -> Result<Collection<V::AggregateResult, Q>, janus_collector::Error>
 where
     V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
@@ -100,9 +96,7 @@ where
     retry(backoff, || {
         let query = query.clone();
         async move {
-            match collect_with_rewritten_url(collector, query, aggregation_parameter, host, port)
-                .await
-            {
+            match collector.collect(query, aggregation_parameter).await {
                 Ok(collection) => Ok(collection),
                 Err(
                     error @ janus_collector::Error::Http {
@@ -174,8 +168,6 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
                 &collector,
                 Query::new_time_interval(batch_interval),
                 &test_case.aggregation_parameter,
-                "127.0.0.1",
-                leader_port,
             )
             .await
             .unwrap();
@@ -194,8 +186,6 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
                     &collector,
                     Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
                     &test_case.aggregation_parameter,
-                    "127.0.0.1",
-                    leader_port,
                 )
                 .await;
                 match collection_res {
