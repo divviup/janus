@@ -24,7 +24,14 @@ use {
 };
 
 #[cfg(any(feature = "otlp", feature = "prometheus"))]
-use {opentelemetry::sdk::metrics::MeterProvider, std::str::FromStr};
+use {
+    git_version::git_version,
+    opentelemetry::{
+        sdk::{metrics::MeterProvider, Resource},
+        KeyValue,
+    },
+    std::str::FromStr,
+};
 
 /// Errors from initializing metrics provider, registry, and exporter.
 #[derive(Debug, thiserror::Error)]
@@ -124,7 +131,12 @@ pub async fn install_metrics_exporter(
                 .with_registry(registry.clone())
                 .build()?;
 
-            set_meter_provider(MeterProvider::builder().with_reader(exporter).build());
+            set_meter_provider(
+                MeterProvider::builder()
+                    .with_reader(exporter)
+                    .with_resource(resource())
+                    .build(),
+            );
 
             let host = config_exporter_host
                 .as_ref()
@@ -176,6 +188,7 @@ pub async fn install_metrics_exporter(
                         .tonic()
                         .with_endpoint(otlp_config.endpoint.clone()),
                 )
+                .with_resource(resource())
                 .build()?;
             // We can't drop the PushController, as that would stop pushes, so return it to the
             // caller.
@@ -190,6 +203,31 @@ pub async fn install_metrics_exporter(
         // If neither exporter is configured, leave the default NoopMeterProvider in place.
         None => Ok(MetricsExporterHandle::Noop),
     }
+}
+
+/// Produces a [`opentelemetry::sdk::Resource`] representing this process.
+#[cfg(any(feature = "otlp", feature = "prometheus"))]
+fn resource() -> Resource {
+    // Note that the implementation of `Default` pulls in attributes set via environment variables.
+    let default_resource = Resource::default();
+
+    let mut git_revision = git_version!(fallback = "unknown");
+    if git_revision == "unknown" {
+        if let Some(value) = option_env!("GIT_REVISION") {
+            git_revision = value;
+        }
+    }
+
+    let version_info_resource = Resource::new([
+        KeyValue::new(
+            "service.version",
+            format!("{}-{}", env!("CARGO_PKG_VERSION"), git_revision),
+        ),
+        KeyValue::new("process.runtime.name", "Rust"),
+        KeyValue::new("process.runtime.version", env!("RUSTC_SEMVER")),
+    ]);
+
+    version_info_resource.merge(&default_resource)
 }
 
 #[cfg(test)]
