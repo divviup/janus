@@ -24,7 +24,7 @@ prio = { version = "0.10", default-features = false }
 rand = "0.8"
 serde.workspace = true
 thiserror.workspace = true
-url = "2.4.0"
+url = "2.4.1"
 
 [dev-dependencies]
 assert_matches = "1"

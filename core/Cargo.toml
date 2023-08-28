@@ -71,4 +71,4 @@ kube.workspace = true
 mockito = "1.1.0"
 rstest.workspace = true
 serde_test.workspace = true
-url = "2.4.0"
+url = "2.4.1"
