@@ -2,9 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 use clap::Parser;
 use janus_aggregator::{
-    binary_utils::{
-        database_pool, datastore, read_config, record_build_info_gauge, CommonBinaryOptions,
-    },
+    binary_utils::{database_pool, datastore, read_config, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
     metrics::{install_metrics_exporter, MetricsExporterHandle},
     trace::{install_trace_subscriber, TraceGuards},
@@ -36,8 +34,6 @@ async fn main() -> Result<()> {
     let config_file: ConfigFile = read_config(&command_line_options.common_options)?;
 
     let _guards = install_tracing_and_metrics_handlers(config_file.common_config()).await?;
-
-    record_build_info_gauge(&meter("janus_aggregator"));
 
     info!(
         common_options = ?&command_line_options.common_options,
