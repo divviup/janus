@@ -297,7 +297,8 @@ struct Options {
         value_parser = HpkeConfigValueParser::new(),
         help_heading = "DAP Task Parameters",
         display_order = 2,
-        conflicts_with = "hpke_config_json"
+        requires = "hpke_private_key",
+        conflicts_with = "hpke_config_json",
     )]
     hpke_config: Option<HpkeConfig>,
     /// The collector's HPKE private key, encoded with base64url
@@ -307,7 +308,8 @@ struct Options {
         env,
         help_heading = "DAP Task Parameters",
         display_order = 3,
-        conflicts_with = "hpke_config_json"
+        requires = "hpke_config",
+        conflicts_with = "hpke_config_json",
     )]
     #[derivative(Debug = "ignore")]
     hpke_private_key: Option<HpkePrivateKey>,
