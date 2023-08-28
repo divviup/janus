@@ -1571,6 +1571,7 @@ dependencies = [
  "hpke",
  "num_enum 0.5.11",
  "rand",
+ "serde",
  "wasm-bindgen",
  "zeroize",
 ]
@@ -2179,7 +2180,9 @@ dependencies = [
  "prio",
  "rand",
  "reqwest",
+ "serde_json",
  "serde_yaml",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-log",
