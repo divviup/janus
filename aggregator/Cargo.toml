@@ -111,7 +111,7 @@ rstest.workspace = true
 tempfile = "3.8.0"
 tokio = { version = "1", features = ["test-util"] } # ensure this remains compatible with the non-dev dependency
 trillium-testing.workspace = true
-trycmd = "0.14.16"
+trycmd = "0.14.17"
 wait-timeout = "0.2.0"
 
 [build-dependencies]
