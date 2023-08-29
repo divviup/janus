@@ -16,8 +16,8 @@ jobs:
     strategy:
       matrix:
         rust-toolchain: [
-          # MSRV from Cargo.toml
-          "1.65",
+          # MSRV policy
+          "stable minus 2 releases",
           "stable",
         ]
     runs-on: ubuntu-latest
@@ -100,8 +100,8 @@ jobs:
     strategy:
       matrix:
         rust-toolchain: [
-          # MSRV from Cargo.toml
-          "1.65",
+          # MSRV policy
+          "stable minus 2 releases",
           "stable",
         ]
     runs-on: ubuntu-latest
