@@ -1503,14 +1503,14 @@ dependencies = [
 
 [[package]]
 name = "hpke-dispatch"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a82ec7195b71c0efe97204a79ed67e5f6384525a5c165b5d54cb4a7546392c4"
+checksum = "6c84f876c484705283c6720aa255f4fa3496044bdc92ae47bf70b855b9660a0c"
 dependencies = [
  "cfg-if",
  "getrandom",
  "hpke",
- "num_enum 0.5.11",
+ "num_enum",
  "rand",
  "wasm-bindgen",
  "zeroize",
@@ -2087,7 +2087,7 @@ dependencies = [
  "base64 0.21.2",
  "derivative",
  "hex",
- "num_enum 0.7.0",
+ "num_enum",
  "prio",
  "rand",
  "serde",
@@ -2469,32 +2469,11 @@ dependencies = [
 
 [[package]]
 name = "num_enum"
-version = "0.5.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f646caf906c20226733ed5b1374287eb97e3c2a5c227ce668c1f2ce20ae57c9"
-dependencies = [
- "num_enum_derive 0.5.11",
-]
-
-[[package]]
-name = "num_enum"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "70bf6736f74634d299d00086f02986875b3c2d924781a6a2cb6c201e73da0ceb"
 dependencies = [
- "num_enum_derive 0.7.0",
-]
-
-[[package]]
-name = "num_enum_derive"
-version = "0.5.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcbff9bc912032c62bf65ef1d5aea88983b420f4f839db1e9b0c281a25c9c799"
-dependencies = [
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
+ "num_enum_derive",
 ]
 
 [[package]]
