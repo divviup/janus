@@ -490,12 +490,8 @@ pub mod test_util {
     use backoff::{future::retry, ExponentialBackoff};
     use futures::{Future, TryFutureExt};
     use rand::random;
-    use std::{fmt::Debug, time::Duration};
+    use std::{fmt::Debug, sync::OnceLock, time::Duration};
     use url::Url;
-
-    lazy_static::lazy_static! {
-        static ref DOCKER_HASH_RE: regex::Regex = regex::Regex::new(r"sha256:([0-9a-f]{64})").unwrap();
-    }
 
     async fn await_readiness_condition<
         I,
@@ -569,6 +565,8 @@ pub mod test_util {
             thread,
         };
 
+        static DOCKER_HASH_RE: OnceLock<regex::Regex> = OnceLock::new();
+
         let mut docker_load_child = Command::new("docker")
             .args(["load", "--quiet"])
             .stdin(Stdio::piped())
@@ -591,6 +589,7 @@ pub mod test_util {
                     .read_to_string(&mut stdout)
                     .expect("Couldn't read image ID from docker");
                 let caps = DOCKER_HASH_RE
+                    .get_or_init(|| regex::Regex::new(r"sha256:([0-9a-f]{64})").unwrap())
                     .captures(&stdout)
                     .expect("Couldn't find image ID from `docker load` output");
                 caps.get(1).unwrap().as_str().to_string()

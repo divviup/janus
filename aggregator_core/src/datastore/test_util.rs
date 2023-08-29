@@ -4,7 +4,6 @@ use crate::{
 };
 use deadpool_postgres::{Manager, Pool};
 use janus_core::time::Clock;
-use lazy_static::lazy_static;
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use sqlx::{
@@ -14,7 +13,7 @@ use sqlx::{
 use std::{
     path::PathBuf,
     str::FromStr,
-    sync::{Arc, Barrier, Weak},
+    sync::{Arc, Barrier, OnceLock, Weak},
     thread::{self, JoinHandle},
 };
 use testcontainers::{images::postgres::Postgres, RunnableImage};
@@ -32,13 +31,13 @@ struct EphemeralDatabase {
 
 impl EphemeralDatabase {
     async fn shared() -> Arc<Self> {
-        // (once Weak::new is stabilized as a const function, replace this with a normal static
-        // variable)
-        lazy_static! {
-            static ref EPHEMERAL_DATABASE: Mutex<Weak<EphemeralDatabase>> = Mutex::new(Weak::new());
-        }
+        // (once Weak::new is stabilized as a const function in Rust 1.73, remove the OnceLock)
+        static EPHEMERAL_DATABASE: OnceLock<Mutex<Weak<EphemeralDatabase>>> = OnceLock::new();
 
-        let mut g = EPHEMERAL_DATABASE.lock().await;
+        let mut g = EPHEMERAL_DATABASE
+            .get_or_init(|| Mutex::new(Weak::new()))
+            .lock()
+            .await;
         if let Some(ephemeral_database) = g.upgrade() {
             return ephemeral_database;
         }

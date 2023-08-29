@@ -263,17 +263,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "atty"
-version = "0.2.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9b39be18770d11421cdb1b9947a45dd3f37e93092cbf377614828a319d5fee8"
-dependencies = [
- "hermit-abi 0.1.19",
- "libc",
- "winapi",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1488,15 +1477,6 @@ dependencies = [
 
 [[package]]
 name = "hermit-abi"
-version = "0.1.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62b467343b94ba476dcb2500d242dadbb39557df889310ac77c5d99100aaac33"
-dependencies = [
- "libc",
-]
-
-[[package]]
-name = "hermit-abi"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "443144c8cdadd93ebf52ddb4056d257f5b52c04d3c804e657d19eb73fc33668b"
@@ -1783,7 +1763,7 @@ version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb0889898416213fab133e1d33a0e5858a48177452750691bde3666d0fdbaf8b"
 dependencies = [
- "hermit-abi 0.3.2",
+ "hermit-abi",
  "rustix",
  "windows-sys",
 ]
@@ -1810,7 +1790,6 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "async-trait",
- "atty",
  "backoff",
  "base64 0.21.3",
  "bytes",
@@ -1835,9 +1814,7 @@ dependencies = [
  "janus_messages",
  "k8s-openapi",
  "kube",
- "lazy_static",
  "mockito",
- "once_cell",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry-prometheus",
@@ -1939,7 +1916,6 @@ dependencies = [
  "janus_messages",
  "k8s-openapi",
  "kube",
- "lazy_static",
  "opentelemetry",
  "postgres-protocol",
  "postgres-types",
@@ -2046,7 +2022,6 @@ dependencies = [
  "janus_messages",
  "k8s-openapi",
  "kube",
- "lazy_static",
  "mockito",
  "prio",
  "rand",
@@ -2121,7 +2096,6 @@ dependencies = [
  "janus_core",
  "janus_interop_binaries",
  "janus_messages",
- "lazy_static",
  "opentelemetry",
  "prio",
  "rand",
@@ -2541,7 +2515,7 @@ version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4161fcb6d602d4d2081af7c3a45852d875a03dd337a6bfdd6e06407b61342a43"
 dependencies = [
- "hermit-abi 0.3.2",
+ "hermit-abi",
  "libc",
 ]
 
