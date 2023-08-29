@@ -46,6 +46,11 @@ tagged `janus_aggregator`, `janus_aggregation_job_creator`,
 Pre-built container images are available at
 [us-west2-docker.pkg.dev/divviup-artifacts-public/janus](https://us-west2-docker.pkg.dev/divviup-artifacts-public/janus).
 
+## Minimum Supported Rust Version (MSRV)
+
+We support the latest stable version of Rust, at time of release, and the two
+preceding minor versions.
+
 ## Running tests
 
 Tests require that [`docker`](https://www.docker.com) and
