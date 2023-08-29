@@ -1838,7 +1838,6 @@ dependencies = [
  "kube",
  "lazy_static",
  "mockito",
- "once_cell",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry-prometheus",

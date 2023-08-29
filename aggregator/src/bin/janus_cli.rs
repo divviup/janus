@@ -14,7 +14,6 @@ use janus_aggregator_core::{
 use janus_core::time::{Clock, RealClock};
 use k8s_openapi::api::core::v1::Secret;
 use kube::api::{ObjectMeta, PostParams};
-use once_cell::sync::OnceCell;
 use opentelemetry::global::meter;
 use rand::{distributions::Standard, thread_rng, Rng};
 use ring::aead::AES_128_GCM;
@@ -22,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 use tokio::fs;
 use tracing::{debug, info};
@@ -418,13 +417,13 @@ impl BinaryConfig for ConfigFile {
 
 /// A wrapper around [`kube::Client`] adding lazy initialization.
 struct LazyKubeClient {
-    cell: OnceCell<kube::Client>,
+    lock: OnceLock<kube::Client>,
 }
 
 impl LazyKubeClient {
     fn new() -> Self {
         Self {
-            cell: OnceCell::new(),
+            lock: OnceLock::new(),
         }
     }
 
@@ -432,22 +431,22 @@ impl LazyKubeClient {
     /// configuration if it has not been done yet. This will use the local kubeconfig file if
     /// present, use in-cluster environment variables if present, or fail.
     async fn get(&self) -> Result<&kube::Client> {
-        if let Some(client) = self.cell.get() {
+        if let Some(client) = self.lock.get() {
             return Ok(client);
         }
-        let _ = self.cell.set(
+        let _ = self.lock.set(
             kube::Client::try_default()
                 .await
                 .context("couldn't load Kubernetes configuration")?,
         );
-        Ok(self.cell.get().unwrap())
+        Ok(self.lock.get().unwrap())
     }
 }
 
 impl From<kube::Client> for LazyKubeClient {
     fn from(value: kube::Client) -> Self {
         Self {
-            cell: OnceCell::from(value),
+            lock: OnceLock::from(value),
         }
     }
 }
@@ -523,7 +522,7 @@ mod tests {
             expected_datastore_keys
         );
         // Shouldn't have set up a kube Client for this, since no namespace was given.
-        assert!(empty_kube_client.cell.get().is_none());
+        assert!(empty_kube_client.lock.get().is_none());
 
         // Keys not provided at command line, present in k8s
         let common_options = CommonBinaryOptions::default();
