@@ -27,7 +27,6 @@ test-util = [
     "janus_core/test-util",
     "janus_messages/test-util",
     "dep:hex",
-    "dep:lazy_static",
     "dep:testcontainers",
     "dep:trillium-testing",
 ]
@@ -59,7 +58,6 @@ janus_core.workspace = true
 janus_messages.workspace = true
 k8s-openapi.workspace = true
 kube.workspace = true
-lazy_static = { version = "1", optional = true }
 opentelemetry = { workspace = true, features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.13", optional = true, features = ["metrics"] }  # ensure that the version of tonic below matches what this uses
 opentelemetry-prometheus = { version = "0.13", optional = true }
