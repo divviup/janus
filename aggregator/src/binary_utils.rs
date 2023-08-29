@@ -14,10 +14,9 @@ use clap::Parser;
 use deadpool::managed::TimeoutType;
 use deadpool_postgres::{Manager, Pool, PoolError, Runtime, Timeouts};
 use futures::StreamExt;
-use git_version::git_version;
 use janus_aggregator_core::datastore::{Crypter, Datastore};
 use janus_core::time::Clock;
-use opentelemetry::{metrics::Meter, KeyValue};
+use opentelemetry::metrics::Meter;
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::{
     fmt::{self, Debug, Formatter},
@@ -286,9 +285,6 @@ where
         .context("failed to install metrics exporter")?;
     let meter = opentelemetry::global::meter("janus_aggregator");
 
-    // Create build info metrics gauge.
-    record_build_info_gauge(&meter);
-
     info!(common_options = ?options.common_options(), ?config, "Starting up");
 
     // Connect to database.
@@ -401,29 +397,6 @@ pub async fn setup_server(
     };
 
     Ok((address, future))
-}
-
-pub fn record_build_info_gauge(meter: &Meter) {
-    let gauge = meter
-        .u64_observable_gauge("janus_build_info")
-        .with_description(
-            "A metric with a constant '1' value labeled with build-time version information.",
-        )
-        .init();
-    let mut git_revision: &str = git_version!(fallback = "unknown");
-    if git_revision == "unknown" {
-        if let Some(value) = option_env!("GIT_REVISION") {
-            git_revision = value;
-        }
-    }
-    gauge.observe(
-        1,
-        &[
-            KeyValue::new("version", env!("CARGO_PKG_VERSION")),
-            KeyValue::new("revision", git_revision),
-            KeyValue::new("rust_version", env!("RUSTC_SEMVER")),
-        ],
-    );
 }
 
 #[cfg(test)]
