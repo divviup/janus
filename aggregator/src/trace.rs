@@ -1,8 +1,11 @@
 //! Configures a tracing subscriber for Janus.
 
-use atty::{self, Stream};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, net::SocketAddr};
+use std::{
+    collections::HashMap,
+    io::{stdout, IsTerminal},
+    net::SocketAddr,
+};
 use tracing::Level;
 use tracing_chrome::{ChromeLayerBuilder, TraceStyle};
 use tracing_log::LogTracer;
@@ -125,7 +128,7 @@ fn make_trace_filter() -> Result<EnvFilter, FromEnvError> {
 pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<TraceGuards, Error> {
     // If stdout is not a tty or if forced by config, output logs as JSON
     // structures
-    let output_json = atty::isnt(Stream::Stdout) || config.force_json_output;
+    let output_json = !stdout().is_terminal() || config.force_json_output;
 
     // Configure filters with RUST_LOG env var. Format discussed at
     // https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html
