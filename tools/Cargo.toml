@@ -10,7 +10,7 @@ version.workspace = true
 
 [dependencies]
 anyhow = "1"
-base64 = "0.21.2"
+base64 = "0.21.3"
 clap = { version = "4.3.23", features = ["cargo", "derive", "env"] }
 derivative = "2.2.0"
 janus_collector.workspace = true
