@@ -81,7 +81,7 @@ mod tests {
     #[test]
     fn dap_problem_type_round_trip() {
         for problem_type in [
-            DapProblemType::UnrecognizedMessage,
+            DapProblemType::InvalidMessage,
             DapProblemType::UnrecognizedTask,
             DapProblemType::MissingTaskId,
             DapProblemType::UnrecognizedAggregationJob,
@@ -135,8 +135,8 @@ mod tests {
                     Some(DapProblemType::ReportRejected),
                 ),
                 TestCase::new(
-                    Box::new(|| Error::UnrecognizedMessage(Some(random()), "test")),
-                    Some(DapProblemType::UnrecognizedMessage),
+                    Box::new(|| Error::InvalidMessage(Some(random()), "test")),
+                    Some(DapProblemType::InvalidMessage),
                 ),
                 TestCase::new(
                     Box::new(|| Error::UnrecognizedTask(random())),

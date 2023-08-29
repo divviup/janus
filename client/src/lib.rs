@@ -422,7 +422,7 @@ mod tests {
             .with_status(400)
             .with_header("Content-Type", "application/problem+json")
             .with_body(concat!(
-                "{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedMessage\", ",
+                "{\"type\": \"urn:ietf:params:ppm:dap:error:invalidMessage\", ",
                 "\"detail\": \"The message type for a response was incorrect or the payload was \
                  malformed.\"}",
             ))
@@ -436,7 +436,7 @@ mod tests {
                 assert_eq!(problem.status.unwrap(), StatusCode::BAD_REQUEST);
                 assert_eq!(
                     problem.type_url.unwrap(),
-                    "urn:ietf:params:ppm:dap:error:unrecognizedMessage"
+                    "urn:ietf:params:ppm:dap:error:invalidMessage"
                 );
                 assert_eq!(
                     problem.detail.unwrap(),

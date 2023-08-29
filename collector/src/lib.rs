@@ -1326,7 +1326,7 @@ mod tests {
             .with_status(400)
             .with_header("Content-Type", "application/problem+json")
             .with_body(concat!(
-                "{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedMessage\", ",
+                "{\"type\": \"urn:ietf:params:ppm:dap:error:invalidMessage\", ",
                 "\"detail\": \"The message type for a response was incorrect or the payload was \
                  malformed.\"}"
             ))
@@ -1340,9 +1340,9 @@ mod tests {
             .unwrap_err();
         assert_matches!(error, Error::Http { problem_details, dap_problem_type } => {
             assert_eq!(problem_details.status.unwrap(), StatusCode::BAD_REQUEST);
-            assert_eq!(problem_details.type_url.unwrap(), "urn:ietf:params:ppm:dap:error:unrecognizedMessage");
+            assert_eq!(problem_details.type_url.unwrap(), "urn:ietf:params:ppm:dap:error:invalidMessage");
             assert_eq!(problem_details.detail.unwrap(), "The message type for a response was incorrect or the payload was malformed.");
-            assert_eq!(dap_problem_type, Some(DapProblemType::UnrecognizedMessage));
+            assert_eq!(dap_problem_type, Some(DapProblemType::InvalidMessage));
         });
 
         mock_bad_request.assert_async().await;
@@ -1420,7 +1420,7 @@ mod tests {
             .with_status(400)
             .with_header("Content-Type", "application/problem+json")
             .with_body(concat!(
-                "{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedMessage\", ",
+                "{\"type\": \"urn:ietf:params:ppm:dap:error:invalidMessage\", ",
                 "\"detail\": \"The message type for a response was incorrect or the payload was \
                  malformed.\"}"
             ))
@@ -1431,9 +1431,9 @@ mod tests {
         let error = collector.poll_once(&job).await.unwrap_err();
         assert_matches!(error, Error::Http { problem_details, dap_problem_type } => {
             assert_eq!(problem_details.status.unwrap(), StatusCode::BAD_REQUEST);
-            assert_eq!(problem_details.type_url.unwrap(), "urn:ietf:params:ppm:dap:error:unrecognizedMessage");
+            assert_eq!(problem_details.type_url.unwrap(), "urn:ietf:params:ppm:dap:error:invalidMessage");
             assert_eq!(problem_details.detail.unwrap(), "The message type for a response was incorrect or the payload was malformed.");
-            assert_eq!(dap_problem_type, Some(DapProblemType::UnrecognizedMessage));
+            assert_eq!(dap_problem_type, Some(DapProblemType::InvalidMessage));
         });
 
         mock_collection_job_bad_request.assert_async().await;

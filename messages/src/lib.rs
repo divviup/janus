@@ -2275,7 +2275,7 @@ pub enum PrepareError {
     VdafPrepError = 5,
     BatchSaturated = 6,
     TaskExpired = 7,
-    UnrecognizedMessage = 8,
+    InvalidMessage = 8,
 }
 
 impl Encode for PrepareError {
