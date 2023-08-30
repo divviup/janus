@@ -1,0 +1,2 @@
+ALTER TABLE collection_jobs ADD CONSTRAINT collection_jobs_unique_task_id_batch_id_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param);
+DROP INDEX collection_jobs_task_id_batch_id CASCADE;

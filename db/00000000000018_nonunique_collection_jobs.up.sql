@@ -1,0 +1,2 @@
+CREATE INDEX collection_jobs_task_id_batch_id ON collection_jobs(task_id, batch_identifier);
+ALTER TABLE collection_jobs DROP CONSTRAINT collection_jobs_unique_task_id_batch_id_aggregation_param;

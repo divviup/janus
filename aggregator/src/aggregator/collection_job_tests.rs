@@ -33,7 +33,7 @@ use janus_messages::{
 use prio::codec::{Decode, Encode};
 use rand::random;
 use serde_json::json;
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 use trillium::{Handler, KnownHeaderName, Status};
 use trillium_testing::{
     prelude::{post, put},
@@ -487,6 +487,119 @@ async fn collection_job_put_idempotence_time_interval() {
                     .unwrap();
                 assert_eq!(collection_jobs.len(), 1);
                 assert_eq!(collection_jobs[0].id(), &collection_job_id);
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn collection_job_put_idempotence_time_interval_varied_collection_id() {
+    // This test sends repeated, identical collection requests with differing collection job IDs and
+    // validates that they are accepted. They should be accepted because calculation of the query
+    // count for max_batch_query_count testing is based on the number of distinct aggregation
+    // parameters that the batch has been collected against.
+
+    let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
+
+    let collection_job_ids = HashSet::from(random::<[CollectionJobId; 2]>());
+    let request = CollectionReq::new(
+        Query::new_time_interval(
+            Interval::new(
+                Time::from_seconds_since_epoch(0),
+                *test_case.task.time_precision(),
+            )
+            .unwrap(),
+        ),
+        AggregationParam::default().get_encoded(),
+    );
+
+    for collection_job_id in &collection_job_ids {
+        let response = test_case
+            .put_collection_job(collection_job_id, &request)
+            .await;
+        assert_eq!(response.status(), Some(Status::Created));
+    }
+
+    test_case
+        .datastore
+        .run_tx(|tx| {
+            let task_id = *test_case.task.id();
+            let collection_job_ids = collection_job_ids.clone();
+
+            Box::pin(async move {
+                let collection_jobs = tx
+                    .get_collection_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &dummy_vdaf::Vdaf::new(),
+                        &task_id,
+                    )
+                    .await
+                    .unwrap();
+
+                assert_eq!(collection_jobs.len(), 2);
+                assert_eq!(
+                    collection_jobs
+                        .into_iter()
+                        .map(|job| *job.id())
+                        .collect::<HashSet<_>>(),
+                    collection_job_ids
+                );
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn collection_job_put_idempotence_fixed_size_varied_collection_id() {
+    // This test sends repeated, identical collection requests with differing collection job IDs and
+    // validates that they are accepted. They should be accepted because calculation of the query
+    // count for max_batch_query_count testing is based on the number of distinct aggregation
+    // parameters that the batch has been collected against.
+
+    let (test_case, batch_id, _, _) =
+        setup_fixed_size_current_batch_collection_job_test_case().await;
+
+    let collection_job_ids = HashSet::from(random::<[CollectionJobId; 2]>());
+    let request = CollectionReq::new(
+        Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
+        AggregationParam::default().get_encoded(),
+    );
+
+    for collection_job_id in &collection_job_ids {
+        let response = test_case
+            .put_collection_job(collection_job_id, &request)
+            .await;
+        assert_eq!(response.status(), Some(Status::Created));
+    }
+
+    test_case
+        .datastore
+        .run_tx(|tx| {
+            let task_id = *test_case.task.id();
+            let collection_job_ids = collection_job_ids.clone();
+
+            Box::pin(async move {
+                let collection_jobs = tx
+                    .get_collection_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        &dummy_vdaf::Vdaf::new(),
+                        &task_id,
+                    )
+                    .await
+                    .unwrap();
+
+                assert_eq!(collection_jobs.len(), 2);
+                assert_eq!(
+                    collection_jobs
+                        .into_iter()
+                        .map(|job| *job.id())
+                        .collect::<HashSet<_>>(),
+                    collection_job_ids
+                );
 
                 Ok(())
             })
