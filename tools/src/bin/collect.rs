@@ -1,3 +1,4 @@
+use anyhow::Context;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::{
     builder::{NonEmptyStringValueParser, StringValueParser, TypedValueParser},
@@ -10,7 +11,7 @@ use fixed::types::extra::{U15, U31, U63};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32, FixedI64};
 use janus_collector::{default_http_client, AuthenticationToken, Collector, CollectorParameters};
-use janus_core::hpke::HpkePrivateKey;
+use janus_core::hpke::{DivviUpHpkeConfig, HpkeKeypair, HpkePrivateKey};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     BatchId, Duration, FixedSizeQuery, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId,
@@ -22,7 +23,7 @@ use prio::{
     codec::Decode,
     vdaf::{self, prio3::Prio3},
 };
-use std::fmt::Debug;
+use std::{fmt::Debug, fs::File, path::PathBuf};
 use tracing_log::LogTracer;
 use tracing_subscriber::{prelude::*, EnvFilter, Registry};
 use url::Url;
@@ -330,19 +331,32 @@ struct Options {
         long,
         value_parser = HpkeConfigValueParser::new(),
         help_heading = "DAP Task Parameters",
-        display_order = 2
+        display_order = 2,
+        requires = "hpke_private_key",
+        conflicts_with = "hpke_config_json",
     )]
-    hpke_config: HpkeConfig,
+    hpke_config: Option<HpkeConfig>,
     /// The collector's HPKE private key, encoded with base64url
     #[clap(
         long,
         value_parser = PrivateKeyValueParser::new(),
         env,
         help_heading = "DAP Task Parameters",
-        display_order = 3
+        display_order = 3,
+        requires = "hpke_config",
+        conflicts_with = "hpke_config_json",
     )]
     #[derivative(Debug = "ignore")]
-    hpke_private_key: HpkePrivateKey,
+    hpke_private_key: Option<HpkePrivateKey>,
+    /// Path to a JSON document containing the collector's HPKE configuration and private key, in
+    /// the format output by `divviup hpke-config generate`.
+    #[clap(
+        long,
+        help_heading = "DAP Task Parameters",
+        display_order = 4,
+        conflicts_with_all = ["hpke_config", "hpke_private_key"]
+    )]
+    hpke_config_json: Option<PathBuf>,
 
     #[clap(flatten)]
     authentication: AuthenticationOptions,
@@ -374,6 +388,28 @@ struct Options {
 
     #[clap(flatten)]
     query: QueryOptions,
+}
+
+impl Options {
+    fn hpke_keypair(&self) -> Result<HpkeKeypair, anyhow::Error> {
+        match (
+            &self.hpke_config,
+            &self.hpke_private_key,
+            &self.hpke_config_json,
+        ) {
+            (Some(config), Some(private), _) => {
+                Ok(HpkeKeypair::new(config.clone(), private.clone()))
+            }
+            (None, None, Some(hpke_config_json_path)) => {
+                let reader =
+                    File::open(hpke_config_json_path).context("could not open HPKE config file")?;
+                let divviup_hpke_config: DivviUpHpkeConfig =
+                    serde_json::from_reader(reader).context("could not parse HPKE config file")?;
+                HpkeKeypair::try_from(divviup_hpke_config).context("could not convert HPKE config")
+            }
+            _ => unreachable!(),
+        }
+    }
 }
 
 #[tokio::main]
@@ -433,19 +469,22 @@ where
     Q: QueryTypeExt,
 {
     let authentication = match (
-        options.authentication.dap_auth_token,
-        options.authentication.authorization_bearer_token,
+        &options.authentication.dap_auth_token,
+        &options.authentication.authorization_bearer_token,
     ) {
         (None, Some(token)) => token,
         (Some(token), None) => token,
         (None, None) | (Some(_), Some(_)) => unreachable!(),
     };
+
+    let hpke_keypair = options.hpke_keypair()?;
+
     let parameters = CollectorParameters::new(
         options.task_id,
         options.leader,
-        authentication,
-        options.hpke_config.clone(),
-        options.hpke_private_key.clone(),
+        authentication.clone(),
+        hpke_keypair.config().clone(),
+        hpke_keypair.private_key().clone(),
     );
     let http_client = default_http_client().map_err(|err| Error::Anyhow(err.into()))?;
     match (options.vdaf, options.length, options.bits, options.buckets) {
@@ -600,12 +639,18 @@ mod tests {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use clap::{error::ErrorKind, CommandFactory, Parser};
     use janus_core::{
-        hpke::test_util::generate_test_hpke_config_and_private_key, task::TokenInner,
+        hpke::{
+            test_util::{generate_test_hpke_config_and_private_key, SAMPLE_DIVVIUP_HPKE_CONFIG},
+            DivviUpHpkeConfig, HpkeKeypair,
+        },
+        task::TokenInner,
     };
     use janus_messages::{BatchId, TaskId};
     use prio::codec::Encode;
     use rand::random;
     use reqwest::Url;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn verify_app() {
@@ -629,8 +674,9 @@ mod tests {
                 dap_auth_token: Some(auth_token.clone()),
                 authorization_bearer_token: None,
             },
-            hpke_config: hpke_keypair.config().clone(),
-            hpke_private_key: hpke_keypair.private_key().clone(),
+            hpke_config: Some(hpke_keypair.config().clone()),
+            hpke_private_key: Some(hpke_keypair.private_key().clone()),
+            hpke_config_json: None,
             vdaf: VdafType::Count,
             length: None,
             bits: None,
@@ -884,8 +930,9 @@ mod tests {
                 dap_auth_token: Some(auth_token.clone()),
                 authorization_bearer_token: None,
             },
-            hpke_config: hpke_keypair.config().clone(),
-            hpke_private_key: hpke_keypair.private_key().clone(),
+            hpke_config: Some(hpke_keypair.config().clone()),
+            hpke_private_key: Some(hpke_keypair.private_key().clone()),
+            hpke_config_json: None,
             vdaf: VdafType::Count,
             length: None,
             bits: None,
@@ -924,8 +971,9 @@ mod tests {
                 dap_auth_token: Some(auth_token.clone()),
                 authorization_bearer_token: None,
             },
-            hpke_config: hpke_keypair.config().clone(),
-            hpke_private_key: hpke_keypair.private_key().clone(),
+            hpke_config: Some(hpke_keypair.config().clone()),
+            hpke_private_key: Some(hpke_keypair.private_key().clone()),
+            hpke_config_json: None,
             vdaf: VdafType::Count,
             length: None,
             bits: None,
@@ -1136,5 +1184,43 @@ mod tests {
                 .kind(),
             ErrorKind::ValueValidation
         );
+    }
+
+    #[test]
+    fn hpke_config_json_file() {
+        let hpke_keypair = HpkeKeypair::try_from(
+            serde_json::from_str::<DivviUpHpkeConfig>(SAMPLE_DIVVIUP_HPKE_CONFIG).unwrap(),
+        )
+        .unwrap();
+
+        let mut hpke_config_file = NamedTempFile::new().unwrap();
+        hpke_config_file
+            .write_all(SAMPLE_DIVVIUP_HPKE_CONFIG.as_bytes())
+            .unwrap();
+        let hpke_config_file_path = hpke_config_file.into_temp_path();
+
+        let options = Options {
+            task_id: random(),
+            leader: Url::parse("https://example.com").unwrap(),
+            authentication: AuthenticationOptions {
+                dap_auth_token: Some(random()),
+                authorization_bearer_token: None,
+            },
+            hpke_config: None,
+            hpke_private_key: None,
+            hpke_config_json: Some(hpke_config_file_path.to_path_buf()),
+            vdaf: VdafType::Count,
+            length: None,
+            bits: None,
+            buckets: None,
+            query: QueryOptions {
+                batch_interval_start: Some(1_000_000),
+                batch_interval_duration: Some(1_000),
+                batch_id: None,
+                current_batch: false,
+            },
+        };
+
+        assert_eq!(options.hpke_keypair().unwrap(), hpke_keypair);
     }
 }

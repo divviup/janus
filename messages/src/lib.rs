@@ -912,7 +912,7 @@ impl Decode for ExtensionType {
 pub struct HpkeCiphertext {
     /// An identifier of the HPKE configuration used to seal the message.
     config_id: HpkeConfigId,
-    /// An encasulated HPKE key.
+    /// An encapsulated HPKE key.
     #[derivative(Debug = "ignore")]
     encapsulated_key: Vec<u8>,
     /// An HPKE ciphertext.
