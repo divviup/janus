@@ -8,6 +8,36 @@ updates:
       interval: "weekly"
     target-branch: "main"
     open-pull-requests-limit: 20
+    groups:
+      serde:
+        patterns:
+          - serde
+          - serde_*
+      tracing:
+        patterns:
+          - tracing
+          - tracing-*
+      opentelemetry:
+        patterns:
+          - opentelemetry
+          - opentelemetry-*
+          - tonic
+      trillium:
+        patterns:
+          - trillium
+          - trillium-*
+      kube:
+        patterns:
+          - kube
+          - k8s-openapi
+      postgres:
+        patterns:
+          - tokio-postgres
+          - postgres-*
+      error-handling:
+        patterns:
+          - thiserror
+          - anyhow
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -26,6 +56,36 @@ updates:
       interval: "weekly"
     target-branch: "release/0.subscriber-01"
     open-pull-requests-limit: 20
+    groups:
+      serde:
+        patterns:
+          - serde
+          - serde_*
+      tracing:
+        patterns:
+          - tracing
+          - tracing-*
+      opentelemetry:
+        patterns:
+          - opentelemetry
+          - opentelemetry-*
+          - tonic
+      trillium:
+        patterns:
+          - trillium
+          - trillium-*
+      kube:
+        patterns:
+          - kube
+          - k8s-openapi
+      postgres:
+        patterns:
+          - tokio-postgres
+          - postgres-*
+      error-handling:
+        patterns:
+          - thiserror
+          - anyhow
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -44,6 +104,36 @@ updates:
       interval: "weekly"
     target-branch: "release/0.5"
     open-pull-requests-limit: 20
+    groups:
+      serde:
+        patterns:
+          - serde
+          - serde_*
+      tracing:
+        patterns:
+          - tracing
+          - tracing-*
+      opentelemetry:
+        patterns:
+          - opentelemetry
+          - opentelemetry-*
+          - tonic
+      trillium:
+        patterns:
+          - trillium
+          - trillium-*
+      kube:
+        patterns:
+          - kube
+          - k8s-openapi
+      postgres:
+        patterns:
+          - tokio-postgres
+          - postgres-*
+      error-handling:
+        patterns:
+          - thiserror
+          - anyhow
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -54,34 +144,3 @@ updates:
     schedule:
       interval: "weekly"
     target-branch: "release/0.5"
-
-groups:
-  serde:
-    patterns:
-      - serde
-      - serde_*
-  tracing:
-    patterns:
-      - tracing
-      - tracing-*
-  opentelemetry:
-    patterns:
-      - opentelemetry
-      - opentelemetry-*
-      - tonic
-  trillium:
-    patterns:
-      - trillium
-      - trillium-*
-  kube:
-    patterns:
-      - kube
-      - k8s-openapi
-  postgres:
-    patterns:
-      - tokio-postgres
-      - postgres-*
-  error-handling:
-    patterns:
-      - thiserror
-      - anyhow
