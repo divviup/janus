@@ -54,3 +54,34 @@ updates:
     schedule:
       interval: "weekly"
     target-branch: "release/0.5"
+
+groups:
+  serde:
+    patterns:
+      - serde
+      - serde_*
+  tracing:
+    patterns:
+      - tracing
+      - tracing-*
+  opentelemetry:
+    patterns:
+      - opentelemetry
+      - opentelemetry-*
+      - tonic
+  trillium:
+    patterns:
+      - trillium
+      - trillium-*
+  kube:
+    patterns:
+      - kube
+      - k8s-openapi
+  postgres:
+    patterns:
+      - tokio-postgres
+      - postgres-*
+  error-handling:
+    patterns:
+      - thiserror
+      - anyhow
