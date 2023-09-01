@@ -2213,10 +2213,10 @@ impl VdafOps {
 
                     // Check if this collection job already exists, ensuring that all parameters match.
                     if let Some(collection_job) = tx
-                        .get_collection_job::<SEED_SIZE, Q, A>(&vdaf, &collection_job_id)
+                        .get_collection_job::<SEED_SIZE, Q, A>(&vdaf, task.id(), &collection_job_id)
                         .await?
                     {
-                        if collection_job.batch_identifier() == &collection_identifier
+                        if collection_job.query() == req.query()
                             && collection_job.aggregation_parameter() == aggregation_param.as_ref()
                         {
                             debug!(
@@ -2366,8 +2366,9 @@ impl VdafOps {
                     let collection_job = CollectionJob::<SEED_SIZE, Q, A>::new(
                         *task.id(),
                         collection_job_id,
-                        collection_identifier,
+                        req.query().clone(),
                         aggregation_param.as_ref().clone(),
+                        collection_identifier,
                         initial_collection_job_state,
                     );
 
@@ -2479,7 +2480,7 @@ impl VdafOps {
                     (Arc::clone(&task), Arc::clone(&vdaf), *collection_job_id);
                 Box::pin(async move {
                     let collection_job = tx
-                        .get_collection_job::<SEED_SIZE, Q, A>(&vdaf, &collection_job_id)
+                        .get_collection_job::<SEED_SIZE, Q, A>(&vdaf, task.id(), &collection_job_id)
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -2653,7 +2654,11 @@ impl VdafOps {
                     (Arc::clone(&task), Arc::clone(&vdaf), *collection_job_id);
                 Box::pin(async move {
                     let collection_job = tx
-                        .get_collection_job::<SEED_SIZE, Q, A>(vdaf.as_ref(), &collection_job_id)
+                        .get_collection_job::<SEED_SIZE, Q, A>(
+                            vdaf.as_ref(),
+                            task.id(),
+                            &collection_job_id,
+                        )
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -3072,7 +3077,7 @@ mod tests {
     };
     use janus_messages::{
         query_type::TimeInterval, Duration, Extension, HpkeCiphertext, HpkeConfig, HpkeConfigId,
-        InputShareAad, Interval, PlaintextInputShare, Report, ReportId, ReportMetadata,
+        InputShareAad, Interval, PlaintextInputShare, Query, Report, ReportId, ReportMetadata,
         ReportShare, Role, TaskId, Time,
     };
     use prio::{
@@ -3392,8 +3397,9 @@ mod tests {
                     >::new(
                         *task.id(),
                         random(),
-                        batch_interval,
+                        Query::new_time_interval(batch_interval),
                         (),
+                        batch_interval,
                         CollectionJobState::Start,
                     ))
                     .await

@@ -24,8 +24,8 @@ use janus_core::{
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     AggregationJobId, BatchId, CollectionJobId, Duration, Extension, HpkeCiphertext, HpkeConfig,
-    HpkeConfigId, Interval, PrepareStep, ReportId, ReportIdChecksum, ReportMetadata, ReportShare,
-    Role, TaskId, Time,
+    HpkeConfigId, Interval, PrepareStep, Query, ReportId, ReportIdChecksum, ReportMetadata,
+    ReportShare, Role, TaskId, Time,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -2442,36 +2442,45 @@ impl<C: Clock> Transaction<'_, C> {
     >(
         &self,
         vdaf: &A,
+        task_id: &TaskId,
         collection_job_id: &CollectionJobId,
     ) -> Result<Option<CollectionJob<SEED_SIZE, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
                 "SELECT
                     tasks.task_id,
-                    collection_jobs.batch_identifier,
+                    collection_jobs.query,
                     collection_jobs.aggregation_param,
+                    collection_jobs.batch_identifier,
                     collection_jobs.state,
                     collection_jobs.report_count,
                     collection_jobs.helper_aggregate_share,
                     collection_jobs.leader_aggregate_share
                 FROM collection_jobs
                 JOIN tasks ON tasks.id = collection_jobs.task_id
-                WHERE collection_jobs.collection_job_id = $1
-                  AND COALESCE(LOWER(collection_jobs.batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier AND batches.aggregation_param = collection_jobs.aggregation_param))) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                WHERE tasks.task_id = $1
+                  AND collection_jobs.collection_job_id = $2
+                  AND COALESCE(LOWER(collection_jobs.batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier AND batches.aggregation_param = collection_jobs.aggregation_param))) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query_opt(
             &stmt,
             &[
+                /* task_id */ task_id.as_ref(),
                 /* collection_job_id */ &collection_job_id.as_ref(),
                 /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
         .await?
         .map(|row| {
-            let task_id = TaskId::get_decoded(row.get("task_id"))?;
             let batch_identifier = Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
-            Self::collection_job_from_row(vdaf, task_id, batch_identifier, *collection_job_id, &row)
+            Self::collection_job_from_row(
+                vdaf,
+                *task_id,
+                batch_identifier,
+                *collection_job_id,
+                &row,
+            )
         })
         .transpose()
     }
@@ -2493,8 +2502,9 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT
                     collection_jobs.collection_job_id,
-                    collection_jobs.batch_identifier,
+                    collection_jobs.query,
                     collection_jobs.aggregation_param,
+                    collection_jobs.batch_identifier,
                     collection_jobs.state,
                     collection_jobs.report_count,
                     collection_jobs.helper_aggregate_share,
@@ -2541,8 +2551,9 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT
                     collection_jobs.collection_job_id,
-                    collection_jobs.batch_identifier,
+                    collection_jobs.query,
                     collection_jobs.aggregation_param,
+                    collection_jobs.batch_identifier,
                     collection_jobs.state,
                     collection_jobs.report_count,
                     collection_jobs.helper_aggregate_share,
@@ -2595,6 +2606,7 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT
                     collection_jobs.collection_job_id,
+                    collection_jobs.query,
                     collection_jobs.aggregation_param,
                     collection_jobs.state,
                     collection_jobs.report_count,
@@ -2641,8 +2653,9 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT
                     collection_jobs.collection_job_id,
-                    collection_jobs.batch_identifier,
+                    collection_jobs.query,
                     collection_jobs.aggregation_param,
+                    collection_jobs.batch_identifier,
                     collection_jobs.state,
                     collection_jobs.report_count,
                     collection_jobs.helper_aggregate_share,
@@ -2682,6 +2695,7 @@ impl<C: Clock> Transaction<'_, C> {
         collection_job_id: CollectionJobId,
         row: &Row,
     ) -> Result<CollectionJob<SEED_SIZE, Q, A>, Error> {
+        let query = Query::<Q>::get_decoded(row.get("query"))?;
         let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
         let state: CollectionJobStateCode = row.get("state");
         let report_count: Option<i64> = row.get("report_count");
@@ -2732,8 +2746,9 @@ impl<C: Clock> Transaction<'_, C> {
         Ok(CollectionJob::new(
             task_id,
             collection_job_id,
-            batch_identifier,
+            query,
             aggregation_param,
+            batch_identifier,
             state,
         ))
     }
@@ -2757,11 +2772,11 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "INSERT INTO collection_jobs
-                    (collection_job_id, task_id, batch_identifier, batch_interval,
-                    aggregation_param, state)
-                VALUES ($1, (SELECT id FROM tasks WHERE task_id = $2), $3, $4, $5, $6)
+                    (collection_job_id, task_id, query, aggregation_param, batch_identifier,
+                    batch_interval, state)
+                VALUES ($1, (SELECT id FROM tasks WHERE task_id = $2), $3, $4, $5, $6, $7)
                 ON CONFLICT DO NOTHING
-                RETURNING COALESCE(COALESCE(LOWER(batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier AND batches.aggregation_param = collection_jobs.aggregation_param))) < COALESCE($7::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $2) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
+                RETURNING COALESCE(COALESCE(LOWER(batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier AND batches.aggregation_param = collection_jobs.aggregation_param))) < COALESCE($8::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $2) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
             )
             .await?;
 
@@ -2771,10 +2786,11 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* collection_job_id */ collection_job.id().as_ref(),
                     /* task_id */ collection_job.task_id().as_ref(),
-                    /* batch_identifier */ &collection_job.batch_identifier().get_encoded(),
-                    /* batch_interval */ &batch_interval,
+                    /* query */ &collection_job.query().get_encoded(),
                     /* aggregation_param */
                     &collection_job.aggregation_parameter().get_encoded(),
+                    /* batch_identifier */ &collection_job.batch_identifier().get_encoded(),
+                    /* batch_interval */ &batch_interval,
                     /* state */
                     &collection_job.state().collection_job_state_code(),
                     /* now */ &self.clock.now().as_naive_date_time()?,

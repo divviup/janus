@@ -1,7 +1,3 @@
-// This function is only used when there are multiple supported versions.
-#[allow(unused_imports)]
-use crate::datastore::test_util::ephemeral_datastore_schema_version_by_downgrade;
-
 use crate::{
     datastore::{
         models::{
@@ -19,7 +15,6 @@ use crate::{
     taskprov::test_util::PeerAggregatorBuilder,
     test_util::noop_meter,
 };
-
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::NaiveDate;
@@ -38,9 +33,9 @@ use janus_core::{
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     AggregateShareAad, AggregationJobId, AggregationJobRound, BatchId, BatchSelector,
-    CollectionJobId, Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval,
-    PrepareStep, PrepareStepResult, ReportId, ReportIdChecksum, ReportMetadata, ReportShare,
-    ReportShareError, Role, TaskId, Time,
+    CollectionJobId, Duration, Extension, ExtensionType, FixedSizeQuery, HpkeCiphertext,
+    HpkeConfigId, Interval, PrepareStep, PrepareStepResult, Query, ReportId, ReportIdChecksum,
+    ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -56,6 +51,10 @@ use std::{
 };
 use tokio::time::timeout;
 use url::Url;
+
+// This function is only used when there are multiple supported versions.
+#[allow(unused_imports)]
+use crate::datastore::test_util::ephemeral_datastore_schema_version_by_downgrade;
 
 const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
 const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(1000);
@@ -2449,8 +2448,9 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
                 let first_collection_job = CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                     *task.id(),
                     random(),
-                    first_batch_interval,
+                    Query::new_time_interval(first_batch_interval),
                     aggregation_param,
+                    first_batch_interval,
                     CollectionJobState::Start,
                 );
                 tx.put_collection_job(&first_collection_job).await.unwrap();
@@ -2458,8 +2458,9 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
                 let second_collection_job = CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                     *task.id(),
                     random(),
-                    second_batch_interval,
+                    Query::new_time_interval(second_batch_interval),
                     aggregation_param,
+                    second_batch_interval,
                     CollectionJobState::Start,
                 );
                 tx.put_collection_job(&second_collection_job).await.unwrap();
@@ -2483,6 +2484,7 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
             let first_collection_job_again = tx
                 .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                     &vdaf,
+                    task.id(),
                     first_collection_job.id(),
                 )
                 .await
@@ -2493,6 +2495,7 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
             let second_collection_job_again = tx
                 .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                     &vdaf,
+                    task.id(),
                     second_collection_job.id(),
                 )
                 .await
@@ -2526,6 +2529,7 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
             let updated_first_collection_job = tx
                 .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                     &vdaf,
+                    task.id(),
                     first_collection_job.id(),
                 )
                 .await
@@ -2543,14 +2547,17 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
     clock.advance(&REPORT_EXPIRY_AGE);
 
     ds.run_tx(|tx| {
+        let task = task.clone();
         let first_collection_job = first_collection_job.clone();
         let second_collection_job = second_collection_job.clone();
+
         Box::pin(async move {
             let vdaf = dummy_vdaf::Vdaf::new();
 
             let first_collection_job = tx
                 .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                     &vdaf,
+                    task.id(),
                     first_collection_job.id(),
                 )
                 .await
@@ -2560,6 +2567,7 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
             let second_collection_job = tx
                 .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                     &vdaf,
+                    task.id(),
                     second_collection_job.id(),
                 )
                 .await
@@ -2608,8 +2616,9 @@ async fn update_collection_jobs(ephemeral_datastore: EphemeralDatastore) {
             let abandoned_collection_job = CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 *task.id(),
                 random(),
-                abandoned_batch_interval,
+                Query::new_time_interval(abandoned_batch_interval),
                 aggregation_param,
+                abandoned_batch_interval,
                 CollectionJobState::Start,
             );
             tx.put_collection_job(&abandoned_collection_job).await?;
@@ -2617,8 +2626,9 @@ async fn update_collection_jobs(ephemeral_datastore: EphemeralDatastore) {
             let deleted_collection_job = CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 *task.id(),
                 random(),
-                deleted_batch_interval,
+                Query::new_time_interval(deleted_batch_interval),
                 aggregation_param,
+                deleted_batch_interval,
                 CollectionJobState::Start,
             );
             tx.put_collection_job(&deleted_collection_job).await?;
@@ -2626,6 +2636,7 @@ async fn update_collection_jobs(ephemeral_datastore: EphemeralDatastore) {
             let abandoned_collection_job_again = tx
                 .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                     &vdaf,
+                    task.id(),
                     abandoned_collection_job.id(),
                 )
                 .await?
@@ -2650,6 +2661,7 @@ async fn update_collection_jobs(ephemeral_datastore: EphemeralDatastore) {
             let abandoned_collection_job_again = tx
                 .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                     &vdaf,
+                    task.id(),
                     abandoned_collection_job.id(),
                 )
                 .await?
@@ -2658,6 +2670,7 @@ async fn update_collection_jobs(ephemeral_datastore: EphemeralDatastore) {
             let deleted_collection_job_again = tx
                 .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                     &vdaf,
+                    task.id(),
                     deleted_collection_job.id(),
                 )
                 .await?
@@ -2714,7 +2727,97 @@ struct CollectionJobAcquireTestCase<Q: CollectableQueryType> {
     collection_job_test_cases: Vec<CollectionJobTestCase<Q>>,
 }
 
-async fn setup_collection_job_acquire_test_case<Q: CollectableQueryType>(
+#[async_trait]
+trait TestQueryTypeExt: CollectableQueryType {
+    fn query_for_batch_identifier(batch_identifier: &Self::BatchIdentifier) -> Query<Self>;
+
+    fn batch_identifier_for_client_timestamps(client_timestamps: &[Time]) -> Self::BatchIdentifier;
+
+    fn shortened_batch_identifier(
+        batch_identifier: &Self::BatchIdentifier,
+    ) -> Self::BatchIdentifier;
+
+    async fn write_outstanding_batch(
+        tx: &Transaction<MockClock>,
+        task_id: &TaskId,
+        batch_identifier: &Self::BatchIdentifier,
+        time_bucket_start: &Option<Time>,
+    ) -> Option<(TaskId, BatchId)>;
+}
+
+#[async_trait]
+impl TestQueryTypeExt for TimeInterval {
+    fn query_for_batch_identifier(batch_identifier: &Self::BatchIdentifier) -> Query<Self> {
+        Query::new_time_interval(*batch_identifier)
+    }
+
+    fn batch_identifier_for_client_timestamps(client_timestamps: &[Time]) -> Self::BatchIdentifier {
+        let min_client_timestamp = *client_timestamps.iter().min().unwrap();
+        let max_client_timestamp = *client_timestamps.iter().max().unwrap();
+        Interval::new(
+            min_client_timestamp,
+            Duration::from_seconds(
+                max_client_timestamp
+                    .difference(&min_client_timestamp)
+                    .unwrap()
+                    .as_seconds()
+                    + 1,
+            ),
+        )
+        .unwrap()
+    }
+
+    fn shortened_batch_identifier(
+        batch_identifier: &Self::BatchIdentifier,
+    ) -> Self::BatchIdentifier {
+        Interval::new(
+            *batch_identifier.start(),
+            Duration::from_seconds(batch_identifier.duration().as_seconds() / 2),
+        )
+        .unwrap()
+    }
+
+    async fn write_outstanding_batch(
+        _: &Transaction<MockClock>,
+        _: &TaskId,
+        _: &Self::BatchIdentifier,
+        _: &Option<Time>,
+    ) -> Option<(TaskId, BatchId)> {
+        None
+    }
+}
+
+#[async_trait]
+impl TestQueryTypeExt for FixedSize {
+    fn query_for_batch_identifier(_: &Self::BatchIdentifier) -> Query<Self> {
+        // We could also generate a by-batch-id query, but using current-batch is more realistic.
+        Query::new_fixed_size(FixedSizeQuery::CurrentBatch)
+    }
+
+    fn batch_identifier_for_client_timestamps(_: &[Time]) -> Self::BatchIdentifier {
+        random()
+    }
+
+    fn shortened_batch_identifier(
+        batch_identifier: &Self::BatchIdentifier,
+    ) -> Self::BatchIdentifier {
+        *batch_identifier
+    }
+
+    async fn write_outstanding_batch(
+        tx: &Transaction<MockClock>,
+        task_id: &TaskId,
+        batch_identifier: &Self::BatchIdentifier,
+        time_bucket_start: &Option<Time>,
+    ) -> Option<(TaskId, BatchId)> {
+        tx.put_outstanding_batch(task_id, batch_identifier, time_bucket_start)
+            .await
+            .unwrap();
+        Some((*task_id, *batch_identifier))
+    }
+}
+
+async fn setup_collection_job_acquire_test_case<Q: TestQueryTypeExt>(
     ds: &Datastore<MockClock>,
     test_case: CollectionJobAcquireTestCase<Q>,
 ) -> CollectionJobAcquireTestCase<Q> {
@@ -2758,8 +2861,9 @@ async fn setup_collection_job_acquire_test_case<Q: CollectableQueryType>(
                 tx.put_collection_job(&CollectionJob::<0, Q, dummy_vdaf::Vdaf>::new(
                     test_case.task_id,
                     collection_job_id,
-                    test_case.batch_identifier.clone(),
+                    Q::query_for_batch_identifier(&test_case.batch_identifier),
                     test_case.agg_param,
+                    test_case.batch_identifier.clone(),
                     match test_case.state {
                         CollectionJobTestCaseState::Start => CollectionJobState::Start,
                         CollectionJobTestCaseState::Collectable => CollectionJobState::Collectable,
@@ -2788,7 +2892,7 @@ async fn setup_collection_job_acquire_test_case<Q: CollectableQueryType>(
     .unwrap()
 }
 
-async fn run_collection_job_acquire_test_case<Q: CollectableQueryType>(
+async fn run_collection_job_acquire_test_case<Q: TestQueryTypeExt>(
     ds: &Datastore<MockClock>,
     test_case: CollectionJobAcquireTestCase<Q>,
 ) -> Vec<Lease<AcquiredCollectionJob>> {
@@ -5030,85 +5134,6 @@ async fn roundtrip_batch(ephemeral_datastore: EphemeralDatastore) {
     .unwrap();
 }
 
-#[async_trait]
-trait ExpirationQueryTypeExt: CollectableQueryType {
-    fn batch_identifier_for_client_timestamps(client_timestamps: &[Time]) -> Self::BatchIdentifier;
-
-    fn shortened_batch_identifier(
-        batch_identifier: &Self::BatchIdentifier,
-    ) -> Self::BatchIdentifier;
-
-    async fn write_outstanding_batch(
-        tx: &Transaction<MockClock>,
-        task_id: &TaskId,
-        batch_identifier: &Self::BatchIdentifier,
-        time_bucket_start: &Option<Time>,
-    ) -> Option<(TaskId, BatchId)>;
-}
-
-#[async_trait]
-impl ExpirationQueryTypeExt for TimeInterval {
-    fn batch_identifier_for_client_timestamps(client_timestamps: &[Time]) -> Self::BatchIdentifier {
-        let min_client_timestamp = *client_timestamps.iter().min().unwrap();
-        let max_client_timestamp = *client_timestamps.iter().max().unwrap();
-        Interval::new(
-            min_client_timestamp,
-            Duration::from_seconds(
-                max_client_timestamp
-                    .difference(&min_client_timestamp)
-                    .unwrap()
-                    .as_seconds()
-                    + 1,
-            ),
-        )
-        .unwrap()
-    }
-
-    fn shortened_batch_identifier(
-        batch_identifier: &Self::BatchIdentifier,
-    ) -> Self::BatchIdentifier {
-        Interval::new(
-            *batch_identifier.start(),
-            Duration::from_seconds(batch_identifier.duration().as_seconds() / 2),
-        )
-        .unwrap()
-    }
-
-    async fn write_outstanding_batch(
-        _: &Transaction<MockClock>,
-        _: &TaskId,
-        _: &Self::BatchIdentifier,
-        _: &Option<Time>,
-    ) -> Option<(TaskId, BatchId)> {
-        None
-    }
-}
-
-#[async_trait]
-impl ExpirationQueryTypeExt for FixedSize {
-    fn batch_identifier_for_client_timestamps(_: &[Time]) -> Self::BatchIdentifier {
-        random()
-    }
-
-    fn shortened_batch_identifier(
-        batch_identifier: &Self::BatchIdentifier,
-    ) -> Self::BatchIdentifier {
-        *batch_identifier
-    }
-
-    async fn write_outstanding_batch(
-        tx: &Transaction<MockClock>,
-        task_id: &TaskId,
-        batch_identifier: &Self::BatchIdentifier,
-        time_bucket_start: &Option<Time>,
-    ) -> Option<(TaskId, BatchId)> {
-        tx.put_outstanding_batch(task_id, batch_identifier, time_bucket_start)
-            .await
-            .unwrap();
-        Some((*task_id, *batch_identifier))
-    }
-}
-
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
 async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) {
@@ -5217,7 +5242,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
     let vdaf = dummy_vdaf::Vdaf::new();
 
     // Setup.
-    async fn write_aggregation_artifacts<Q: ExpirationQueryTypeExt>(
+    async fn write_aggregation_artifacts<Q: TestQueryTypeExt>(
         tx: &Transaction<'_, MockClock>,
         task_id: &TaskId,
         client_timestamps: &[Time],
@@ -5683,7 +5708,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     // Setup.
-    async fn write_collect_artifacts<Q: ExpirationQueryTypeExt>(
+    async fn write_collect_artifacts<Q: TestQueryTypeExt>(
         tx: &Transaction<'_, MockClock>,
         task: &Task,
         client_timestamps: &[Time],
@@ -5730,8 +5755,9 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
             let collection_job = CollectionJob::<0, Q, dummy_vdaf::Vdaf>::new(
                 *task.id(),
                 random(),
-                batch_identifier.clone(),
+                Q::query_for_batch_identifier(&batch_identifier),
                 AggregationParam(0),
+                batch_identifier.clone(),
                 CollectionJobState::Start,
             );
             tx.put_collection_job(&collection_job).await.unwrap();

@@ -143,6 +143,7 @@ impl CollectionJobDriver {
                     let collection_job = tx
                         .get_collection_job::<SEED_SIZE, Q, A>(
                             vdaf.as_ref(),
+                            lease.leased().task_id(),
                             lease.leased().collection_job_id(),
                         )
                         .await?
@@ -253,7 +254,7 @@ impl CollectionJobDriver {
 
                 Box::pin(async move {
                     let maybe_updated_collection_job = tx
-                        .get_collection_job::<SEED_SIZE, Q, A>(vdaf.as_ref(), collection_job.id())
+                        .get_collection_job::<SEED_SIZE, Q, A>(vdaf.as_ref(), lease.leased().task_id(), collection_job.id())
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -355,6 +356,7 @@ impl CollectionJobDriver {
                     let collection_job = tx
                         .get_collection_job::<SEED_SIZE, Q, A>(
                             &vdaf,
+                            lease.leased().task_id(),
                             lease.leased().collection_job_id(),
                         )
                         .await?
@@ -551,7 +553,8 @@ mod tests {
     };
     use janus_messages::{
         query_type::TimeInterval, AggregateShare, AggregateShareReq, AggregationJobRound,
-        BatchSelector, Duration, HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum, Role,
+        BatchSelector, Duration, HpkeCiphertext, HpkeConfigId, Interval, Query, ReportIdChecksum,
+        Role,
     };
     use prio::codec::{Decode, Encode};
     use rand::random;
@@ -580,8 +583,9 @@ mod tests {
         let collection_job = CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
             *task.id(),
             random(),
-            batch_interval,
+            Query::new_time_interval(batch_interval),
             aggregation_param,
+            batch_interval,
             CollectionJobState::Collectable,
         );
 
@@ -749,8 +753,9 @@ mod tests {
                         &CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                             *task.id(),
                             collection_job_id,
-                            batch_interval,
+                            Query::new_time_interval(batch_interval),
                             aggregation_param,
+                            batch_interval,
                             CollectionJobState::Collectable,
                         ),
                     )
@@ -904,10 +909,13 @@ mod tests {
 
         // collection job in datastore should be unchanged.
         ds.run_tx(|tx| {
+            let task_id = *task.id();
+
             Box::pin(async move {
                 let collection_job = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &dummy_vdaf::Vdaf::new(),
+                        &task_id,
                         &collection_job_id,
                     )
                     .await
@@ -953,11 +961,14 @@ mod tests {
 
         // Should now have recorded helper encrypted aggregate share, too.
         ds.run_tx(|tx| {
+            let task_id = *task.id();
             let helper_aggregate_share = helper_response.encrypted_aggregate_share().clone();
+
             Box::pin(async move {
                 let collection_job = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &dummy_vdaf::Vdaf::new(),
+                        &task_id,
                         &collection_job_id,
                     )
                     .await
@@ -1013,6 +1024,7 @@ mod tests {
                     let abandoned_collection_job = tx
                         .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                             &dummy_vdaf::Vdaf::new(),
+                            collection_job.task_id(),
                             collection_job.id(),
                         )
                         .await?
@@ -1119,6 +1131,7 @@ mod tests {
                 Box::pin(async move {
                     tx.get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &dummy_vdaf::Vdaf::new(),
+                        collection_job.task_id(),
                         collection_job.id(),
                     )
                     .await
@@ -1192,6 +1205,7 @@ mod tests {
                 let collection_job = tx
                     .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &dummy_vdaf::Vdaf::new(),
+                        collection_job.task_id(),
                         collection_job.id(),
                     )
                     .await

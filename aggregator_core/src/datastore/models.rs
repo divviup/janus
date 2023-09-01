@@ -13,7 +13,7 @@ use janus_core::{
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     AggregationJobId, AggregationJobRound, BatchId, CollectionJobId, Duration, Extension,
-    HpkeCiphertext, Interval, PrepareStep, ReportId, ReportIdChecksum, ReportMetadata,
+    HpkeCiphertext, Interval, PrepareStep, Query, ReportId, ReportIdChecksum, ReportMetadata,
     ReportShareError, Role, TaskId, Time,
 };
 use postgres_protocol::types::{
@@ -1031,11 +1031,13 @@ pub struct CollectionJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregat
     task_id: TaskId,
     /// The unique identifier for the collection job.
     collection_job_id: CollectionJobId,
-    /// The batch interval covered by the collection job.
-    batch_identifier: Q::BatchIdentifier,
+    /// The Query that was sent to create this collection job.
+    query: Query<Q>,
     /// The VDAF aggregation parameter used to prepare and aggregate input shares.
     #[derivative(Debug = "ignore")]
     aggregation_parameter: A::AggregationParam,
+    /// The batch interval covered by the collection job.
+    batch_identifier: Q::BatchIdentifier,
     /// The current state of the collection job.
     state: CollectionJobState<SEED_SIZE, A>,
 }
@@ -1047,15 +1049,17 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
     pub fn new(
         task_id: TaskId,
         collection_job_id: CollectionJobId,
-        batch_identifier: Q::BatchIdentifier,
+        query: Query<Q>,
         aggregation_parameter: A::AggregationParam,
+        batch_identifier: Q::BatchIdentifier,
         state: CollectionJobState<SEED_SIZE, A>,
     ) -> Self {
         Self {
             task_id,
             collection_job_id,
-            batch_identifier,
+            query,
             aggregation_parameter,
+            batch_identifier,
             state,
         }
     }
@@ -1070,13 +1074,9 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         &self.collection_job_id
     }
 
-    /// Gets the batch identifier associated with this collection job.
-    ///
-    /// This method would typically be used for code which is generic over the query type.
-    /// Query-type specific code will typically call one of [`Self::batch_interval`] or
-    /// [`Self::batch_id`].
-    pub fn batch_identifier(&self) -> &Q::BatchIdentifier {
-        &self.batch_identifier
+    /// Returns the query that was sent to create this collection job.
+    pub fn query(&self) -> &Query<Q> {
+        &self.query
     }
 
     /// Returns the aggregation parameter associated with this collection job.
@@ -1087,6 +1087,15 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
     /// Takes the aggregation parameter associated with this collection job, consuming the job.
     pub fn take_aggregation_parameter(self) -> A::AggregationParam {
         self.aggregation_parameter
+    }
+
+    /// Gets the batch identifier associated with this collection job.
+    ///
+    /// This method would typically be used for code which is generic over the query type.
+    /// Query-type specific code will typically call one of [`Self::batch_interval`] or
+    /// [`Self::batch_id`].
+    pub fn batch_identifier(&self) -> &Q::BatchIdentifier {
+        &self.batch_identifier
     }
 
     /// Returns the state associated with this collection job.
