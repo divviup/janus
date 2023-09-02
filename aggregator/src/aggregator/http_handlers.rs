@@ -2710,7 +2710,7 @@ mod tests {
                 AggregationJobState::Finished,
                 AggregationJobRound::from(1),
             )
-            .with_last_continue_request_hash(aggregation_job.last_continue_request_hash().unwrap())
+            .with_last_request_hash(aggregation_job.last_request_hash().unwrap())
         );
         assert_eq!(
             report_aggregations,
@@ -3633,7 +3633,7 @@ mod tests {
                 AggregationJobState::Finished,
                 AggregationJobRound::from(1),
             )
-            .with_last_continue_request_hash(aggregation_job.last_continue_request_hash().unwrap())
+            .with_last_request_hash(aggregation_job.last_request_hash().unwrap())
         );
         assert_eq!(
             report_aggregation,

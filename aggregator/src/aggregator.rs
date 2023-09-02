@@ -1502,10 +1502,8 @@ impl VdafOps {
     /// the sense that no new rows would need to be written to service the job.
     async fn check_aggregation_job_idempotence<'b, const SEED_SIZE: usize, Q, A, C>(
         tx: &Transaction<'b, C>,
-        vdaf: &A,
         task: &Task,
         incoming_aggregation_job: &AggregationJob<SEED_SIZE, Q, A>,
-        incoming_report_share_data: &[ReportShareData<SEED_SIZE, A>],
     ) -> Result<bool, Error>
     where
         Q: AccumulableQueryType,
@@ -1519,6 +1517,8 @@ impl VdafOps {
             Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)> + PartialEq,
         A::OutputShare: Send + Sync + PartialEq,
     {
+        // unwrap safety: this function should only be called if there is an existing aggregation
+        // job.
         let existing_aggregation_job = tx
             .get_aggregation_job(task.id(), incoming_aggregation_job.id())
             .await?
@@ -1530,46 +1530,7 @@ impl VdafOps {
                 )
             });
 
-        if !existing_aggregation_job.eq(incoming_aggregation_job) {
-            return Ok(false);
-        }
-
-        // Check the existing report aggregations for this job against the ones in the incoming
-        // message.
-        let existing_report_aggregations = tx
-            .get_report_aggregations_for_aggregation_job(
-                vdaf,
-                &Role::Helper,
-                task.id(),
-                incoming_aggregation_job.id(),
-            )
-            .await?;
-
-        if existing_report_aggregations.len() != incoming_report_share_data.len() {
-            return Ok(false);
-        }
-
-        // Check each report share in the incoming aggregation job against the already recorded
-        // report aggregations. `existing_report_aggregations` preserves the order in which the
-        // report shares were seen in the previous `AggregationJobInitReq`, and that order should be
-        // preserved in the repeated message, so it's OK to just zip the iterators together.
-        if incoming_report_share_data
-            .iter()
-            .zip(existing_report_aggregations)
-            .any(
-                |(incoming_report_share_data, existing_report_aggregation)| {
-                    !existing_report_aggregation
-                        .report_metadata()
-                        .eq(incoming_report_share_data.report_share.metadata())
-                        || !existing_report_aggregation
-                            .eq(&incoming_report_share_data.report_aggregation)
-                },
-            )
-        {
-            return Ok(false);
-        }
-
-        Ok(true)
+        Ok(existing_aggregation_job.eq(incoming_aggregation_job))
     }
 
     /// Implements the aggregate initialization request portion of the `/aggregate` endpoint for the
@@ -1596,6 +1557,8 @@ impl VdafOps {
             Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)> + PartialEq,
         A::OutputShare: Send + Sync + PartialEq,
     {
+        // unwrap safety: SHA-256 computed by ring should always be 32 bytes
+        let request_hash = digest(&SHA256, req_bytes).as_ref().try_into().unwrap();
         let req = AggregationJobInitializeReq::<Q>::get_decoded(req_bytes)?;
 
         // If two ReportShare messages have the same report ID, then the helper MUST abort with
@@ -1818,19 +1781,22 @@ impl VdafOps {
                 .difference(min_client_timestamp)?
                 .add(&Duration::from_seconds(1))?,
         )?;
-        let aggregation_job = Arc::new(AggregationJob::<SEED_SIZE, Q, A>::new(
-            *task.id(),
-            *aggregation_job_id,
-            agg_param,
-            req.batch_selector().batch_identifier().clone(),
-            client_timestamp_interval,
-            if saw_continue {
-                AggregationJobState::InProgress
-            } else {
-                AggregationJobState::Finished
-            },
-            AggregationJobRound::from(0),
-        ));
+        let aggregation_job = Arc::new(
+            AggregationJob::<SEED_SIZE, Q, A>::new(
+                *task.id(),
+                *aggregation_job_id,
+                agg_param,
+                req.batch_selector().batch_identifier().clone(),
+                client_timestamp_interval,
+                if saw_continue {
+                    AggregationJobState::InProgress
+                } else {
+                    AggregationJobState::Finished
+                },
+                AggregationJobRound::from(0),
+            )
+            .with_last_request_hash(request_hash),
+        );
         let interval_per_batch_identifier = Arc::new(interval_per_batch_identifier);
 
         Ok(datastore
@@ -1901,10 +1867,8 @@ impl VdafOps {
                             // the datastore, which we must now check.
                             if !Self::check_aggregation_job_idempotence(
                                 tx,
-                                &vdaf,
                                 task.borrow(),
                                 aggregation_job.borrow(),
-                                &report_share_data,
                             )
                             .await
                             .map_err(|e| datastore::Error::User(e.into()))?
@@ -2060,7 +2024,7 @@ impl VdafOps {
                     // but the leader never got our response and so retried stepping the job.
                     // TODO(issue #1087): measure how often this happens with a Prometheus metric
                     if helper_aggregation_job.round() == leader_aggregation_job.round() {
-                        match helper_aggregation_job.last_continue_request_hash() {
+                        match helper_aggregation_job.last_request_hash() {
                             None => {
                                 return Err(datastore::Error::User(
                                     Error::Internal(format!(

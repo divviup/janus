@@ -174,8 +174,7 @@ CREATE TABLE aggregation_jobs(
     client_timestamp_interval  TSRANGE NOT NULL,                -- the minimal interval containing all of client timestamps included in this aggregation job
     state                      AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
     round                      INTEGER NOT NULL,                -- current round of the VDAF preparation protocol
-    last_continue_request_hash BYTEA,                           -- SHA-256 hash of the most recently received AggregationJobContinueReq
-                                                                -- (helper only and only after the first round of the job)
+    last_request_hash          BYTEA,                           -- SHA-256 hash of the most recently received AggregationJobContinueReq (helper only)
     trace_context              JSONB,                           -- distributed tracing metadata
 
     lease_expiry             TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this aggregation job expires; -infinity implies no current lease
