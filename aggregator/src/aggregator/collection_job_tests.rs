@@ -305,6 +305,7 @@ async fn collection_job_success_fixed_size() {
                     let collection_job = tx
                         .get_collection_job::<0, FixedSize, dummy_vdaf::Vdaf>(
                             &vdaf,
+                            task.id(),
                             &collection_job_id,
                         )
                         .await

@@ -99,8 +99,8 @@ mod tests {
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
-        AggregationJobRound, Duration, HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum,
-        ReportMetadata, ReportShare, Role, Time,
+        AggregationJobRound, Duration, FixedSizeQuery, HpkeCiphertext, HpkeConfigId, Interval,
+        Query, ReportIdChecksum, ReportMetadata, ReportShare, Role, Time,
     };
     use rand::random;
     use std::sync::Arc;
@@ -203,8 +203,9 @@ mod tests {
                         &CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                             *task.id(),
                             random(),
-                            batch_identifier,
+                            Query::new_time_interval(batch_identifier),
                             AggregationParam(0),
+                            batch_identifier,
                             CollectionJobState::Start,
                         ),
                     )
@@ -575,8 +576,9 @@ mod tests {
                     tx.put_collection_job(&CollectionJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         random(),
-                        batch_id,
+                        Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
                         AggregationParam(0),
+                        batch_id,
                         CollectionJobState::Start,
                     ))
                     .await

@@ -898,9 +898,10 @@ mod tests {
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
         AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
-        AggregationJobRound, Duration, Extension, ExtensionType, HpkeConfig, InputShareAad,
-        Interval, PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult,
-        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
+        AggregationJobRound, Duration, Extension, ExtensionType, FixedSizeQuery, HpkeConfig,
+        InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare, PrepareStep,
+        PrepareStepResult, Query, ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError,
+        Role, TaskId, Time,
     };
     use prio::{
         codec::Encode,
@@ -1019,8 +1020,9 @@ mod tests {
                         CollectionJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
                             *task.id(),
                             random(),
-                            batch_identifier,
+                            Query::new_time_interval(batch_identifier),
                             (),
+                            batch_identifier,
                             CollectionJobState::Start,
                         );
                     tx.put_collection_job(&collection_job).await?;
@@ -1180,7 +1182,7 @@ mod tests {
                         .await?
                         .unwrap();
                     let collection_job = tx
-                        .get_collection_job(vdaf.as_ref(), &collection_job_id)
+                        .get_collection_job(vdaf.as_ref(), task.id(), &collection_job_id)
                         .await?
                         .unwrap();
                     Ok((aggregation_job, report_aggregation, batch, collection_job))
@@ -1930,8 +1932,9 @@ mod tests {
                         CollectionJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
                             *task.id(),
                             random(),
-                            collection_identifier,
+                            Query::new_time_interval(collection_identifier),
                             (),
+                            collection_identifier,
                             CollectionJobState::Start,
                         );
                     tx.put_collection_job(&collection_job).await?;
@@ -2140,7 +2143,7 @@ mod tests {
                         .await?
                         .unwrap();
                     let got_collection_job = tx
-                        .get_collection_job(vdaf.as_ref(), &collection_job_id)
+                        .get_collection_job(vdaf.as_ref(), task.id(), &collection_job_id)
                         .await?
                         .unwrap();
 
@@ -2294,8 +2297,9 @@ mod tests {
                         CollectionJob::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
                             *task.id(),
                             random(),
-                            batch_id,
+                            Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
                             (),
+                            batch_id,
                             CollectionJobState::Start,
                         );
                     tx.put_collection_job(&collection_job).await?;
@@ -2467,7 +2471,7 @@ mod tests {
                         .await?;
                     let batch = tx.get_batch(task.id(), &batch_id, &()).await?.unwrap();
                     let collection_job = tx
-                        .get_collection_job(vdaf.as_ref(), &collection_job_id)
+                        .get_collection_job(vdaf.as_ref(), task.id(), &collection_job_id)
                         .await?
                         .unwrap();
                     Ok((

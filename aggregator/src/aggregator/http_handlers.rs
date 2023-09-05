@@ -4291,8 +4291,9 @@ mod tests {
         let want_collection_job = CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
             *test_case.task.id(),
             collection_job_id,
-            batch_interval,
+            Query::new_time_interval(batch_interval),
             aggregation_param,
+            batch_interval,
             CollectionJobState::Start,
         );
         let want_batches = Vec::from([Batch::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
@@ -4311,7 +4312,7 @@ mod tests {
 
                 Box::pin(async move {
                     let got_collection_job = tx
-                        .get_collection_job(&dummy_vdaf::Vdaf::new(), &collection_job_id)
+                        .get_collection_job(&dummy_vdaf::Vdaf::new(), &task_id, &collection_job_id)
                         .await?
                         .unwrap();
                     let got_batches = tx.get_batches_for_task(&task_id).await?;
@@ -4356,6 +4357,7 @@ mod tests {
                     let collection_job = tx
                         .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                             &dummy_vdaf::Vdaf::new(),
+                            task.id(),
                             &collection_job_id,
                         )
                         .await
