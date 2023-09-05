@@ -208,12 +208,13 @@ pub struct HeaderEntry {
 pub struct AggregatorApi {
     /// Address on which this server should listen for connections to the Janus aggregator API
     /// and serve its API endpoints, independently from the address on which the DAP API is
-    /// served.
+    /// served. This is mutually exclusive with [`path_prefix`].
     listen_address: Option<SocketAddr>,
     /// The Janus aggregator API will be served on the same address as the DAP API, but relative
     /// to the provided prefix. e.g., if `path_prefix` is `aggregator-api`, then the DAP API's
     /// uploads endpoint would be `{listen-address}/tasks/{task-id}/reports`, while task IDs
     /// could be obtained from the aggregator API at `{listen-address}/aggregator-api/task_ids`.
+    /// This is mutually exclusive with [`listen_address`].
     path_prefix: Option<String>,
     /// Resource location at which the DAP service managed by this aggregator api can be found
     /// on the public internet. Required.
@@ -224,9 +225,7 @@ fn deserialize_aggregator_api<'de, D>(deserializer: D) -> Result<Option<Aggregat
 where
     D: Deserializer<'de>,
 {
-    let aggregator_api: Option<AggregatorApi> =
-        serde_yaml::from_value(Deserialize::deserialize(deserializer)?)
-            .map_err(de::Error::custom)?;
+    let aggregator_api: Option<AggregatorApi> = Deserialize::deserialize(deserializer)?;
     if let Some(ref aggregator_api) = aggregator_api {
         match (aggregator_api.listen_address, &aggregator_api.path_prefix) {
             (None, None) => {

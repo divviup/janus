@@ -69,8 +69,10 @@ listen_address: "0.0.0.0:8080"
 
 # How to serve the Janus aggregator API. If not set, Janus aggregator API is not served. (optional)
 aggregator_api:
-  # Serve the aggregator API on an address and port that is separate from the DAP API.
+  # Serve the aggregator API on an address and port that is separate from the DAP API. This is
+  # mutually exclusive with path_prefix.
   listen_address: "0.0.0.0:8081"
+
   # Alternatively, serve the aggregator API on the same address as the DAP API, but on a separate
   # path denoted by `path_prefix`. This is mutually exclusive with listen_address.
   # path_prefix: "aggregator-api"
