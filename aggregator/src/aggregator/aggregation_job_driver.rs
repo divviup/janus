@@ -187,7 +187,8 @@ impl AggregationJobDriver {
                     // operation to avoid needing to join many futures?
                     let client_reports: HashMap<_, _> =
                         try_join_all(report_aggregations.iter().filter_map(|report_aggregation| {
-                            if report_aggregation.state() == &ReportAggregationState::Start {
+                            if matches!(report_aggregation.state(), &ReportAggregationState::Start)
+                            {
                                 Some(
                                     tx.get_client_report(
                                         vdaf.as_ref(),
@@ -308,7 +309,7 @@ impl AggregationJobDriver {
         let report_aggregations: Vec<_> = report_aggregations
             .into_iter()
             .filter(|report_aggregation| {
-                report_aggregation.state() == &ReportAggregationState::Start
+                matches!(report_aggregation.state(), &ReportAggregationState::Start)
             })
             .collect();
 

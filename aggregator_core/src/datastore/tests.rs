@@ -1269,8 +1269,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     let new_leader_aggregation_job = leader_aggregation_job
         .clone()
         .with_state(AggregationJobState::Finished);
-    let new_helper_aggregation_job =
-        helper_aggregation_job.with_last_continue_request_hash([3; 32]);
+    let new_helper_aggregation_job = helper_aggregation_job.with_last_request_hash([3; 32]);
     ds.run_tx(|tx| {
         let (new_leader_aggregation_job, new_helper_aggregation_job) = (
             new_leader_aggregation_job.clone(),
@@ -1811,7 +1810,7 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
         AggregationJobState::InProgress,
         AggregationJobRound::from(0),
     )
-    .with_last_continue_request_hash([3; 32]);
+    .with_last_request_hash([3; 32]);
 
     let mut want_agg_jobs = Vec::from([
         first_aggregation_job,

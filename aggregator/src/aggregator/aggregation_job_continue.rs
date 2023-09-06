@@ -245,7 +245,7 @@ impl VdafOps {
                     ))
                 }
             })
-            .with_last_continue_request_hash(request_hash);
+            .with_last_request_hash(request_hash);
 
         try_join!(
             tx.update_aggregation_job(&helper_aggregation_job),

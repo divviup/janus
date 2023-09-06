@@ -237,7 +237,7 @@ pub struct AggregationJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggrega
     /// The SHA-256 hash of the most recent [`janus_messages::AggregationJobContinueReq`]
     /// received for this aggregation job. Will only be set for helpers, and only after the
     /// first round of the job.
-    last_continue_request_hash: Option<[u8; 32]>,
+    last_request_hash: Option<[u8; 32]>,
 }
 
 impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
@@ -261,7 +261,7 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
             client_timestamp_interval,
             state,
             round,
-            last_continue_request_hash: None,
+            last_request_hash: None,
         }
     }
 
@@ -317,16 +317,17 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
     }
 
     /// Returns the SHA-256 digest of the most recent
+    /// [`janus_messages::AggregationJobInitializeReq`] or
     /// [`janus_messages::AggregationJobContinueReq`] for the job, if any.
-    pub fn last_continue_request_hash(&self) -> Option<[u8; 32]> {
-        self.last_continue_request_hash
+    pub fn last_request_hash(&self) -> Option<[u8; 32]> {
+        self.last_request_hash
     }
 
-    /// Returns a new [`AggregationJob`] corresponding to this aggregation job updated to have
-    /// the given last continue request hash.
-    pub fn with_last_continue_request_hash(self, hash: [u8; 32]) -> Self {
+    /// Returns a new [`AggregationJob`] corresponding to this aggregation job updated to have the
+    /// given last request hash.
+    pub fn with_last_request_hash(self, hash: [u8; 32]) -> Self {
         Self {
-            last_continue_request_hash: Some(hash),
+            last_request_hash: Some(hash),
             ..self
         }
     }
@@ -354,7 +355,7 @@ where
             && self.client_timestamp_interval == other.client_timestamp_interval
             && self.state == other.state
             && self.round == other.round
-            && self.last_continue_request_hash == other.last_continue_request_hash
+            && self.last_request_hash == other.last_request_hash
     }
 }
 
@@ -669,6 +670,10 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> ReportAggregati
     }
 }
 
+// This trait implementation is gated on the `test-util` feature as we do not wish to compare
+// preparation states in non-test code, since doing so would require a constant-time comparison to
+// avoid risking leaking information about the preparation state.
+#[cfg(feature = "test-util")]
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
     for ReportAggregation<SEED_SIZE, A>
 where
@@ -688,6 +693,10 @@ where
     }
 }
 
+// This trait implementation is gated on the `test-util` feature as we do not wish to compare
+// preparation states in non-test code, since doing so would require a constant-time comparison to
+// avoid risking leaking information about the preparation state.
+#[cfg(feature = "test-util")]
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
     for ReportAggregation<SEED_SIZE, A>
 where
@@ -775,6 +784,10 @@ pub enum ReportAggregationStateCode {
     Failed,
 }
 
+// This trait implementation is gated on the `test-util` feature as we do not wish to compare
+// preparation states in non-test code, since doing so would require a constant-time comparison to
+// avoid risking leaking information about the preparation state.
+#[cfg(feature = "test-util")]
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
     for ReportAggregationState<SEED_SIZE, A>
 where
@@ -797,6 +810,10 @@ where
     }
 }
 
+// This trait implementation is gated on the `test-util` feature as we do not wish to compare
+// preparation states in non-test code, since doing so would require a constant-time comparison to
+// avoid risking leaking information about the preparation state.
+#[cfg(feature = "test-util")]
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
     for ReportAggregationState<SEED_SIZE, A>
 where
