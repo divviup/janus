@@ -740,6 +740,50 @@ async fn collection_job_put_idempotence_fixed_size_current_batch_mutate_aggregat
 }
 
 #[tokio::test]
+async fn collection_job_put_idempotence_fixed_size_current_batch_no_extra_reports() {
+    let (test_case, _batch_id_1, _batch_id_2, _) =
+        setup_fixed_size_current_batch_collection_job_test_case().await;
+
+    let collection_job_id_1 = random();
+    let collection_job_id_2 = random();
+    let request = Arc::new(CollectionReq::new(
+        Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
+        AggregationParam(0).get_encoded(),
+    ));
+
+    // Create the first collection job.
+    let response = test_case
+        .put_collection_job(&collection_job_id_1, &request)
+        .await;
+    assert_eq!(response.status(), Some(Status::Created));
+
+    // Fetch the first collection job, to advance the current batch.
+    let response = test_case.post_collection_job(&collection_job_id_1).await;
+    assert_eq!(response.status(), Some(Status::Accepted));
+
+    // Create the second collection job.
+    let response = test_case
+        .put_collection_job(&collection_job_id_2, &request)
+        .await;
+    assert_eq!(response.status(), Some(Status::Created));
+
+    // Fetch the second collection job, to advance the current batch. There are now no outstanding
+    // batches left.
+    let response = test_case.post_collection_job(&collection_job_id_2).await;
+    assert_eq!(response.status(), Some(Status::Accepted));
+
+    // Re-send the collection job creation requests to confirm they are still idempotent.
+    let response = test_case
+        .put_collection_job(&collection_job_id_1, &request)
+        .await;
+    assert_eq!(response.status(), Some(Status::Created));
+    let response = test_case
+        .put_collection_job(&collection_job_id_2, &request)
+        .await;
+    assert_eq!(response.status(), Some(Status::Created));
+}
+
+#[tokio::test]
 async fn collection_job_put_idempotence_fixed_size_by_batch_id() {
     let test_case = setup_collection_job_test_case(
         Role::Leader,
