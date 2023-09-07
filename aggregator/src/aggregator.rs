@@ -2153,28 +2153,6 @@ impl VdafOps {
                     Arc::clone(&aggregation_param),
                 );
                 Box::pin(async move {
-                    let collection_identifier =
-                        Q::collection_identifier_for_query(tx, &task, req.query())
-                            .await?
-                            .ok_or_else(|| {
-                                datastore::Error::User(
-                                    Error::BatchInvalid(
-                                        *task.id(),
-                                        "no batch ready for collection".to_string(),
-                                    )
-                                    .into(),
-                                )
-                            })?;
-
-                    // Check that the batch interval is valid for the task
-                    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
-                    if !Q::validate_collection_identifier(&task, &collection_identifier) {
-                        return Err(datastore::Error::User(
-                            Error::BatchInvalid(*task.id(), format!("{collection_identifier}"))
-                                .into(),
-                        ));
-                    }
-
                     // Check if this collection job already exists, ensuring that all parameters match.
                     if let Some(collection_job) = tx
                         .get_collection_job::<SEED_SIZE, Q, A>(&vdaf, task.id(), &collection_job_id)
@@ -2198,6 +2176,28 @@ impl VdafOps {
                                 .into(),
                             ));
                         }
+                    }
+
+                    let collection_identifier =
+                        Q::collection_identifier_for_query(tx, &task, req.query())
+                            .await?
+                            .ok_or_else(|| {
+                                datastore::Error::User(
+                                    Error::BatchInvalid(
+                                        *task.id(),
+                                        "no batch ready for collection".to_string(),
+                                    )
+                                    .into(),
+                                )
+                            })?;
+
+                    // Check that the batch interval is valid for the task
+                    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
+                    if !Q::validate_collection_identifier(&task, &collection_identifier) {
+                        return Err(datastore::Error::User(
+                            Error::BatchInvalid(*task.id(), format!("{collection_identifier}"))
+                                .into(),
+                        ));
                     }
 
                     debug!(collect_request = ?req, "Cache miss, creating new collection job");
