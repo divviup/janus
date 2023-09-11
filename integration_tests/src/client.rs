@@ -265,7 +265,7 @@ where
                 .with_network(network)
                 .with_container_name(client_container_name),
         );
-        let container = ContainerLogsDropGuard::new(container);
+        let container = ContainerLogsDropGuard::new_janus(container);
         let host_port = container.get_host_port_ipv4(8080);
         let http_client = reqwest::Client::new();
         let (leader_aggregator_endpoint, helper_aggregator_endpoint) = task_parameters

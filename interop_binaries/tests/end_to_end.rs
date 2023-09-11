@@ -60,7 +60,7 @@ async fn run(
     let container_client = container_client();
     let network = generate_network_name();
 
-    let client_container = ContainerLogsDropGuard::new(
+    let client_container = ContainerLogsDropGuard::new_janus(
         container_client.run(
             RunnableImage::from(Client::default())
                 .with_network(&network)
@@ -70,7 +70,7 @@ async fn run(
     let client_port = client_container.get_host_port_ipv4(Client::INTERNAL_SERVING_PORT);
 
     let leader_name = generate_unique_name("leader");
-    let leader_container = ContainerLogsDropGuard::new(
+    let leader_container = ContainerLogsDropGuard::new_janus(
         container_client.run(
             RunnableImage::from(Aggregator::default())
                 .with_network(&network)
@@ -80,7 +80,7 @@ async fn run(
     let leader_port = leader_container.get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT);
 
     let helper_name = generate_unique_name("helper");
-    let helper_container = ContainerLogsDropGuard::new(
+    let helper_container = ContainerLogsDropGuard::new_janus(
         container_client.run(
             RunnableImage::from(Aggregator::default())
                 .with_network(&network)
@@ -89,7 +89,7 @@ async fn run(
     );
     let helper_port = helper_container.get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT);
 
-    let collector_container = ContainerLogsDropGuard::new(
+    let collector_container = ContainerLogsDropGuard::new_janus(
         container_client.run(
             RunnableImage::from(Collector::default())
                 .with_network(&network)

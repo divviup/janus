@@ -15,12 +15,12 @@ use std::{
     collections::HashMap,
     env::{self, VarError},
     fmt::Display,
-    fs::create_dir_all,
+    fs::{create_dir_all, File},
     io::{stderr, Write},
     marker::PhantomData,
     ops::Deref,
     path::PathBuf,
-    process::Command,
+    process::{Command, Stdio},
     str::FromStr,
     sync::Arc,
     thread::panicking,
@@ -390,11 +390,26 @@ struct ContainerInspectEntry {
 
 pub struct ContainerLogsDropGuard<'d, I: Image> {
     container: Container<'d, I>,
+    source: ContainerLogsSource,
+}
+
+pub enum ContainerLogsSource {
+    /// Logs can be gathered through the `docker logs` command.
+    Docker,
+    /// Logs are present inside the container at the given path.
+    Path(String),
 }
 
 impl<'d, I: Image> ContainerLogsDropGuard<'d, I> {
-    pub fn new(container: Container<I>) -> ContainerLogsDropGuard<I> {
-        ContainerLogsDropGuard { container }
+    pub fn new(container: Container<I>, source: ContainerLogsSource) -> ContainerLogsDropGuard<I> {
+        ContainerLogsDropGuard { container, source }
+    }
+
+    pub fn new_janus(container: Container<I>) -> ContainerLogsDropGuard<I> {
+        ContainerLogsDropGuard {
+            container,
+            source: ContainerLogsSource::Path("/logs".to_string()),
+        }
     }
 }
 
@@ -403,6 +418,12 @@ impl<'d, I: Image> Drop for ContainerLogsDropGuard<'d, I> {
         if !panicking() {
             return;
         }
+        // If we're panicking then we're probably in the middle of test failure. In this case,
+        // export logs if log_export_path() suggests doing so.
+        //
+        // The unwraps in this code block would induce a double panic, but we accept this risk
+        // since it happens only in test code. This is also our main method of debugging
+        // integration tests, so if it's broken we should be alerted and have it fixed ASAP.
         if let Some(base_dir) = log_export_path() {
             create_dir_all(&base_dir).expect("could not create log output directory");
 
@@ -427,13 +448,28 @@ impl<'d, I: Image> Drop for ContainerLogsDropGuard<'d, I> {
 
             let destination = base_dir.join(name);
 
-            let copy_status = Command::new("docker")
-                .arg("cp")
-                .arg(format!("{id}:/logs"))
-                .arg(destination)
-                .status()
-                .expect("running `docker cp` failed");
-            assert!(copy_status.success());
+            let command_status = match self.source {
+                ContainerLogsSource::Docker => {
+                    create_dir_all(&destination).unwrap();
+                    Command::new("docker")
+                        .args(["logs", "--timestamps", id])
+                        .stdin(Stdio::null())
+                        .stdout(File::create(destination.join("stdout.log")).unwrap())
+                        .stderr(File::create(destination.join("stderr.log")).unwrap())
+                        .status()
+                        .expect("running `docker logs` failed")
+                }
+                ContainerLogsSource::Path(ref path) => Command::new("docker")
+                    .arg("cp")
+                    .arg(format!("{id}:{path}"))
+                    .arg(destination)
+                    .status()
+                    .expect("running `docker cp` failed"),
+            };
+            assert!(
+                command_status.success(),
+                "log extraction failed {command_status:?}"
+            );
         }
     }
 }
