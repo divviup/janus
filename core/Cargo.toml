@@ -35,7 +35,7 @@ test-util = [
 anyhow.workspace = true
 assert_matches = { version = "1", optional = true }
 backoff = { version = "0.4.0", features = ["tokio"] }
-base64 = "0.21.3"
+base64 = "0.21.4"
 chrono = { workspace = true, features = ["clock"] }
 derivative = "2.2.0"
 futures = "0.3.28"
