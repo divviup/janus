@@ -54,7 +54,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 use backoff::{backoff::Backoff, ExponentialBackoff};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, TimeZone, Utc};
 use derivative::Derivative;
 use http_api_problem::HttpApiProblem;
 pub use janus_core::task::AuthenticationToken;
@@ -545,10 +545,7 @@ impl<V: vdaf::Collector> Collector<V> {
             partial_batch_selector: collect_response.partial_batch_selector().clone(),
             report_count: collect_response.report_count(),
             interval: (
-                DateTime::<Utc>::from_utc(
-                    collect_response.interval().start().as_naive_date_time()?,
-                    Utc,
-                ),
+                Utc.from_utc_datetime(&collect_response.interval().start().as_naive_date_time()?),
                 collect_response
                     .interval()
                     .duration()
@@ -635,7 +632,7 @@ mod tests {
         PollResult,
     };
     use assert_matches::assert_matches;
-    use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+    use chrono::{NaiveDateTime, TimeZone, Utc};
     #[cfg(feature = "fpvec_bounded_l2")]
     use fixed_macro::fixed;
     use janus_core::{
@@ -870,9 +867,8 @@ mod tests {
                 PartialBatchSelector::new_time_interval(),
                 1,
                 (
-                    DateTime::<Utc>::from_utc(
-                        NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
-                        Utc
+                    Utc.from_utc_datetime(
+                        &NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
                     ),
                     chrono::Duration::seconds(3600),
                 ),
@@ -943,9 +939,8 @@ mod tests {
                 PartialBatchSelector::new_time_interval(),
                 1,
                 (
-                    DateTime::<Utc>::from_utc(
-                        NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
-                        Utc
+                    Utc.from_utc_datetime(
+                        &NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
                     ),
                     chrono::Duration::seconds(3600),
                 ),
@@ -1015,9 +1010,8 @@ mod tests {
                 PartialBatchSelector::new_time_interval(),
                 1,
                 (
-                    DateTime::<Utc>::from_utc(
-                        NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
-                        Utc
+                    Utc.from_utc_datetime(
+                        &NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
                     ),
                     chrono::Duration::seconds(3600),
                 ),
@@ -1096,9 +1090,8 @@ mod tests {
                 PartialBatchSelector::new_time_interval(),
                 1,
                 (
-                    DateTime::<Utc>::from_utc(
-                        NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
-                        Utc
+                    Utc.from_utc_datetime(
+                        &NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
                     ),
                     chrono::Duration::seconds(3600),
                 ),
@@ -1170,10 +1163,7 @@ mod tests {
                 PartialBatchSelector::new_fixed_size(batch_id),
                 1,
                 (
-                    DateTime::<Utc>::from_utc(
-                        NaiveDateTime::from_timestamp_opt(0, 0).unwrap(),
-                        Utc
-                    ),
+                    Utc.from_utc_datetime(&NaiveDateTime::from_timestamp_opt(0, 0).unwrap()),
                     chrono::Duration::seconds(1),
                 ),
                 1
@@ -1255,9 +1245,8 @@ mod tests {
                 PartialBatchSelector::new_time_interval(),
                 1,
                 (
-                    DateTime::<Utc>::from_utc(
-                        NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
-                        Utc
+                    Utc.from_utc_datetime(
+                        &NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
                     ),
                     chrono::Duration::seconds(3600),
                 ),
