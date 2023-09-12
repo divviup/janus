@@ -68,8 +68,8 @@ use prio::{
     vdaf::{
         self,
         poplar1::Poplar1,
-        prg::PrgSha3,
         prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVecMultithreaded},
+        xof::XofShake128,
     },
 };
 use reqwest::Client;
@@ -795,7 +795,12 @@ impl<C: Clock> TaskAggregator<C> {
             }
 
             VdafInstance::Prio3CountVec { length } => {
-                let vdaf = Prio3::new_sum_vec_multithreaded(2, 1, *length)?;
+                let vdaf = Prio3::new_sum_vec_multithreaded(
+                    2,
+                    1,
+                    *length,
+                    VdafInstance::chunk_size(*length),
+                )?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3CountVec(Arc::new(vdaf), verify_key)
             }
@@ -807,13 +812,18 @@ impl<C: Clock> TaskAggregator<C> {
             }
 
             VdafInstance::Prio3SumVec { bits, length } => {
-                let vdaf = Prio3::new_sum_vec_multithreaded(2, *bits, *length)?;
+                let vdaf = Prio3::new_sum_vec_multithreaded(
+                    2,
+                    *bits,
+                    *length,
+                    VdafInstance::chunk_size(*length),
+                )?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3SumVec(Arc::new(vdaf), verify_key)
             }
 
             VdafInstance::Prio3Histogram { length } => {
-                let vdaf = Prio3::new_histogram(2, *length)?;
+                let vdaf = Prio3::new_histogram(2, *length, VdafInstance::chunk_size(*length))?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3Histogram(Arc::new(vdaf), verify_key)
             }
@@ -843,7 +853,7 @@ impl<C: Clock> TaskAggregator<C> {
             }
 
             VdafInstance::Poplar1 { bits } => {
-                let vdaf = Poplar1::new_sha3(*bits);
+                let vdaf = Poplar1::new_shake128(*bits);
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Poplar1(Arc::new(vdaf), verify_key)
             }
@@ -1038,7 +1048,7 @@ enum VdafOps {
         Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>>,
         VerifyKey<VERIFY_KEY_LENGTH>,
     ),
-    Poplar1(Arc<Poplar1<PrgSha3, 16>>, VerifyKey<VERIFY_KEY_LENGTH>),
+    Poplar1(Arc<Poplar1<XofShake128, 16>>, VerifyKey<VERIFY_KEY_LENGTH>),
 
     #[cfg(feature = "test-util")]
     Fake(Arc<dummy_vdaf::Vdaf>),
@@ -1125,7 +1135,7 @@ macro_rules! vdaf_ops_dispatch {
             crate::aggregator::VdafOps::Poplar1(vdaf, verify_key) => {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
-                type $Vdaf = ::prio::vdaf::poplar1::Poplar1<::prio::vdaf::prg::PrgSha3, 16>;
+                type $Vdaf = ::prio::vdaf::poplar1::Poplar1<::prio::vdaf::xof::XofShake128, 16>;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::VERIFY_KEY_LENGTH;
                 $body
             }

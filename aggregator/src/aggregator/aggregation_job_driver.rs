@@ -469,7 +469,7 @@ impl AggregationJobDriver {
 
                 // Step our own state.
                 let prepare_step_res = trace_span!("VDAF preparation")
-                    .in_scope(|| vdaf.prepare_step(prep_state.clone(), prep_msg.clone()));
+                    .in_scope(|| vdaf.prepare_next(prep_state.clone(), prep_msg.clone()));
                 let leader_transition = match prepare_step_res {
                     Ok(leader_transition) => leader_transition,
                     Err(error) => {
@@ -589,11 +589,14 @@ impl AggregationJobDriver {
                             A::PrepareShare::get_decoded_with_param(&leader_prep_state, payload)
                                 .context("couldn't decode helper's prepare message");
                         let prep_msg = helper_prep_share.and_then(|helper_prep_share| {
-                            vdaf.prepare_preprocess([leader_prep_share.clone(), helper_prep_share])
-                                .context(
-                                    "couldn't preprocess leader & helper prepare shares into \
+                            vdaf.prepare_shares_to_prepare_message(
+                                aggregation_job.aggregation_parameter(),
+                                [leader_prep_share.clone(), helper_prep_share],
+                            )
+                            .context(
+                                "couldn't preprocess leader & helper prepare shares into \
                                      prepare message",
-                                )
+                            )
                         });
                         match prep_msg {
                             Ok(prep_msg) => {

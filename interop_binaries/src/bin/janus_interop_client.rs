@@ -146,8 +146,9 @@ async fn handle_upload(
 
         VdafInstance::Prio3CountVec { length } => {
             let measurement = parse_vector_measurement::<u128>(request.measurement.clone())?;
-            let vdaf_client = Prio3::new_sum_vec_multithreaded(2, 1, length)
-                .context("failed to construct Prio3CountVec VDAF")?;
+            let vdaf_client =
+                Prio3::new_sum_vec_multithreaded(2, 1, length, VdafInstance::chunk_size(length))
+                    .context("failed to construct Prio3CountVec VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
 
@@ -160,14 +161,15 @@ async fn handle_upload(
 
         VdafInstance::Prio3SumVec { bits, length } => {
             let measurement = parse_vector_measurement::<u128>(request.measurement.clone())?;
-            let vdaf_client = Prio3::new_sum_vec_multithreaded(2, bits, length)
-                .context("failed to construct Prio3SumVec VDAF")?;
+            let vdaf_client =
+                Prio3::new_sum_vec_multithreaded(2, bits, length, VdafInstance::chunk_size(length))
+                    .context("failed to construct Prio3SumVec VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
 
         VdafInstance::Prio3Histogram { length } => {
             let measurement = parse_primitive_measurement::<usize>(request.measurement.clone())?;
-            let vdaf_client = Prio3::new_histogram(2, length)
+            let vdaf_client = Prio3::new_histogram(2, length, VdafInstance::chunk_size(length))
                 .context("failed to construct Prio3Histogram VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }

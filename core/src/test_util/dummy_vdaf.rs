@@ -111,14 +111,15 @@ impl vdaf::Aggregator<0, 16> for Vdaf {
         Ok((PrepareState(input_share.0), ()))
     }
 
-    fn prepare_preprocess<M: IntoIterator<Item = Self::PrepareMessage>>(
+    fn prepare_shares_to_prepare_message<M: IntoIterator<Item = Self::PrepareShare>>(
         &self,
+        _: &Self::AggregationParam,
         _: M,
     ) -> Result<Self::PrepareMessage, VdafError> {
         Ok(())
     }
 
-    fn prepare_step(
+    fn prepare_next(
         &self,
         _: Self::PrepareState,
         _: Self::PrepareMessage,
