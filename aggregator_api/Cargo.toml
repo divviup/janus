@@ -11,7 +11,7 @@ version.workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait = "0.1"
-base64 = "0.21.3"
+base64 = "0.21.4"
 janus_aggregator_core.workspace = true
 janus_core.workspace = true
 janus_messages.workspace = true
