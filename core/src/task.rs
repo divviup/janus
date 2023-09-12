@@ -77,9 +77,10 @@ impl VdafInstance {
     ///
     /// # Bugs
     ///
-    /// Janus should allow chunk size to be configured: https://github.com/divviup/janus/issues/1900
+    /// Janus should allow chunk size to be configured ([#1900][issue]).
     ///
     /// [VDAF]: https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-vdaf-07#name-selection-of-parallelsum-ch
+    /// [issue]: https://github.com/divviup/janus/issues/1900
     pub fn chunk_size(measurement_length: usize) -> usize {
         (measurement_length as f64).sqrt().floor() as usize
     }
