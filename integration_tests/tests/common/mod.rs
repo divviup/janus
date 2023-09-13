@@ -284,7 +284,7 @@ pub async fn submit_measurements_and_verify_aggregate(
                 2,
                 *bits,
                 *length,
-                VdafInstance::chunk_size(*length),
+                VdafInstance::chunk_size(*bits * *length),
             )
             .unwrap();
 

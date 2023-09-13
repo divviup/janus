@@ -816,7 +816,7 @@ impl<C: Clock> TaskAggregator<C> {
                     2,
                     *bits,
                     *length,
-                    VdafInstance::chunk_size(*length),
+                    VdafInstance::chunk_size(*bits * *length),
                 )?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3SumVec(Arc::new(vdaf), verify_key)

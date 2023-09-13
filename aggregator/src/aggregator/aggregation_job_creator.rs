@@ -292,7 +292,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     2,
                     *bits,
                     *length,
-                    VdafInstance::chunk_size(*length),
+                    VdafInstance::chunk_size(*bits * *length),
                 )?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3SumVecMultithreaded>(task, vdaf)
                     .await
@@ -411,7 +411,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     2,
                     *bits,
                     *length,
-                    VdafInstance::chunk_size(*length),
+                    VdafInstance::chunk_size(*bits * *length),
                 )?);
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;

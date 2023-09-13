@@ -467,7 +467,7 @@ where
                 .map_err(|err| Error::Anyhow(err.into()))
         }
         (VdafType::SumVec, Some(length), Some(bits)) => {
-            let vdaf = Prio3::new_sum_vec(2, bits, length, VdafInstance::chunk_size(length))
+            let vdaf = Prio3::new_sum_vec(2, bits, length, VdafInstance::chunk_size(bits * length))
                 .map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await

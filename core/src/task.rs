@@ -190,7 +190,7 @@ macro_rules! vdaf_dispatch_impl_base {
                     2,
                     *bits,
                     *length,
-                    janus_core::task::VdafInstance::chunk_size(*length),
+                    janus_core::task::VdafInstance::chunk_size(*bits * *length),
                 )?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
                 const $VERIFY_KEY_LEN: usize = ::janus_core::task::VERIFY_KEY_LENGTH;
