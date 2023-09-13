@@ -71,6 +71,19 @@ impl VdafInstance {
             _ => VERIFY_KEY_LENGTH,
         }
     }
+
+    /// Returns a suboptimal estimate of the chunk size to use in ParallelSum gadgets. See [VDAF]
+    /// for discussion of chunk size.
+    ///
+    /// # Bugs
+    ///
+    /// Janus should allow chunk size to be configured ([#1900][issue]).
+    ///
+    /// [VDAF]: https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-vdaf-07#name-selection-of-parallelsum-ch
+    /// [issue]: https://github.com/divviup/janus/issues/1900
+    pub fn chunk_size(measurement_length: usize) -> usize {
+        (measurement_length as f64).sqrt().floor() as usize
+    }
 }
 
 impl TryFrom<&taskprov::VdafType> for VdafInstance {
@@ -154,7 +167,12 @@ macro_rules! vdaf_dispatch_impl_base {
 
             ::janus_core::task::VdafInstance::Prio3CountVec { length } => {
                 // Prio3CountVec is implemented as a 1-bit sum vec
-                let $vdaf = ::prio::vdaf::prio3::Prio3::new_sum_vec_multithreaded(2, 1, *length)?;
+                let $vdaf = ::prio::vdaf::prio3::Prio3::new_sum_vec_multithreaded(
+                    2,
+                    1,
+                    *length,
+                    janus_core::task::VdafInstance::chunk_size(*length),
+                )?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
                 const $VERIFY_KEY_LEN: usize = ::janus_core::task::VERIFY_KEY_LENGTH;
                 $body
@@ -168,23 +186,31 @@ macro_rules! vdaf_dispatch_impl_base {
             }
 
             ::janus_core::task::VdafInstance::Prio3SumVec { bits, length } => {
-                let $vdaf =
-                    ::prio::vdaf::prio3::Prio3::new_sum_vec_multithreaded(2, *bits, *length)?;
+                let $vdaf = ::prio::vdaf::prio3::Prio3::new_sum_vec_multithreaded(
+                    2,
+                    *bits,
+                    *length,
+                    janus_core::task::VdafInstance::chunk_size(*bits * *length),
+                )?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
                 const $VERIFY_KEY_LEN: usize = ::janus_core::task::VERIFY_KEY_LENGTH;
                 $body
             }
 
             ::janus_core::task::VdafInstance::Prio3Histogram { length } => {
-                let $vdaf = ::prio::vdaf::prio3::Prio3::new_histogram(2, *length)?;
+                let $vdaf = ::prio::vdaf::prio3::Prio3::new_histogram(
+                    2,
+                    *length,
+                    janus_core::task::VdafInstance::chunk_size(*length),
+                )?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Histogram;
                 const $VERIFY_KEY_LEN: usize = ::janus_core::task::VERIFY_KEY_LENGTH;
                 $body
             }
 
             ::janus_core::task::VdafInstance::Poplar1 { bits } => {
-                let $vdaf = ::prio::vdaf::poplar1::Poplar1::new_sha3(*bits);
-                type $Vdaf = ::prio::vdaf::poplar1::Poplar1<::prio::vdaf::prg::PrgSha3, 16>;
+                let $vdaf = ::prio::vdaf::poplar1::Poplar1::new_shake128(*bits);
+                type $Vdaf = ::prio::vdaf::poplar1::Poplar1<::prio::vdaf::xof::XofShake128, 16>;
                 const $VERIFY_KEY_LEN: usize = ::janus_core::task::VERIFY_KEY_LENGTH;
                 $body
             }

@@ -116,7 +116,9 @@ pub fn run_vdaf<const SEED_SIZE: usize, V: vdaf::Aggregator<SEED_SIZE, 16> + vda
                 aggregate_shares: agg_shares,
             };
         }
-        let prep_msg = vdaf.prepare_preprocess(prep_shares).unwrap();
+        let prep_msg = vdaf
+            .prepare_shares_to_prepare_message(aggregation_param, prep_shares)
+            .unwrap();
         prep_msgs.push(prep_msg.clone());
 
         // Compute each participant's next transition.
@@ -126,7 +128,7 @@ pub fn run_vdaf<const SEED_SIZE: usize, V: vdaf::Aggregator<SEED_SIZE, 16> + vda
                 PrepareTransition::<V, SEED_SIZE, 16>::Continue(prep_state, _) => prep_state
             )
             .clone();
-            pts.push(vdaf.prepare_step(prep_state, prep_msg.clone()).unwrap());
+            pts.push(vdaf.prepare_next(prep_state, prep_msg.clone()).unwrap());
         }
     }
 }

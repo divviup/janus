@@ -136,7 +136,7 @@ impl VdafOps {
 
             // Compute the next transition.
             let prepare_step_res = trace_span!("VDAF preparation")
-                .in_scope(|| vdaf.prepare_step(prep_state.clone(), prep_msg));
+                .in_scope(|| vdaf.prepare_next(prep_state.clone(), prep_msg));
             match prepare_step_res {
                 Ok(PrepareTransition::Continue(prep_state, prep_share)) => {
                     *report_aggregation = report_aggregation

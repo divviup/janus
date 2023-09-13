@@ -312,8 +312,9 @@ async fn handle_collection_start(
         }
 
         (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3CountVec { length }) => {
-            let vdaf = Prio3::new_sum_vec_multithreaded(2, 1, length)
-                .context("failed to construct Prio3CountVec VDAF")?;
+            let vdaf =
+                Prio3::new_sum_vec_multithreaded(2, 1, length, VdafInstance::chunk_size(length))
+                    .context("failed to construct Prio3CountVec VDAF")?;
             handle_collect_generic(
                 http_client,
                 collector_params,
@@ -344,8 +345,13 @@ async fn handle_collection_start(
         }
 
         (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3SumVec { bits, length }) => {
-            let vdaf = Prio3::new_sum_vec_multithreaded(2, bits, length)
-                .context("failed to construct Prio3SumVec VDAF")?;
+            let vdaf = Prio3::new_sum_vec_multithreaded(
+                2,
+                bits,
+                length,
+                VdafInstance::chunk_size(bits * length),
+            )
+            .context("failed to construct Prio3SumVec VDAF")?;
             handle_collect_generic(
                 http_client,
                 collector_params,
@@ -362,7 +368,7 @@ async fn handle_collection_start(
         }
 
         (ParsedQuery::TimeInterval(batch_interval), VdafInstance::Prio3Histogram { length }) => {
-            let vdaf = Prio3::new_histogram(2, length)
+            let vdaf = Prio3::new_histogram(2, length, VdafInstance::chunk_size(length))
                 .context("failed to construct Prio3Histogram VDAF")?;
             handle_collect_generic(
                 http_client,
@@ -463,8 +469,9 @@ async fn handle_collection_start(
         }
 
         (ParsedQuery::FixedSize(fixed_size_query), VdafInstance::Prio3CountVec { length }) => {
-            let vdaf = Prio3::new_sum_vec_multithreaded(2, 1, length)
-                .context("failed to construct Prio3CountVec VDAF")?;
+            let vdaf =
+                Prio3::new_sum_vec_multithreaded(2, 1, length, VdafInstance::chunk_size(length))
+                    .context("failed to construct Prio3CountVec VDAF")?;
             handle_collect_generic(
                 http_client,
                 collector_params,
@@ -564,8 +571,13 @@ async fn handle_collection_start(
         }
 
         (ParsedQuery::FixedSize(fixed_size_query), VdafInstance::Prio3SumVec { bits, length }) => {
-            let vdaf = Prio3::new_sum_vec_multithreaded(2, bits, length)
-                .context("failed to construct Prio3SumVec VDAF")?;
+            let vdaf = Prio3::new_sum_vec_multithreaded(
+                2,
+                bits,
+                length,
+                VdafInstance::chunk_size(bits * length),
+            )
+            .context("failed to construct Prio3SumVec VDAF")?;
             handle_collect_generic(
                 http_client,
                 collector_params,
@@ -582,7 +594,7 @@ async fn handle_collection_start(
         }
 
         (ParsedQuery::FixedSize(fixed_size_query), VdafInstance::Prio3Histogram { length }) => {
-            let vdaf = Prio3::new_histogram(2, length)
+            let vdaf = Prio3::new_histogram(2, length, VdafInstance::chunk_size(length))
                 .context("failed to construct Prio3Histogram VDAF")?;
             handle_collect_generic(
                 http_client,

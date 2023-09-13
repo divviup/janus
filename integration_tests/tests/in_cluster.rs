@@ -252,7 +252,7 @@ async fn in_cluster_sum() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divviup-api does not currently support DAP-05 (https://github.com/divviup/divviup-api/issues/410)"]
+#[ignore = "divviup-api does not currently support DAP-06 (https://github.com/divviup/divviup-api/issues/410)"]
 async fn in_cluster_histogram() {
     install_test_trace_subscriber();
 

@@ -955,7 +955,7 @@ mod tests {
     async fn successful_collect_prio3_histogram() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = Prio3::new_histogram(2, 4).unwrap();
+        let vdaf = Prio3::new_histogram(2, 4, 2).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &3);
         let collector = setup_collector(&mut server, vdaf);
 

@@ -51,8 +51,8 @@ use prio::{
     field::Field64,
     flp::types::Count,
     vdaf::{
-        prg::PrgSha3,
         prio3::{Prio3, Prio3Count},
+        xof::XofShake128,
         AggregateShare, OutputShare,
     },
 };
@@ -66,7 +66,7 @@ use trillium_testing::{
     prelude::{post, put},
 };
 
-type TestVdaf = Prio3<Count<Field64>, PrgSha3, 16>;
+type TestVdaf = Prio3<Count<Field64>, XofShake128, 16>;
 
 pub struct TaskprovTestCase {
     _ephemeral_datastore: EphemeralDatastore,
