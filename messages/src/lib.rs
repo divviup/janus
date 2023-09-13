@@ -8,9 +8,12 @@ use anyhow::anyhow;
 use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use num_enum::TryFromPrimitive;
-use prio::codec::{
-    decode_u16_items, decode_u32_items, encode_u16_items, encode_u32_items, CodecError, Decode,
-    Encode,
+use prio::{
+    codec::{
+        decode_u16_items, decode_u32_items, encode_u16_items, encode_u32_items, CodecError, Decode,
+        Encode,
+    },
+    topology::ping_pong::PingPongMessage,
 };
 use rand::{distributions::Standard, prelude::Distribution, Rng};
 use serde::{
@@ -2111,14 +2114,65 @@ impl Decode for ReportShare {
     }
 }
 
-/// DAP protocol message representing the result of a preparation step in a VDAF evaluation.
+/// DAP protocol message representing information required to initialize preparation of a report for
+/// aggregation.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PrepareStep {
+pub struct PrepareInit {
+    report_share: ReportShare,
+    message: PingPongMessage,
+}
+
+impl PrepareInit {
+    /// Constructs a new preparation initialization message from its components.
+    pub fn new(report_share: ReportShare, message: PingPongMessage) -> Self {
+        Self {
+            report_share,
+            message,
+        }
+    }
+
+    /// Gets the report share associated with this prep init.
+    pub fn report_share(&self) -> &ReportShare {
+        &self.report_share
+    }
+
+    /// Gets the message associated with this prep init.
+    pub fn message(&self) -> &PingPongMessage {
+        &self.message
+    }
+}
+
+impl Encode for PrepareInit {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.report_share.encode(bytes);
+        self.message.encode(bytes);
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(self.report_share.encoded_len()? + self.message.encoded_len()?)
+    }
+}
+
+impl Decode for PrepareInit {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let report_share = ReportShare::decode(bytes)?;
+        let message = PingPongMessage::decode(bytes)?;
+
+        Ok(Self {
+            report_share,
+            message,
+        })
+    }
+}
+
+/// DAP protocol message representing the response to a preparation step in a VDAF evaluation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrepareResp {
     report_id: ReportId,
     result: PrepareStepResult,
 }
 
-impl PrepareStep {
+impl PrepareResp {
     /// Constructs a new prepare step from its components.
     pub fn new(report_id: ReportId, result: PrepareStepResult) -> Self {
         Self { report_id, result }
@@ -2135,7 +2189,7 @@ impl PrepareStep {
     }
 }
 
-impl Encode for PrepareStep {
+impl Encode for PrepareResp {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.report_id.encode(bytes);
         self.result.encode(bytes);
@@ -2146,7 +2200,7 @@ impl Encode for PrepareStep {
     }
 }
 
-impl Decode for PrepareStep {
+impl Decode for PrepareResp {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let report_id = ReportId::decode(bytes)?;
         let result = PrepareStepResult::decode(bytes)?;
@@ -2156,13 +2210,16 @@ impl Decode for PrepareStep {
 }
 
 /// DAP protocol message representing result-type-specific data associated with a preparation step
-/// in a VDAF evaluation. Included in a PrepareStep message.
+/// in a VDAF evaluation. Included in a PrepareResp message.
 #[derive(Clone, Derivative, PartialEq, Eq)]
 #[derivative(Debug)]
 pub enum PrepareStepResult {
-    Continued(#[derivative(Debug = "ignore")] Vec<u8>), // content is a serialized preparation message
+    Continue {
+        #[derivative(Debug = "ignore")]
+        message: PingPongMessage,
+    },
     Finished,
-    Failed(ReportShareError),
+    Reject(PrepareError),
 }
 
 impl Encode for PrepareStepResult {
@@ -2170,12 +2227,12 @@ impl Encode for PrepareStepResult {
         // The encoding includes an implicit discriminator byte, called PrepareStepResult in the
         // DAP spec.
         match self {
-            Self::Continued(vdaf_msg) => {
+            Self::Continue { message: prep_msg } => {
                 0u8.encode(bytes);
-                encode_u32_items(bytes, &(), vdaf_msg);
+                prep_msg.encode(bytes);
             }
             Self::Finished => 1u8.encode(bytes),
-            Self::Failed(error) => {
+            Self::Reject(error) => {
                 2u8.encode(bytes);
                 error.encode(bytes);
             }
@@ -2184,9 +2241,9 @@ impl Encode for PrepareStepResult {
 
     fn encoded_len(&self) -> Option<usize> {
         match self {
-            PrepareStepResult::Continued(vdaf_msg) => Some(1 + 4 + vdaf_msg.len()),
-            PrepareStepResult::Finished => Some(1),
-            PrepareStepResult::Failed(error) => Some(1 + error.encoded_len()?),
+            Self::Continue { message: prep_msg } => Some(1 + prep_msg.encoded_len()?),
+            Self::Finished => Some(1),
+            Self::Reject(error) => Some(1 + error.encoded_len()?),
         }
     }
 }
@@ -2195,9 +2252,12 @@ impl Decode for PrepareStepResult {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u8::decode(bytes)?;
         Ok(match val {
-            0 => Self::Continued(decode_u32_items(&(), bytes)?),
+            0 => {
+                let prep_msg = PingPongMessage::decode(bytes)?;
+                Self::Continue { message: prep_msg }
+            }
             1 => Self::Finished,
-            2 => Self::Failed(ReportShareError::decode(bytes)?),
+            2 => Self::Reject(PrepareError::decode(bytes)?),
             _ => return Err(CodecError::UnexpectedValue),
         })
     }
@@ -2206,7 +2266,7 @@ impl Decode for PrepareStepResult {
 /// DAP protocol message representing an error while preparing a report share for aggregation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive)]
 #[repr(u8)]
-pub enum ReportShareError {
+pub enum PrepareError {
     BatchCollected = 0,
     ReportReplayed = 1,
     ReportDropped = 2,
@@ -2218,7 +2278,7 @@ pub enum ReportShareError {
     UnrecognizedMessage = 8,
 }
 
-impl Encode for ReportShareError {
+impl Encode for PrepareError {
     fn encode(&self, bytes: &mut Vec<u8>) {
         (*self as u8).encode(bytes);
     }
@@ -2228,12 +2288,57 @@ impl Encode for ReportShareError {
     }
 }
 
-impl Decode for ReportShareError {
+impl Decode for PrepareError {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u8::decode(bytes)?;
         Self::try_from(val).map_err(|_| {
             CodecError::Other(anyhow!("unexpected ReportShareError value {}", val).into())
         })
+    }
+}
+
+/// DAP protocol message representing a request to continue preparation of a report share for
+/// aggregation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrepareContinue {
+    report_id: ReportId,
+    message: PingPongMessage,
+}
+
+impl PrepareContinue {
+    /// Constructs a new prepare continue from its components.
+    pub fn new(report_id: ReportId, message: PingPongMessage) -> Self {
+        Self { report_id, message }
+    }
+
+    /// Gets the report ID associated with this prepare continue.
+    pub fn report_id(&self) -> &ReportId {
+        &self.report_id
+    }
+
+    /// Gets the message associated with this prepare continue.
+    pub fn message(&self) -> &PingPongMessage {
+        &self.message
+    }
+}
+
+impl Encode for PrepareContinue {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.report_id.encode(bytes);
+        self.message.encode(bytes);
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(self.report_id.encoded_len()? + self.message.encoded_len()?)
+    }
+}
+
+impl Decode for PrepareContinue {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let report_id = ReportId::decode(bytes)?;
+        let message = PingPongMessage::decode(bytes)?;
+
+        Ok(Self { report_id, message })
     }
 }
 
@@ -2309,7 +2414,7 @@ pub struct AggregationJobInitializeReq<Q: QueryType> {
     #[derivative(Debug = "ignore")]
     aggregation_parameter: Vec<u8>,
     partial_batch_selector: PartialBatchSelector<Q>,
-    report_shares: Vec<ReportShare>,
+    prepare_inits: Vec<PrepareInit>,
 }
 
 impl<Q: QueryType> AggregationJobInitializeReq<Q> {
@@ -2320,12 +2425,12 @@ impl<Q: QueryType> AggregationJobInitializeReq<Q> {
     pub fn new(
         aggregation_parameter: Vec<u8>,
         partial_batch_selector: PartialBatchSelector<Q>,
-        report_shares: Vec<ReportShare>,
+        prepare_inits: Vec<PrepareInit>,
     ) -> Self {
         Self {
             aggregation_parameter,
             partial_batch_selector,
-            report_shares,
+            prepare_inits,
         }
     }
 
@@ -2339,9 +2444,10 @@ impl<Q: QueryType> AggregationJobInitializeReq<Q> {
         &self.partial_batch_selector
     }
 
-    /// Gets the report shares associated with this aggregate initialization request.
-    pub fn report_shares(&self) -> &[ReportShare] {
-        &self.report_shares
+    /// Gets the preparation initialization messages associated with this aggregate initialization
+    /// request.
+    pub fn prepare_inits(&self) -> &[PrepareInit] {
+        &self.prepare_inits
     }
 }
 
@@ -2349,15 +2455,15 @@ impl<Q: QueryType> Encode for AggregationJobInitializeReq<Q> {
     fn encode(&self, bytes: &mut Vec<u8>) {
         encode_u32_items(bytes, &(), &self.aggregation_parameter);
         self.partial_batch_selector.encode(bytes);
-        encode_u32_items(bytes, &(), &self.report_shares);
+        encode_u32_items(bytes, &(), &self.prepare_inits);
     }
 
     fn encoded_len(&self) -> Option<usize> {
         let mut length = 4 + self.aggregation_parameter.len();
         length += self.partial_batch_selector.encoded_len()?;
         length += 4;
-        for report_share in self.report_shares.iter() {
-            length += report_share.encoded_len()?;
+        for prepare_init in &self.prepare_inits {
+            length += prepare_init.encoded_len()?;
         }
         Some(length)
     }
@@ -2367,12 +2473,12 @@ impl<Q: QueryType> Decode for AggregationJobInitializeReq<Q> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let aggregation_parameter = decode_u32_items(&(), bytes)?;
         let partial_batch_selector = PartialBatchSelector::decode(bytes)?;
-        let report_shares = decode_u32_items(&(), bytes)?;
+        let prepare_inits = decode_u32_items(&(), bytes)?;
 
         Ok(Self {
             aggregation_parameter,
             partial_batch_selector,
-            report_shares,
+            prepare_inits,
         })
     }
 }
@@ -2438,7 +2544,7 @@ impl TryFrom<i32> for AggregationJobRound {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregationJobContinueReq {
     round: AggregationJobRound,
-    prepare_steps: Vec<PrepareStep>,
+    prepare_continues: Vec<PrepareContinue>,
 }
 
 impl AggregationJobContinueReq {
@@ -2446,10 +2552,10 @@ impl AggregationJobContinueReq {
     pub const MEDIA_TYPE: &'static str = "application/dap-aggregation-job-continue-req";
 
     /// Constructs a new aggregate continuation response from its components.
-    pub fn new(round: AggregationJobRound, prepare_steps: Vec<PrepareStep>) -> Self {
+    pub fn new(round: AggregationJobRound, prepare_continues: Vec<PrepareContinue>) -> Self {
         Self {
             round,
-            prepare_steps,
+            prepare_continues,
         }
     }
 
@@ -2459,22 +2565,22 @@ impl AggregationJobContinueReq {
     }
 
     /// Gets the prepare steps associated with this aggregate continuation response.
-    pub fn prepare_steps(&self) -> &[PrepareStep] {
-        &self.prepare_steps
+    pub fn prepare_steps(&self) -> &[PrepareContinue] {
+        &self.prepare_continues
     }
 }
 
 impl Encode for AggregationJobContinueReq {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.round.encode(bytes);
-        encode_u32_items(bytes, &(), &self.prepare_steps);
+        encode_u32_items(bytes, &(), &self.prepare_continues);
     }
 
     fn encoded_len(&self) -> Option<usize> {
         let mut length = self.round.encoded_len()?;
         length += 4;
-        for prepare_step in self.prepare_steps.iter() {
-            length += prepare_step.encoded_len()?;
+        for prepare_continue in self.prepare_continues.iter() {
+            length += prepare_continue.encoded_len()?;
         }
         Some(length)
     }
@@ -2483,8 +2589,8 @@ impl Encode for AggregationJobContinueReq {
 impl Decode for AggregationJobContinueReq {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let round = AggregationJobRound::decode(bytes)?;
-        let prepare_steps = decode_u32_items(&(), bytes)?;
-        Ok(Self::new(round, prepare_steps))
+        let prepare_continues = decode_u32_items(&(), bytes)?;
+        Ok(Self::new(round, prepare_continues))
     }
 }
 
@@ -2492,7 +2598,7 @@ impl Decode for AggregationJobContinueReq {
 /// continuation request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregationJobResp {
-    prepare_steps: Vec<PrepareStep>,
+    prepare_resps: Vec<PrepareResp>,
 }
 
 impl AggregationJobResp {
@@ -2500,25 +2606,25 @@ impl AggregationJobResp {
     pub const MEDIA_TYPE: &'static str = "application/dap-aggregation-job-resp";
 
     /// Constructs a new aggregate continuation response from its components.
-    pub fn new(prepare_steps: Vec<PrepareStep>) -> Self {
-        Self { prepare_steps }
+    pub fn new(prepare_resps: Vec<PrepareResp>) -> Self {
+        Self { prepare_resps }
     }
 
-    /// Gets the prepare steps associated with this aggregate continuation response.
-    pub fn prepare_steps(&self) -> &[PrepareStep] {
-        &self.prepare_steps
+    /// Gets the prepare responses associated with this aggregate continuation response.
+    pub fn prepare_resps(&self) -> &[PrepareResp] {
+        &self.prepare_resps
     }
 }
 
 impl Encode for AggregationJobResp {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        encode_u32_items(bytes, &(), &self.prepare_steps);
+        encode_u32_items(bytes, &(), &self.prepare_resps);
     }
 
     fn encoded_len(&self) -> Option<usize> {
         let mut length = 4;
-        for prepare_step in self.prepare_steps.iter() {
-            length += prepare_step.encoded_len()?;
+        for prepare_resp in self.prepare_resps.iter() {
+            length += prepare_resp.encoded_len()?;
         }
         Some(length)
     }
@@ -2526,8 +2632,8 @@ impl Encode for AggregationJobResp {
 
 impl Decode for AggregationJobResp {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let prepare_steps = decode_u32_items(&(), bytes)?;
-        Ok(Self { prepare_steps })
+        let prepare_resps = decode_u32_items(&(), bytes)?;
+        Ok(Self { prepare_resps })
     }
 }
 
@@ -2766,12 +2872,15 @@ mod tests {
         AggregationJobRound, BatchId, BatchSelector, Collection, CollectionReq, Duration,
         Extension, ExtensionType, FixedSize, FixedSizeQuery, HpkeAeadId, HpkeCiphertext,
         HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, InputShareAad, Interval,
-        PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult, Query, Report,
-        ReportId, ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId,
-        Time, TimeInterval, Url,
+        PartialBatchSelector, PlaintextInputShare, PrepareContinue, PrepareError, PrepareInit,
+        PrepareResp, PrepareStepResult, Query, Report, ReportId, ReportIdChecksum, ReportMetadata,
+        ReportShare, Role, TaskId, Time, TimeInterval, Url,
     };
     use assert_matches::assert_matches;
-    use prio::codec::{CodecError, Decode, Encode};
+    use prio::{
+        codec::{CodecError, Decode, Encode},
+        topology::ping_pong::PingPongMessage,
+    };
     use serde_test::{assert_de_tokens_error, assert_tokens, Token};
 
     #[test]
@@ -3877,72 +3986,97 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_prepare_step() {
+    fn roundtrip_report_share() {
         roundtrip_encoding(&[
             (
-                PrepareStep {
-                    report_id: ReportId::from([
-                        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-                    ]),
-                    result: PrepareStepResult::Continued(Vec::from("012345")),
+                ReportShare {
+                    metadata: ReportMetadata::new(
+                        ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                        Time::from_seconds_since_epoch(54321),
+                    ),
+                    public_share: Vec::new(),
+                    encrypted_input_share: HpkeCiphertext::new(
+                        HpkeConfigId::from(42),
+                        Vec::from("012345"),
+                        Vec::from("543210"),
+                    ),
                 },
                 concat!(
-                    "0102030405060708090A0B0C0D0E0F10", // report_id
-                    "00",                               // prepare_step_result
                     concat!(
-                        // vdaf_msg
-                        "00000006",     // length
-                        "303132333435", // opaque data
+                        // metadata
+                        "0102030405060708090A0B0C0D0E0F10", // report_id
+                        "000000000000D431",                 // time
+                    ),
+                    concat!(
+                        // public_share
+                        "00000000", // length
+                        "",         // opaque data
+                    ),
+                    concat!(
+                        // encrypted_input_share
+                        "2A", // config_id
+                        concat!(
+                            // encapsulated_context
+                            "0006",         // length
+                            "303132333435", // opaque data
+                        ),
+                        concat!(
+                            // payload
+                            "00000006",     // length
+                            "353433323130", // opaque data
+                        ),
                     ),
                 ),
             ),
             (
-                PrepareStep {
-                    report_id: ReportId::from([
-                        16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
-                    ]),
-                    result: PrepareStepResult::Finished,
+                ReportShare {
+                    metadata: ReportMetadata::new(
+                        ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+                        Time::from_seconds_since_epoch(73542),
+                    ),
+                    public_share: Vec::from("0123"),
+                    encrypted_input_share: HpkeCiphertext::new(
+                        HpkeConfigId::from(13),
+                        Vec::from("abce"),
+                        Vec::from("abfd"),
+                    ),
                 },
                 concat!(
-                    "100F0E0D0C0B0A090807060504030201", // report_id
-                    "01",                               // prepare_step_result
-                ),
-            ),
-            (
-                PrepareStep {
-                    report_id: ReportId::from([255; 16]),
-                    result: PrepareStepResult::Failed(ReportShareError::VdafPrepError),
-                },
-                concat!(
-                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // report_id
-                    "02",                               // prepare_step_result
-                    "05",                               // report_share_error
+                    concat!(
+                        // metadata
+                        "100F0E0D0C0B0A090807060504030201", // report_id
+                        "0000000000011F46",                 // time
+                    ),
+                    concat!(
+                        // public_share
+                        "00000004", // length
+                        "30313233", // opaque data
+                    ),
+                    concat!(
+                        // encrypted_input_share
+                        "0D", // config_id
+                        concat!(
+                            // encapsulated_context
+                            "0004",     // length
+                            "61626365", // opaque data
+                        ),
+                        concat!(
+                            // payload
+                            "00000004", // length
+                            "61626664", // opaque data
+                        ),
+                    ),
                 ),
             ),
         ])
     }
 
     #[test]
-    fn roundtrip_report_share_error() {
+    fn roundtrip_prepare_init() {
         roundtrip_encoding(&[
-            (ReportShareError::BatchCollected, "00"),
-            (ReportShareError::ReportReplayed, "01"),
-            (ReportShareError::ReportDropped, "02"),
-            (ReportShareError::HpkeUnknownConfigId, "03"),
-            (ReportShareError::HpkeDecryptError, "04"),
-            (ReportShareError::VdafPrepError, "05"),
-        ])
-    }
-
-    #[test]
-    fn roundtrip_aggregation_job_initialize_req() {
-        // TimeInterval.
-        roundtrip_encoding(&[(
-            AggregationJobInitializeReq {
-                aggregation_parameter: Vec::from("012345"),
-                partial_batch_selector: PartialBatchSelector::new_time_interval(),
-                report_shares: Vec::from([
-                    ReportShare {
+            (
+                PrepareInit {
+                    report_share: ReportShare {
                         metadata: ReportMetadata::new(
                             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                             Time::from_seconds_since_epoch(54321),
@@ -3954,34 +4088,13 @@ mod tests {
                             Vec::from("543210"),
                         ),
                     },
-                    ReportShare {
-                        metadata: ReportMetadata::new(
-                            ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
-                            Time::from_seconds_since_epoch(73542),
-                        ),
-                        public_share: Vec::from("0123"),
-                        encrypted_input_share: HpkeCiphertext::new(
-                            HpkeConfigId::from(13),
-                            Vec::from("abce"),
-                            Vec::from("abfd"),
-                        ),
+                    message: PingPongMessage::Initialize {
+                        prep_share: Vec::from("012345"),
                     },
-                ]),
-            },
-            concat!(
+                },
                 concat!(
-                    // aggregation_parameter
-                    "00000006",     // length
-                    "303132333435", // opaque data
-                ),
-                concat!(
-                    // partial_batch_selector
-                    "01", // query_type
-                ),
-                concat!(
-                    // report_shares
-                    "0000005E", // length
                     concat!(
+                        // report_share
                         concat!(
                             // metadata
                             "0102030405060708090A0B0C0D0E0F10", // report_id
@@ -4008,55 +4121,18 @@ mod tests {
                         ),
                     ),
                     concat!(
+                        // message
+                        "00", // Message type
                         concat!(
-                            // metadata
-                            "100F0E0D0C0B0A090807060504030201", // report_id
-                            "0000000000011F46",                 // time
-                        ),
-                        concat!(
-                            "00000004", // payload
-                            "30313233", // opaque data
-                        ),
-                        concat!(
-                            // encrypted_input_share
-                            "0D", // config_id
-                            concat!(
-                                // encapsulated_context
-                                "0004",     // length
-                                "61626365", // opaque data
-                            ),
-                            concat!(
-                                // payload
-                                "00000004", // length
-                                "61626664", // opaque data
-                            ),
-                        ),
-                    ),
+                            "00000006",     // length
+                            "303132333435", // opaque data
+                        )
+                    )
                 ),
             ),
-        )]);
-
-        // FixedSize.
-        roundtrip_encoding(&[(
-            AggregationJobInitializeReq::<FixedSize> {
-                aggregation_parameter: Vec::from("012345"),
-                partial_batch_selector: PartialBatchSelector::new_fixed_size(BatchId::from(
-                    [2u8; 32],
-                )),
-                report_shares: Vec::from([
-                    ReportShare {
-                        metadata: ReportMetadata::new(
-                            ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-                            Time::from_seconds_since_epoch(54321),
-                        ),
-                        public_share: Vec::new(),
-                        encrypted_input_share: HpkeCiphertext::new(
-                            HpkeConfigId::from(42),
-                            Vec::from("012345"),
-                            Vec::from("543210"),
-                        ),
-                    },
-                    ReportShare {
+            (
+                PrepareInit {
+                    report_share: ReportShare {
                         metadata: ReportMetadata::new(
                             ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                             Time::from_seconds_since_epoch(73542),
@@ -4068,49 +4144,13 @@ mod tests {
                             Vec::from("abfd"),
                         ),
                     },
-                ]),
-            },
-            concat!(
+                    message: PingPongMessage::Finish {
+                        prep_msg: Vec::new(),
+                    },
+                },
                 concat!(
-                    // aggregation_parameter
-                    "00000006",     // length
-                    "303132333435", // opaque data
-                ),
-                concat!(
-                    // partial_batch_selector
-                    "02", // query_type
-                    "0202020202020202020202020202020202020202020202020202020202020202", // batch_id
-                ),
-                concat!(
-                    // report_shares
-                    "0000005E", // length
                     concat!(
-                        concat!(
-                            // metadata
-                            "0102030405060708090A0B0C0D0E0F10", // report_id
-                            "000000000000D431",                 // time
-                        ),
-                        concat!(
-                            // public_share
-                            "00000000", // length
-                            "",         // opaque data
-                        ),
-                        concat!(
-                            // encrypted_input_share
-                            "2A", // config_id
-                            concat!(
-                                // encapsulated_context
-                                "0006",         // length
-                                "303132333435", // opaque data
-                            ),
-                            concat!(
-                                // payload
-                                "00000006",     // length
-                                "353433323130", // opaque data
-                            ),
-                        ),
-                    ),
-                    concat!(
+                        // report_share
                         concat!(
                             // metadata
                             "100F0E0D0C0B0A090807060504030201", // report_id
@@ -4136,6 +4176,362 @@ mod tests {
                             ),
                         ),
                     ),
+                    concat!(
+                        // message
+                        "02", // Message type
+                        concat!(
+                            "00000000", // length
+                            ""          // opaque data
+                        )
+                    )
+                ),
+            ),
+        ])
+    }
+
+    #[test]
+    fn roundtrip_prepare_resp() {
+        roundtrip_encoding(&[
+            (
+                PrepareResp {
+                    report_id: ReportId::from([
+                        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                    ]),
+                    result: PrepareStepResult::Continue {
+                        message: PingPongMessage::Continue {
+                            prep_msg: Vec::from("012345"),
+                            prep_share: Vec::from("6789"),
+                        },
+                    },
+                },
+                concat!(
+                    "0102030405060708090A0B0C0D0E0F10", // report_id
+                    "00",                               // prepare_step_result
+                    concat!(
+                        // message
+                        "01", // message type
+                        concat!(
+                            "00000006",     // length
+                            "303132333435", // opaque data
+                        ),
+                        concat!(
+                            "00000004", // length
+                            "36373839", // opaque data
+                        )
+                    ),
+                ),
+            ),
+            (
+                PrepareResp {
+                    report_id: ReportId::from([
+                        16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
+                    ]),
+                    result: PrepareStepResult::Finished,
+                },
+                concat!(
+                    "100F0E0D0C0B0A090807060504030201", // report_id
+                    "01",                               // prepare_step_result
+                ),
+            ),
+            (
+                PrepareResp {
+                    report_id: ReportId::from([255; 16]),
+                    result: PrepareStepResult::Reject(PrepareError::VdafPrepError),
+                },
+                concat!(
+                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // report_id
+                    "02",                               // prepare_step_result
+                    "05",                               // report_share_error
+                ),
+            ),
+        ])
+    }
+
+    #[test]
+    fn roundtrip_report_share_error() {
+        roundtrip_encoding(&[
+            (PrepareError::BatchCollected, "00"),
+            (PrepareError::ReportReplayed, "01"),
+            (PrepareError::ReportDropped, "02"),
+            (PrepareError::HpkeUnknownConfigId, "03"),
+            (PrepareError::HpkeDecryptError, "04"),
+            (PrepareError::VdafPrepError, "05"),
+        ])
+    }
+
+    #[test]
+    fn roundtrip_aggregation_job_initialize_req() {
+        // TimeInterval.
+        roundtrip_encoding(&[(
+            AggregationJobInitializeReq {
+                aggregation_parameter: Vec::from("012345"),
+                partial_batch_selector: PartialBatchSelector::new_time_interval(),
+                prepare_inits: Vec::from([
+                    PrepareInit {
+                        report_share: ReportShare {
+                            metadata: ReportMetadata::new(
+                                ReportId::from([
+                                    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                                ]),
+                                Time::from_seconds_since_epoch(54321),
+                            ),
+                            public_share: Vec::new(),
+                            encrypted_input_share: HpkeCiphertext::new(
+                                HpkeConfigId::from(42),
+                                Vec::from("012345"),
+                                Vec::from("543210"),
+                            ),
+                        },
+                        message: PingPongMessage::Initialize {
+                            prep_share: Vec::from("012345"),
+                        },
+                    },
+                    PrepareInit {
+                        report_share: ReportShare {
+                            metadata: ReportMetadata::new(
+                                ReportId::from([
+                                    16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
+                                ]),
+                                Time::from_seconds_since_epoch(73542),
+                            ),
+                            public_share: Vec::from("0123"),
+                            encrypted_input_share: HpkeCiphertext::new(
+                                HpkeConfigId::from(13),
+                                Vec::from("abce"),
+                                Vec::from("abfd"),
+                            ),
+                        },
+                        message: PingPongMessage::Finish {
+                            prep_msg: Vec::new(),
+                        },
+                    },
+                ]),
+            },
+            concat!(
+                concat!(
+                    // aggregation_parameter
+                    "00000006",     // length
+                    "303132333435", // opaque data
+                ),
+                concat!(
+                    // partial_batch_selector
+                    "01", // query_type
+                ),
+                concat!(
+                    // prepare_inits
+                    "0000006E", // length
+                    concat!(
+                        concat!(
+                            // report_share
+                            concat!(
+                                // metadata
+                                "0102030405060708090A0B0C0D0E0F10", // report_id
+                                "000000000000D431",                 // time
+                            ),
+                            concat!(
+                                // public_share
+                                "00000000", // length
+                                "",         // opaque data
+                            ),
+                            concat!(
+                                // encrypted_input_share
+                                "2A", // config_id
+                                concat!(
+                                    // encapsulated_context
+                                    "0006",         // length
+                                    "303132333435", // opaque data
+                                ),
+                                concat!(
+                                    // payload
+                                    "00000006",     // length
+                                    "353433323130", // opaque data
+                                ),
+                            ),
+                        ),
+                        concat!(
+                            // message
+                            "00", // Message type
+                            concat!(
+                                "00000006",     // length
+                                "303132333435", // opaque data
+                            ),
+                        )
+                    ),
+                    concat!(
+                        concat!(
+                            concat!(
+                                // metadata
+                                "100F0E0D0C0B0A090807060504030201", // report_id
+                                "0000000000011F46",                 // time
+                            ),
+                            concat!(
+                                // public_share
+                                "00000004", // length
+                                "30313233", // opaque data
+                            ),
+                            concat!(
+                                // encrypted_input_share
+                                "0D", // config_id
+                                concat!(
+                                    // encapsulated_context
+                                    "0004",     // length
+                                    "61626365", // opaque data
+                                ),
+                                concat!(
+                                    // payload
+                                    "00000004", // length
+                                    "61626664", // opaque data
+                                ),
+                            ),
+                        ),
+                        concat!(
+                            // message
+                            "02", // Message type
+                            concat!(
+                                "00000000", // length
+                                ""          // opaque data
+                            )
+                        )
+                    ),
+                ),
+            ),
+        )]);
+
+        // FixedSize.
+        roundtrip_encoding(&[(
+            AggregationJobInitializeReq::<FixedSize> {
+                aggregation_parameter: Vec::from("012345"),
+                partial_batch_selector: PartialBatchSelector::new_fixed_size(BatchId::from(
+                    [2u8; 32],
+                )),
+                prepare_inits: Vec::from([
+                    PrepareInit {
+                        report_share: ReportShare {
+                            metadata: ReportMetadata::new(
+                                ReportId::from([
+                                    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                                ]),
+                                Time::from_seconds_since_epoch(54321),
+                            ),
+                            public_share: Vec::new(),
+                            encrypted_input_share: HpkeCiphertext::new(
+                                HpkeConfigId::from(42),
+                                Vec::from("012345"),
+                                Vec::from("543210"),
+                            ),
+                        },
+                        message: PingPongMessage::Initialize {
+                            prep_share: Vec::from("012345"),
+                        },
+                    },
+                    PrepareInit {
+                        report_share: ReportShare {
+                            metadata: ReportMetadata::new(
+                                ReportId::from([
+                                    16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
+                                ]),
+                                Time::from_seconds_since_epoch(73542),
+                            ),
+                            public_share: Vec::from("0123"),
+                            encrypted_input_share: HpkeCiphertext::new(
+                                HpkeConfigId::from(13),
+                                Vec::from("abce"),
+                                Vec::from("abfd"),
+                            ),
+                        },
+                        message: PingPongMessage::Finish {
+                            prep_msg: Vec::new(),
+                        },
+                    },
+                ]),
+            },
+            concat!(
+                concat!(
+                    // aggregation_parameter
+                    "00000006",     // length
+                    "303132333435", // opaque data
+                ),
+                concat!(
+                    // partial_batch_selector
+                    "02", // query_type
+                    "0202020202020202020202020202020202020202020202020202020202020202", // batch_id
+                ),
+                concat!(
+                    // prepare_inits
+                    "0000006E", // length
+                    concat!(
+                        concat!(
+                            // report_share
+                            concat!(
+                                // metadata
+                                "0102030405060708090A0B0C0D0E0F10", // report_id
+                                "000000000000D431",                 // time
+                            ),
+                            concat!(
+                                // public_share
+                                "00000000", // length
+                                "",         // opaque data
+                            ),
+                            concat!(
+                                // encrypted_input_share
+                                "2A", // config_id
+                                concat!(
+                                    // encapsulated_context
+                                    "0006",         // length
+                                    "303132333435", // opaque data
+                                ),
+                                concat!(
+                                    // payload
+                                    "00000006",     // length
+                                    "353433323130", // opaque data
+                                ),
+                            ),
+                        ),
+                        concat!(
+                            // payload
+                            "00", // Message type
+                            concat!(
+                                "00000006",     // length
+                                "303132333435", // opaque data
+                            )
+                        ),
+                    ),
+                    concat!(
+                        concat!(
+                            concat!(
+                                // metadata
+                                "100F0E0D0C0B0A090807060504030201", // report_id
+                                "0000000000011F46",                 // time
+                            ),
+                            concat!(
+                                // public_share
+                                "00000004", // length
+                                "30313233", // opaque data
+                            ),
+                            concat!(
+                                // encrypted_input_share
+                                "0D", // config_id
+                                concat!(
+                                    // encapsulated_context
+                                    "0004",     // length
+                                    "61626365", // opaque data
+                                ),
+                                concat!(
+                                    // payload
+                                    "00000004", // length
+                                    "61626664", // opaque data
+                                ),
+                            ),
+                        ),
+                        concat!(
+                            // payload
+                            "02", // Message type
+                            concat!(
+                                "00000000", // length
+                                "",         // opaque data
+                            )
+                        ),
+                    ),
                 ),
             ),
         )])
@@ -4146,18 +4542,22 @@ mod tests {
         roundtrip_encoding(&[(
             AggregationJobContinueReq {
                 round: AggregationJobRound(42405),
-                prepare_steps: Vec::from([
-                    PrepareStep {
+                prepare_continues: Vec::from([
+                    PrepareContinue {
                         report_id: ReportId::from([
                             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
                         ]),
-                        result: PrepareStepResult::Continued(Vec::from("012345")),
+                        message: PingPongMessage::Initialize {
+                            prep_share: Vec::from("012345"),
+                        },
                     },
-                    PrepareStep {
+                    PrepareContinue {
                         report_id: ReportId::from([
                             16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
                         ]),
-                        result: PrepareStepResult::Finished,
+                        message: PingPongMessage::Initialize {
+                            prep_share: Vec::from("012345"),
+                        },
                     },
                 ]),
             },
@@ -4165,19 +4565,28 @@ mod tests {
                 "A5A5", // round
                 concat!(
                     // prepare_steps
-                    "0000002C", // length
+                    "00000036", // length
                     concat!(
                         "0102030405060708090A0B0C0D0E0F10", // report_id
-                        "00",                               // prepare_step_result
                         concat!(
                             // payload
-                            "00000006",     // length
-                            "303132333435", // opaque data
+                            "00", // Message type
+                            concat!(
+                                "00000006",     // length
+                                "303132333435", // opaque data
+                            )
                         ),
                     ),
                     concat!(
                         "100F0E0D0C0B0A090807060504030201", // report_id
-                        "01",                               // prepare_step_result
+                        concat!(
+                            // payload
+                            "00", // Message type
+                            concat!(
+                                "00000006",     // length
+                                "303132333435", // opaque data
+                            )
+                        ),
                     )
                 ),
             ),
@@ -4188,14 +4597,19 @@ mod tests {
     fn roundtrip_aggregation_job_resp() {
         roundtrip_encoding(&[(
             AggregationJobResp {
-                prepare_steps: Vec::from([
-                    PrepareStep {
+                prepare_resps: Vec::from([
+                    PrepareResp {
                         report_id: ReportId::from([
                             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
                         ]),
-                        result: PrepareStepResult::Continued(Vec::from("012345")),
+                        result: PrepareStepResult::Continue {
+                            message: PingPongMessage::Continue {
+                                prep_msg: Vec::from("01234"),
+                                prep_share: Vec::from("56789"),
+                            },
+                        },
                     },
-                    PrepareStep {
+                    PrepareResp {
                         report_id: ReportId::from([
                             16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
                         ]),
@@ -4205,14 +4619,22 @@ mod tests {
             },
             concat!(concat!(
                 // prepare_steps
-                "0000002C", // length
+                "00000035", // length
                 concat!(
                     "0102030405060708090A0B0C0D0E0F10", // report_id
                     "00",                               // prepare_step_result
                     concat!(
-                        // payload
-                        "00000006",     // length
-                        "303132333435", // opaque data
+                        "01", // Message type
+                        concat!(
+                            // prep_msg
+                            "00000005",   // length
+                            "3031323334", // opaque data
+                        ),
+                        concat!(
+                            // prep_share
+                            "00000005",   // length
+                            "3536373839", // opaque data
+                        )
                     ),
                 ),
                 concat!(

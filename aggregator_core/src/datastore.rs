@@ -13,7 +13,6 @@ use crate::{
     taskprov::{self, PeerAggregator},
     SecretBytes,
 };
-use anyhow::anyhow;
 use chrono::NaiveDateTime;
 use futures::future::try_join_all;
 use janus_core::{
@@ -24,7 +23,7 @@ use janus_core::{
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     AggregationJobId, BatchId, CollectionJobId, Duration, Extension, HpkeCiphertext, HpkeConfig,
-    HpkeConfigId, Interval, PrepareStep, Query, ReportId, ReportIdChecksum, ReportMetadata,
+    HpkeConfigId, Interval, PrepareResp, Query, ReportId, ReportIdChecksum, ReportMetadata,
     ReportShare, Role, TaskId, Time,
 };
 use opentelemetry::{
@@ -34,6 +33,7 @@ use opentelemetry::{
 use postgres_types::{FromSql, Json, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
+    topology::ping_pong::PingPongTransition,
     vdaf,
 };
 use rand::random;
@@ -2097,6 +2097,7 @@ impl<C: Clock> Transaction<'_, C> {
         role: &Role,
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
+        aggregation_param: &A::AggregationParam,
         report_id: &ReportId,
     ) -> Result<Option<ReportAggregation<SEED_SIZE, A>>, Error>
     where
@@ -2106,9 +2107,9 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT
                     report_aggregations.client_timestamp, report_aggregations.ord,
-                    report_aggregations.state, report_aggregations.prep_state,
-                    report_aggregations.prep_msg, report_aggregations.error_code,
-                    report_aggregations.last_prep_step
+                    report_aggregations.state, report_aggregations.helper_prep_state,
+                    report_aggregations.leader_prep_transition, report_aggregations.error_code,
+                    report_aggregations.last_prep_resp
                 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id
@@ -2162,8 +2163,8 @@ impl<C: Clock> Transaction<'_, C> {
                 "SELECT
                     report_aggregations.client_report_id, report_aggregations.client_timestamp,
                     report_aggregations.ord, report_aggregations.state,
-                    report_aggregations.prep_state, report_aggregations.prep_msg,
-                    report_aggregations.error_code, report_aggregations.last_prep_step
+                    report_aggregations.helper_prep_state, report_aggregations.leader_prep_transition,
+                    report_aggregations.error_code, report_aggregations.last_prep_resp
                 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id
@@ -2216,9 +2217,9 @@ impl<C: Clock> Transaction<'_, C> {
                 "SELECT
                     aggregation_jobs.aggregation_job_id, report_aggregations.client_report_id,
                     report_aggregations.client_timestamp, report_aggregations.ord,
-                    report_aggregations.state, report_aggregations.prep_state,
-                    report_aggregations.prep_msg, report_aggregations.error_code,
-                    report_aggregations.last_prep_step
+                    report_aggregations.state, report_aggregations.helper_prep_state,
+                    report_aggregations.leader_prep_transition, report_aggregations.error_code,
+                    report_aggregations.last_prep_resp
                 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id
@@ -2262,10 +2263,8 @@ impl<C: Clock> Transaction<'_, C> {
         let time = Time::from_naive_date_time(&row.get("client_timestamp"));
         let ord: u64 = row.get_bigint_and_convert("ord")?;
         let state: ReportAggregationStateCode = row.get("state");
-        let prep_state_bytes: Option<Vec<u8>> = row.get("prep_state");
-        let prep_msg_bytes: Option<Vec<u8>> = row.get("prep_msg");
         let error_code: Option<i16> = row.get("error_code");
-        let last_prep_step_bytes: Option<Vec<u8>> = row.get("last_prep_step");
+        let last_prep_resp_bytes: Option<Vec<u8>> = row.get("last_prep_resp");
 
         let error_code = match error_code {
             Some(c) => {
@@ -2279,31 +2278,49 @@ impl<C: Clock> Transaction<'_, C> {
             None => None,
         };
 
-        let last_prep_step = last_prep_step_bytes
-            .map(|bytes| PrepareStep::get_decoded(&bytes))
+        let last_prep_resp = last_prep_resp_bytes
+            .map(|bytes| PrepareResp::get_decoded(&bytes))
             .transpose()?;
 
         let agg_state = match state {
             ReportAggregationStateCode::Start => ReportAggregationState::Start,
 
             ReportAggregationStateCode::Waiting => {
-                let agg_index = role.index().ok_or_else(|| {
-                    Error::User(anyhow!("unexpected role: {}", role.as_str()).into())
-                })?;
-                let prep_state = A::PrepareState::get_decoded_with_param(
-                    &(vdaf, agg_index),
-                    &prep_state_bytes.ok_or_else(|| {
-                        Error::DbState(
-                            "report aggregation in state WAITING but prep_state is NULL"
-                                .to_string(),
-                        )
-                    })?,
-                )?;
-                let prep_msg = prep_msg_bytes
-                    .map(|bytes| A::PrepareMessage::get_decoded_with_param(&prep_state, &bytes))
-                    .transpose()?;
+                match role {
+                    Role::Leader => {
+                        let leader_prep_transition_bytes = row
+                            .get::<_, Option<Vec<u8>>>("leader_prep_transition")
+                            .ok_or_else(|| {
+                                Error::DbState(
+                                    "report aggregation in state WAITING but leader_prep_transition is NULL"
+                                        .to_string(),
+                                )
+                            })?;
+                        let ping_pong_transition = PingPongTransition::get_decoded_with_param(
+                            &(vdaf, 0 /* leader */),
+                            &leader_prep_transition_bytes,
+                        )?;
 
-                ReportAggregationState::Waiting(prep_state, prep_msg)
+                        ReportAggregationState::WaitingLeader(ping_pong_transition)
+                    }
+                    Role::Helper => {
+                        let helper_prep_state_bytes = row
+                            .get::<_, Option<Vec<u8>>>("helper_prep_state")
+                            .ok_or_else(|| {
+                                Error::DbState(
+                                    "report aggregation in state WAITING but helper_prep_state is NULL"
+                                        .to_string(),
+                                )
+                            })?;
+                        let prepare_state = A::PrepareState::get_decoded_with_param(
+                            &(vdaf, 1 /* helper */),
+                            &helper_prep_state_bytes,
+                        )?;
+
+                        ReportAggregationState::WaitingHelper(prepare_state)
+                    }
+                    _ => panic!("unexpected role"),
+                }
             }
 
             ReportAggregationStateCode::Finished => ReportAggregationState::Finished,
@@ -2323,7 +2340,7 @@ impl<C: Clock> Transaction<'_, C> {
             *report_id,
             time,
             ord,
-            last_prep_step,
+            last_prep_resp,
             agg_state,
         ))
     }
@@ -2341,15 +2358,15 @@ impl<C: Clock> Transaction<'_, C> {
         A::PrepareState: Encode,
     {
         let encoded_state_values = report_aggregation.state().encoded_values_from_state();
-        let encoded_last_prep_step = report_aggregation
-            .last_prep_step()
-            .map(PrepareStep::get_encoded);
+        let encoded_last_prep_resp: Option<Vec<u8>> = report_aggregation
+            .last_prep_resp()
+            .map(PrepareResp::get_encoded);
 
         let stmt = self
             .prepare_cached(
                 "INSERT INTO report_aggregations
-                    (aggregation_job_id, client_report_id, client_timestamp, ord, state, prep_state,
-                     prep_msg, error_code, last_prep_step)
+                    (aggregation_job_id, client_report_id, client_timestamp, ord, state,
+                    helper_prep_state, leader_prep_transition, error_code, last_prep_resp)
                 SELECT aggregation_jobs.id, $3, $4, $5, $6, $7, $8, $9, $10
                 FROM aggregation_jobs
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id
@@ -2368,10 +2385,10 @@ impl<C: Clock> Transaction<'_, C> {
                 /* client_timestamp */ &report_aggregation.time().as_naive_date_time()?,
                 /* ord */ &TryInto::<i64>::try_into(report_aggregation.ord())?,
                 /* state */ &report_aggregation.state().state_code(),
-                /* prep_state */ &encoded_state_values.prep_state,
-                /* prep_msg */ &encoded_state_values.prep_msg,
-                /* error_code */ &encoded_state_values.report_share_err,
-                /* last_prep_step */ &encoded_last_prep_step,
+                /* helper_prep_state */ &encoded_state_values.helper_prep_state,
+                /* leader_prep_transition */ &encoded_state_values.leader_prep_transition,
+                /* error_code */ &encoded_state_values.prepare_err,
+                /* last_prep_resp */ &encoded_last_prep_resp,
                 /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
@@ -2391,14 +2408,14 @@ impl<C: Clock> Transaction<'_, C> {
         A::PrepareState: Encode,
     {
         let encoded_state_values = report_aggregation.state().encoded_values_from_state();
-        let encoded_last_prep_step = report_aggregation
-            .last_prep_step()
-            .map(PrepareStep::get_encoded);
+        let encoded_last_prep_resp: Option<Vec<u8>> = report_aggregation
+            .last_prep_resp()
+            .map(PrepareResp::get_encoded);
 
         let stmt = self
             .prepare_cached(
                 "UPDATE report_aggregations
-                SET state = $1, prep_state = $2, prep_msg = $3, error_code = $4, last_prep_step = $5
+                SET state = $1, helper_prep_state = $2, leader_prep_transition = $3, error_code = $4, last_prep_resp = $5
                 FROM aggregation_jobs, tasks
                 WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
                   AND aggregation_jobs.task_id = tasks.id
@@ -2416,10 +2433,11 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* state */
                     &report_aggregation.state().state_code(),
-                    /* prep_state */ &encoded_state_values.prep_state,
-                    /* prep_msg */ &encoded_state_values.prep_msg,
-                    /* error_code */ &encoded_state_values.report_share_err,
-                    /* last_prep_step */ &encoded_last_prep_step,
+                    /* helper_prep_state */ &encoded_state_values.helper_prep_state,
+                    /* leader_prep_transition */
+                    &encoded_state_values.leader_prep_transition,
+                    /* error_code */ &encoded_state_values.prepare_err,
+                    /* last_prep_resp */ &encoded_last_prep_resp,
                     /* aggregation_job_id */
                     &report_aggregation.aggregation_job_id().as_ref(),
                     /* task_id */ &report_aggregation.task_id().as_ref(),
@@ -4427,7 +4445,7 @@ impl<C: Clock> Transaction<'_, C> {
 
         let stmt = self
             .prepare_cached(
-                "SELECT (SELECT p.id FROM taskprov_peer_aggregators AS p 
+                "SELECT (SELECT p.id FROM taskprov_peer_aggregators AS p
                     WHERE p.id = a.peer_aggregator_id) AS peer_id,
                 ord, type, token FROM taskprov_aggregator_auth_tokens AS a
                     ORDER BY ord ASC",
@@ -4437,7 +4455,7 @@ impl<C: Clock> Transaction<'_, C> {
 
         let stmt = self
             .prepare_cached(
-                "SELECT (SELECT p.id FROM taskprov_peer_aggregators AS p 
+                "SELECT (SELECT p.id FROM taskprov_peer_aggregators AS p
                     WHERE p.id = a.peer_aggregator_id) AS peer_id,
                 ord, type, token FROM taskprov_collector_auth_tokens AS a
                     ORDER BY ord ASC",

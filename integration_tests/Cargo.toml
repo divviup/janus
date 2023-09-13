@@ -14,10 +14,11 @@ in-cluster = ["dep:k8s-openapi", "dep:kube"]
 [dependencies]
 anyhow.workspace = true
 backoff = { version = "0.4", features = ["tokio"] }
-base64 = "0.21.4"
+base64.workspace = true
 futures = "0.3.28"
 hex = "0.4"
 http = "0.2"
+itertools.workspace = true
 janus_aggregator = { workspace = true, features = ["test-util"] }
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
 janus_client.workspace = true
@@ -37,6 +38,5 @@ tokio.workspace = true
 url = { version = "2.4.1", features = ["serde"] }
 
 [dev-dependencies]
-itertools.workspace = true
 janus_collector = { workspace = true, features = ["test-util"] }
 tempfile = "3"
