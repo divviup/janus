@@ -60,12 +60,12 @@ pub struct VdafTranscript<
     pub helper_input_share: V::InputShare,
 
     /// The leader's states and messages computed throughout the protocol run. Indexed by the
-    /// aggregation job round.
+    /// aggregation job step.
     #[allow(clippy::type_complexity)]
     pub leader_prepare_transitions: Vec<LeaderPrepareTransition<VERIFY_KEY_LENGTH, V>>,
 
     /// The helper's states and messages computed throughout the protocol run. Indexed by the
-    /// aggregation job round.
+    /// aggregation job step.
     #[allow(clippy::type_complexity)]
     pub helper_prepare_transitions: Vec<HelperPrepareTransition<VERIFY_KEY_LENGTH, V>>,
 

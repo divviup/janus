@@ -49,7 +49,7 @@ use janus_messages::{
     query_type::{FixedSize, TimeInterval},
     taskprov::TaskConfig,
     AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
-    AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobRound,
+    AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, HpkeConfig,
     HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
     PrepareError, PrepareResp, PrepareStepResult, Report, ReportIdChecksum, ReportShare, Role,
@@ -1799,7 +1799,7 @@ impl VdafOps {
             let (report_aggregation_state, prepare_step_result) = match init_rslt {
                 Ok((PingPongState::Continued(prep_state), outgoing_message)) => {
                     // Helper is not finished. Await the next message from the Leader to advance to
-                    // the next round.
+                    // the next step.
                     saw_continue = true;
                     (
                         ReportAggregationState::WaitingHelper(prep_state),
@@ -1879,7 +1879,7 @@ impl VdafOps {
                 } else {
                     AggregationJobState::Finished
                 },
-                AggregationJobRound::from(0),
+                AggregationJobStep::from(0),
             )
             .with_last_request_hash(request_hash),
         );
@@ -2068,10 +2068,10 @@ impl VdafOps {
         A::PrepareMessage: Send + Sync,
         A::OutputShare: Send + Sync,
     {
-        if leader_aggregation_job.round() == AggregationJobRound::from(0) {
+        if leader_aggregation_job.step() == AggregationJobStep::from(0) {
             return Err(Error::InvalidMessage(
                 Some(*task.id()),
-                "aggregation job cannot be advanced to round 0",
+                "aggregation job cannot be advanced to step 0",
             ));
         }
 
@@ -2112,18 +2112,18 @@ impl VdafOps {
                         )
                     })?;
 
-                    // If the leader's request is on the same round as our stored aggregation job,
-                    // then we probably have already received this message and computed this round,
+                    // If the leader's request is on the same step as our stored aggregation job,
+                    // then we probably have already received this message and computed this step,
                     // but the leader never got our response and so retried stepping the job.
                     // TODO(issue #1087): measure how often this happens with a Prometheus metric
-                    if helper_aggregation_job.round() == leader_aggregation_job.round() {
+                    if helper_aggregation_job.step() == leader_aggregation_job.step() {
                         match helper_aggregation_job.last_request_hash() {
                             None => {
                                 return Err(datastore::Error::User(
                                     Error::Internal(format!(
-                                        "aggregation job {aggregation_job_id} is in round {} but \
+                                        "aggregation job {aggregation_job_id} is on step {} but \
                                          has no last request hash",
-                                        helper_aggregation_job.round(),
+                                        helper_aggregation_job.step(),
                                     ))
                                     .into(),
                                 ));
@@ -2141,23 +2141,23 @@ impl VdafOps {
                             }
                         }
                         return Ok(Self::aggregation_job_resp_for(report_aggregations));
-                    } else if helper_aggregation_job.round().increment()
-                        != leader_aggregation_job.round()
+                    } else if helper_aggregation_job.step().increment()
+                        != leader_aggregation_job.step()
                     {
                         // If this is not a replay, the leader should be advancing our state to the next
-                        // round and no further.
+                        // step and no further.
                         return Err(datastore::Error::User(
                             Error::StepMismatch {
                                 task_id: *task.id(),
                                 aggregation_job_id,
-                                expected_step: helper_aggregation_job.round().increment(),
-                                got_step: leader_aggregation_job.round(),
+                                expected_step: helper_aggregation_job.step().increment(),
+                                got_step: leader_aggregation_job.step(),
                             }
                             .into(),
                         ));
                     }
 
-                    // The leader is advancing us to the next round. Step the aggregation job to
+                    // The leader is advancing us to the next step. Step the aggregation job to
                     // compute the next round of prepare messages and state.
                     Self::step_aggregation_job(
                         tx,

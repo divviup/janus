@@ -173,7 +173,7 @@ CREATE TABLE aggregation_jobs(
     batch_id                   BYTEA NOT NULL,                  -- batch ID (fixed-size only; corresponds to identifier in BatchSelector)
     client_timestamp_interval  TSRANGE NOT NULL,                -- the minimal interval containing all of client timestamps included in this aggregation job
     state                      AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
-    round                      INTEGER NOT NULL,                -- current round of the VDAF preparation protocol
+    step                       INTEGER NOT NULL,                -- current step of the VDAF preparation protocol
     last_request_hash          BYTEA,                           -- SHA-256 hash of the most recently received AggregationJobContinueReq (helper only)
     trace_context              JSONB,                           -- distributed tracing metadata
 

@@ -10,7 +10,7 @@ use janus_aggregator_core::datastore::{
 };
 use janus_core::time::{Clock, DurationExt, TimeExt};
 use janus_messages::{
-    query_type::FixedSize, AggregationJobRound, BatchId, Duration, Interval, ReportId, TaskId, Time,
+    query_type::FixedSize, AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskId, Time,
 };
 use prio::{codec::Encode, vdaf::Aggregator};
 use rand::random;
@@ -318,7 +318,7 @@ where
             batch_id,
             client_timestamp_interval,
             AggregationJobState::InProgress,
-            AggregationJobRound::from(0),
+            AggregationJobStep::from(0),
         );
         aggregation_job_writer.put(aggregation_job, report_aggregations)?;
 

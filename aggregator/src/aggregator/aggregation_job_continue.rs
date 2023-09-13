@@ -28,8 +28,8 @@ use tokio::try_join;
 use tracing::trace_span;
 
 impl VdafOps {
-    /// Step the helper's aggregation job to the next round of VDAF preparation using the round `n`
-    /// prepare state in `report_aggregations` with the round `n+1` broadcast prepare messages in
+    /// Step the helper's aggregation job to the next step of VDAF preparation using the step `n`
+    /// prepare state in `report_aggregations` with the step `n+1` broadcast prepare messages in
     /// `leader_aggregation_job`.
     pub(super) async fn step_aggregation_job<const SEED_SIZE: usize, C, Q, A>(
         tx: &Transaction<'_, C>,
@@ -240,8 +240,8 @@ impl VdafOps {
             )
         });
         let helper_aggregation_job = helper_aggregation_job
-            // Advance the job to the leader's round
-            .with_round(leader_aggregation_job.round())
+            // Advance the job to the leader's step
+            .with_step(leader_aggregation_job.step())
             .with_state(match (saw_continue, saw_finish) {
                 (false, false) => AggregationJobState::Finished, // everything failed, or there were no reports
                 (true, false) => AggregationJobState::InProgress,
@@ -249,7 +249,7 @@ impl VdafOps {
                 (true, true) => {
                     return Err(datastore::Error::User(
                         Error::Internal(
-                            "VDAF took an inconsistent number of rounds to reach Finish state"
+                            "VDAF took an inconsistent number of steps to reach Finish state"
                                 .to_string(),
                         )
                         .into(),
@@ -403,7 +403,7 @@ mod tests {
     };
     use janus_messages::{
         query_type::TimeInterval, AggregationJobContinueReq, AggregationJobId, AggregationJobResp,
-        AggregationJobRound, Interval, PrepareContinue, PrepareResp, PrepareStepResult, Role,
+        AggregationJobStep, Interval, PrepareContinue, PrepareResp, PrepareStepResult, Role,
     };
     use prio::{
         idpf::IdpfInput,
@@ -431,7 +431,7 @@ mod tests {
         _ephemeral_datastore: EphemeralDatastore,
     }
 
-    /// Set up a helper with an aggregation job in round 0
+    /// Set up a helper with an aggregation job in step 0
     #[allow(clippy::unit_arg)]
     async fn setup_aggregation_job_continue_test(
     ) -> AggregationJobContinueTestCase<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>> {
@@ -490,7 +490,7 @@ mod tests {
                         (),
                         Interval::from_time(prepare_init.report_share().metadata().time()).unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
+                        AggregationJobStep::from(0),
                     ))
                     .await
                     .unwrap();
@@ -520,7 +520,7 @@ mod tests {
             .unwrap();
 
         let first_continue_request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+            AggregationJobStep::from(1),
             Vec::from([PrepareContinue::new(
                 *prepare_init.report_share().metadata().id(),
                 transcript.leader_prepare_transitions[1].message.clone(),
@@ -549,9 +549,9 @@ mod tests {
         }
     }
 
-    /// Set up a helper with an aggregation job in round 1.
+    /// Set up a helper with an aggregation job in step 1.
     #[allow(clippy::unit_arg)]
-    async fn setup_aggregation_job_continue_round_recovery_test(
+    async fn setup_aggregation_job_continue_step_recovery_test(
     ) -> AggregationJobContinueTestCase<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>> {
         let mut test_case = setup_aggregation_job_continue_test().await;
 
@@ -581,20 +581,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn aggregation_job_continue_round_zero() {
+    async fn aggregation_job_continue_step_zero() {
         let test_case = setup_aggregation_job_continue_test().await;
 
-        // The job is initialized into round 0 but has never been continued. Send a continue request
-        // to advance to round 0. Should be rejected because that is an illegal transition.
-        let round_zero_request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(0),
+        // The job is initialized into step 0 but has never been continued. Send a continue request
+        // to advance to step 0. Should be rejected because that is an illegal transition.
+        let step_zero_request = AggregationJobContinueReq::new(
+            AggregationJobStep::from(0),
             test_case.first_continue_request.prepare_steps().to_vec(),
         );
 
         post_aggregation_job_expecting_error(
             &test_case.task,
             &test_case.aggregation_job_id,
-            &round_zero_request,
+            &step_zero_request,
             &test_case.handler,
             Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:invalidMessage",
@@ -604,8 +604,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn aggregation_job_continue_round_recovery_replay_request() {
-        let test_case = setup_aggregation_job_continue_round_recovery_test().await;
+    async fn aggregation_job_continue_step_recovery_replay_request() {
+        let test_case = setup_aggregation_job_continue_step_recovery_test().await;
 
         // Re-send the request, simulating the leader crashing and losing the helper's response. The
         // helper should send back the exact same response.
@@ -624,8 +624,8 @@ mod tests {
 
     #[tokio::test]
     #[allow(clippy::unit_arg)]
-    async fn aggregation_job_continue_round_recovery_mutate_continue_request() {
-        let test_case = setup_aggregation_job_continue_round_recovery_test().await;
+    async fn aggregation_job_continue_step_recovery_mutate_continue_request() {
+        let test_case = setup_aggregation_job_continue_step_recovery_test().await;
 
         let (unrelated_prepare_init, unrelated_transcript) = test_case
             .prepare_init_generator
@@ -671,7 +671,7 @@ mod tests {
         // Send another continue request for the same aggregation job, but with a different report
         // ID.
         let modified_request = AggregationJobContinueReq::new(
-            test_case.first_continue_request.round(),
+            test_case.first_continue_request.step(),
             Vec::from([PrepareContinue::new(
                 *unrelated_prepare_init.report_share().metadata().id(),
                 unrelated_transcript.leader_prepare_transitions[1]
@@ -725,8 +725,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn aggregation_job_continue_round_recovery_past_round() {
-        let test_case = setup_aggregation_job_continue_round_recovery_test().await;
+    async fn aggregation_job_continue_step_recovery_past_step() {
+        let test_case = setup_aggregation_job_continue_step_recovery_test().await;
 
         test_case
             .datastore
@@ -734,10 +734,10 @@ mod tests {
                 let (task_id, aggregation_job_id) =
                     (*test_case.task.id(), test_case.aggregation_job_id);
                 Box::pin(async move {
-                    // This is a cheat: dummy_vdaf only has a single round, so we artificially force
-                    // this job into round 2 so that we can send a request for round 1 and force a
-                    // round mismatch error instead of tripping the check for a request to continue
-                    // to round 0.
+                    // This is a cheat: dummy_vdaf only has a single step, so we artificially force
+                    // this job into step 2 so that we can send a request for step 1 and force a
+                    // step mismatch error instead of tripping the check for a request to continue
+                    // to step 0.
                     let aggregation_job = tx
                         .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>(
                             &task_id,
@@ -746,7 +746,7 @@ mod tests {
                         .await
                         .unwrap()
                         .unwrap()
-                        .with_round(AggregationJobRound::from(2));
+                        .with_step(AggregationJobStep::from(2));
 
                     tx.update_aggregation_job(&aggregation_job).await.unwrap();
 
@@ -756,16 +756,16 @@ mod tests {
             .await
             .unwrap();
 
-        // Send another request for a round that the helper is past. Should fail.
-        let past_round_request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+        // Send another request for a step that the helper is past. Should fail.
+        let past_step_request = AggregationJobContinueReq::new(
+            AggregationJobStep::from(1),
             test_case.first_continue_request.prepare_steps().to_vec(),
         );
 
         post_aggregation_job_expecting_error(
             &test_case.task,
             &test_case.aggregation_job_id,
-            &past_round_request,
+            &past_step_request,
             &test_case.handler,
             Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:stepMismatch",
@@ -775,20 +775,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn aggregation_job_continue_round_recovery_future_round() {
-        let test_case = setup_aggregation_job_continue_round_recovery_test().await;
+    async fn aggregation_job_continue_step_recovery_future_step() {
+        let test_case = setup_aggregation_job_continue_step_recovery_test().await;
 
-        // Send another request for a round too far past the helper's round. Should fail because the
-        // helper isn't on that round.
-        let future_round_request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(17),
+        // Send another request for a step too far past the helper's step. Should fail because the
+        // helper isn't on that step.
+        let future_step_request = AggregationJobContinueReq::new(
+            AggregationJobStep::from(17),
             test_case.first_continue_request.prepare_steps().to_vec(),
         );
 
         post_aggregation_job_expecting_error(
             &test_case.task,
             &test_case.aggregation_job_id,
-            &future_round_request,
+            &future_step_request,
             &test_case.handler,
             Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:stepMismatch",

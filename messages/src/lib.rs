@@ -2483,24 +2483,24 @@ impl<Q: QueryType> Decode for AggregationJobInitializeReq<Q> {
     }
 }
 
-/// Type representing the round of an aggregation job.
+/// Type representing the step of an aggregation job.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct AggregationJobRound(u16);
+pub struct AggregationJobStep(u16);
 
-impl AggregationJobRound {
-    /// Construct a new [`AggregationJobRound`] representing the round after this one.
+impl AggregationJobStep {
+    /// Construct a new [`AggregationJobStep`] representing the step after this one.
     pub fn increment(&self) -> Self {
         Self(self.0 + 1)
     }
 }
 
-impl Display for AggregationJobRound {
+impl Display for AggregationJobStep {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl Encode for AggregationJobRound {
+impl Encode for AggregationJobStep {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.0.encode(bytes)
     }
@@ -2510,40 +2510,40 @@ impl Encode for AggregationJobRound {
     }
 }
 
-impl Decode for AggregationJobRound {
+impl Decode for AggregationJobStep {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         Ok(Self(u16::decode(bytes)?))
     }
 }
 
-impl From<u16> for AggregationJobRound {
+impl From<u16> for AggregationJobStep {
     fn from(value: u16) -> Self {
         Self(value)
     }
 }
 
-impl From<AggregationJobRound> for u16 {
-    fn from(value: AggregationJobRound) -> Self {
+impl From<AggregationJobStep> for u16 {
+    fn from(value: AggregationJobStep) -> Self {
         value.0
     }
 }
 
-impl TryFrom<i32> for AggregationJobRound {
-    // This implementation is convenient for converting from the representation of a round in
+impl TryFrom<i32> for AggregationJobStep {
+    // This implementation is convenient for converting from the representation of a step in
     // PostgreSQL, where the smallest type that can store a u16 is `integer`, which is represented
     // as i32 in Rust.
 
     type Error = TryFromIntError;
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
-        Ok(AggregationJobRound(u16::try_from(value)?))
+        Ok(AggregationJobStep(u16::try_from(value)?))
     }
 }
 
 /// DAP protocol message representing a request to continue an aggregation job.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregationJobContinueReq {
-    round: AggregationJobRound,
+    step: AggregationJobStep,
     prepare_continues: Vec<PrepareContinue>,
 }
 
@@ -2552,16 +2552,16 @@ impl AggregationJobContinueReq {
     pub const MEDIA_TYPE: &'static str = "application/dap-aggregation-job-continue-req";
 
     /// Constructs a new aggregate continuation response from its components.
-    pub fn new(round: AggregationJobRound, prepare_continues: Vec<PrepareContinue>) -> Self {
+    pub fn new(step: AggregationJobStep, prepare_continues: Vec<PrepareContinue>) -> Self {
         Self {
-            round,
+            step,
             prepare_continues,
         }
     }
 
-    /// Gets the round of VDAF preparation this aggregation job is on.
-    pub fn round(&self) -> AggregationJobRound {
-        self.round
+    /// Gets the step of VDAF preparation this aggregation job is on.
+    pub fn step(&self) -> AggregationJobStep {
+        self.step
     }
 
     /// Gets the prepare steps associated with this aggregate continuation response.
@@ -2572,12 +2572,12 @@ impl AggregationJobContinueReq {
 
 impl Encode for AggregationJobContinueReq {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        self.round.encode(bytes);
+        self.step.encode(bytes);
         encode_u32_items(bytes, &(), &self.prepare_continues);
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        let mut length = self.round.encoded_len()?;
+        let mut length = self.step.encoded_len()?;
         length += 4;
         for prepare_continue in self.prepare_continues.iter() {
             length += prepare_continue.encoded_len()?;
@@ -2588,9 +2588,9 @@ impl Encode for AggregationJobContinueReq {
 
 impl Decode for AggregationJobContinueReq {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let round = AggregationJobRound::decode(bytes)?;
+        let step = AggregationJobStep::decode(bytes)?;
         let prepare_continues = decode_u32_items(&(), bytes)?;
-        Ok(Self::new(round, prepare_continues))
+        Ok(Self::new(step, prepare_continues))
     }
 }
 
@@ -2869,9 +2869,9 @@ mod tests {
     use crate::{
         query_type, roundtrip_encoding, AggregateShare, AggregateShareAad, AggregateShareReq,
         AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
-        AggregationJobRound, BatchId, BatchSelector, Collection, CollectionReq, Duration,
-        Extension, ExtensionType, FixedSize, FixedSizeQuery, HpkeAeadId, HpkeCiphertext,
-        HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, InputShareAad, Interval,
+        AggregationJobStep, BatchId, BatchSelector, Collection, CollectionReq, Duration, Extension,
+        ExtensionType, FixedSize, FixedSizeQuery, HpkeAeadId, HpkeCiphertext, HpkeConfig,
+        HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, InputShareAad, Interval,
         PartialBatchSelector, PlaintextInputShare, PrepareContinue, PrepareError, PrepareInit,
         PrepareResp, PrepareStepResult, Query, Report, ReportId, ReportIdChecksum, ReportMetadata,
         ReportShare, Role, TaskId, Time, TimeInterval, Url,
@@ -4541,7 +4541,7 @@ mod tests {
     fn roundtrip_aggregation_job_continue_req() {
         roundtrip_encoding(&[(
             AggregationJobContinueReq {
-                round: AggregationJobRound(42405),
+                step: AggregationJobStep(42405),
                 prepare_continues: Vec::from([
                     PrepareContinue {
                         report_id: ReportId::from([

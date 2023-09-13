@@ -498,7 +498,7 @@ impl AggregationJobDriver {
         // Construct request, send it to the helper, and process the response.
         // TODO(#235): abandon work immediately on "terminal" failures from helper, or other
         // unexpected cases such as unknown/unexpected content type.
-        let req = AggregationJobContinueReq::new(aggregation_job.round(), prepare_continues);
+        let req = AggregationJobContinueReq::new(aggregation_job.step(), prepare_continues);
 
         let resp_bytes = send_request_to_helper(
             &self.http_client,
@@ -595,7 +595,7 @@ impl AggregationJobDriver {
                     match state_and_message {
                         Ok(PingPongContinuedValue::WithMessage { transition }) => {
                             // Leader did not finish. Store our state and outgoing message for the
-                            // next round.
+                            // next step.
                             // n.b. it's possible we finished and recovered an output share at the
                             // VDAF level (i.e., state may be PingPongState::Finished) but we cannot
                             // finish at the DAP layer and commit the output share until we get
@@ -687,9 +687,9 @@ impl AggregationJobDriver {
 
         // Write everything back to storage.
         let mut aggregation_job_writer = AggregationJobWriter::new(Arc::clone(&task));
-        let new_round = aggregation_job.round().increment();
+        let new_step = aggregation_job.step().increment();
         aggregation_job_writer.update(
-            aggregation_job.with_round(new_round),
+            aggregation_job.with_step(new_step),
             report_aggregations_to_write,
         )?;
         let aggregation_job_writer = Arc::new(aggregation_job_writer);
@@ -933,7 +933,7 @@ mod tests {
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
         AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
-        AggregationJobRound, Duration, Extension, ExtensionType, FixedSizeQuery, HpkeConfig,
+        AggregationJobStep, Duration, Extension, ExtensionType, FixedSizeQuery, HpkeConfig,
         InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare, PrepareContinue,
         PrepareError, PrepareInit, PrepareResp, PrepareStepResult, Query, ReportIdChecksum,
         ReportMetadata, ReportShare, Role, TaskId, Time,
@@ -1037,7 +1037,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
+                        AggregationJobStep::from(0),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -1187,7 +1187,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
-                AggregationJobRound::from(2),
+                AggregationJobStep::from(2),
             );
         let want_report_aggregation =
             ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>::new(
@@ -1260,7 +1260,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn step_time_interval_aggregation_job_init_single_round() {
+    async fn step_time_interval_aggregation_job_init_single_step() {
         // Setup: insert a client report and add it to a new aggregation job.
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
@@ -1345,7 +1345,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
+                        AggregationJobStep::from(0),
                     ))
                     .await?;
                     tx.put_report_aggregation(
@@ -1497,7 +1497,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
-                AggregationJobRound::from(1),
+                AggregationJobStep::from(1),
             );
         let want_report_aggregation = ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
             *task.id(),
@@ -1622,7 +1622,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn step_time_interval_aggregation_job_init_two_rounds() {
+    async fn step_time_interval_aggregation_job_init_two_steps() {
         // Setup: insert a client report and add it to a new aggregation job.
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
@@ -1696,7 +1696,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
+                        AggregationJobStep::from(0),
                     ))
                     .await?;
 
@@ -1806,7 +1806,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::InProgress,
-                AggregationJobRound::from(1),
+                AggregationJobStep::from(1),
             );
         let want_report_aggregation =
             ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>::new(
@@ -1875,7 +1875,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn step_fixed_size_aggregation_job_init_single_round() {
+    async fn step_fixed_size_aggregation_job_init_single_step() {
         // Setup: insert a client report and add it to a new aggregation job.
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
@@ -1945,7 +1945,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
+                        AggregationJobStep::from(0),
                     ))
                     .await?;
 
@@ -2072,7 +2072,7 @@ mod tests {
             batch_id,
             Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
             AggregationJobState::Finished,
-            AggregationJobRound::from(1),
+            AggregationJobStep::from(1),
         );
         let want_report_aggregation = ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
             *task.id(),
@@ -2128,7 +2128,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn step_fixed_size_aggregation_job_init_two_rounds() {
+    async fn step_fixed_size_aggregation_job_init_two_steps() {
         // Setup: insert a client report and add it to a new aggregation job.
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
@@ -2207,7 +2207,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
+                        AggregationJobStep::from(0),
                     ))
                     .await?;
 
@@ -2317,7 +2317,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::InProgress,
-                AggregationJobRound::from(1),
+                AggregationJobStep::from(1),
             );
         let want_report_aggregation =
             ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>::new(
@@ -2480,7 +2480,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(1),
+                        AggregationJobStep::from(1),
                     ))
                     .await?;
 
@@ -2562,7 +2562,7 @@ mod tests {
         // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
         // verification -- but mockito does not expose this functionality at time of writing.)
         let leader_request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+            AggregationJobStep::from(1),
             Vec::from([PrepareContinue::new(
                 *report.metadata().id(),
                 transcript.leader_prepare_transitions[1].message.clone(),
@@ -2638,7 +2638,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
-                AggregationJobRound::from(2),
+                AggregationJobStep::from(2),
             );
         let want_report_aggregation =
             ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>::new(
@@ -2882,7 +2882,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(1),
+                        AggregationJobStep::from(1),
                     ))
                     .await?;
 
@@ -2951,7 +2951,7 @@ mod tests {
         // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
         // verification -- but mockito does not expose this functionality at time of writing.)
         let leader_request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+            AggregationJobStep::from(1),
             Vec::from([PrepareContinue::new(
                 *report.metadata().id(),
                 transcript.leader_prepare_transitions[1].message.clone(),
@@ -3027,7 +3027,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
-                AggregationJobRound::from(2),
+                AggregationJobStep::from(2),
             );
         let want_report_aggregation =
             ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>::new(
@@ -3200,7 +3200,7 @@ mod tests {
             (),
             Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
             AggregationJobState::InProgress,
-            AggregationJobRound::from(0),
+            AggregationJobStep::from(0),
         );
         let report_aggregation = ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
             *task.id(),
@@ -3414,7 +3414,7 @@ mod tests {
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
                     AggregationJobState::InProgress,
-                    AggregationJobRound::from(0),
+                    AggregationJobStep::from(0),
                 ))
                 .await?;
 
@@ -3564,7 +3564,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Abandoned,
-                AggregationJobRound::from(0),
+                AggregationJobStep::from(0),
             ),
         );
         assert_eq!(

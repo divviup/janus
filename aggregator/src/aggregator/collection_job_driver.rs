@@ -552,7 +552,7 @@ mod tests {
         Runtime,
     };
     use janus_messages::{
-        query_type::TimeInterval, AggregateShare, AggregateShareReq, AggregationJobRound,
+        query_type::TimeInterval, AggregateShare, AggregateShareReq, AggregationJobStep,
         BatchSelector, Duration, HpkeCiphertext, HpkeConfigId, Interval, Query, ReportIdChecksum,
         Role,
     };
@@ -612,7 +612,7 @@ mod tests {
                             (),
                             Interval::from_time(&report_timestamp).unwrap(),
                             AggregationJobState::Finished,
-                            AggregationJobRound::from(1),
+                            AggregationJobStep::from(1),
                         ),
                     )
                     .await?;
@@ -770,7 +770,7 @@ mod tests {
                             (),
                             Interval::from_time(&report_timestamp).unwrap(),
                             AggregationJobState::Finished,
-                            AggregationJobRound::from(1),
+                            AggregationJobStep::from(1),
                         ),
                     )
                     .await?;

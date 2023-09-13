@@ -1733,7 +1733,7 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "SELECT
-                    aggregation_param, batch_id, client_timestamp_interval, state, round,
+                    aggregation_param, batch_id, client_timestamp_interval, state, step,
                     last_request_hash
                 FROM aggregation_jobs
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id
@@ -1771,7 +1771,7 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT
                     aggregation_job_id, aggregation_param, batch_id, client_timestamp_interval,
-                    state, round, last_request_hash
+                    state, step, last_request_hash
                 FROM aggregation_jobs
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id
                 WHERE tasks.task_id = $1
@@ -1814,7 +1814,7 @@ impl<C: Clock> Transaction<'_, C> {
             row.get::<_, SqlInterval>("client_timestamp_interval")
                 .as_interval(),
             row.get("state"),
-            row.get_postgres_integer_and_convert::<i32, _, _>("round")?,
+            row.get_postgres_integer_and_convert::<i32, _, _>("step")?,
         );
 
         if let Some(hash) = row.try_get::<_, Option<Vec<u8>>>("last_request_hash")? {
@@ -1951,7 +1951,7 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "INSERT INTO aggregation_jobs
                     (task_id, aggregation_job_id, aggregation_param, batch_id,
-                    client_timestamp_interval, state, round, last_request_hash)
+                    client_timestamp_interval, state, step, last_request_hash)
                 VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8)
                 ON CONFLICT DO NOTHING
                 RETURNING COALESCE(UPPER(client_timestamp_interval) < COALESCE($9::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
@@ -1970,7 +1970,7 @@ impl<C: Clock> Transaction<'_, C> {
                     /* client_timestamp_interval */
                     &SqlInterval::from(aggregation_job.client_timestamp_interval()),
                     /* state */ &aggregation_job.state(),
-                    /* round */ &(u16::from(aggregation_job.round()) as i32),
+                    /* step */ &(u16::from(aggregation_job.step()) as i32),
                     /* last_request_hash */
                     &aggregation_job.last_request_hash(),
                     /* now */ &self.clock.now().as_naive_date_time()?,
@@ -2021,7 +2021,7 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "UPDATE aggregation_jobs SET
                     state = $1,
-                    round = $2,
+                    step = $2,
                     last_request_hash = $3
                 FROM tasks
                 WHERE tasks.task_id = $4
@@ -2034,7 +2034,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* state */ &aggregation_job.state(),
-                    /* round */ &(u16::from(aggregation_job.round()) as i32),
+                    /* step */ &(u16::from(aggregation_job.step()) as i32),
                     /* last_request_hash */
                     &aggregation_job.last_request_hash(),
                     /* task_id */ &aggregation_job.task_id().as_ref(),

@@ -695,7 +695,7 @@ mod tests {
     use janus_messages::{
         query_type::TimeInterval, AggregateShare as AggregateShareMessage, AggregateShareAad,
         AggregateShareReq, AggregationJobContinueReq, AggregationJobId,
-        AggregationJobInitializeReq, AggregationJobResp, AggregationJobRound, BatchSelector,
+        AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep, BatchSelector,
         Collection, CollectionJobId, CollectionReq, Duration, Extension, ExtensionType,
         HpkeCiphertext, HpkeConfigId, HpkeConfigList, InputShareAad, Interval,
         PartialBatchSelector, PrepareContinue, PrepareError, PrepareInit, PrepareResp,
@@ -1711,7 +1711,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
+                        AggregationJobStep::from(0),
                     );
                     tx.put_aggregation_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &conflicting_aggregation_job,
@@ -1742,7 +1742,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
+                        AggregationJobStep::from(0),
                     );
                     tx.put_aggregation_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &non_conflicting_aggregation_job,
@@ -2530,7 +2530,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
+                        AggregationJobStep::from(0),
                     ))
                     .await?;
 
@@ -2592,7 +2592,7 @@ mod tests {
             .unwrap();
 
         let request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+            AggregationJobStep::from(1),
             Vec::from([
                 PrepareContinue::new(*report_metadata_0.id(), leader_prep_message_0.clone()),
                 PrepareContinue::new(*report_metadata_2.id(), leader_prep_message_2.clone()),
@@ -2653,7 +2653,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
-                AggregationJobRound::from(1),
+                AggregationJobStep::from(1),
             )
             .with_last_request_hash(aggregation_job.last_request_hash().unwrap())
         );
@@ -2870,7 +2870,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
+                        AggregationJobStep::from(0),
                     ))
                     .await?;
 
@@ -2946,7 +2946,7 @@ mod tests {
             .unwrap();
 
         let request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+            AggregationJobStep::from(1),
             Vec::from([
                 PrepareContinue::new(*report_metadata_0.id(), ping_pong_leader_message_0.clone()),
                 PrepareContinue::new(*report_metadata_1.id(), ping_pong_leader_message_1.clone()),
@@ -3197,7 +3197,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
+                        AggregationJobStep::from(0),
                     ))
                     .await?;
 
@@ -3248,7 +3248,7 @@ mod tests {
             .unwrap();
 
         let request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+            AggregationJobStep::from(1),
             Vec::from([
                 PrepareContinue::new(*report_metadata_3.id(), ping_pong_leader_message_3.clone()),
                 PrepareContinue::new(*report_metadata_4.id(), ping_pong_leader_message_4.clone()),
@@ -3453,7 +3453,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
+                        AggregationJobStep::from(0),
                     ))
                     .await?;
                     tx.put_report_aggregation(
@@ -3479,7 +3479,7 @@ mod tests {
 
         // Make request.
         let request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+            AggregationJobStep::from(1),
             Vec::from([PrepareContinue::new(
                 *report_metadata.id(),
                 // An AggregationJobContinueReq should only ever contain Continue or Finished
@@ -3562,7 +3562,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
+                        AggregationJobStep::from(0),
                     ))
                     .await?;
                     tx.put_report_aggregation(
@@ -3588,7 +3588,7 @@ mod tests {
 
         // Make request.
         let request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+            AggregationJobStep::from(1),
             Vec::from([PrepareContinue::new(
                 *report_metadata.id(),
                 PingPongMessage::Continue {
@@ -3650,7 +3650,7 @@ mod tests {
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
-                AggregationJobRound::from(1),
+                AggregationJobStep::from(1),
             )
             .with_last_request_hash(aggregation_job.last_request_hash().unwrap())
         );
@@ -3734,7 +3734,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
+                        AggregationJobStep::from(0),
                     ))
                     .await?;
                     tx.put_report_aggregation(
@@ -3760,7 +3760,7 @@ mod tests {
 
         // Make request.
         let request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+            AggregationJobStep::from(1),
             Vec::from([PrepareContinue::new(
                 ReportId::from(
                     [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1], // not the same as above
@@ -3882,7 +3882,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
+                        AggregationJobStep::from(0),
                     ))
                     .await?;
 
@@ -3925,7 +3925,7 @@ mod tests {
 
         // Make request.
         let request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+            AggregationJobStep::from(1),
             Vec::from([
                 // Report IDs are in opposite order to what was stored in the datastore.
                 PrepareContinue::new(
@@ -4000,7 +4000,7 @@ mod tests {
                             )
                             .unwrap(),
                             AggregationJobState::InProgress,
-                            AggregationJobRound::from(0),
+                            AggregationJobStep::from(0),
                         ),
                     )
                     .await?;
@@ -4021,7 +4021,7 @@ mod tests {
 
         // Make request.
         let request = AggregationJobContinueReq::new(
-            AggregationJobRound::from(1),
+            AggregationJobStep::from(1),
             Vec::from([PrepareContinue::new(
                 ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 PingPongMessage::Continue {

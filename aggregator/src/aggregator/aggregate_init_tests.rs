@@ -448,7 +448,7 @@ async fn aggregation_job_mutation_report_aggregations() {
 }
 
 #[tokio::test]
-async fn aggregation_job_init_two_round_vdaf_idempotence() {
+async fn aggregation_job_init_two_step_vdaf_idempotence() {
     // We must run Poplar1 in this test so that the aggregation job won't finish on the first step
     let test_case = setup_poplar1_aggregate_init_test().await;
 
