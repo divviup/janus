@@ -349,7 +349,7 @@ async fn handle_collection_start(
                 2,
                 bits,
                 length,
-                VdafInstance::chunk_size(nits * length),
+                VdafInstance::chunk_size(bits * length),
             )
             .context("failed to construct Prio3SumVec VDAF")?;
             handle_collect_generic(
