@@ -980,7 +980,12 @@ async fn taskprov_aggregate_share() {
         test.collector_hpke_keypair.private_key(),
         &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
         aggregate_share_resp.encrypted_aggregate_share(),
-        &AggregateShareAad::new(test.task_id, request.batch_selector().clone()).get_encoded(),
+        &AggregateShareAad::new(
+            test.task_id,
+            test.aggregation_param.get_encoded(),
+            request.batch_selector().clone(),
+        )
+        .get_encoded(),
     )
     .unwrap();
 }
@@ -1114,6 +1119,7 @@ async fn end_to_end() {
         aggregate_share_resp.encrypted_aggregate_share(),
         &AggregateShareAad::new(
             test.task_id,
+            test.aggregation_param.get_encoded(),
             aggregate_share_request.batch_selector().clone(),
         )
         .get_encoded(),

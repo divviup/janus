@@ -278,9 +278,10 @@ async fn collection_job_success_fixed_size() {
     let vdaf = dummy_vdaf::Vdaf::new();
     let leader_aggregate_share = dummy_vdaf::AggregateShare(0);
     let helper_aggregate_share = dummy_vdaf::AggregateShare(1);
+    let aggregation_param = dummy_vdaf::AggregationParam::default();
     let request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
-        AggregationParam::default().get_encoded(),
+        aggregation_param.get_encoded(),
     );
 
     for _ in 0..2 {
@@ -323,6 +324,7 @@ async fn collection_job_success_fixed_size() {
                         &helper_aggregate_share_bytes,
                         &AggregateShareAad::new(
                             *task.id(),
+                            aggregation_param.get_encoded(),
                             BatchSelector::new_fixed_size(batch_id),
                         )
                         .get_encoded(),
@@ -374,6 +376,7 @@ async fn collection_job_success_fixed_size() {
             collect_resp.leader_encrypted_aggregate_share(),
             &AggregateShareAad::new(
                 *test_case.task.id(),
+                aggregation_param.get_encoded(),
                 BatchSelector::new_fixed_size(batch_id),
             )
             .get_encoded(),
@@ -392,6 +395,7 @@ async fn collection_job_success_fixed_size() {
             collect_resp.helper_encrypted_aggregate_share(),
             &AggregateShareAad::new(
                 *test_case.task.id(),
+                aggregation_param.get_encoded(),
                 BatchSelector::new_fixed_size(batch_id),
             )
             .get_encoded(),

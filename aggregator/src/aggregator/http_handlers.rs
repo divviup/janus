@@ -4443,6 +4443,7 @@ mod tests {
                         &helper_aggregate_share_bytes,
                         &AggregateShareAad::new(
                             *task.id(),
+                            aggregation_param.get_encoded(),
                             BatchSelector::new_time_interval(batch_interval),
                         )
                         .get_encoded(),
@@ -4492,6 +4493,7 @@ mod tests {
             collect_resp.leader_encrypted_aggregate_share(),
             &AggregateShareAad::new(
                 *test_case.task.id(),
+                aggregation_param.get_encoded(),
                 BatchSelector::new_time_interval(batch_interval),
             )
             .get_encoded(),
@@ -4510,6 +4512,7 @@ mod tests {
             collect_resp.helper_encrypted_aggregate_share(),
             &AggregateShareAad::new(
                 *test_case.task.id(),
+                aggregation_param.get_encoded(),
                 BatchSelector::new_time_interval(batch_interval),
             )
             .get_encoded(),
@@ -5235,8 +5238,12 @@ mod tests {
                         &Role::Collector,
                     ),
                     aggregate_share_resp.encrypted_aggregate_share(),
-                    &AggregateShareAad::new(*task.id(), request.batch_selector().clone())
-                        .get_encoded(),
+                    &AggregateShareAad::new(
+                        *task.id(),
+                        dummy_vdaf::AggregationParam(0).get_encoded(),
+                        request.batch_selector().clone(),
+                    )
+                    .get_encoded(),
                 )
                 .unwrap();
 

@@ -2624,6 +2624,7 @@ impl VdafOps {
                     &leader_aggregate_share.get_encoded(),
                     &AggregateShareAad::new(
                         *collection_job.task_id(),
+                        collection_job.aggregation_parameter().get_encoded(),
                         BatchSelector::<Q>::new(collection_job.batch_identifier().clone()),
                     )
                     .get_encoded(),
@@ -2965,8 +2966,12 @@ impl VdafOps {
             collector_hpke_config,
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
             &aggregate_share_job.helper_aggregate_share().get_encoded(),
-            &AggregateShareAad::new(*task.id(), aggregate_share_req.batch_selector().clone())
-                .get_encoded(),
+            &AggregateShareAad::new(
+                *task.id(),
+                aggregate_share_job.aggregation_parameter().get_encoded(),
+                aggregate_share_req.batch_selector().clone(),
+            )
+            .get_encoded(),
         )?;
 
         Ok(AggregateShare::new(encrypted_aggregate_share))

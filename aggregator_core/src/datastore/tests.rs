@@ -2580,6 +2580,7 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
                 &[0, 1, 2, 3, 4, 5],
                 &AggregateShareAad::new(
                     *task.id(),
+                    ().get_encoded(),
                     BatchSelector::new_time_interval(first_batch_interval),
                 )
                 .get_encoded(),
