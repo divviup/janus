@@ -351,9 +351,10 @@ impl AggregationJobDriver {
                 info!(report_id = %report_aggregation.report_id(), "Received report with duplicate extensions");
                 self.aggregate_step_failure_counter
                     .add(1, &[KeyValue::new("type", "duplicate_extension")]);
-                report_aggregations_to_write.push(report_aggregation.with_state(
-                    ReportAggregationState::Failed(PrepareError::UnrecognizedMessage),
-                ));
+                report_aggregations_to_write.push(
+                    report_aggregation
+                        .with_state(ReportAggregationState::Failed(PrepareError::InvalidMessage)),
+                );
                 continue;
             }
 
@@ -1515,7 +1516,7 @@ mod tests {
                 *repeated_extension_report.metadata().time(),
                 1,
                 None,
-                ReportAggregationState::Failed(PrepareError::UnrecognizedMessage),
+                ReportAggregationState::Failed(PrepareError::InvalidMessage),
             );
         let want_missing_report_report_aggregation =
             ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(

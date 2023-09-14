@@ -3,9 +3,9 @@ use std::str::FromStr;
 /// Representation of the different problem types defined in Table 1 in §3.2.
 #[derive(Debug, PartialEq, Eq)]
 pub enum DapProblemType {
-    UnrecognizedMessage,
+    InvalidMessage,
     UnrecognizedTask,
-    RoundMismatch,
+    StepMismatch,
     MissingTaskId,
     UnrecognizedAggregationJob,
     OutdatedConfig,
@@ -24,11 +24,9 @@ impl DapProblemType {
     /// Returns the problem type URI for a particular kind of error.
     pub fn type_uri(&self) -> &'static str {
         match self {
-            DapProblemType::UnrecognizedMessage => {
-                "urn:ietf:params:ppm:dap:error:unrecognizedMessage"
-            }
+            DapProblemType::InvalidMessage => "urn:ietf:params:ppm:dap:error:invalidMessage",
             DapProblemType::UnrecognizedTask => "urn:ietf:params:ppm:dap:error:unrecognizedTask",
-            DapProblemType::RoundMismatch => "urn:ietf:params:ppm:dap:error:roundMismatch",
+            DapProblemType::StepMismatch => "urn:ietf:params:ppm:dap:error:stepMismatch",
             DapProblemType::MissingTaskId => "urn:ietf:params:ppm:dap:error:missingTaskID",
             DapProblemType::UnrecognizedAggregationJob => {
                 "urn:ietf:params:ppm:dap:error:unrecognizedAggregationJob"
@@ -53,14 +51,14 @@ impl DapProblemType {
     /// Returns a human-readable summary of a problem type.
     pub fn description(&self) -> &'static str {
         match self {
-            DapProblemType::UnrecognizedMessage => {
+            DapProblemType::InvalidMessage => {
                 "The message type for a response was incorrect or the payload was malformed."
             }
             DapProblemType::UnrecognizedTask => {
                 "An endpoint received a message with an unknown task ID."
             }
-            DapProblemType::RoundMismatch => {
-                "The leader and helper are not on the same round of VDAF preparation."
+            DapProblemType::StepMismatch => {
+                "The leader and helper are not on the same step of VDAF preparation."
             }
             DapProblemType::MissingTaskId => {
                 "HPKE configuration was requested without specifying a task ID."
@@ -103,13 +101,11 @@ impl FromStr for DapProblemType {
 
     fn from_str(value: &str) -> Result<DapProblemType, DapProblemTypeParseError> {
         match value {
-            "urn:ietf:params:ppm:dap:error:unrecognizedMessage" => {
-                Ok(DapProblemType::UnrecognizedMessage)
-            }
+            "urn:ietf:params:ppm:dap:error:invalidMessage" => Ok(DapProblemType::InvalidMessage),
             "urn:ietf:params:ppm:dap:error:unrecognizedTask" => {
                 Ok(DapProblemType::UnrecognizedTask)
             }
-            "urn:ietf:params:ppm:dap:error:roundMismatch" => Ok(DapProblemType::RoundMismatch),
+            "urn:ietf:params:ppm:dap:error:stepMismatch" => Ok(DapProblemType::StepMismatch),
             "urn:ietf:params:ppm:dap:error:missingTaskID" => Ok(DapProblemType::MissingTaskId),
             "urn:ietf:params:ppm:dap:error:unrecognizedAggregationJob" => {
                 Ok(DapProblemType::UnrecognizedAggregationJob)

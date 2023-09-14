@@ -290,9 +290,9 @@ impl<C: Clock> Aggregator<C> {
                 Some(task_id_base64) => {
                     let task_id_bytes = URL_SAFE_NO_PAD
                         .decode(task_id_base64)
-                        .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
+                        .map_err(|_| Error::InvalidMessage(None, "task_id"))?;
                     let task_id = TaskId::get_decoded(&task_id_bytes)
-                        .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
+                        .map_err(|_| Error::InvalidMessage(None, "task_id"))?;
                     let task_aggregator = self
                         .task_aggregator_for(&task_id)
                         .await?
@@ -734,7 +734,7 @@ impl<C: Clock> Aggregator<C> {
             .map(|url| url.try_into())
             .collect::<Result<Vec<Url>, _>>()?;
         if aggregator_urls.len() != 2 {
-            return Err(Error::UnrecognizedMessage(
+            return Err(Error::InvalidMessage(
                 Some(*task_id),
                 "taskprov configuration is missing one or both aggregators",
             ));
@@ -1586,11 +1586,11 @@ impl VdafOps {
         let req = AggregationJobInitializeReq::<Q>::get_decoded(req_bytes)?;
 
         // If two ReportShare messages have the same report ID, then the helper MUST abort with
-        // error "unrecognizedMessage". (§4.4.4.1)
+        // error "invalidMessage". (§4.5.1.2)
         let mut seen_report_ids = HashSet::with_capacity(req.prepare_inits().len());
         for prepare_init in req.prepare_inits() {
             if !seen_report_ids.insert(*prepare_init.report_share().metadata().id()) {
-                return Err(Error::UnrecognizedMessage(
+                return Err(Error::InvalidMessage(
                     Some(*task.id()),
                     "aggregate request contains duplicate report IDs",
                 ));
@@ -1700,37 +1700,71 @@ impl VdafOps {
             });
 
             let plaintext_input_share = plaintext.and_then(|plaintext| {
-                let plaintext_input_share = PlaintextInputShare::get_decoded(&plaintext).map_err(|error| {
-                    info!(task_id = %task.id(), metadata = ?prepare_init.report_share().metadata(), ?error, "Couldn't decode helper's plaintext input share");
-                    aggregate_step_failure_counter.add(1, &[KeyValue::new("type", "plaintext_input_share_decode_failure")]);
-                    PrepareError::UnrecognizedMessage
-                })?;
+                let plaintext_input_share =
+                    PlaintextInputShare::get_decoded(&plaintext).map_err(|error| {
+                        info!(
+                            task_id = %task.id(),
+                            metadata = ?prepare_init.report_share().metadata(),
+                            ?error, "Couldn't decode helper's plaintext input share",
+                        );
+                        aggregate_step_failure_counter.add(
+                            1,
+                            &[KeyValue::new(
+                                "type",
+                                "plaintext_input_share_decode_failure",
+                            )],
+                        );
+                        PrepareError::InvalidMessage
+                    })?;
                 // Check for repeated extensions.
                 let mut extension_types = HashSet::new();
                 if !plaintext_input_share
                     .extensions()
                     .iter()
-                    .all(|extension| extension_types.insert(extension.extension_type())) {
-                        info!(task_id = %task.id(), metadata = ?prepare_init.report_share().metadata(), "Received report share with duplicate extensions");
-                        aggregate_step_failure_counter.add(1, &[KeyValue::new("type", "duplicate_extension")]);
-                        return Err(PrepareError::UnrecognizedMessage)
+                    .all(|extension| extension_types.insert(extension.extension_type()))
+                {
+                    info!(
+                        task_id = %task.id(),
+                        metadata = ?prepare_init.report_share().metadata(),
+                        "Received report share with duplicate extensions",
+                    );
+                    aggregate_step_failure_counter
+                        .add(1, &[KeyValue::new("type", "duplicate_extension")]);
+                    return Err(PrepareError::InvalidMessage);
                 }
                 Ok(plaintext_input_share)
             });
 
             let input_share = plaintext_input_share.and_then(|plaintext_input_share| {
-                A::InputShare::get_decoded_with_param(&(vdaf, Role::Helper.index().unwrap()), plaintext_input_share.payload())
-                    .map_err(|error| {
-                        info!(task_id = %task.id(), metadata = ?prepare_init.report_share().metadata(), ?error, "Couldn't decode helper's input share");
-                        aggregate_step_failure_counter.add(1, &[KeyValue::new("type", "input_share_decode_failure")]);
-                        PrepareError::UnrecognizedMessage
-                    })
+                A::InputShare::get_decoded_with_param(
+                    &(vdaf, Role::Helper.index().unwrap()),
+                    plaintext_input_share.payload(),
+                )
+                .map_err(|error| {
+                    info!(
+                        task_id = %task.id(),
+                        metadata = ?prepare_init.report_share().metadata(),
+                        ?error, "Couldn't decode helper's input share",
+                    );
+                    aggregate_step_failure_counter
+                        .add(1, &[KeyValue::new("type", "input_share_decode_failure")]);
+                    PrepareError::InvalidMessage
+                })
             });
 
-            let public_share = A::PublicShare::get_decoded_with_param(vdaf, prepare_init.report_share().public_share()).map_err(|error|{
-                info!(task_id = %task.id(), metadata = ?prepare_init.report_share().metadata(), ?error, "Couldn't decode public share");
-                aggregate_step_failure_counter.add(1, &[KeyValue::new("type", "public_share_decode_failure")]);
-                PrepareError::UnrecognizedMessage
+            let public_share = A::PublicShare::get_decoded_with_param(
+                vdaf,
+                prepare_init.report_share().public_share(),
+            )
+            .map_err(|error| {
+                info!(
+                    task_id = %task.id(),
+                    metadata = ?prepare_init.report_share().metadata(),
+                    ?error, "Couldn't decode public share",
+                );
+                aggregate_step_failure_counter
+                    .add(1, &[KeyValue::new("type", "public_share_decode_failure")]);
+                PrepareError::InvalidMessage
             });
 
             let shares = input_share.and_then(|input_share| Ok((public_share?, input_share)));
@@ -2035,7 +2069,7 @@ impl VdafOps {
         A::OutputShare: Send + Sync,
     {
         if leader_aggregation_job.round() == AggregationJobRound::from(0) {
-            return Err(Error::UnrecognizedMessage(
+            return Err(Error::InvalidMessage(
                 Some(*task.id()),
                 "aggregation job cannot be advanced to round 0",
             ));
@@ -2113,11 +2147,11 @@ impl VdafOps {
                         // If this is not a replay, the leader should be advancing our state to the next
                         // round and no further.
                         return Err(datastore::Error::User(
-                            Error::RoundMismatch {
+                            Error::StepMismatch {
                                 task_id: *task.id(),
                                 aggregation_job_id,
-                                expected_round: helper_aggregation_job.round().increment(),
-                                got_round: leader_aggregation_job.round(),
+                                expected_step: helper_aggregation_job.round().increment(),
+                                got_step: leader_aggregation_job.round(),
                             }
                             .into(),
                         ));

@@ -44,16 +44,16 @@ impl Handler for Error {
         match self {
             Error::InvalidConfiguration(_) => conn.with_status(Status::InternalServerError),
             Error::MessageDecode(_) => {
-                conn.with_problem_details(DapProblemType::UnrecognizedMessage, None)
+                conn.with_problem_details(DapProblemType::InvalidMessage, None)
             }
             Error::ReportRejected(task_id, _, _) => {
                 conn.with_problem_details(DapProblemType::ReportRejected, Some(task_id))
             }
-            Error::UnrecognizedMessage(task_id, _) => {
-                conn.with_problem_details(DapProblemType::UnrecognizedMessage, task_id.as_ref())
+            Error::InvalidMessage(task_id, _) => {
+                conn.with_problem_details(DapProblemType::InvalidMessage, task_id.as_ref())
             }
-            Error::RoundMismatch { task_id, .. } => {
-                conn.with_problem_details(DapProblemType::RoundMismatch, Some(task_id))
+            Error::StepMismatch { task_id, .. } => {
+                conn.with_problem_details(DapProblemType::StepMismatch, Some(task_id))
             }
             Error::UnrecognizedTask(task_id) => {
                 conn.with_problem_details(DapProblemType::UnrecognizedTask, Some(task_id))
@@ -99,7 +99,7 @@ impl Handler for Error {
             | Error::TaskParameters(_) => conn.with_status(Status::InternalServerError),
             Error::AggregateShareRequestRejected(_, _) => conn.with_status(Status::BadRequest),
             Error::EmptyAggregation(task_id) => {
-                conn.with_problem_details(DapProblemType::UnrecognizedMessage, Some(task_id))
+                conn.with_problem_details(DapProblemType::InvalidMessage, Some(task_id))
             }
             Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
             Error::BadRequest(_) => conn.with_status(Status::BadRequest),
@@ -582,14 +582,14 @@ fn parse_taskprov_header<C: Clock>(
             Some(taskprov_header) => {
                 let task_config_encoded =
                     &URL_SAFE_NO_PAD.decode(taskprov_header).map_err(|_| {
-                        Error::UnrecognizedMessage(
+                        Error::InvalidMessage(
                             Some(*task_id),
                             "taskprov header could not be decoded",
                         )
                     })?;
 
                 if task_id.as_ref() != digest(&SHA256, task_config_encoded).as_ref() {
-                    Err(Error::UnrecognizedMessage(
+                    Err(Error::InvalidMessage(
                         Some(*task_id),
                         "derived taskprov task ID does not match task config",
                     ))
@@ -1842,7 +1842,7 @@ mod tests {
             );
             assert_matches!(
                 prepare_step_2.result(),
-                &PrepareStepResult::Reject(PrepareError::UnrecognizedMessage)
+                &PrepareStepResult::Reject(PrepareError::InvalidMessage)
             );
 
             let prepare_step_3 = aggregate_resp.prepare_resps().get(3).unwrap();
@@ -1882,7 +1882,7 @@ mod tests {
             );
             assert_eq!(
                 prepare_step_6.result(),
-                &PrepareStepResult::Reject(PrepareError::UnrecognizedMessage),
+                &PrepareStepResult::Reject(PrepareError::InvalidMessage),
             );
 
             let prepare_step_7 = aggregate_resp.prepare_resps().get(7).unwrap();
@@ -1892,7 +1892,7 @@ mod tests {
             );
             assert_eq!(
                 prepare_step_7.result(),
-                &PrepareStepResult::Reject(PrepareError::UnrecognizedMessage),
+                &PrepareStepResult::Reject(PrepareError::InvalidMessage),
             );
 
             let prepare_step_8 = aggregate_resp.prepare_resps().get(8).unwrap();
@@ -2382,7 +2382,7 @@ mod tests {
             take_problem_details(&mut test_conn).await,
             json!({
                 "status": want_status,
-                "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
+                "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
                 "taskid": format!("{}", task.id()),
             })
@@ -3778,7 +3778,7 @@ mod tests {
             &request,
             &handler,
             Status::BadRequest,
-            "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
+            "urn:ietf:params:ppm:dap:error:invalidMessage",
             "The message type for a response was incorrect or the payload was malformed.",
         )
         .await;
@@ -3950,7 +3950,7 @@ mod tests {
             &request,
             &handler,
             Status::BadRequest,
-            "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
+            "urn:ietf:params:ppm:dap:error:invalidMessage",
             "The message type for a response was incorrect or the payload was malformed.",
         )
         .await;
@@ -4036,7 +4036,7 @@ mod tests {
             &request,
             &handler,
             Status::BadRequest,
-            "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
+            "urn:ietf:params:ppm:dap:error:invalidMessage",
             "The message type for a response was incorrect or the payload was malformed.",
         )
         .await;
@@ -4135,7 +4135,7 @@ mod tests {
             take_problem_details(&mut test_conn).await,
             json!({
                 "status": Status::BadRequest as u16,
-                "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
+                "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
             })
         );

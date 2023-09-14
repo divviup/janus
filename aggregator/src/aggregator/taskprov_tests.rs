@@ -467,7 +467,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
         take_problem_details(&mut test_conn).await,
         json!({
             "status": Status::BadRequest as u16,
-            "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
+            "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
             "title": "The message type for a response was incorrect or the payload was malformed.",
             "taskid": format!("{}", test.task_id),
         })
@@ -548,7 +548,7 @@ async fn taskprov_opt_out_missing_aggregator() {
         take_problem_details(&mut test_conn).await,
         json!({
             "status": Status::BadRequest as u16,
-            "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
+            "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
             "title": "The message type for a response was incorrect or the payload was malformed.",
             "taskid": format!("{}", another_task_id),
         })

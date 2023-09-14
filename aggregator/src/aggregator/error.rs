@@ -31,19 +31,19 @@ pub enum Error {
     /// far in the future, §4.3.2.
     #[error("task {0}: report {1} too early: {2}")]
     ReportTooEarly(TaskId, ReportId, Time),
-    /// Corresponds to `unrecognizedMessage`, §3.2
-    #[error("task {0:?}: unrecognized message: {1}")]
-    UnrecognizedMessage(Option<TaskId>, &'static str),
-    /// Corresponds to `roundMismatch`
+    /// Corresponds to `invalidMessage`, §3.2
+    #[error("task {0:?}: invalid message: {1}")]
+    InvalidMessage(Option<TaskId>, &'static str),
+    /// Corresponds to `stepMismatch`
     #[error(
-        "task {task_id}: unexpected round in aggregation job {aggregation_job_id} (expected \
-         {expected_round}, got {got_round})"
+        "task {task_id}: unexpected step in aggregation job {aggregation_job_id} (expected \
+         {expected_step}, got {got_step})"
     )]
-    RoundMismatch {
+    StepMismatch {
         task_id: TaskId,
         aggregation_job_id: AggregationJobId,
-        expected_round: AggregationJobRound,
-        got_round: AggregationJobRound,
+        expected_step: AggregationJobRound,
+        got_step: AggregationJobRound,
     },
     /// Corresponds to `unrecognizedTask`, §3.2
     #[error("task {0}: unrecognized task")]
@@ -157,8 +157,8 @@ impl Error {
             Error::Message(_) => "message",
             Error::ReportRejected(_, _, _) => "report_rejected",
             Error::ReportTooEarly(_, _, _) => "report_too_early",
-            Error::UnrecognizedMessage(_, _) => "unrecognized_message",
-            Error::RoundMismatch { .. } => "round_mismatch",
+            Error::InvalidMessage(_, _) => "unrecognized_message",
+            Error::StepMismatch { .. } => "step_mismatch",
             Error::UnrecognizedTask(_) => "unrecognized_task",
             Error::MissingTaskId => "missing_task_id",
             Error::UnrecognizedAggregationJob(_, _) => "unrecognized_aggregation_job",

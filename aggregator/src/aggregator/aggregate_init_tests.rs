@@ -1,9 +1,13 @@
 use crate::aggregator::{
-    http_handlers::{aggregator_handler, test_util::decode_response_body},
+    http_handlers::{
+        aggregator_handler,
+        test_util::{decode_response_body, take_problem_details},
+    },
     tests::generate_helper_report_share,
     Config,
 };
 use assert_matches::assert_matches;
+use http::StatusCode;
 use janus_aggregator_core::{
     datastore::{
         test_util::{ephemeral_datastore, EphemeralDatastore},
@@ -31,6 +35,7 @@ use prio::{
     },
 };
 use rand::random;
+use serde_json::json;
 use std::sync::Arc;
 use trillium::{Handler, KnownHeaderName, Status};
 use trillium_testing::{prelude::put, TestConn};
@@ -459,6 +464,48 @@ async fn aggregation_job_init_two_round_vdaf_idempotence() {
     let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut response).await;
     assert_eq!(
         aggregation_job_resp,
-        test_case.aggregation_job_init_resp.unwrap()
+        test_case.aggregation_job_init_resp.unwrap(),
+    );
+}
+
+#[tokio::test]
+async fn aggregation_job_init_wrong_query() {
+    let test_case = setup_aggregate_init_test().await;
+
+    // setup_aggregate_init_test sets up a task with a time interval query. We send a fixed size
+    // query which should yield an error.
+    let wrong_query = AggregationJobInitializeReq::new(
+        test_case.aggregation_param.get_encoded(),
+        PartialBatchSelector::new_fixed_size(random()),
+        test_case.prepare_inits,
+    );
+
+    let mut response = put(test_case
+        .task
+        .aggregation_job_uri(&random())
+        .unwrap()
+        .path())
+    .with_request_header(
+        DAP_AUTH_HEADER,
+        test_case
+            .task
+            .primary_aggregator_auth_token()
+            .as_ref()
+            .to_owned(),
+    )
+    .with_request_header(
+        KnownHeaderName::ContentType,
+        AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+    )
+    .with_request_body(wrong_query.get_encoded())
+    .run_async(&test_case.handler)
+    .await;
+    assert_eq!(
+        take_problem_details(&mut response).await,
+        json!({
+            "status": StatusCode::BAD_REQUEST.as_u16(),
+            "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
+            "title": "The message type for a response was incorrect or the payload was malformed.",
+        }),
     );
 }

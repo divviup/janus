@@ -62,7 +62,7 @@ impl VdafOps {
             let report_aggregation = loop {
                 let report_agg = report_aggregations_iter.next().ok_or_else(|| {
                     datastore::Error::User(
-                        Error::UnrecognizedMessage(
+                        Error::InvalidMessage(
                             Some(*task.id()),
                             "leader sent unexpected, duplicate, or out-of-order prepare steps",
                         )
@@ -116,7 +116,7 @@ impl VdafOps {
                 }
                 _ => {
                     return Err(datastore::Error::User(
-                        Error::UnrecognizedMessage(
+                        Error::InvalidMessage(
                             Some(*task.id()),
                             "leader sent prepare step for non-WAITING report aggregation",
                         )
@@ -597,7 +597,7 @@ mod tests {
             &round_zero_request,
             &test_case.handler,
             Status::BadRequest,
-            "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
+            "urn:ietf:params:ppm:dap:error:invalidMessage",
             "The message type for a response was incorrect or the payload was malformed.",
         )
         .await;
@@ -768,8 +768,8 @@ mod tests {
             &past_round_request,
             &test_case.handler,
             Status::BadRequest,
-            "urn:ietf:params:ppm:dap:error:roundMismatch",
-            "The leader and helper are not on the same round of VDAF preparation.",
+            "urn:ietf:params:ppm:dap:error:stepMismatch",
+            "The leader and helper are not on the same step of VDAF preparation.",
         )
         .await;
     }
@@ -791,8 +791,8 @@ mod tests {
             &future_round_request,
             &test_case.handler,
             Status::BadRequest,
-            "urn:ietf:params:ppm:dap:error:roundMismatch",
-            "The leader and helper are not on the same round of VDAF preparation.",
+            "urn:ietf:params:ppm:dap:error:stepMismatch",
+            "The leader and helper are not on the same step of VDAF preparation.",
         )
         .await;
     }
