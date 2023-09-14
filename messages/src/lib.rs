@@ -4562,7 +4562,7 @@ mod tests {
                 ]),
             },
             concat!(
-                "A5A5", // round
+                "A5A5", // step
                 concat!(
                     // prepare_steps
                     "00000036", // length
