@@ -99,7 +99,7 @@ mod tests {
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
-        AggregationJobRound, Duration, FixedSizeQuery, HpkeCiphertext, HpkeConfigId, Interval,
+        AggregationJobStep, Duration, FixedSizeQuery, HpkeCiphertext, HpkeConfigId, Interval,
         Query, ReportIdChecksum, ReportMetadata, ReportShare, Role, Time,
     };
     use rand::random;
@@ -153,7 +153,7 @@ mod tests {
                             (),
                             Interval::from_time(&client_timestamp).unwrap(),
                             AggregationJobState::InProgress,
-                            AggregationJobRound::from(0),
+                            AggregationJobStep::from(0),
                         ),
                     )
                     .await
@@ -343,7 +343,7 @@ mod tests {
                             (),
                             Interval::from_time(&client_timestamp).unwrap(),
                             AggregationJobState::InProgress,
-                            AggregationJobRound::from(0),
+                            AggregationJobStep::from(0),
                         ),
                     )
                     .await
@@ -524,7 +524,7 @@ mod tests {
                         batch_id,
                         Interval::from_time(&client_timestamp).unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
+                        AggregationJobStep::from(0),
                     );
                     tx.put_aggregation_job(&aggregation_job).await.unwrap();
 
@@ -717,7 +717,7 @@ mod tests {
                         batch_id,
                         Interval::from_time(&client_timestamp).unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
+                        AggregationJobStep::from(0),
                     );
                     tx.put_aggregation_job(&aggregation_job).await.unwrap();
 

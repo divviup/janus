@@ -39,7 +39,7 @@ use janus_core::{
     time::MockClock,
 };
 use janus_messages::{
-    query_type::TimeInterval, AggregationJobRound, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId,
+    query_type::TimeInterval, AggregationJobStep, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId,
     HpkeKdfId, HpkeKemId, HpkePublicKey, Interval, Role, TaskId, Time,
 };
 use rand::{distributions::Standard, random, thread_rng, Rng};
@@ -763,7 +763,7 @@ async fn get_task_metrics() {
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
                     AggregationJobState::InProgress,
-                    AggregationJobRound::from(0),
+                    AggregationJobStep::from(0),
                 ))
                 .await?;
 

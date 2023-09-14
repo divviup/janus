@@ -1,7 +1,7 @@
 use http_api_problem::HttpApiProblem;
 use janus_aggregator_core::{datastore, task};
 use janus_messages::{
-    problem_type::DapProblemType, AggregationJobId, AggregationJobRound, CollectionJobId,
+    problem_type::DapProblemType, AggregationJobId, AggregationJobStep, CollectionJobId,
     HpkeConfigId, Interval, PrepareError, ReportId, ReportIdChecksum, Role, TaskId, Time,
 };
 use opentelemetry::{metrics::Counter, KeyValue};
@@ -42,8 +42,8 @@ pub enum Error {
     StepMismatch {
         task_id: TaskId,
         aggregation_job_id: AggregationJobId,
-        expected_step: AggregationJobRound,
-        got_step: AggregationJobRound,
+        expected_step: AggregationJobStep,
+        got_step: AggregationJobStep,
     },
     /// Corresponds to `unrecognizedTask`, §3.2
     #[error("task {0}: unrecognized task")]

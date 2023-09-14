@@ -12,7 +12,7 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
-    AggregationJobId, AggregationJobRound, BatchId, CollectionJobId, Duration, Extension,
+    AggregationJobId, AggregationJobStep, BatchId, CollectionJobId, Duration, Extension,
     HpkeCiphertext, Interval, PrepareError, PrepareResp, Query, ReportId, ReportIdChecksum,
     ReportMetadata, Role, TaskId, Time,
 };
@@ -233,11 +233,11 @@ pub struct AggregationJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggrega
     client_timestamp_interval: Interval,
     /// The overall state of this aggregation job.
     state: AggregationJobState,
-    /// The round of VDAF preparation that this aggregation job is currently on.
-    round: AggregationJobRound,
+    /// The step of VDAF preparation that this aggregation job is currently on.
+    step: AggregationJobStep,
     /// The SHA-256 hash of the most recent [`janus_messages::AggregationJobContinueReq`]
     /// received for this aggregation job. Will only be set for helpers, and only after the
-    /// first round of the job.
+    /// first step of the job.
     last_request_hash: Option<[u8; 32]>,
 }
 
@@ -252,7 +252,7 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         batch_id: Q::PartialBatchIdentifier,
         client_timestamp_interval: Interval,
         state: AggregationJobState,
-        round: AggregationJobRound,
+        step: AggregationJobStep,
     ) -> Self {
         Self {
             task_id,
@@ -261,7 +261,7 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
             batch_id,
             client_timestamp_interval,
             state,
-            round,
+            step,
             last_request_hash: None,
         }
     }
@@ -306,15 +306,15 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         AggregationJob { state, ..self }
     }
 
-    /// Returns the round of the VDAF preparation protocol the aggregation job is on.
-    pub fn round(&self) -> AggregationJobRound {
-        self.round
+    /// Returns the step of the VDAF preparation protocol the aggregation job is on.
+    pub fn step(&self) -> AggregationJobStep {
+        self.step
     }
 
     /// Returns a new [`AggregationJob`] corresponding to this aggregation job updated to be on
-    /// the given VDAF preparation round.
-    pub fn with_round(self, round: AggregationJobRound) -> Self {
-        Self { round, ..self }
+    /// the given VDAF preparation step.
+    pub fn with_step(self, step: AggregationJobStep) -> Self {
+        Self { step, ..self }
     }
 
     /// Returns the SHA-256 digest of the most recent
@@ -355,7 +355,7 @@ where
             && self.batch_id == other.batch_id
             && self.client_timestamp_interval == other.client_timestamp_interval
             && self.state == other.state
-            && self.round == other.round
+            && self.step == other.step
             && self.last_request_hash == other.last_request_hash
     }
 }

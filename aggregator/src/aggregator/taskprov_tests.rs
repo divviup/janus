@@ -44,7 +44,7 @@ use janus_messages::{
     },
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq,
     AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
-    AggregationJobRound, BatchSelector, Duration, Interval, PartialBatchSelector, PrepareContinue,
+    AggregationJobStep, BatchSelector, Duration, Interval, PartialBatchSelector, PrepareContinue,
     PrepareInit, PrepareResp, PrepareStepResult, ReportIdChecksum, ReportMetadata, ReportShare,
     Role, TaskId, Time,
 };
@@ -155,7 +155,7 @@ async fn setup_taskprov_test() -> TaskprovTestCase {
     task_config.encode(&mut task_config_encoded);
 
     // We use a real VDAF since taskprov doesn't have any allowance for a test VDAF, and we use
-    // Poplar1 so that the VDAF wil take more than one round, so we can exercise aggregation
+    // Poplar1 so that the VDAF wil take more than one step, so we can exercise aggregation
     // continuation.
     let vdaf = Poplar1::new(1);
 
@@ -755,7 +755,7 @@ async fn taskprov_aggregate_continue() {
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
-                        AggregationJobRound::from(0),
+                        AggregationJobStep::from(0),
                     ),
                 )
                 .await?;
@@ -792,7 +792,7 @@ async fn taskprov_aggregate_continue() {
         .unwrap();
 
     let request = AggregationJobContinueReq::new(
-        AggregationJobRound::from(1),
+        AggregationJobStep::from(1),
         Vec::from([PrepareContinue::new(
             *test.report_metadata.id(),
             test.transcript.leader_prepare_transitions[1]
@@ -1044,7 +1044,7 @@ async fn end_to_end() {
     );
 
     let aggregation_job_continue_request = AggregationJobContinueReq::new(
-        AggregationJobRound::from(1),
+        AggregationJobStep::from(1),
         Vec::from([PrepareContinue::new(
             *test.report_metadata.id(),
             test.transcript.leader_prepare_transitions[1]

@@ -17,7 +17,7 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
-    AggregationJobRound, Duration as DurationMsg, Interval, Role, TaskId,
+    AggregationJobStep, Duration as DurationMsg, Interval, Role, TaskId,
 };
 use opentelemetry::{
     metrics::{Histogram, Meter, Unit},
@@ -579,7 +579,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             (),
                             client_timestamp_interval,
                             AggregationJobState::InProgress,
-                            AggregationJobRound::from(0),
+                            AggregationJobStep::from(0),
                         );
 
                         let report_aggregations = agg_job_reports
@@ -692,7 +692,7 @@ mod tests {
     use janus_messages::{
         codec::ParameterizedDecode,
         query_type::{FixedSize, TimeInterval},
-        AggregationJobRound, Interval, ReportId, Role, TaskId, Time,
+        AggregationJobStep, Interval, ReportId, Role, TaskId, Time,
     };
     use prio::vdaf::{self, prio3::Prio3Count};
     use std::{collections::HashSet, iter, sync::Arc, time::Duration};
@@ -807,7 +807,7 @@ mod tests {
         assert_eq!(leader_aggregations.len(), 1);
         let leader_aggregation = leader_aggregations.into_iter().next().unwrap();
         assert_eq!(leader_aggregation.0.partial_batch_identifier(), &());
-        assert_eq!(leader_aggregation.0.round(), AggregationJobRound::from(0));
+        assert_eq!(leader_aggregation.0.step(), AggregationJobStep::from(0));
         assert_eq!(
             leader_aggregation.1,
             Vec::from([*leader_report.metadata().id()])
@@ -910,8 +910,8 @@ mod tests {
             .unwrap();
         let mut seen_report_ids = HashSet::new();
         for (agg_job, report_ids) in &agg_jobs {
-            // Jobs are created in round 0
-            assert_eq!(agg_job.round(), AggregationJobRound::from(0));
+            // Jobs are created in step 0
+            assert_eq!(agg_job.step(), AggregationJobStep::from(0));
 
             // The batch is at most MAX_AGGREGATION_JOB_SIZE in size.
             assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
@@ -1163,8 +1163,8 @@ mod tests {
             // Job immediately finished since all reports are in a closed batch.
             assert_eq!(agg_job.state(), &AggregationJobState::Finished);
 
-            // Jobs are created in round 0.
-            assert_eq!(agg_job.round(), AggregationJobRound::from(0));
+            // Jobs are created in step 0.
+            assert_eq!(agg_job.step(), AggregationJobStep::from(0));
 
             // The batch is at most MAX_AGGREGATION_JOB_SIZE in size.
             assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
@@ -1314,8 +1314,8 @@ mod tests {
         let mut seen_report_ids = HashSet::new();
         let mut batches_with_small_agg_jobs = HashSet::new();
         for (agg_job, report_ids) in agg_jobs {
-            // Aggregation jobs are created in round 0.
-            assert_eq!(agg_job.round(), AggregationJobRound::from(0));
+            // Aggregation jobs are created in step 0.
+            assert_eq!(agg_job.step(), AggregationJobStep::from(0));
 
             // Every batch corresponds to one of the outstanding batches.
             assert!(batch_ids.contains(agg_job.batch_id()));
@@ -1648,7 +1648,7 @@ mod tests {
         // Verify consistency of batches and aggregation jobs.
         let mut seen_report_ids = HashSet::new();
         for (agg_job, report_ids) in agg_jobs {
-            assert_eq!(agg_job.round(), AggregationJobRound::from(0));
+            assert_eq!(agg_job.step(), AggregationJobStep::from(0));
             assert!(batch_ids.contains(agg_job.batch_id()));
             assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
 
@@ -1840,7 +1840,7 @@ mod tests {
         // Verify consistency of batches and aggregation jobs.
         let mut seen_report_ids = HashSet::new();
         for (agg_job, report_ids) in agg_jobs {
-            assert_eq!(agg_job.round(), AggregationJobRound::from(0));
+            assert_eq!(agg_job.step(), AggregationJobStep::from(0));
             assert!(batch_ids.contains(agg_job.batch_id()));
             assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
 
@@ -1996,7 +1996,7 @@ mod tests {
         let mut seen_report_ids = HashSet::new();
         let mut batches_with_small_agg_jobs = HashSet::new();
         for (agg_job, report_ids) in agg_jobs {
-            assert_eq!(agg_job.round(), AggregationJobRound::from(0));
+            assert_eq!(agg_job.step(), AggregationJobStep::from(0));
             assert!(batch_ids.contains(agg_job.batch_id()));
             assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
 
