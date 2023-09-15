@@ -1845,14 +1845,20 @@ impl Decode for InputShareAad {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateShareAad<Q: QueryType> {
     task_id: TaskId,
+    aggregation_parameter: Vec<u8>,
     batch_selector: BatchSelector<Q>,
 }
 
 impl<Q: QueryType> AggregateShareAad<Q> {
     /// Constructs a new aggregate share AAD.
-    pub fn new(task_id: TaskId, batch_selector: BatchSelector<Q>) -> Self {
+    pub fn new(
+        task_id: TaskId,
+        aggregation_parameter: Vec<u8>,
+        batch_selector: BatchSelector<Q>,
+    ) -> Self {
         Self {
             task_id,
+            aggregation_parameter,
             batch_selector,
         }
     }
@@ -1860,6 +1866,11 @@ impl<Q: QueryType> AggregateShareAad<Q> {
     /// Retrieves the task ID associated with this aggregate share AAD.
     pub fn task_id(&self) -> &TaskId {
         &self.task_id
+    }
+
+    /// Retrieves the aggregation parameter associated with this aggregate share AAD.
+    pub fn aggregation_parameter(&self) -> &[u8] {
+        &self.aggregation_parameter
     }
 
     /// Retrieves the batch selector associated with this aggregate share AAD.
@@ -1871,21 +1882,29 @@ impl<Q: QueryType> AggregateShareAad<Q> {
 impl<Q: QueryType> Encode for AggregateShareAad<Q> {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.task_id.encode(bytes);
+        encode_u32_items(bytes, &(), &self.aggregation_parameter);
         self.batch_selector.encode(bytes);
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        Some(self.task_id.encoded_len()? + self.batch_selector.encoded_len()?)
+        Some(
+            self.task_id.encoded_len()?
+                + 4
+                + self.aggregation_parameter.len()
+                + self.batch_selector.encoded_len()?,
+        )
     }
 }
 
 impl<Q: QueryType> Decode for AggregateShareAad<Q> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let task_id = TaskId::decode(bytes)?;
+        let aggregation_parameter = decode_u32_items(&(), bytes)?;
         let batch_selector = BatchSelector::decode(bytes)?;
 
         Ok(Self {
             task_id,
+            aggregation_parameter,
             batch_selector,
         })
     }
@@ -4916,6 +4935,7 @@ mod tests {
         roundtrip_encoding(&[(
             AggregateShareAad::<TimeInterval> {
                 task_id: TaskId::from([12u8; 32]),
+                aggregation_parameter: Vec::from([0, 1, 2, 3]),
                 batch_selector: BatchSelector {
                     batch_identifier: Interval::new(
                         Time::from_seconds_since_epoch(54321),
@@ -4926,6 +4946,11 @@ mod tests {
             },
             concat!(
                 "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // task_id
+                concat!(
+                    // aggregation_parameter
+                    "00000004", // length
+                    "00010203", //opaque data
+                ),
                 concat!(
                     // batch_selector
                     "01", // query_type
@@ -4942,12 +4967,18 @@ mod tests {
         roundtrip_encoding(&[(
             AggregateShareAad::<FixedSize> {
                 task_id: TaskId::from([u8::MIN; 32]),
+                aggregation_parameter: Vec::from([3, 2, 1, 0]),
                 batch_selector: BatchSelector {
                     batch_identifier: BatchId::from([7u8; 32]),
                 },
             },
             concat!(
                 "0000000000000000000000000000000000000000000000000000000000000000", // task_id
+                concat!(
+                    // aggregation_parameter
+                    "00000004", // length
+                    "03020100", //opaque data
+                ),
                 concat!(
                     // batch_selector
                     "02", // query_type

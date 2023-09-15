@@ -36,7 +36,7 @@ async fn run_divviup_ts_integration_test(container_client: &Cli, vdaf: VdafInsta
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divviup-ts does not currently support DAP-06 (issue #1669)"]
+#[ignore = "divviup-ts does not currently support DAP-07 (issue #1669)"]
 async fn janus_divviup_ts_count() {
     install_test_trace_subscriber();
 
@@ -44,7 +44,7 @@ async fn janus_divviup_ts_count() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divviup-ts does not currently support DAP-06 (issue #1669)"]
+#[ignore = "divviup-ts does not currently support DAP-07 (issue #1669)"]
 async fn janus_divviup_ts_sum() {
     install_test_trace_subscriber();
 
@@ -52,7 +52,7 @@ async fn janus_divviup_ts_sum() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divviup-ts does not currently support DAP-06 (issue #1669)"]
+#[ignore = "divviup-ts does not currently support DAP-07 (issue #1669)"]
 async fn janus_divviup_ts_histogram() {
     install_test_trace_subscriber();
 

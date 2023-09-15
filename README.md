@@ -28,7 +28,15 @@ branch.
 | `release/0.4` | [`draft-ietf-ppm-dap-04`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/04/) | Yes | Unmaintained as of May 24, 2023 |
 | `release/0.subscriber-01` | [`draft-ietf-ppm-dap-02`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/02/) plus extensions | No | Supported |
 | `release/0.5` | [`draft-ietf-ppm-dap-04`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/04/) | Yes | Supported |
-| `main` | [`draft-ietf-ppm-dap-05`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/05/) | [Partial](https://github.com/divviup/janus/issues/1669) | Supported |
+| `main` | [`draft-ietf-ppm-dap-07`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/07/) | Yes | Supported |
+
+Note that no version of Janus supports `draft-ietf-ppm-dap-05` or `-06`. Draft
+05 was skipped because there were flaws in its usage of the new ping-pong
+topology introduced in `draft-irtf-cfrg-vdaf-06`. Draft 6 fixed those issues,
+but was skipped because it was published from the wrong commit of
+[`draft-ietf-ppm-dap`](https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap) and so
+contains a couple of bugs. `draft-ietf-ppm-dap-07` is effectively identical to
+draft 6, but with those bugs fixed.
 
 ## Building
 
@@ -40,8 +48,8 @@ subtle incompatibilities between the two that will cause tests to fail.
 
 ### Container image
 
-To build container images, run `docker buildx bake --load`. This will produce images
-tagged `janus_aggregator`, `janus_aggregation_job_creator`,
+To build container images, run `docker buildx bake --load`. This will produce
+images tagged `janus_aggregator`, `janus_aggregation_job_creator`,
 `janus_aggregation_job_driver`, `janus_collection_job_driver`, `janus_cli`,
 `janus_interop_client`, `janus_interop_aggregator`, and
 `janus_interop_collector` by default.

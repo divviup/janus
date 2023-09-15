@@ -516,6 +516,7 @@ impl<V: vdaf::Collector> Collector<V> {
                 encrypted_aggregate_share,
                 &AggregateShareAad::new(
                     self.parameters.task_id,
+                    job.aggregation_parameter.get_encoded(),
                     BatchSelector::<Q>::new(Q::batch_identifier_for_collection(
                         &job.query,
                         &collect_response,
@@ -692,10 +693,12 @@ mod tests {
     fn build_collect_response_time<const SEED_SIZE: usize, V: vdaf::Aggregator<SEED_SIZE, 16>>(
         transcript: &VdafTranscript<SEED_SIZE, V>,
         parameters: &CollectorParameters,
+        aggregation_parameter: &V::AggregationParam,
         batch_interval: Interval,
     ) -> CollectionMessage<TimeInterval> {
         let associated_data = AggregateShareAad::new(
             parameters.task_id,
+            aggregation_parameter.get_encoded(),
             BatchSelector::new_time_interval(batch_interval),
         );
         CollectionMessage::new(
@@ -722,10 +725,14 @@ mod tests {
     fn build_collect_response_fixed<const SEED_SIZE: usize, V: vdaf::Aggregator<SEED_SIZE, 16>>(
         transcript: &VdafTranscript<SEED_SIZE, V>,
         parameters: &CollectorParameters,
+        aggregation_parameter: &V::AggregationParam,
         batch_id: BatchId,
     ) -> CollectionMessage<FixedSize> {
-        let associated_data =
-            AggregateShareAad::new(parameters.task_id, BatchSelector::new_fixed_size(batch_id));
+        let associated_data = AggregateShareAad::new(
+            parameters.task_id,
+            aggregation_parameter.get_encoded(),
+            BatchSelector::new_fixed_size(batch_id),
+        );
         CollectionMessage::new(
             PartialBatchSelector::new_fixed_size(batch_id),
             1,
@@ -793,7 +800,7 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector.parameters, batch_interval);
+            build_collect_response_time(&transcript, &collector.parameters, &(), batch_interval);
         let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
 
         let mocked_collect_start_error = server
@@ -895,7 +902,7 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector.parameters, batch_interval);
+            build_collect_response_time(&transcript, &collector.parameters, &(), batch_interval);
         let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
 
         let mocked_collect_start_success = server
@@ -965,7 +972,7 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector.parameters, batch_interval);
+            build_collect_response_time(&transcript, &collector.parameters, &(), batch_interval);
         let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
 
         let mocked_collect_start_success = server
@@ -1045,7 +1052,7 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector.parameters, batch_interval);
+            build_collect_response_time(&transcript, &collector.parameters, &(), batch_interval);
         let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
 
         let mocked_collect_start_success = server
@@ -1112,7 +1119,7 @@ mod tests {
 
         let batch_id = random();
         let collect_resp =
-            build_collect_response_fixed(&transcript, &collector.parameters, batch_id);
+            build_collect_response_fixed(&transcript, &collector.parameters, &(), batch_id);
         let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
 
         let mocked_collect_start_success = server
@@ -1198,7 +1205,7 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector.parameters, batch_interval);
+            build_collect_response_time(&transcript, &collector.parameters, &(), batch_interval);
         let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
 
         let mocked_collect_start_success = server
@@ -1491,6 +1498,7 @@ mod tests {
 
         let associated_data = AggregateShareAad::new(
             collector.parameters.task_id,
+            ().get_encoded(),
             BatchSelector::new_time_interval(batch_interval),
         );
         let collect_resp = CollectionMessage::new(
