@@ -174,7 +174,7 @@ CREATE TABLE aggregation_jobs(
     client_timestamp_interval  TSRANGE NOT NULL,                -- the minimal interval containing all of client timestamps included in this aggregation job
     state                      AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
     step                       INTEGER NOT NULL,                -- current step of the aggregation job
-    last_request_hash          BYTEA,                           -- SHA-256 hash of the most recently received AggregationJobContinueReq (helper only)
+    last_request_hash          BYTEA,                           -- SHA-256 hash of the most recently received AggregationJobInitReq or AggregationJobContinueReq (helper only)
     trace_context              JSONB,                           -- distributed tracing metadata
 
     lease_expiry             TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this aggregation job expires; -infinity implies no current lease
@@ -209,7 +209,7 @@ CREATE TABLE report_aggregations(
     helper_prep_state   BYTEA,                              -- the current VDAF prepare state (opaque VDAF message, only if in state WAITING, only populated for helper)
     leader_prep_transition BYTEA,                           -- the current VDAF prepare transition (opaque VDAF message, only if in state WAITING, only populated for leader)
     error_code          SMALLINT,                           -- error code corresponding to a DAP ReportShareError value; null if in a state other than FAILED
-    last_prep_resp      BYTEA,                              -- the last PrepareResp message sent to the Leader, to assist in replay (opaque VDAF message, populated for Helper only)
+    last_prep_resp      BYTEA,                              -- the last PrepareResp message sent to the Leader, to assist in replay (opaque DAP message, populated for Helper only)
 
     CONSTRAINT report_aggregations_unique_ord UNIQUE(aggregation_job_id, ord),
     CONSTRAINT fk_aggregation_job_id FOREIGN KEY(aggregation_job_id) REFERENCES aggregation_jobs(id) ON DELETE CASCADE
