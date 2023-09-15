@@ -28,9 +28,8 @@ use tokio::try_join;
 use tracing::trace_span;
 
 impl VdafOps {
-    /// Step the helper's aggregation job to the next step of VDAF preparation using the step `n`
-    /// prepare state in `report_aggregations` with the step `n+1` broadcast prepare messages in
-    /// `leader_aggregation_job`.
+    /// Step the helper's aggregation job to the next step using the step `n` ping pong state in
+    /// `report_aggregations` with the step `n+1` ping pong messages in `leader_aggregation_job`.
     pub(super) async fn step_aggregation_job<const SEED_SIZE: usize, C, Q, A>(
         tx: &Transaction<'_, C>,
         task: Arc<Task>,

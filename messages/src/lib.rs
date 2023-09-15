@@ -2578,7 +2578,7 @@ impl AggregationJobContinueReq {
         }
     }
 
-    /// Gets the step of VDAF preparation this aggregation job is on.
+    /// Gets the step this aggregation job is on.
     pub fn step(&self) -> AggregationJobStep {
         self.step
     }

@@ -306,13 +306,13 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         AggregationJob { state, ..self }
     }
 
-    /// Returns the step of the VDAF preparation protocol the aggregation job is on.
+    /// Returns the step the aggregation job is on.
     pub fn step(&self) -> AggregationJobStep {
         self.step
     }
 
     /// Returns a new [`AggregationJob`] corresponding to this aggregation job updated to be on
-    /// the given VDAF preparation step.
+    /// the given step.
     pub fn with_step(self, step: AggregationJobStep) -> Self {
         Self { step, ..self }
     }
