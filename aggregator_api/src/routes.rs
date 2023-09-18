@@ -323,8 +323,7 @@ pub(super) async fn put_global_hpke_config<C: Clock>(
         req.kem_id.unwrap_or(HpkeKemId::X25519HkdfSha256),
         req.kdf_id.unwrap_or(HpkeKdfId::HkdfSha256),
         req.aead_id.unwrap_or(HpkeAeadId::Aes128Gcm),
-    )
-    .unwrap();
+    )?;
 
     let inserted_keypair = ds
         .run_tx_with_name("put_global_hpke_config", |tx| {
