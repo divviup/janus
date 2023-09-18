@@ -106,7 +106,7 @@ assert_matches = "1"
 hyper = "0.14.27"
 janus_aggregator = { path = ".", features = ["test-util"] }
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
-mockito = "1.1.0"
+mockito = "1.2.0"
 rstest.workspace = true
 tempfile = "3.8.0"
 tokio = { version = "1", features = ["test-util"] } # ensure this remains compatible with the non-dev dependency
