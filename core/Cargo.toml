@@ -68,7 +68,7 @@ trillium.workspace = true
 hex = { version = "0.4", features = ["serde"] }  # ensure this remains compatible with the non-dev dependency
 janus_core = { path = ".", features = ["test-util"] }
 kube.workspace = true
-mockito = "1.1.0"
+mockito = "1.2.0"
 rstest.workspace = true
 serde_test.workspace = true
 url = "2.4.1"
