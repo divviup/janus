@@ -2022,6 +2022,7 @@ pub mod query_type {
     /// DAP protocol message representing the type of a query.
     #[derive(Copy, Clone, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
     #[repr(u8)]
+    #[non_exhaustive]
     pub enum Code {
         Reserved = 0,
         TimeInterval = 1,
