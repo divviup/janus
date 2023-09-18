@@ -22,6 +22,8 @@ pub enum Error {
     Hpke(#[from] HpkeError),
     #[error("invalid HPKE configuration: {0}")]
     InvalidConfiguration(&'static str),
+    #[error("unsupported KEM")]
+    UnsupportedKem,
 }
 
 fn hpke_dispatch_config_from_hpke_config(
@@ -200,21 +202,23 @@ pub fn open(
 }
 
 /// Generate a new HPKE keypair and return it as an HpkeConfig (public portion) and
-/// HpkePrivateKey (private portion).
+/// HpkePrivateKey (private portion). This function errors if the supplied key
+/// encapsulated mechanism is not supported by the underlying HPKE library.
 pub fn generate_hpke_config_and_private_key(
     hpke_config_id: HpkeConfigId,
     kem_id: HpkeKemId,
     kdf_id: HpkeKdfId,
     aead_id: HpkeAeadId,
-) -> HpkeKeypair {
+) -> Result<HpkeKeypair, Error> {
     let Keypair {
         private_key,
         public_key,
     } = match kem_id {
         HpkeKemId::X25519HkdfSha256 => Kem::X25519HkdfSha256.gen_keypair(),
         HpkeKemId::P256HkdfSha256 => Kem::DhP256HkdfSha256.gen_keypair(),
+        _ => return Err(Error::UnsupportedKem),
     };
-    HpkeKeypair::new(
+    Ok(HpkeKeypair::new(
         HpkeConfig::new(
             hpke_config_id,
             kem_id,
@@ -223,7 +227,7 @@ pub fn generate_hpke_config_and_private_key(
             HpkePublicKey::from(public_key),
         ),
         HpkePrivateKey::new(private_key),
-    )
+    ))
 }
 
 /// An HPKE configuration and its corresponding private key.
@@ -313,6 +317,7 @@ pub mod test_util {
             HpkeKdfId::HkdfSha256,
             HpkeAeadId::Aes128Gcm,
         )
+        .unwrap()
     }
 
     pub fn generate_test_hpke_config_and_private_key_with_id(id: u8) -> HpkeKeypair {
@@ -322,6 +327,7 @@ pub mod test_util {
             HpkeKdfId::HkdfSha256,
             HpkeAeadId::Aes128Gcm,
         )
+        .unwrap()
     }
 }
 

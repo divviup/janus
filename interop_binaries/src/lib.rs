@@ -352,6 +352,7 @@ impl HpkeConfigRegistry {
         self.keypairs
             .entry(id)
             .or_insert_with(|| {
+                // Unwrap safety: we always use a supported KEM.
                 generate_hpke_config_and_private_key(
                     id,
                     // These algorithms should be broadly compatible with other DAP implementations, since they
@@ -360,6 +361,7 @@ impl HpkeConfigRegistry {
                     HpkeKdfId::HkdfSha256,
                     HpkeAeadId::Aes128Gcm,
                 )
+                .unwrap()
             })
             .clone()
     }

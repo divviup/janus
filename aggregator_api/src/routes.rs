@@ -146,12 +146,14 @@ pub(super) async fn post_task<C: Clock>(
         _ => unreachable!(),
     };
 
+    // Unwrap safety: we always use a supported KEM.
     let hpke_keys = Vec::from([generate_hpke_config_and_private_key(
         random(),
         HpkeKemId::X25519HkdfSha256,
         HpkeKdfId::HkdfSha256,
         HpkeAeadId::Aes128Gcm,
-    )]);
+    )
+    .unwrap()]);
 
     let task = Arc::new(
         Task::new(
@@ -321,7 +323,8 @@ pub(super) async fn put_global_hpke_config<C: Clock>(
         req.kem_id.unwrap_or(HpkeKemId::X25519HkdfSha256),
         req.kdf_id.unwrap_or(HpkeKdfId::HkdfSha256),
         req.aead_id.unwrap_or(HpkeAeadId::Aes128Gcm),
-    );
+    )
+    .unwrap();
 
     let inserted_keypair = ds
         .run_tx_with_name("put_global_hpke_config", |tx| {

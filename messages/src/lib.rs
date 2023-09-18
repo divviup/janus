@@ -744,6 +744,7 @@ impl<'de> Deserialize<'de> for TaskId {
 /// DAP protocol message representing an HPKE key encapsulation mechanism.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u16)]
+#[non_exhaustive]
 pub enum HpkeKemId {
     /// NIST P-256 keys and HKDF-SHA256.
     P256HkdfSha256 = 0x0010,
@@ -773,6 +774,7 @@ impl Decode for HpkeKemId {
 /// DAP protocol message representing an HPKE key derivation function.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u16)]
+#[non_exhaustive]
 pub enum HpkeKdfId {
     /// HMAC Key Derivation Function SHA256.
     HkdfSha256 = 0x0001,
@@ -804,6 +806,7 @@ impl Decode for HpkeKdfId {
 /// DAP protocol message representing an HPKE AEAD.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u16)]
+#[non_exhaustive]
 pub enum HpkeAeadId {
     /// AES-128-GCM.
     Aes128Gcm = 0x0001,
