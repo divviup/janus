@@ -23,6 +23,7 @@ pub(crate) enum AggregatorRole {
 
 #[derive(Serialize, PartialEq, Eq, Debug)]
 pub(crate) struct AggregatorApiConfig {
+    pub protocol: &'static str,
     pub dap_url: Url,
     pub role: AggregatorRole,
     pub vdafs: Vec<SupportedVdaf>,
