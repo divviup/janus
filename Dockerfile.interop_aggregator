@@ -64,7 +64,7 @@ COPY tools /src/tools
 RUN cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_interop_binaries \
     --bin janus_interop_aggregator
 
-FROM postgres:14-alpine AS final
+FROM postgres:16-alpine AS final
 RUN mkdir /logs && mkdir /etc/janus
 RUN apk add --no-cache supervisor && rm -rf /tmp/* /var/cache/apk/*
 COPY db /etc/janus/migrations
