@@ -4876,9 +4876,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-tokio"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf84d604a6e6580cb6da72e8351d69b77613ce7059e1a64d35b77d43e758b308"
+checksum = "0fe0cef8c430f8697c5e83efd0e467a7f84e3902e4242d43700369545c82cce1"
 dependencies = [
  "async-compat",
  "log",
