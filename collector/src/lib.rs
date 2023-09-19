@@ -25,7 +25,7 @@
 //!     HpkeKemId::X25519HkdfSha256,
 //!     HpkeKdfId::HkdfSha256,
 //!     HpkeAeadId::Aes128Gcm,
-//! );
+//! ).unwrap();
 //! let parameters = CollectorParameters::new(
 //!     task_id,
 //!     "https://example.com/dap/".parse().unwrap(),
