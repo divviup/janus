@@ -268,12 +268,18 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     .await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3CountVec { length }) => {
+            (
+                task::QueryType::TimeInterval,
+                VdafInstance::Prio3CountVec {
+                    length,
+                    chunk_length,
+                },
+            ) => {
                 let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(
                     2,
                     1,
                     *length,
-                    VdafInstance::chunk_size(*length),
+                    *chunk_length,
                 )?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<
                     VERIFY_KEY_LENGTH,
@@ -287,23 +293,32 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     .await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3SumVec { bits, length }) => {
+            (
+                task::QueryType::TimeInterval,
+                VdafInstance::Prio3SumVec {
+                    bits,
+                    length,
+                    chunk_length,
+                },
+            ) => {
                 let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(
                     2,
                     *bits,
                     *length,
-                    VdafInstance::chunk_size(*bits * *length),
+                    *chunk_length,
                 )?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3SumVecMultithreaded>(task, vdaf)
                     .await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Prio3Histogram { length }) => {
-                let vdaf = Arc::new(Prio3::new_histogram(
-                    2,
-                    *length,
-                    VdafInstance::chunk_size(*length),
-                )?);
+            (
+                task::QueryType::TimeInterval,
+                VdafInstance::Prio3Histogram {
+                    length,
+                    chunk_length,
+                },
+            ) => {
+                let vdaf = Arc::new(Prio3::new_histogram(2, *length, *chunk_length)?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3Histogram>(task, vdaf)
                     .await
             }
@@ -368,13 +383,16 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     max_batch_size,
                     batch_time_window_size,
                 },
-                VdafInstance::Prio3CountVec { length },
+                VdafInstance::Prio3CountVec {
+                    length,
+                    chunk_length,
+                },
             ) => {
                 let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(
                     2,
                     1,
                     *length,
-                    VdafInstance::chunk_size(*length),
+                    *chunk_length,
                 )?);
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
@@ -405,13 +423,17 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     max_batch_size,
                     batch_time_window_size,
                 },
-                VdafInstance::Prio3SumVec { bits, length },
+                VdafInstance::Prio3SumVec {
+                    bits,
+                    length,
+                    chunk_length,
+                },
             ) => {
                 let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(
                     2,
                     *bits,
                     *length,
-                    VdafInstance::chunk_size(*bits * *length),
+                    *chunk_length,
                 )?);
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
@@ -426,13 +448,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     max_batch_size,
                     batch_time_window_size,
                 },
-                VdafInstance::Prio3Histogram { length },
+                VdafInstance::Prio3Histogram {
+                    length,
+                    chunk_length,
+                },
             ) => {
-                let vdaf = Arc::new(Prio3::new_histogram(
-                    2,
-                    *length,
-                    VdafInstance::chunk_size(*length),
-                )?);
+                let vdaf = Arc::new(Prio3::new_histogram(2, *length, *chunk_length)?);
                 let max_batch_size = *max_batch_size;
                 let batch_time_window_size = *batch_time_window_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<

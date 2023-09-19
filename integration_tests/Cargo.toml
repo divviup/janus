@@ -15,7 +15,7 @@ in-cluster = ["dep:k8s-openapi", "dep:kube"]
 anyhow.workspace = true
 backoff = { version = "0.4", features = ["tokio"] }
 base64.workspace = true
-divviup-client = { git = "https://github.com/divviup/divviup-api", features = ["admin"], tag = "0.0.25" }
+divviup-client = { git = "https://github.com/divviup/divviup-api", features = ["admin"], rev = "06667dbeb93d4870bb257b7ddf9a19b37a7e5da5" }
 futures = "0.3.28"
 hex = "0.4"
 http = "0.2"

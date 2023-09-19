@@ -11,10 +11,7 @@ use fixed::types::extra::{U15, U31, U63};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32, FixedI64};
 use janus_collector::{default_http_client, AuthenticationToken, Collector, CollectorParameters};
-use janus_core::{
-    hpke::{DivviUpHpkeConfig, HpkeKeypair, HpkePrivateKey},
-    task::VdafInstance,
-};
+use janus_core::hpke::{DivviUpHpkeConfig, HpkeKeypair, HpkePrivateKey};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     BatchId, Duration, FixedSizeQuery, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId,
@@ -454,8 +451,10 @@ where
                 .map_err(|err| Error::Anyhow(err.into()))
         }
         (VdafType::CountVec, Some(length), None) => {
-            let vdaf = Prio3::new_sum_vec(2, 1, length, VdafInstance::chunk_size(length))
-                .map_err(|err| Error::Anyhow(err.into()))?;
+            // We can take advantage of the fact that Prio3SumVec unsharding does not use the
+            // chunk_length parameter and avoid asking the user for it.
+            let vdaf =
+                Prio3::new_sum_vec(2, 1, length, 1).map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
@@ -467,15 +466,19 @@ where
                 .map_err(|err| Error::Anyhow(err.into()))
         }
         (VdafType::SumVec, Some(length), Some(bits)) => {
-            let vdaf = Prio3::new_sum_vec(2, bits, length, VdafInstance::chunk_size(bits * length))
-                .map_err(|err| Error::Anyhow(err.into()))?;
+            // We can take advantage of the fact that Prio3SumVec unsharding does not use the
+            // chunk_length parameter and avoid asking the user for it.
+            let vdaf =
+                Prio3::new_sum_vec(2, bits, length, 1).map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
         }
         (VdafType::Histogram, Some(length), None) => {
-            let vdaf = Prio3::new_histogram(2, length, VdafInstance::chunk_size(length))
-                .map_err(|err| Error::Anyhow(err.into()))?;
+            // We can take advantage of the fact that Prio3Histogram unsharding does not use the
+            // chunk_length parameter and avoid asking the user for it.
+            let vdaf =
+                Prio3::new_histogram(2, length, 1).map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(parameters, vdaf, http_client, query, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))

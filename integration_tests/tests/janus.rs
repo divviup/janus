@@ -99,30 +99,10 @@ async fn janus_janus_histogram_4_buckets() {
     let container_client = container_client();
     let janus_pair = JanusPair::new(
         &container_client,
-        VdafInstance::Prio3Histogram { length: 4 },
-        QueryType::TimeInterval,
-    )
-    .await;
-
-    // Run the behavioral test.
-    submit_measurements_and_verify_aggregate(
-        &janus_pair.task_parameters,
-        (janus_pair.leader.port(), janus_pair.helper.port()),
-        &ClientBackend::InProcess,
-    )
-    .await;
-}
-
-/// This test exercises Prio3CountVec with Janus as both the leader and the helper.
-#[tokio::test(flavor = "multi_thread")]
-async fn janus_janus_count_vec_15() {
-    install_test_trace_subscriber();
-
-    // Start servers.
-    let container_client = container_client();
-    let janus_pair = JanusPair::new(
-        &container_client,
-        VdafInstance::Prio3CountVec { length: 15 },
+        VdafInstance::Prio3Histogram {
+            length: 4,
+            chunk_length: 2,
+        },
         QueryType::TimeInterval,
     )
     .await;
@@ -173,6 +153,7 @@ async fn janus_janus_sum_vec() {
         VdafInstance::Prio3SumVec {
             bits: 16,
             length: 15,
+            chunk_length: 16,
         },
         QueryType::TimeInterval,
     )

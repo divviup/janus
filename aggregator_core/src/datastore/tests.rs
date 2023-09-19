@@ -110,12 +110,36 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
     let mut want_tasks = HashMap::new();
     for (vdaf, role) in [
         (VdafInstance::Prio3Count, Role::Leader),
-        (VdafInstance::Prio3CountVec { length: 8 }, Role::Leader),
-        (VdafInstance::Prio3CountVec { length: 64 }, Role::Helper),
+        (
+            VdafInstance::Prio3CountVec {
+                length: 8,
+                chunk_length: 3,
+            },
+            Role::Leader,
+        ),
+        (
+            VdafInstance::Prio3CountVec {
+                length: 64,
+                chunk_length: 10,
+            },
+            Role::Helper,
+        ),
         (VdafInstance::Prio3Sum { bits: 64 }, Role::Helper),
         (VdafInstance::Prio3Sum { bits: 32 }, Role::Helper),
-        (VdafInstance::Prio3Histogram { length: 4 }, Role::Leader),
-        (VdafInstance::Prio3Histogram { length: 5 }, Role::Leader),
+        (
+            VdafInstance::Prio3Histogram {
+                length: 4,
+                chunk_length: 2,
+            },
+            Role::Leader,
+        ),
+        (
+            VdafInstance::Prio3Histogram {
+                length: 5,
+                chunk_length: 2,
+            },
+            Role::Leader,
+        ),
         (VdafInstance::Poplar1 { bits: 8 }, Role::Helper),
         (VdafInstance::Poplar1 { bits: 64 }, Role::Helper),
     ] {

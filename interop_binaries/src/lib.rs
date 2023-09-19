@@ -106,18 +106,17 @@ where
 #[serde(tag = "type")]
 pub enum VdafObject {
     Prio3Count,
-    Prio3CountVec {
-        length: NumberAsString<usize>,
-    },
     Prio3Sum {
         bits: NumberAsString<usize>,
     },
     Prio3SumVec {
         bits: NumberAsString<usize>,
         length: NumberAsString<usize>,
+        chunk_length: NumberAsString<usize>,
     },
     Prio3Histogram {
         length: NumberAsString<usize>,
+        chunk_length: NumberAsString<usize>,
     },
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3FixedPoint16BitBoundedL2VecSum {
@@ -138,21 +137,26 @@ impl From<VdafInstance> for VdafObject {
         match vdaf {
             VdafInstance::Prio3Count => VdafObject::Prio3Count,
 
-            VdafInstance::Prio3CountVec { length } => VdafObject::Prio3CountVec {
-                length: NumberAsString(length),
-            },
-
             VdafInstance::Prio3Sum { bits } => VdafObject::Prio3Sum {
                 bits: NumberAsString(bits),
             },
 
-            VdafInstance::Prio3SumVec { bits, length } => VdafObject::Prio3SumVec {
+            VdafInstance::Prio3SumVec {
+                bits,
+                length,
+                chunk_length,
+            } => VdafObject::Prio3SumVec {
                 bits: NumberAsString(bits),
                 length: NumberAsString(length),
+                chunk_length: NumberAsString(chunk_length),
             },
 
-            VdafInstance::Prio3Histogram { length } => VdafObject::Prio3Histogram {
+            VdafInstance::Prio3Histogram {
+                length,
+                chunk_length,
+            } => VdafObject::Prio3Histogram {
                 length: NumberAsString(length),
+                chunk_length: NumberAsString(chunk_length),
             },
 
             #[cfg(feature = "fpvec_bounded_l2")]
@@ -185,20 +189,25 @@ impl From<VdafObject> for VdafInstance {
         match vdaf {
             VdafObject::Prio3Count => VdafInstance::Prio3Count,
 
-            VdafObject::Prio3CountVec { length } => {
-                VdafInstance::Prio3CountVec { length: length.0 }
-            }
-
             VdafObject::Prio3Sum { bits } => VdafInstance::Prio3Sum { bits: bits.0 },
 
-            VdafObject::Prio3SumVec { bits, length } => VdafInstance::Prio3SumVec {
+            VdafObject::Prio3SumVec {
+                bits,
+                length,
+                chunk_length,
+            } => VdafInstance::Prio3SumVec {
                 bits: bits.0,
                 length: length.0,
+                chunk_length: chunk_length.0,
             },
 
-            VdafObject::Prio3Histogram { length } => {
-                VdafInstance::Prio3Histogram { length: length.0 }
-            }
+            VdafObject::Prio3Histogram {
+                length,
+                chunk_length,
+            } => VdafInstance::Prio3Histogram {
+                length: length.0,
+                chunk_length: chunk_length.0,
+            },
 
             #[cfg(feature = "fpvec_bounded_l2")]
             VdafObject::Prio3FixedPoint16BitBoundedL2VecSum { length } => {

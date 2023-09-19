@@ -1518,7 +1518,10 @@ fn post_task_req_serialization() {
                 max_batch_size: 999,
                 batch_time_window_size: None,
             },
-            vdaf: VdafInstance::Prio3CountVec { length: 5 },
+            vdaf: VdafInstance::Prio3CountVec {
+                length: 5,
+                chunk_length: 2,
+            },
             role: Role::Helper,
             vdaf_verify_key: "encoded".to_owned(),
             max_batch_query_count: 1,
@@ -1556,10 +1559,12 @@ fn post_task_req_serialization() {
             Token::StructVariant {
                 name: "VdafInstance",
                 variant: "Prio3CountVec",
-                len: 1,
+                len: 2,
             },
             Token::Str("length"),
             Token::U64(5),
+            Token::Str("chunk_length"),
+            Token::U64(2),
             Token::StructVariantEnd,
             Token::Str("role"),
             Token::UnitVariant {
@@ -1619,7 +1624,10 @@ fn post_task_req_serialization() {
                 max_batch_size: 999,
                 batch_time_window_size: None,
             },
-            vdaf: VdafInstance::Prio3CountVec { length: 5 },
+            vdaf: VdafInstance::Prio3CountVec {
+                length: 5,
+                chunk_length: 2,
+            },
             role: Role::Leader,
             vdaf_verify_key: "encoded".to_owned(),
             max_batch_query_count: 1,
@@ -1659,10 +1667,12 @@ fn post_task_req_serialization() {
             Token::StructVariant {
                 name: "VdafInstance",
                 variant: "Prio3CountVec",
-                len: 1,
+                len: 2,
             },
             Token::Str("length"),
             Token::U64(5),
+            Token::Str("chunk_length"),
+            Token::U64(2),
             Token::StructVariantEnd,
             Token::Str("role"),
             Token::UnitVariant {
@@ -1739,7 +1749,10 @@ fn task_resp_serialization() {
             max_batch_size: 999,
             batch_time_window_size: None,
         },
-        VdafInstance::Prio3CountVec { length: 5 },
+        VdafInstance::Prio3CountVec {
+            length: 5,
+            chunk_length: 2,
+        },
         Role::Leader,
         SecretBytes::new(b"vdaf verify key!".to_vec()),
         1,
@@ -1801,10 +1814,12 @@ fn task_resp_serialization() {
             Token::StructVariant {
                 name: "VdafInstance",
                 variant: "Prio3CountVec",
-                len: 1,
+                len: 2,
             },
             Token::Str("length"),
             Token::U64(5),
+            Token::Str("chunk_length"),
+            Token::U64(2),
             Token::StructVariantEnd,
             Token::Str("role"),
             Token::UnitVariant {

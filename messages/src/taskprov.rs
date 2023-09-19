@@ -6,8 +6,8 @@ use crate::{Duration, Error, Role, Time, Url};
 use anyhow::anyhow;
 use derivative::Derivative;
 use prio::codec::{
-    decode_u16_items, decode_u24_items, decode_u8_items, encode_u16_items, encode_u24_items,
-    encode_u8_items, CodecError, Decode, Encode,
+    decode_u16_items, decode_u8_items, encode_u16_items, encode_u8_items, CodecError, Decode,
+    Encode,
 };
 use std::{fmt::Debug, io::Cursor};
 
@@ -261,13 +261,6 @@ pub struct VdafConfig {
 
 impl VdafConfig {
     pub fn new(dp_config: DpConfig, vdaf_type: VdafType) -> Result<Self, Error> {
-        if let VdafType::Prio3Histogram { buckets } = &vdaf_type {
-            if buckets.is_empty() {
-                return Err(Error::InvalidParameter(
-                    "buckets must not be empty for Prio3Histogram",
-                ));
-            }
-        }
         Ok(Self {
             dp_config,
             vdaf_type,
@@ -300,13 +293,6 @@ impl Decode for VdafConfig {
             dp_config: DpConfig::decode(bytes)?,
             vdaf_type: VdafType::decode(bytes)?,
         };
-        if let VdafType::Prio3Histogram { buckets } = &ret.vdaf_type {
-            if buckets.is_empty() {
-                return Err(CodecError::Other(
-                    anyhow!("buckets must not be empty for Prio3Histogram").into(),
-                ));
-            }
-        }
         Ok(ret)
     }
 }
@@ -321,11 +307,19 @@ pub enum VdafType {
         /// Bit length of the summand.
         bits: u8,
     },
+    Prio3SumVec {
+        /// Bit length of each summand.
+        bits: u8,
+        /// Number of summands.
+        length: u32,
+        /// Size of each proof chunk.
+        chunk_length: u32,
+    },
     Prio3Histogram {
-        /// Number of buckets in the histogram
-        // This may change as the taskprov draft adapts to VDAF-06
-        // https://github.com/wangshan/draft-wang-ppm-dap-taskprov/issues/33
-        buckets: Vec<u64>,
+        /// Number of buckets.
+        length: u32,
+        /// Size of each proof chunk.
+        chunk_length: u32,
     },
     Poplar1 {
         /// Bit length of the input string.
@@ -336,7 +330,8 @@ pub enum VdafType {
 impl VdafType {
     const PRIO3COUNT: u32 = 0x00000000;
     const PRIO3SUM: u32 = 0x00000001;
-    const PRIO3HISTOGRAM: u32 = 0x00000002;
+    const PRIO3SUMVEC: u32 = 0x00000002;
+    const PRIO3HISTOGRAM: u32 = 0x00000003;
     const POPLAR1: u32 = 0x00001000;
 }
 
@@ -348,9 +343,23 @@ impl Encode for VdafType {
                 Self::PRIO3SUM.encode(bytes);
                 bits.encode(bytes);
             }
-            Self::Prio3Histogram { buckets } => {
+            Self::Prio3SumVec {
+                bits,
+                length,
+                chunk_length,
+            } => {
+                Self::PRIO3SUMVEC.encode(bytes);
+                bits.encode(bytes);
+                length.encode(bytes);
+                chunk_length.encode(bytes);
+            }
+            Self::Prio3Histogram {
+                length,
+                chunk_length,
+            } => {
                 Self::PRIO3HISTOGRAM.encode(bytes);
-                encode_u24_items(bytes, &(), buckets);
+                length.encode(bytes);
+                chunk_length.encode(bytes);
             }
             Self::Poplar1 { bits } => {
                 Self::POPLAR1.encode(bytes);
@@ -363,9 +372,10 @@ impl Encode for VdafType {
         Some(
             4 + match self {
                 Self::Prio3Count => 0,
-                Self::Prio3Sum { bits } => bits.encoded_len()?,
-                Self::Prio3Histogram { buckets } => 3 + buckets.len() * 0u64.encoded_len()?,
-                Self::Poplar1 { bits } => bits.encoded_len()?,
+                Self::Prio3Sum { .. } => 1,
+                Self::Prio3SumVec { .. } => 9,
+                Self::Prio3Histogram { .. } => 8,
+                Self::Poplar1 { .. } => 2,
             },
         )
     }
@@ -378,8 +388,14 @@ impl Decode for VdafType {
             Self::PRIO3SUM => Ok(Self::Prio3Sum {
                 bits: u8::decode(bytes)?,
             }),
+            Self::PRIO3SUMVEC => Ok(Self::Prio3SumVec {
+                bits: u8::decode(bytes)?,
+                length: u32::decode(bytes)?,
+                chunk_length: u32::decode(bytes)?,
+            }),
             Self::PRIO3HISTOGRAM => Ok(Self::Prio3Histogram {
-                buckets: decode_u24_items(&(), bytes)?,
+                length: u32::decode(bytes)?,
+                chunk_length: u32::decode(bytes)?,
             }),
             Self::POPLAR1 => Ok(Self::Poplar1 {
                 bits: u16::decode(bytes)?,
@@ -496,26 +512,27 @@ mod tests {
                 concat!("00000001", "FF"),
             ),
             (
-                VdafType::Prio3Histogram {
-                    buckets: vec![0x00ABCDEF, 0x40404040, 0xDEADBEEF],
+                VdafType::Prio3SumVec {
+                    bits: 8,
+                    length: 12,
+                    chunk_length: 14,
                 },
                 concat!(
-                    "00000002",
-                    "000018", // length
-                    "0000000000ABCDEF",
-                    "0000000040404040",
-                    "00000000DEADBEEF",
+                    "00000002", // algorithm ID
+                    "08",       // bits
+                    "0000000C", // length
+                    "0000000E"  // chunk_length
                 ),
             ),
             (
                 VdafType::Prio3Histogram {
-                    buckets: vec![u64::MIN, u64::MAX],
+                    length: 256,
+                    chunk_length: 18,
                 },
                 concat!(
-                    "00000002",
-                    "000010", // length
-                    "0000000000000000",
-                    "FFFFFFFFFFFFFFFF",
+                    "00000003", // algorithm ID
+                    "00000100", // length
+                    "00000012", // chunk_length
                 ),
             ),
             (
@@ -551,22 +568,27 @@ mod tests {
             (
                 VdafConfig::new(
                     DpConfig::new(DpMechanism::None),
-                    VdafType::Prio3Histogram {
-                        buckets: vec![0xAAAAAAAA],
+                    VdafType::Prio3SumVec {
+                        bits: 8,
+                        length: 12,
+                        chunk_length: 14,
                     },
                 )
                 .unwrap(),
-                concat!("01", concat!("00000002", "000008", "00000000AAAAAAAA")),
+                concat!("01", concat!("00000002", "08", "0000000C", "0000000E")),
+            ),
+            (
+                VdafConfig::new(
+                    DpConfig::new(DpMechanism::None),
+                    VdafType::Prio3Histogram {
+                        length: 10,
+                        chunk_length: 4,
+                    },
+                )
+                .unwrap(),
+                concat!("01", concat!("00000003", "0000000A", "00000004")),
             ),
         ]);
-
-        // Empty Prio3Histogram buckets.
-        assert_matches!(
-            VdafConfig::get_decoded(
-                &hex::decode(concat!("01", concat!("00000002", "000000"))).unwrap()
-            ),
-            Err(CodecError::Other(_))
-        );
     }
 
     #[test]
@@ -711,7 +733,8 @@ mod tests {
                     VdafConfig::new(
                         DpConfig::new(DpMechanism::None),
                         VdafType::Prio3Histogram {
-                            buckets: vec![0xFFFF],
+                            length: 10,
+                            chunk_length: 4,
                         },
                     )
                     .unwrap(),
@@ -742,11 +765,10 @@ mod tests {
                     concat!(
                         // vdaf_config
                         "01",       // dp_config
-                        "00000002", // vdaf_type
+                        "00000003", // vdaf_type
                         concat!(
-                            // buckets
-                            "000008",           // length
-                            "000000000000FFFF"  // bucket
+                            "0000000A", // length
+                            "00000004"  // chunk_length
                         )
                     ),
                 ),
