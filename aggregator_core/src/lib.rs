@@ -5,6 +5,7 @@
 // https://github.com/rust-lang/rust-clippy/pull/9879
 #![allow(clippy::single_component_path_imports)]
 
+use derivative::Derivative;
 use tracing::{info, info_span, Instrument, Span};
 use trillium::{Conn, Handler, Status};
 use trillium_macros::Handler;
@@ -23,10 +24,11 @@ pub mod query_type;
 pub mod task;
 pub mod taskprov;
 
-/// A secret byte array. This does not implement `Debug` or `Display`, to avoid accidental
-/// inclusion in logs.
-#[derive(Clone, PartialEq, Eq)]
-pub struct SecretBytes(Vec<u8>);
+/// A secret byte array. Its implementation of [`std::fmt::Debug`] does not log the contents to
+/// avoid accidental inclusion in logs.
+#[derive(Clone, Derivative, PartialEq, Eq)]
+#[derivative(Debug)]
+pub struct SecretBytes(#[derivative(Debug = "ignore")] Vec<u8>);
 
 impl SecretBytes {
     pub fn new(buf: Vec<u8>) -> Self {

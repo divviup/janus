@@ -671,8 +671,7 @@ impl<C: Clock> Aggregator<C> {
             }
         };
 
-        let vdaf_verify_keys =
-            Vec::from([peer_aggregator.derive_vdaf_verify_key(task_id, &vdaf_instance)]);
+        let vdaf_verify_key = peer_aggregator.derive_vdaf_verify_key(task_id, &vdaf_instance);
 
         let task = taskprov::Task::new(
             *task_id,
@@ -681,7 +680,7 @@ impl<C: Clock> Aggregator<C> {
             task_config.query_config().query().try_into()?,
             vdaf_instance,
             our_role,
-            vdaf_verify_keys,
+            vdaf_verify_key,
             task_config.query_config().max_batch_query_count() as u64,
             Some(*task_config.task_expiration()),
             peer_aggregator.report_expiry_age().cloned(),
@@ -798,7 +797,7 @@ impl<C: Clock> TaskAggregator<C> {
         let vdaf_ops = match task.vdaf() {
             VdafInstance::Prio3Count => {
                 let vdaf = Prio3::new_count(2)?;
-                let verify_key = task.primary_vdaf_verify_key()?;
+                let verify_key = task.vdaf_verify_key()?;
                 VdafOps::Prio3Count(Arc::new(vdaf), verify_key)
             }
 
@@ -809,13 +808,13 @@ impl<C: Clock> TaskAggregator<C> {
                     *length,
                     VdafInstance::chunk_size(*length),
                 )?;
-                let verify_key = task.primary_vdaf_verify_key()?;
+                let verify_key = task.vdaf_verify_key()?;
                 VdafOps::Prio3CountVec(Arc::new(vdaf), verify_key)
             }
 
             VdafInstance::Prio3Sum { bits } => {
                 let vdaf = Prio3::new_sum(2, *bits)?;
-                let verify_key = task.primary_vdaf_verify_key()?;
+                let verify_key = task.vdaf_verify_key()?;
                 VdafOps::Prio3Sum(Arc::new(vdaf), verify_key)
             }
 
@@ -826,13 +825,13 @@ impl<C: Clock> TaskAggregator<C> {
                     *length,
                     VdafInstance::chunk_size(*bits * *length),
                 )?;
-                let verify_key = task.primary_vdaf_verify_key()?;
+                let verify_key = task.vdaf_verify_key()?;
                 VdafOps::Prio3SumVec(Arc::new(vdaf), verify_key)
             }
 
             VdafInstance::Prio3Histogram { length } => {
                 let vdaf = Prio3::new_histogram(2, *length, VdafInstance::chunk_size(*length))?;
-                let verify_key = task.primary_vdaf_verify_key()?;
+                let verify_key = task.vdaf_verify_key()?;
                 VdafOps::Prio3Histogram(Arc::new(vdaf), verify_key)
             }
 
@@ -840,7 +839,7 @@ impl<C: Clock> TaskAggregator<C> {
             VdafInstance::Prio3FixedPoint16BitBoundedL2VecSum { length } => {
                 let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>> =
                     Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, *length)?;
-                let verify_key = task.primary_vdaf_verify_key()?;
+                let verify_key = task.vdaf_verify_key()?;
                 VdafOps::Prio3FixedPoint16BitBoundedL2VecSum(Arc::new(vdaf), verify_key)
             }
 
@@ -848,7 +847,7 @@ impl<C: Clock> TaskAggregator<C> {
             VdafInstance::Prio3FixedPoint32BitBoundedL2VecSum { length } => {
                 let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>> =
                     Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, *length)?;
-                let verify_key = task.primary_vdaf_verify_key()?;
+                let verify_key = task.vdaf_verify_key()?;
                 VdafOps::Prio3FixedPoint32BitBoundedL2VecSum(Arc::new(vdaf), verify_key)
             }
 
@@ -856,13 +855,13 @@ impl<C: Clock> TaskAggregator<C> {
             VdafInstance::Prio3FixedPoint64BitBoundedL2VecSum { length } => {
                 let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>> =
                     Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, *length)?;
-                let verify_key = task.primary_vdaf_verify_key()?;
+                let verify_key = task.vdaf_verify_key()?;
                 VdafOps::Prio3FixedPoint64BitBoundedL2VecSum(Arc::new(vdaf), verify_key)
             }
 
             VdafInstance::Poplar1 { bits } => {
                 let vdaf = Poplar1::new_shake128(*bits);
-                let verify_key = task.primary_vdaf_verify_key()?;
+                let verify_key = task.vdaf_verify_key()?;
                 VdafOps::Poplar1(Arc::new(vdaf), verify_key)
             }
 

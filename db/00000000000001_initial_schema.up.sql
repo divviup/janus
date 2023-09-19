@@ -88,7 +88,8 @@ CREATE TABLE tasks(
     min_batch_size              BIGINT NOT NULL,           -- the minimum number of reports in a batch to allow it to be collected
     time_precision              BIGINT NOT NULL,           -- the duration to which clients are expected to round their report timestamps, in seconds
     tolerable_clock_skew        BIGINT NOT NULL,           -- the maximum acceptable clock skew to allow between client and aggregator, in seconds
-    collector_hpke_config       BYTEA                      -- the HPKE config of the collector (encoded HpkeConfig message)
+    collector_hpke_config       BYTEA,                     -- the HPKE config of the collector (encoded HpkeConfig message)
+    vdaf_verify_key             BYTEA NOT NULL             -- the VDAF verification key (encrypted)
 );
 CREATE INDEX task_id_index ON tasks(task_id);
 
@@ -125,17 +126,6 @@ CREATE TABLE task_hpke_keys(
     private_key BYTEA NOT NULL,   -- private key (encrypted)
 
     CONSTRAINT task_hpke_keys_unique_task_id_and_config_id UNIQUE(task_id, config_id),
-    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
-);
-
--- The VDAF verification keys used by a given task.
--- TODO(#229): support multiple verification parameters per task
-CREATE TABLE task_vdaf_verify_keys(
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    task_id BIGINT NOT NULL,         -- task ID the verification key is associated with
-    vdaf_verify_key BYTEA NOT NULL,  -- the VDAF verification key (encrypted)
-
-    CONSTRAINT task_vdaf_verify_keys_unique_task_id UNIQUE(task_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 

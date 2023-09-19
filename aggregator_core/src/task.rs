@@ -109,9 +109,8 @@ pub struct Task {
     vdaf: VdafInstance,
     /// The role performed by the aggregator.
     role: Role,
-    /// Secret verification keys shared by the aggregators.
-    #[derivative(Debug = "ignore")]
-    vdaf_verify_keys: Vec<SecretBytes>,
+    /// Secret verification key shared by the aggregators.
+    vdaf_verify_key: SecretBytes,
     /// The maximum number of times a given batch may be collected.
     max_batch_query_count: u64,
     /// The time after which the task is considered invalid.
@@ -148,7 +147,7 @@ impl Task {
         query_type: QueryType,
         vdaf: VdafInstance,
         role: Role,
-        vdaf_verify_keys: Vec<SecretBytes>,
+        vdaf_verify_key: SecretBytes,
         max_batch_query_count: u64,
         task_expiration: Option<Time>,
         report_expiry_age: Option<Duration>,
@@ -167,7 +166,7 @@ impl Task {
             query_type,
             vdaf,
             role,
-            vdaf_verify_keys,
+            vdaf_verify_key,
             max_batch_query_count,
             task_expiration,
             report_expiry_age,
@@ -193,7 +192,7 @@ impl Task {
         query_type: QueryType,
         vdaf: VdafInstance,
         role: Role,
-        vdaf_verify_keys: Vec<SecretBytes>,
+        vdaf_verify_key: SecretBytes,
         max_batch_query_count: u64,
         task_expiration: Option<Time>,
         report_expiry_age: Option<Duration>,
@@ -221,7 +220,7 @@ impl Task {
             query_type,
             vdaf,
             role,
-            vdaf_verify_keys,
+            vdaf_verify_key,
             max_batch_query_count,
             task_expiration,
             report_expiry_age,
@@ -239,9 +238,6 @@ impl Task {
     pub(crate) fn validate_common(&self) -> Result<(), Error> {
         if !self.role.is_aggregator() {
             return Err(Error::InvalidParameter("role"));
-        }
-        if self.vdaf_verify_keys.is_empty() {
-            return Err(Error::InvalidParameter("vdaf_verify_keys"));
         }
         if let QueryType::FixedSize { max_batch_size, .. } = self.query_type() {
             if *max_batch_size < self.min_batch_size() {
@@ -321,9 +317,9 @@ impl Task {
         &self.role
     }
 
-    /// Retrieves the VDAF verification keys associated with this task.
-    pub fn vdaf_verify_keys(&self) -> &[SecretBytes] {
-        &self.vdaf_verify_keys
+    /// Retrieves the VDAF verification key associated with this task, as opaque secret bytes.
+    pub fn opaque_vdaf_verify_key(&self) -> &SecretBytes {
+        &self.vdaf_verify_key
     }
 
     /// Retrieves the max batch query count parameter associated with this task.
@@ -432,20 +428,15 @@ impl Task {
             .any(|t| t == auth_token)
     }
 
-    /// Returns the [`VerifyKey`] currently used by this aggregator to prepare report shares with
-    /// other aggregators.
+    /// Returns the [`VerifyKey`] used by this aggregator to prepare report shares with other
+    /// aggregators.
     ///
     /// # Errors
     ///
     /// If the verify key is not the correct length as required by the VDAF, an error will be
     /// returned.
-    pub fn primary_vdaf_verify_key<const SEED_SIZE: usize>(
-        &self,
-    ) -> Result<VerifyKey<SEED_SIZE>, Error> {
-        // We can safely unwrap this because we maintain an invariant that this vector is
-        // non-empty.
-        let secret_bytes = self.vdaf_verify_keys.first().unwrap();
-        VerifyKey::try_from(secret_bytes).map_err(|_| Error::AggregatorVerifyKeySize)
+    pub fn vdaf_verify_key<const SEED_SIZE: usize>(&self) -> Result<VerifyKey<SEED_SIZE>, Error> {
+        VerifyKey::try_from(&self.vdaf_verify_key).map_err(|_| Error::AggregatorVerifyKeySize)
     }
 
     /// Returns the relative path for tasks, relative to which other API endpoints are defined.
@@ -496,7 +487,7 @@ pub struct SerializedTask {
     query_type: QueryType,
     vdaf: VdafInstance,
     role: Role,
-    vdaf_verify_keys: Vec<String>, // in unpadded base64url
+    vdaf_verify_key: Option<String>, // in unpadded base64url
     max_batch_query_count: u64,
     task_expiration: Option<Time>,
     report_expiry_age: Option<Duration>,
@@ -530,7 +521,7 @@ impl SerializedTask {
             self.task_id = Some(task_id);
         }
 
-        if self.vdaf_verify_keys.is_empty() {
+        if self.vdaf_verify_key.is_none() {
             let vdaf_verify_key = SecretBytes::new(
                 thread_rng()
                     .sample_iter(Standard)
@@ -538,7 +529,7 @@ impl SerializedTask {
                     .collect(),
             );
 
-            self.vdaf_verify_keys = Vec::from([URL_SAFE_NO_PAD.encode(vdaf_verify_key.as_ref())]);
+            self.vdaf_verify_key = Some(URL_SAFE_NO_PAD.encode(vdaf_verify_key.as_ref()));
         }
 
         if self.aggregator_auth_tokens.is_empty() {
@@ -564,11 +555,6 @@ impl SerializedTask {
 
 impl Serialize for Task {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let vdaf_verify_keys: Vec<_> = self
-            .vdaf_verify_keys
-            .iter()
-            .map(|key| URL_SAFE_NO_PAD.encode(key.as_ref()))
-            .collect();
         let hpke_keys = self.hpke_keys.values().cloned().collect();
 
         SerializedTask {
@@ -578,7 +564,7 @@ impl Serialize for Task {
             query_type: self.query_type,
             vdaf: self.vdaf.clone(),
             role: self.role,
-            vdaf_verify_keys,
+            vdaf_verify_key: Some(URL_SAFE_NO_PAD.encode(self.vdaf_verify_key.as_ref())),
             max_batch_query_count: self.max_batch_query_count,
             task_expiration: self.task_expiration,
             report_expiry_age: self.report_expiry_age,
@@ -606,12 +592,10 @@ impl TryFrom<SerializedTask> for Task {
             .task_id
             .ok_or(Error::InvalidParameter("missing field task_id"))?;
 
-        // vdaf_verify_keys
-        let vdaf_verify_keys: Vec<_> = serialized_task
-            .vdaf_verify_keys
-            .into_iter()
-            .map(|key| Ok(SecretBytes::new(URL_SAFE_NO_PAD.decode(key)?)))
-            .collect::<Result<_, Self::Error>>()?;
+        // vdaf_verify_key
+        let vdaf_verify_key = serialized_task
+            .vdaf_verify_key
+            .ok_or(Error::InvalidParameter("missing vdaf_verify_key"))?;
 
         Task::new(
             task_id,
@@ -620,7 +604,7 @@ impl TryFrom<SerializedTask> for Task {
             serialized_task.query_type,
             serialized_task.vdaf,
             serialized_task.role,
-            vdaf_verify_keys,
+            SecretBytes::new(URL_SAFE_NO_PAD.decode(vdaf_verify_key)?),
             serialized_task.max_batch_query_count,
             serialized_task.task_expiration,
             serialized_task.report_expiry_age,
@@ -717,7 +701,7 @@ pub mod test_util {
                     query_type,
                     vdaf,
                     role,
-                    Vec::from([vdaf_verify_key]),
+                    vdaf_verify_key,
                     1,
                     None,
                     None,
@@ -769,10 +753,10 @@ pub mod test_util {
             Self(Task { role, ..self.0 })
         }
 
-        /// Associates the eventual task with the given VDAF verification keys.
-        pub fn with_vdaf_verify_keys(self, vdaf_verify_keys: Vec<SecretBytes>) -> Self {
+        /// Associates the eventual task with the given VDAF verification key.
+        pub fn with_vdaf_verify_key(self, vdaf_verify_key: SecretBytes) -> Self {
             Self(Task {
-                vdaf_verify_keys,
+                vdaf_verify_key,
                 ..self.0
             })
         }
@@ -921,7 +905,7 @@ mod tests {
             QueryType::TimeInterval,
             VdafInstance::Prio3Count,
             Role::Leader,
-            Vec::from([SecretBytes::new([0; VERIFY_KEY_LENGTH].into())]),
+            SecretBytes::new([0; VERIFY_KEY_LENGTH].into()),
             0,
             None,
             None,
@@ -943,7 +927,7 @@ mod tests {
             QueryType::TimeInterval,
             VdafInstance::Prio3Count,
             Role::Leader,
-            Vec::from([SecretBytes::new([0; VERIFY_KEY_LENGTH].into())]),
+            SecretBytes::new([0; VERIFY_KEY_LENGTH].into()),
             0,
             None,
             None,
@@ -965,7 +949,7 @@ mod tests {
             QueryType::TimeInterval,
             VdafInstance::Prio3Count,
             Role::Helper,
-            Vec::from([SecretBytes::new([0; VERIFY_KEY_LENGTH].into())]),
+            SecretBytes::new([0; VERIFY_KEY_LENGTH].into()),
             0,
             None,
             None,
@@ -987,7 +971,7 @@ mod tests {
             QueryType::TimeInterval,
             VdafInstance::Prio3Count,
             Role::Helper,
-            Vec::from([SecretBytes::new([0; VERIFY_KEY_LENGTH].into())]),
+            SecretBytes::new([0; VERIFY_KEY_LENGTH].into()),
             0,
             None,
             None,
@@ -1011,7 +995,7 @@ mod tests {
             QueryType::TimeInterval,
             VdafInstance::Prio3Count,
             Role::Leader,
-            Vec::from([SecretBytes::new([0; VERIFY_KEY_LENGTH].into())]),
+            SecretBytes::new([0; VERIFY_KEY_LENGTH].into()),
             0,
             None,
             None,
@@ -1088,7 +1072,7 @@ mod tests {
                 QueryType::TimeInterval,
                 VdafInstance::Prio3Count,
                 Role::Leader,
-                Vec::from([SecretBytes::new(b"1234567812345678".to_vec())]),
+                SecretBytes::new(b"1234567812345678".to_vec()),
                 1,
                 None,
                 None,
@@ -1149,10 +1133,9 @@ mod tests {
                     name: "Role",
                     variant: "Leader",
                 },
-                Token::Str("vdaf_verify_keys"),
-                Token::Seq { len: Some(1) },
+                Token::Str("vdaf_verify_key"),
+                Token::Some,
                 Token::Str("MTIzNDU2NzgxMjM0NTY3OA"),
-                Token::SeqEnd,
                 Token::Str("max_batch_query_count"),
                 Token::U64(1),
                 Token::Str("task_expiration"),
@@ -1278,7 +1261,7 @@ mod tests {
                 },
                 VdafInstance::Prio3CountVec { length: 8 },
                 Role::Helper,
-                Vec::from([SecretBytes::new(b"1234567812345678".to_vec())]),
+                SecretBytes::new(b"1234567812345678".to_vec()),
                 1,
                 None,
                 Some(Duration::from_seconds(1800)),
@@ -1346,10 +1329,9 @@ mod tests {
                     name: "Role",
                     variant: "Helper",
                 },
-                Token::Str("vdaf_verify_keys"),
-                Token::Seq { len: Some(1) },
+                Token::Str("vdaf_verify_key"),
+                Token::Some,
                 Token::Str("MTIzNDU2NzgxMjM0NTY3OA"),
-                Token::SeqEnd,
                 Token::Str("max_batch_query_count"),
                 Token::U64(1),
                 Token::Str("task_expiration"),

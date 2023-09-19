@@ -154,7 +154,7 @@ impl AggregationJobDriver {
                                 anyhow!("couldn't find task {}", lease.leased().task_id()).into(),
                             )
                         })?;
-                    let verify_key = task.primary_vdaf_verify_key().map_err(|_| {
+                    let verify_key = task.vdaf_verify_key().map_err(|_| {
                         datastore::Error::User(
                             anyhow!("VDAF verification key has wrong length").into(),
                         )
@@ -983,7 +983,7 @@ mod tests {
             .unwrap();
         let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
-        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
         let measurement = IdpfInput::from_bools(&[true]);
         let aggregation_param =
             Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[true])]))
@@ -1283,7 +1283,7 @@ mod tests {
             .unwrap();
         let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
-        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
 
         let transcript = run_vdaf(
             vdaf.as_ref(),
@@ -1645,7 +1645,7 @@ mod tests {
             .unwrap();
         let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
-        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
         let measurement = IdpfInput::from_bools(&[true]);
         let aggregation_param =
             Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[true])]))
@@ -1902,7 +1902,7 @@ mod tests {
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
         );
-        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
 
         let transcript = run_vdaf(
             vdaf.as_ref(),
@@ -2155,7 +2155,7 @@ mod tests {
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
         );
-        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
         let measurement = IdpfInput::from_bools(&[true]);
         let aggregation_param =
             Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[true])]))
@@ -2422,7 +2422,7 @@ mod tests {
         )
         .unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
-        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
 
         let aggregation_param = Poplar1AggregationParam::try_from_prefixes(Vec::from([
             IdpfInput::from_bools(&[false]),
@@ -2826,7 +2826,7 @@ mod tests {
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
         );
-        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
 
         let aggregation_param = Poplar1AggregationParam::try_from_prefixes(Vec::from([
             IdpfInput::from_bools(&[false]),
@@ -3171,7 +3171,7 @@ mod tests {
             .unwrap();
         let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
-        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
 
         let transcript = run_vdaf(
             vdaf.as_ref(),
@@ -3368,7 +3368,7 @@ mod tests {
         .build();
         let agg_auth_token = task.primary_aggregator_auth_token();
         let aggregation_job_id = random();
-        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
 
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
 

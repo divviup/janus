@@ -23,8 +23,7 @@
 
   # The VDAF verify key, in base64url-encoded form. The key's length is
   # determined by the task's VDAF.
-  vdaf_verify_keys:
-  - "1CmuYNtBLYIoXN8bU0T_XA"
+  vdaf_verify_key: "1CmuYNtBLYIoXN8bU0T_XA"
 
   # The maximum number of times any report can be collected.
   max_batch_query_count: 1
@@ -110,8 +109,7 @@
     batch_time_window_size: null
   vdaf: Prio3Count
   role: Helper
-  vdaf_verify_keys:
-  - "ZXtE4kLqtsCOr8h_pNUeoQ"
+  vdaf_verify_key: "ZXtE4kLqtsCOr8h_pNUeoQ"
   max_batch_query_count: 1
   task_expiration: 1704088800
   report_expiry_age: null

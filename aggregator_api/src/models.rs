@@ -143,10 +143,6 @@ impl TryFrom<&Task> for TaskResp {
         }
         .clone();
 
-        if task.vdaf_verify_keys().len() != 1 {
-            return Err("illegal number of VDAF verify keys in task");
-        }
-
         if task.aggregator_auth_tokens().len() != 1 {
             return Err("illegal number of aggregator auth tokens in task");
         }
@@ -175,7 +171,7 @@ impl TryFrom<&Task> for TaskResp {
             query_type: *task.query_type(),
             vdaf: task.vdaf().clone(),
             role: *task.role(),
-            vdaf_verify_key: URL_SAFE_NO_PAD.encode(task.vdaf_verify_keys()[0].as_ref()),
+            vdaf_verify_key: URL_SAFE_NO_PAD.encode(task.opaque_vdaf_verify_key().as_ref()),
             max_batch_query_count: task.max_batch_query_count(),
             task_expiration: task.task_expiration().copied(),
             report_expiry_age: task.report_expiry_age().cloned(),

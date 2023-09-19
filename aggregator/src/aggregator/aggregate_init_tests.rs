@@ -91,7 +91,7 @@ where
     ) -> (PrepareInit, VdafTranscript<VERIFY_KEY_SIZE, V>) {
         let transcript = run_vdaf(
             &self.vdaf,
-            self.task.primary_vdaf_verify_key().unwrap().as_bytes(),
+            self.task.vdaf_verify_key().unwrap().as_bytes(),
             &self.aggregation_param,
             report_metadata.id(),
             measurement,

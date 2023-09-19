@@ -177,7 +177,7 @@ async fn setup_taskprov_test() -> TaskprovTestCase {
         },
         vdaf_instance,
         Role::Helper,
-        Vec::from([vdaf_verify_key.clone()]),
+        vdaf_verify_key.clone(),
         max_batch_query_count as u64,
         Some(task_expiration),
         peer_aggregator.report_expiry_age().copied(),
