@@ -19,7 +19,7 @@ fn main() -> Result<()> {
         options.kem.into(),
         options.kdf.into(),
         options.aead.into(),
-    );
+    )?;
 
     let mut writer = stdout().lock();
 

@@ -206,6 +206,7 @@ async fn post_task_bad_role() {
             HpkeKdfId::HkdfSha256,
             HpkeAeadId::Aes128Gcm,
         )
+        .unwrap()
         .config()
         .clone(),
         aggregator_auth_token: Some(aggregator_auth_token),
@@ -246,6 +247,7 @@ async fn post_task_unauthorized() {
             HpkeKdfId::HkdfSha256,
             HpkeAeadId::Aes128Gcm,
         )
+        .unwrap()
         .config()
         .clone(),
         aggregator_auth_token: Some(aggregator_auth_token),
@@ -287,6 +289,7 @@ async fn post_task_helper_no_optional_fields() {
             HpkeKdfId::HkdfSha256,
             HpkeAeadId::Aes128Gcm,
         )
+        .unwrap()
         .config()
         .clone(),
         aggregator_auth_token: None,
@@ -366,6 +369,7 @@ async fn post_task_helper_with_aggregator_auth_token() {
             HpkeKdfId::HkdfSha256,
             HpkeAeadId::Aes128Gcm,
         )
+        .unwrap()
         .config()
         .clone(),
         aggregator_auth_token: Some(aggregator_auth_token),
@@ -408,6 +412,7 @@ async fn post_task_idempotence() {
             HpkeKdfId::HkdfSha256,
             HpkeAeadId::Aes128Gcm,
         )
+        .unwrap()
         .config()
         .clone(),
         aggregator_auth_token: Some(aggregator_auth_token.clone()),
@@ -488,6 +493,7 @@ async fn post_task_leader_all_optional_fields() {
             HpkeKdfId::HkdfSha256,
             HpkeAeadId::Aes128Gcm,
         )
+        .unwrap()
         .config()
         .clone(),
         aggregator_auth_token: Some(aggregator_auth_token.clone()),
@@ -577,6 +583,7 @@ async fn post_task_leader_no_aggregator_auth_token() {
             HpkeKdfId::HkdfSha256,
             HpkeAeadId::Aes128Gcm,
         )
+        .unwrap()
         .config()
         .clone(),
         aggregator_auth_token: None,
@@ -861,7 +868,8 @@ async fn get_global_hpke_configs() {
         HpkeKemId::P256HkdfSha256,
         HpkeKdfId::HkdfSha384,
         HpkeAeadId::Aes128Gcm,
-    );
+    )
+    .unwrap();
     ds.run_tx(|tx| {
         let keypair1 = keypair1.clone();
         let keypair2 = keypair2.clone();
@@ -962,7 +970,8 @@ async fn get_global_hpke_config() {
         HpkeKemId::P256HkdfSha256,
         HpkeKdfId::HkdfSha384,
         HpkeAeadId::Aes128Gcm,
-    );
+    )
+    .unwrap();
     ds.run_tx(|tx| {
         let keypair1 = keypair1.clone();
         let keypair2 = keypair2.clone();

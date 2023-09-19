@@ -5,9 +5,11 @@ mod routes;
 mod tests;
 
 use async_trait::async_trait;
-use janus_aggregator_core::datastore;
-use janus_aggregator_core::{datastore::Datastore, instrumented};
-use janus_core::{http::extract_bearer_token, task::AuthenticationToken, time::Clock};
+use janus_aggregator_core::{
+    datastore::{self, Datastore},
+    instrumented,
+};
+use janus_core::{hpke, http::extract_bearer_token, task::AuthenticationToken, time::Clock};
 use janus_messages::{HpkeConfigId, RoleParseError, TaskId};
 use ring::constant_time;
 use routes::*;
@@ -162,6 +164,8 @@ enum Error {
     Url(#[from] url::ParseError),
     #[error(transparent)]
     Role(#[from] RoleParseError),
+    #[error(transparent)]
+    Hpke(#[from] hpke::Error),
 }
 
 #[async_trait]
@@ -198,6 +202,9 @@ impl Handler for Error {
                 .with_status(Status::BadRequest)
                 .with_body(err.to_string()),
             Self::Role(err) => conn
+                .with_status(Status::BadRequest)
+                .with_body(err.to_string()),
+            Self::Hpke(err) => conn
                 .with_status(Status::BadRequest)
                 .with_body(err.to_string()),
         }

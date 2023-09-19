@@ -550,12 +550,14 @@ impl SerializedTask {
         }
 
         if self.hpke_keys.is_empty() {
+            // Unwrap safety: we always use a supported KEM.
             let hpke_keypair = generate_hpke_config_and_private_key(
                 random(),
                 HpkeKemId::X25519HkdfSha256,
                 HpkeKdfId::HkdfSha256,
                 HpkeAeadId::Aes128Gcm,
-            );
+            )
+            .unwrap();
 
             self.hpke_keys = Vec::from([hpke_keypair]);
         }
