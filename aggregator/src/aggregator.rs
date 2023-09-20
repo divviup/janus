@@ -3485,7 +3485,6 @@ mod tests {
             setup_upload_test(Config {
                 max_upload_batch_size: 1000,
                 max_upload_batch_write_delay: StdDuration::from_millis(500),
-                global_hpke_configs_refresh_interval: StdDuration::from_millis(500),
                 ..Default::default()
             })
             .await;
