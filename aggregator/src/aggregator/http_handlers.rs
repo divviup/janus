@@ -714,7 +714,7 @@ mod tests {
     };
     use rand::random;
     use serde_json::json;
-    use std::{collections::HashMap, sync::Arc, time::Duration as StdDuration};
+    use std::{collections::HashMap, sync::Arc};
     use trillium::{Handler, KnownHeaderName, Status};
     use trillium_testing::{
         assert_headers,
@@ -831,17 +831,12 @@ mod tests {
             .await
             .unwrap();
 
-        let cfg = Config {
-            global_hpke_configs_refresh_interval: StdDuration::from_millis(500),
-            ..Default::default()
-        };
-
         let aggregator = Arc::new(
             crate::aggregator::Aggregator::new(
                 datastore.clone(),
                 clock.clone(),
                 &noop_meter(),
-                cfg,
+                Config::default(),
             )
             .await
             .unwrap(),

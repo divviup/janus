@@ -631,12 +631,11 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
     assert_eq!(
         take_problem_details(&mut test_conn).await,
         json!({
-                "status": Status::BadRequest as u16,
-                "type": "urn:ietf:params:ppm:dap:error:invalidTask",
-                "title": "Aggregator has opted out of the indicated task.",
-                "taskid": format!("{}", another_task_id
-        ),
-            })
+            "status": Status::BadRequest as u16,
+            "type": "urn:ietf:params:ppm:dap:error:invalidTask",
+            "title": "Aggregator has opted out of the indicated task.",
+            "taskid": format!("{}", another_task_id),
+        })
     );
 }
 
@@ -716,12 +715,11 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
     assert_eq!(
         take_problem_details(&mut test_conn).await,
         json!({
-                "status": Status::BadRequest as u16,
-                "type": "urn:ietf:params:ppm:dap:error:invalidTask",
-                "title": "Aggregator has opted out of the indicated task.",
-                "taskid": format!("{}", another_task_id
-        ),
-            })
+            "status": Status::BadRequest as u16,
+            "type": "urn:ietf:params:ppm:dap:error:invalidTask",
+            "title": "Aggregator has opted out of the indicated task.",
+            "taskid": format!("{}", another_task_id),
+        })
     );
 }
 
