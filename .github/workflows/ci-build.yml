@@ -50,7 +50,7 @@ jobs:
       with:
         toolchain: ${{ matrix.rust-toolchain }}
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v2
+      uses: docker/setup-buildx-action@v3
       with:
         driver: docker-container
         use: true
@@ -135,7 +135,7 @@ jobs:
     - uses: actions/checkout@v4
     - run: echo "GIT_REVISION=$(git describe --always --dirty=-modified)" >> $GITHUB_ENV
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v2
+      uses: docker/setup-buildx-action@v3
       with:
         driver: docker-container
         use: true
@@ -159,7 +159,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v2
+      uses: docker/setup-buildx-action@v3
       with:
         driver: docker-container
         use: true
