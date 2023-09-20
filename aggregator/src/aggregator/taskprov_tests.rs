@@ -1,13 +1,10 @@
-use crate::{
-    aggregator::{
-        http_handlers::{
-            aggregator_handler,
-            test_util::{take_problem_details, take_response_body},
-        },
-        tests::generate_helper_report_share,
-        Config,
+use crate::aggregator::{
+    http_handlers::{
+        aggregator_handler,
+        test_util::{take_problem_details, take_response_body},
     },
-    config::TaskprovConfig,
+    tests::generate_helper_report_share,
+    Config,
 };
 use assert_matches::assert_matches;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -112,10 +109,7 @@ async fn setup_taskprov_test() -> TaskprovTestCase {
         Arc::clone(&datastore),
         clock.clone(),
         &noop_meter(),
-        Config {
-            taskprov_config: TaskprovConfig { enabled: true },
-            ..Default::default()
-        },
+        Config::default(),
     )
     .await
     .unwrap();

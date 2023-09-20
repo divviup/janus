@@ -7,7 +7,7 @@ use janus_aggregator::{
         CommonBinaryOptions,
     },
     cache::GlobalHpkeKeypairCache,
-    config::{BinaryConfig, CommonConfig, TaskprovConfig},
+    config::{BinaryConfig, CommonConfig},
 };
 use janus_aggregator_api::{self, aggregator_api_handler};
 use janus_aggregator_core::datastore::Datastore;
@@ -288,8 +288,6 @@ impl AggregatorApi {
 /// max_upload_batch_size: 100
 /// max_upload_batch_write_delay_ms: 250
 /// batch_aggregation_shard_count: 32
-/// taskprov_config:
-///   enabled: false
 /// "#;
 ///
 /// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
@@ -298,9 +296,6 @@ impl AggregatorApi {
 struct Config {
     #[serde(flatten)]
     common_config: CommonConfig,
-
-    #[serde(default)]
-    taskprov_config: TaskprovConfig,
 
     #[serde(default)]
     garbage_collection: Option<GarbageCollectorConfig>,
@@ -376,7 +371,6 @@ impl Config {
                 self.max_upload_batch_write_delay_ms,
             ),
             batch_aggregation_shard_count: self.batch_aggregation_shard_count,
-            taskprov_config: self.taskprov_config.clone(),
             global_hpke_configs_refresh_interval: match self.global_hpke_configs_refresh_interval {
                 Some(duration) => Duration::from_millis(duration),
                 None => GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
@@ -403,7 +397,7 @@ mod tests {
         aggregator,
         config::{
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-            BinaryConfig, CommonConfig, TaskprovConfig,
+            BinaryConfig, CommonConfig,
         },
         metrics::{MetricsExporterConfiguration, OtlpExporterConfiguration},
         trace::{
@@ -455,7 +449,6 @@ mod tests {
             max_upload_batch_size: 100,
             max_upload_batch_write_delay_ms: 250,
             batch_aggregation_shard_count: 32,
-            taskprov_config: TaskprovConfig::default(),
             global_hpke_configs_refresh_interval: None,
         })
     }
@@ -507,28 +500,6 @@ mod tests {
                 aggregation_limit: 50,
                 collection_limit: 75,
             }),
-        );
-    }
-
-    #[test]
-    fn config_taskprov() {
-        assert_eq!(
-            serde_yaml::from_str::<Config>(
-                r#"---
-    listen_address: "0.0.0.0:8080"
-    database:
-        url: "postgres://postgres:postgres@localhost:5432/postgres"
-        connection_pool_timeouts_secs: 60
-    max_upload_batch_size: 100
-    max_upload_batch_write_delay_ms: 250
-    batch_aggregation_shard_count: 32
-    taskprov_config:
-        enabled: true
-    "#
-            )
-            .unwrap()
-            .taskprov_config,
-            TaskprovConfig { enabled: true },
         );
     }
 
@@ -641,7 +612,6 @@ mod tests {
                 max_upload_batch_size: 100,
                 max_upload_batch_write_delay: Duration::from_millis(250),
                 batch_aggregation_shard_count: 32,
-                taskprov_config: TaskprovConfig::default(),
                 ..Default::default()
             }
         );

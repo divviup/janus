@@ -88,12 +88,6 @@ max_upload_batch_write_delay_ms: 250
 # than the equivalent setting in the collection job driver. (required)
 batch_aggregation_shard_count: 32
 
-# Configuration for the taskprov extension. If enabled, this changes the behavior of the
-# aggregator as described in draft-wang-ppm-dap-taskprov. (optional)
-taskprov_config:
-  # Whether to enable the taskprov extension. Defaults to false.
-  enabled: false
-
 # Configuration for garbage collection. If omitted, old data is never deleted. (optional)
 garbage_collection:
   # How frequently to collect garbage, in seconds.
