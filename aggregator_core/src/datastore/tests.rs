@@ -4842,7 +4842,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                 let report_id_0_1 = random();
                 let transcript = run_vdaf(
                     &dummy_vdaf::Vdaf::new(),
-                    task_1.primary_vdaf_verify_key().unwrap().as_bytes(),
+                    task_1.vdaf_verify_key().unwrap().as_bytes(),
                     &dummy_vdaf::AggregationParam(0),
                     &report_id_0_1,
                     &(),

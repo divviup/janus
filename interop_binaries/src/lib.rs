@@ -303,8 +303,7 @@ impl From<Task> for AggregatorAddTaskRequest {
                 None
             },
             role: (*task.role()).try_into().unwrap(),
-            vdaf_verify_key: URL_SAFE_NO_PAD
-                .encode(task.vdaf_verify_keys().first().unwrap().as_ref()),
+            vdaf_verify_key: URL_SAFE_NO_PAD.encode(task.opaque_vdaf_verify_key().as_ref()),
             max_batch_query_count: task.max_batch_query_count(),
             query_type,
             min_batch_size: task.min_batch_size(),

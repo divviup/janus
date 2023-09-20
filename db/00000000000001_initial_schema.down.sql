@@ -23,7 +23,6 @@ DROP TYPE AGGREGATION_JOB_STATE CASCADE;
 DROP INDEX client_reports_task_and_timestamp_index CASCADE;
 DROP INDEX client_reports_task_and_timestamp_unaggregated_index CASCADE;
 DROP TABLE client_reports CASCADE;
-DROP TABLE task_vdaf_verify_keys CASCADE;
 DROP TABLE task_hpke_keys CASCADE;
 DROP TABLE task_collector_auth_tokens CASCADE;
 DROP TABLE task_aggregator_auth_tokens CASCADE;

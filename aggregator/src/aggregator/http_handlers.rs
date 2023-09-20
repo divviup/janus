@@ -986,7 +986,7 @@ mod tests {
             *task.query_type(),
             task.vdaf().clone(),
             *task.role(),
-            task.vdaf_verify_keys().to_vec(),
+            task.opaque_vdaf_verify_key().clone(),
             task.max_batch_query_count(),
             task.task_expiration().cloned(),
             task.report_expiry_age().cloned(),
@@ -1509,7 +1509,7 @@ mod tests {
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
 
         let vdaf = dummy_vdaf::Vdaf::new();
-        let verify_key: VerifyKey<0> = task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
         let hpke_key = task.current_hpke_key();
         let measurement = ();
         let prep_init_generator = PrepareInitGenerator::new(
@@ -1996,7 +1996,7 @@ mod tests {
         .await
         .unwrap();
 
-        let verify_key: VerifyKey<0> = task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
 
         // This report was encrypted with a global HPKE config that has the same config
         // ID as the task's HPKE config.
@@ -2403,7 +2403,7 @@ mod tests {
         .build();
 
         let vdaf = Arc::new(Poplar1::<XofShake128, 16>::new(1));
-        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
         let hpke_key = task.current_hpke_key();
         let measurement = IdpfInput::from_bools(&[true]);
         let aggregation_param =
@@ -2718,7 +2718,7 @@ mod tests {
         );
 
         let vdaf = Poplar1::new(1);
-        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.primary_vdaf_verify_key().unwrap();
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
         let hpke_key = task.current_hpke_key();
         let measurement = IdpfInput::from_bools(&[true]);
         let aggregation_param =
@@ -3405,7 +3405,7 @@ mod tests {
         .unwrap();
         let transcript = run_vdaf(
             &Poplar1::new_shake128(1),
-            task.primary_vdaf_verify_key().unwrap().as_bytes(),
+            task.vdaf_verify_key().unwrap().as_bytes(),
             &aggregation_param,
             &report_id,
             &IdpfInput::from_bools(&[false]),
@@ -3520,7 +3520,7 @@ mod tests {
         .unwrap();
         let transcript = run_vdaf(
             &vdaf,
-            task.primary_vdaf_verify_key().unwrap().as_bytes(),
+            task.vdaf_verify_key().unwrap().as_bytes(),
             &aggregation_param,
             &report_id,
             &IdpfInput::from_bools(&[false]),
@@ -3689,7 +3689,7 @@ mod tests {
         .unwrap();
         let transcript = run_vdaf(
             &Poplar1::new_shake128(1),
-            task.primary_vdaf_verify_key().unwrap().as_bytes(),
+            task.vdaf_verify_key().unwrap().as_bytes(),
             &aggregation_param,
             &report_id,
             &IdpfInput::from_bools(&[false]),
@@ -3802,7 +3802,7 @@ mod tests {
         .unwrap();
         let transcript_0 = run_vdaf(
             &Poplar1::new_shake128(1),
-            task.primary_vdaf_verify_key().unwrap().as_bytes(),
+            task.vdaf_verify_key().unwrap().as_bytes(),
             &aggregation_param,
             &report_id_0,
             &IdpfInput::from_bools(&[false]),
@@ -3812,7 +3812,7 @@ mod tests {
         let report_id_1 = random();
         let transcript_1 = run_vdaf(
             &Poplar1::new_shake128(1),
-            task.primary_vdaf_verify_key().unwrap().as_bytes(),
+            task.vdaf_verify_key().unwrap().as_bytes(),
             &aggregation_param,
             &report_id_1,
             &IdpfInput::from_bools(&[false]),

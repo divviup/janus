@@ -534,11 +534,7 @@ async fn post_task_leader_all_optional_fields() {
     assert_eq!(&req.query_type, got_task.query_type());
     assert_eq!(&req.vdaf, got_task.vdaf());
     assert_eq!(&req.role, got_task.role());
-    assert_eq!(1, got_task.vdaf_verify_keys().len());
-    assert_eq!(
-        vdaf_verify_key.as_ref(),
-        got_task.vdaf_verify_keys()[0].as_ref()
-    );
+    assert_eq!(&vdaf_verify_key, got_task.opaque_vdaf_verify_key());
     assert_eq!(req.max_batch_query_count, got_task.max_batch_query_count());
     assert_eq!(req.task_expiration.as_ref(), got_task.task_expiration());
     assert_eq!(req.min_batch_size, got_task.min_batch_size());
@@ -1748,7 +1744,7 @@ fn task_resp_serialization() {
         },
         VdafInstance::Prio3CountVec { length: 5 },
         Role::Leader,
-        Vec::from([SecretBytes::new(b"vdaf verify key!".to_vec())]),
+        SecretBytes::new(b"vdaf verify key!".to_vec()),
         1,
         None,
         None,

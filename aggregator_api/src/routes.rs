@@ -119,7 +119,7 @@ pub(super) async fn post_task<C: Clock>(
     let task_id = TaskId::try_from(digest(&SHA256, &vdaf_verify_key_bytes).as_ref())
         .map_err(|err| Error::Internal(err.to_string()))?;
 
-    let vdaf_verify_keys = Vec::from([SecretBytes::new(vdaf_verify_key_bytes)]);
+    let vdaf_verify_key = SecretBytes::new(vdaf_verify_key_bytes);
 
     let (aggregator_auth_tokens, collector_auth_tokens) = match req.role {
         Role::Leader => {
@@ -163,7 +163,7 @@ pub(super) async fn post_task<C: Clock>(
             /* query_type */ req.query_type,
             /* vdaf */ req.vdaf,
             /* role */ req.role,
-            vdaf_verify_keys,
+            vdaf_verify_key,
             /* max_batch_query_count */ req.max_batch_query_count,
             /* task_expiration */ req.task_expiration,
             /* report_expiry_age */
@@ -190,7 +190,7 @@ pub(super) async fn post_task<C: Clock>(
                 && existing_task.helper_aggregator_endpoint() == task.helper_aggregator_endpoint()
                 && existing_task.query_type() == task.query_type()
                 && existing_task.vdaf() == task.vdaf()
-                && existing_task.vdaf_verify_keys() == task.vdaf_verify_keys()
+                && existing_task.opaque_vdaf_verify_key() == task.opaque_vdaf_verify_key()
                 && existing_task.role() == task.role()
                 && existing_task.max_batch_query_count() == task.max_batch_query_count()
                 && existing_task.task_expiration() == task.task_expiration()
