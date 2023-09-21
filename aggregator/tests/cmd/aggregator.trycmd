@@ -2,7 +2,7 @@
 $ aggregator --help
 DAP aggregator server
 
-Usage: aggregator [OPTIONS] --config-file <CONFIG_FILE>
+Usage: aggregator [OPTIONS] --config-file <CONFIG_FILE> --aggregator-auth-tokens <AGGREGATOR_AUTH_TOKENS> --verify-key-init <VERIFY_KEY_INIT>
 
 Options:
       --config-file <CONFIG_FILE>
@@ -17,6 +17,10 @@ Options:
           additional OTLP/gRPC metadata key/value pairs for the metrics exporter [env: OTLP_METRICS_METADATA=]
       --aggregator-api-auth-tokens [<AGGREGATOR_API_AUTH_TOKENS>]
           aggregator API auth tokens, encoded in base64 then comma-separated [env: AGGREGATOR_API_AUTH_TOKENS]
+      --aggregator-auth-tokens <AGGREGATOR_AUTH_TOKENS>
+          DAP aggregator tokens, encoded in base64 then comma-separated [env: AGGREGATOR_AUTH_TOKENS]
+      --verify-key-init <VERIFY_KEY_INIT>
+          Taskprov verify key init, encoded in base64 [env: VERIFY_KEY_INIT]
   -h, --help
           Print help
   -V, --version

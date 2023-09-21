@@ -104,3 +104,13 @@ garbage_collection:
   # The maximum number of collection jobs (& related artifacts), per task, to delete in a single run
   # of the garbage collector.
   collection_limit: 50
+
+taskprov_config:
+  collector_hpke_config:
+    id: 183
+    kem_id: X25519HkdfSha256
+    kdf_id: HkdfSha256
+    aead_id: Aes128Gcm
+    public_key: 4qiv6IY5jrjCV3xbaQXULmPIpvoIml1oJmeXm-yOuAo
+  tolerable_clock_skew: 60
+  report_expiry_age: 2592000

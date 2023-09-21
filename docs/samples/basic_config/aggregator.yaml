@@ -21,3 +21,12 @@ max_upload_batch_write_delay_ms: 250
 # Number of sharded database records per batch aggregation. Must not be greater
 # than the equivalent setting in the collection job driver. (required)
 batch_aggregation_shard_count: 32
+
+taskprov_config:
+  collector_hpke_config:
+    id: 183
+    kem_id: X25519HkdfSha256
+    kdf_id: HkdfSha256
+    aead_id: Aes128Gcm
+    public_key: 4qiv6IY5jrjCV3xbaQXULmPIpvoIml1oJmeXm-yOuAo
+  tolerable_clock_skew: 60

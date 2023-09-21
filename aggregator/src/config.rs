@@ -2,6 +2,7 @@
 
 use crate::{metrics::MetricsConfiguration, trace::TraceConfiguration};
 use derivative::Derivative;
+use janus_messages::{Duration, HpkeConfig};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     fmt::Debug,
@@ -125,6 +126,18 @@ pub struct JobDriverConfig {
     /// The number of attempts to drive a work item before it is placed in a permanent failure
     /// state.
     pub maximum_attempts_before_failure: usize,
+}
+
+/// Configuration options for the Taskprov extension. This extension is
+/// described in [draft-wang-ppm-dap-taskprov][spec], although its configuration
+/// options are implementation-specific.
+///
+/// [spec]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskprovConfig {
+    pub collector_hpke_config: HpkeConfig,
+    pub report_expiry_age: Option<Duration>,
+    pub tolerable_clock_skew: Duration,
 }
 
 #[cfg(feature = "test-util")]

@@ -4,7 +4,8 @@ use clap::Parser;
 use janus_aggregator::{
     aggregator::{self, http_handlers::aggregator_handler},
     binary_utils::{janus_main, BinaryOptions, CommonBinaryOptions},
-    config::{BinaryConfig, CommonConfig},
+    cache::GlobalHpkeKeypairCache,
+    config::{BinaryConfig, CommonConfig, TaskprovConfig},
 };
 use janus_aggregator_core::{
     datastore::{models::HpkeKeyState, Datastore},
@@ -12,7 +13,9 @@ use janus_aggregator_core::{
     SecretBytes,
 };
 use janus_core::{
-    hpke::generate_hpke_config_and_private_key, task::AuthenticationToken, time::RealClock,
+    hpke::generate_hpke_config_and_private_key,
+    task::AuthenticationToken,
+    time::{DurationExt, RealClock},
 };
 use janus_interop_binaries::{
     status::{ERROR, SUCCESS},
@@ -24,6 +27,7 @@ use janus_messages::{
 };
 use opentelemetry::metrics::Meter;
 use prio::codec::Decode;
+use rand::random;
 use serde::{Deserialize, Serialize};
 use sqlx::{migrate::Migrator, Connection, PgConnection};
 use std::{
@@ -161,7 +165,21 @@ async fn make_handler(
             max_upload_batch_size: 100,
             max_upload_batch_write_delay: std::time::Duration::from_millis(100),
             batch_aggregation_shard_count: 32,
-            ..Default::default()
+            global_hpke_configs_refresh_interval: GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
+
+            // TODO(janus-ops#991): Give these taskprov parameters actual values to facilitiate an E2E test.
+            collector_hpke_config: generate_hpke_config_and_private_key(
+                HpkeConfigId::from(1),
+                HpkeKemId::X25519HkdfSha256,
+                HpkeKdfId::HkdfSha256,
+                HpkeAeadId::Aes128Gcm,
+            )
+            .config()
+            .clone(),
+            report_expiry_age: None,
+            tolerable_clock_skew: Duration::from_minutes(60).unwrap(),
+            verify_key_init: random(),
+            auth_tokens: Vec::new(),
         },
     )
     .await?;
@@ -263,6 +281,8 @@ struct Config {
     /// Path prefix, e.g. `/dap/`, to serve DAP from.
     #[serde(default = "default_dap_serving_prefix")]
     dap_serving_prefix: String,
+
+    taskprov_config: TaskprovConfig,
 }
 
 impl BinaryConfig for Config {

@@ -3,15 +3,25 @@
 //! process. The process should promptly shut down, and this test will fail if
 //! it times out waiting for the process to do so.
 
-use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
+use base64::{
+    engine::general_purpose::{STANDARD_NO_PAD, URL_SAFE_NO_PAD},
+    Engine,
+};
 use janus_aggregator_core::{
     datastore::test_util::ephemeral_datastore,
     task::{test_util::TaskBuilder, QueryType},
+    taskprov::VerifyKeyInit,
 };
-use janus_core::{task::VdafInstance, test_util::install_test_trace_subscriber, time::RealClock};
+use janus_core::{
+    hpke::test_util::generate_test_hpke_config_and_private_key,
+    task::{AuthenticationToken, VdafInstance},
+    test_util::install_test_trace_subscriber,
+    time::RealClock,
+};
 use janus_messages::Role;
+use rand::random;
 use reqwest::Url;
-use serde_yaml::{Mapping, Value};
+use serde_yaml::{to_value, Mapping, Value};
 use std::{
     future::Future,
     io::{ErrorKind, Write},
@@ -119,6 +129,15 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
     db_config.insert("url".into(), ephemeral_datastore.connection_string().into());
     db_config.insert("connection_pool_timeout_secs".into(), "60".into());
     config.insert("database".into(), db_config.into());
+
+    let mut taskprov_config = Mapping::new();
+    taskprov_config.insert(
+        "collector_hpke_config".into(),
+        to_value(generate_test_hpke_config_and_private_key().config()).unwrap(),
+    );
+    taskprov_config.insert("tolerable_clock_skew".into(), 60.into());
+    config.insert("taskprov_config".into(), taskprov_config.into());
+
     config.insert(
         "health_check_listen_address".into(),
         format!("{health_check_listen_address}").into(),
@@ -161,6 +180,14 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         .env(
             "DATASTORE_KEYS",
             STANDARD_NO_PAD.encode(ephemeral_datastore.datastore_key_bytes()),
+        )
+        .env(
+            "VERIFY_KEY_INIT",
+            URL_SAFE_NO_PAD.encode(random::<VerifyKeyInit>().as_ref()),
+        )
+        .env(
+            "AGGREGATOR_AUTH_TOKENS",
+            URL_SAFE_NO_PAD.encode(random::<AuthenticationToken>()),
         )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
