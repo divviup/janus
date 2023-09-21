@@ -303,7 +303,7 @@ async fn main() -> anyhow::Result<()> {
                         );
                         tx.put_global_hpke_keypair(&keypair).await?;
                         tx.set_global_hpke_keypair_state(
-                            &keypair.config().id(),
+                            keypair.config().id(),
                             &HpkeKeyState::Active,
                         )
                         .await?;
