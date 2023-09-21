@@ -16,8 +16,9 @@ use crate::{
 use chrono::NaiveDateTime;
 use futures::future::try_join_all;
 use janus_core::{
+    auth_tokens::AuthenticationToken,
     hpke::{HpkeKeypair, HpkePrivateKey},
-    task::{AuthenticationToken, VdafInstance},
+    task::VdafInstance,
     time::{Clock, TimeExt},
 };
 use janus_messages::{

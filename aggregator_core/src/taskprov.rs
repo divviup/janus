@@ -4,7 +4,7 @@ use crate::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
-use janus_core::task::{AuthenticationToken, VdafInstance};
+use janus_core::{auth_tokens::AuthenticationToken, task::VdafInstance};
 use janus_messages::{Duration, HpkeConfig, Role, TaskId, Time};
 use rand::{distributions::Standard, prelude::Distribution};
 use ring::hkdf::{KeyType, Salt, HKDF_SHA256};
@@ -304,6 +304,7 @@ impl Task {
             None,
             None,
             None,
+            None,
             Vec::new(),
         ));
         task.validate()?;
@@ -341,7 +342,8 @@ impl From<Task> for task::Task {
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use janus_core::{
-        hpke::test_util::generate_test_hpke_config_and_private_key, task::AuthenticationToken,
+        auth_tokens::AuthenticationToken,
+        hpke::test_util::generate_test_hpke_config_and_private_key,
     };
     use janus_messages::{Duration, HpkeConfig, Role};
     use rand::random;

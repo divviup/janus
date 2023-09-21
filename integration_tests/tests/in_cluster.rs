@@ -6,7 +6,7 @@ use divviup_client::{
 };
 use janus_aggregator_core::task::QueryType;
 use janus_core::{
-    task::AuthenticationToken,
+    auth_tokens::AuthenticationToken,
     task::VdafInstance,
     test_util::{
         install_test_trace_subscriber,

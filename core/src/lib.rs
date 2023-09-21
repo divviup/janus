@@ -3,6 +3,7 @@
 use std::future::Future;
 use tokio::task::JoinHandle;
 
+pub mod auth_tokens;
 pub mod hpke;
 pub mod http;
 pub mod report_id;

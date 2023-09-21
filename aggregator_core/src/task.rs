@@ -4,8 +4,9 @@ use crate::SecretBytes;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use janus_core::{
+    auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     hpke::{generate_hpke_config_and_private_key, HpkeKeypair},
-    task::{url_ensure_trailing_slash, AuthenticationToken, VdafInstance},
+    task::{url_ensure_trailing_slash, VdafInstance},
     time::TimeExt,
 };
 use janus_messages::{
@@ -129,8 +130,11 @@ pub struct Task {
     tolerable_clock_skew: Duration,
     /// HPKE configuration for the collector.
     collector_hpke_config: Option<HpkeConfig>,
-    /// Token used to authenticate messages sent to or received from the other aggregator. Only set
-    /// if the task was not created via taskprov.
+    /// Token hash used to authenticate aggregation protocol messages received from the leader. Only
+    /// set if this aggregator is the leader and the task was not created via taskprov.
+    aggregator_auth_token_hash: Option<AuthenticationTokenHash>,
+    /// Token used to authenticate messages sent to the helper. Only set if this aggregator is the
+    /// leader and if the task was not created via taskprov.
     aggregator_auth_token: Option<AuthenticationToken>,
     /// Token used to authenticate messages sent to or received from the collector. Only set if this
     /// aggregator is the leader.
@@ -157,6 +161,7 @@ impl Task {
         time_precision: Duration,
         tolerable_clock_skew: Duration,
         collector_hpke_config: HpkeConfig,
+        aggregator_auth_token_hash: Option<AuthenticationTokenHash>,
         aggregator_auth_token: Option<AuthenticationToken>,
         collector_auth_token: Option<AuthenticationToken>,
         hpke_keys: I,
@@ -176,6 +181,7 @@ impl Task {
             time_precision,
             tolerable_clock_skew,
             Some(collector_hpke_config),
+            aggregator_auth_token_hash,
             aggregator_auth_token,
             collector_auth_token,
             hpke_keys,
@@ -202,6 +208,7 @@ impl Task {
         time_precision: Duration,
         tolerable_clock_skew: Duration,
         collector_hpke_config: Option<HpkeConfig>,
+        aggregator_auth_token_hash: Option<AuthenticationTokenHash>,
         aggregator_auth_token: Option<AuthenticationToken>,
         collector_auth_token: Option<AuthenticationToken>,
         hpke_keys: I,
@@ -230,6 +237,7 @@ impl Task {
             time_precision,
             tolerable_clock_skew,
             collector_hpke_config,
+            aggregator_auth_token_hash,
             aggregator_auth_token,
             collector_auth_token,
             hpke_keys,
@@ -266,11 +274,17 @@ impl Task {
 
     pub(crate) fn validate(&self) -> Result<(), Error> {
         self.validate_common()?;
-        if self.aggregator_auth_token.is_none() {
+
+        // Aggregator auth token is allowed and required iff this task is in the leader role
+        if (self.role == Role::Leader) == (self.aggregator_auth_token.is_none()) {
             return Err(Error::InvalidParameter("aggregator_auth_token"));
         }
+        // Aggregator auth token hash is allowed and required iff this task is in the helper role
+        if (self.role == Role::Helper) == (self.aggregator_auth_token_hash.is_none()) {
+            return Err(Error::InvalidParameter("aggregator_auth_token_hash"));
+        }
         if (self.role == Role::Leader) == (self.collector_auth_token.is_none()) {
-            // Collector auth tokens are allowed & required if and only if this task is in the
+            // Collector auth token is allowed & required if and only if this task is in the
             // leader role.
             return Err(Error::InvalidParameter("collector_auth_token"));
         }
@@ -359,7 +373,14 @@ impl Task {
         self.collector_hpke_config.as_ref()
     }
 
-    /// Retrieves the aggregator authentication token associated with this task.
+    /// Retrieves the aggregator authentication token hash associatd with this task for the helper,
+    /// or `None` for the leader.
+    pub fn aggregator_auth_token_hash(&self) -> Option<&AuthenticationTokenHash> {
+        self.aggregator_auth_token_hash.as_ref()
+    }
+
+    /// Retrieves the aggregator authentication token associated with this task for the leader, or
+    /// `None` for the helper.
     pub fn aggregator_auth_token(&self) -> Option<&AuthenticationToken> {
         self.aggregator_auth_token.as_ref()
     }
@@ -396,15 +417,6 @@ impl Task {
                 // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.2.2
                 batch_size >= self.min_batch_size() && batch_size <= max_batch_size
             }
-        }
-    }
-
-    /// Checks if the given aggregator authentication token is valid (i.e. matches with an
-    /// authentication token recognized by this task).
-    pub fn check_aggregator_auth_token(&self, auth_token: &AuthenticationToken) -> bool {
-        match self.aggregator_auth_token {
-            Some(ref t) => t == auth_token,
-            None => false,
         }
     }
 
@@ -484,6 +496,7 @@ pub struct SerializedTask {
     time_precision: Duration,
     tolerable_clock_skew: Duration,
     collector_hpke_config: HpkeConfig,
+    aggregator_auth_token_hash: Option<AuthenticationTokenHash>,
     aggregator_auth_token: Option<AuthenticationToken>,
     collector_auth_token: Option<AuthenticationToken>,
     hpke_keys: Vec<HpkeKeypair>, // uses unpadded base64url
@@ -500,7 +513,6 @@ impl SerializedTask {
     ///
     /// - Task ID
     /// - VDAF verify keys (only one key is generated)
-    /// - Aggregator authentication tokens (only one token is generated)
     /// - Collector authentication tokens (only one token is generated and only if the task's role
     ///   is leader)
     /// - The aggregator's HPKE keypair (only one keypair is generated)
@@ -519,10 +531,6 @@ impl SerializedTask {
             );
 
             self.vdaf_verify_key = Some(URL_SAFE_NO_PAD.encode(vdaf_verify_key.as_ref()));
-        }
-
-        if self.aggregator_auth_token.is_none() {
-            self.aggregator_auth_token = Some(random());
         }
 
         if self.collector_auth_token.is_none() && self.role == Role::Leader {
@@ -566,6 +574,7 @@ impl Serialize for Task {
                 .collector_hpke_config()
                 .expect("serializable tasks must have collector_hpke_config")
                 .clone(),
+            aggregator_auth_token_hash: self.aggregator_auth_token_hash.clone(),
             aggregator_auth_token: self.aggregator_auth_token.clone(),
             collector_auth_token: self.collector_auth_token.clone(),
             hpke_keys,
@@ -603,6 +612,7 @@ impl TryFrom<SerializedTask> for Task {
             serialized_task.time_precision,
             serialized_task.tolerable_clock_skew,
             serialized_task.collector_hpke_config,
+            serialized_task.aggregator_auth_token_hash,
             serialized_task.aggregator_auth_token,
             serialized_task.collector_auth_token,
             serialized_task.hpke_keys,
@@ -626,8 +636,9 @@ pub mod test_util {
         SecretBytes,
     };
     use janus_core::{
+        auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
         hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair},
-        task::{AuthenticationToken, VdafInstance, VERIFY_KEY_LENGTH},
+        task::{VdafInstance, VERIFY_KEY_LENGTH},
         time::DurationExt,
     };
     use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId, Time};
@@ -649,7 +660,13 @@ pub mod test_util {
 
     /// TaskBuilder is a testing utility allowing tasks to be built based on a template.
     #[derive(Clone)]
-    pub struct TaskBuilder(Task);
+    pub struct TaskBuilder {
+        /// The task being built.
+        task: Task,
+        /// The aggregator auth token for the task. In the case where the task's role is helper, the
+        /// `Task` will only store an `AuthenticationTokenHash`, so we store the actual token here.
+        aggregator_auth_token: AuthenticationToken,
+    }
 
     impl TaskBuilder {
         /// Create a [`TaskBuilder`] from the provided values, with arbitrary values for the other
@@ -678,14 +695,26 @@ pub mod test_util {
                     .collect(),
             );
 
+            // Create an AuthenticationToken::Bearer by default
+            let aggregator_auth_token: AuthenticationToken = random();
+            let (task_aggregator_auth_token, task_aggregator_auth_token_hash) = match role {
+                Role::Leader => (Some(aggregator_auth_token.clone()), None),
+                Role::Helper => (
+                    None,
+                    Some(AuthenticationTokenHash::from(&aggregator_auth_token)),
+                ),
+                _ => panic!("illegal role in task"),
+            };
+
             let collector_auth_token = if role == Role::Leader {
-                Some(random()) // Create an AuthenticationToken::Bearer by default
+                // Create an AuthenticationToken::Bearer by default
+                Some(random())
             } else {
                 None
             };
 
-            Self(
-                Task::new(
+            Self {
+                task: Task::new(
                     task_id,
                     "https://leader.endpoint".parse().unwrap(),
                     "https://helper.endpoint".parse().unwrap(),
@@ -700,108 +729,155 @@ pub mod test_util {
                     Duration::from_hours(8).unwrap(),
                     Duration::from_minutes(10).unwrap(),
                     generate_test_hpke_config_and_private_key().config().clone(),
-                    Some(random()), // Create an AuthenticationToken::Bearer by default
+                    task_aggregator_auth_token_hash,
+                    task_aggregator_auth_token,
                     collector_auth_token,
                     Vec::from([aggregator_keypair_0, aggregator_keypair_1]),
                 )
                 .unwrap(),
-            )
+                aggregator_auth_token,
+            }
         }
 
         /// Gets the leader aggregator endpoint for the eventual task.
         pub fn leader_aggregator_endpoint(&self) -> &Url {
-            self.0.leader_aggregator_endpoint()
+            self.task.leader_aggregator_endpoint()
         }
 
         /// Gets the helper aggregator endpoint for the eventual task.
         pub fn helper_aggregator_endpoint(&self) -> &Url {
-            self.0.helper_aggregator_endpoint()
+            self.task.helper_aggregator_endpoint()
+        }
+
+        /// Gets the aggregator auth token for the eventual task.
+        pub fn aggregator_auth_token(&self) -> &AuthenticationToken {
+            &self.aggregator_auth_token
         }
 
         /// Associates the eventual task with the given task ID.
         pub fn with_id(self, task_id: TaskId) -> Self {
-            Self(Task { task_id, ..self.0 })
+            Self {
+                task: Task {
+                    task_id,
+                    ..self.task
+                },
+                ..self
+            }
         }
 
         /// Associates the eventual task with the given aggregator endpoint for the Leader.
         pub fn with_leader_aggregator_endpoint(self, leader_aggregator_endpoint: Url) -> Self {
-            Self(Task {
-                leader_aggregator_endpoint,
-                ..self.0
-            })
+            Self {
+                task: Task {
+                    leader_aggregator_endpoint,
+                    ..self.task
+                },
+                ..self
+            }
         }
 
         /// Associates the eventual task with the given aggregator endpoint for the Helper.
         pub fn with_helper_aggregator_endpoint(self, helper_aggregator_endpoint: Url) -> Self {
-            Self(Task {
-                helper_aggregator_endpoint,
-                ..self.0
-            })
+            Self {
+                task: Task {
+                    helper_aggregator_endpoint,
+                    ..self.task
+                },
+                ..self
+            }
         }
 
         /// Associates the eventual task with the given aggregator role.
         pub fn with_role(self, role: Role) -> Self {
-            Self(Task { role, ..self.0 })
+            Self {
+                task: Task { role, ..self.task },
+                ..self
+            }
         }
 
         /// Associates the eventual task with the given VDAF verification key.
         pub fn with_vdaf_verify_key(self, vdaf_verify_key: SecretBytes) -> Self {
-            Self(Task {
-                vdaf_verify_key,
-                ..self.0
-            })
+            Self {
+                task: Task {
+                    vdaf_verify_key,
+                    ..self.task
+                },
+                ..self
+            }
         }
 
         /// Associates the eventual task with the given max batch query count parameter.
         pub fn with_max_batch_query_count(self, max_batch_query_count: u64) -> Self {
-            Self(Task {
-                max_batch_query_count,
-                ..self.0
-            })
+            Self {
+                task: Task {
+                    max_batch_query_count,
+                    ..self.task
+                },
+                ..self
+            }
         }
 
         /// Associates the eventual task with the given min batch size parameter.
         pub fn with_min_batch_size(self, min_batch_size: u64) -> Self {
-            Self(Task {
-                min_batch_size,
-                ..self.0
-            })
+            Self {
+                task: Task {
+                    min_batch_size,
+                    ..self.task
+                },
+                ..self
+            }
         }
 
         /// Associates the eventual task with the given time precision parameter.
         pub fn with_time_precision(self, time_precision: Duration) -> Self {
-            Self(Task {
-                time_precision,
-                ..self.0
-            })
+            Self {
+                task: Task {
+                    time_precision,
+                    ..self.task
+                },
+                ..self
+            }
         }
 
         /// Associates the eventual task with the given collector HPKE config.
         pub fn with_collector_hpke_config(self, collector_hpke_config: HpkeConfig) -> Self {
-            Self(Task {
-                collector_hpke_config: Some(collector_hpke_config),
-                ..self.0
-            })
+            Self {
+                task: Task {
+                    collector_hpke_config: Some(collector_hpke_config),
+                    ..self.task
+                },
+                ..self
+            }
         }
 
         /// Associates the eventual task with the given aggregator authentication token.
         pub fn with_aggregator_auth_token(
             self,
-            aggregator_auth_token: Option<AuthenticationToken>,
+            aggregator_auth_token: AuthenticationToken,
         ) -> Self {
-            Self(Task {
+            let task = match self.task.role {
+                Role::Leader => Task {
+                    aggregator_auth_token: Some(aggregator_auth_token.clone()),
+                    ..self.task
+                },
+                Role::Helper => Task {
+                    aggregator_auth_token_hash: Some(AuthenticationTokenHash::from(
+                        &aggregator_auth_token,
+                    )),
+                    ..self.task
+                },
+                _ => panic!("illegal role"),
+            };
+            Self {
+                task,
                 aggregator_auth_token,
-                ..self.0
-            })
+            }
         }
 
         /// Associates the eventual task with a random [`AuthenticationToken::DapAuth`] aggregator
         /// auth token.
         pub fn with_dap_auth_aggregator_token(self) -> Self {
-            Self(Task {
-                aggregator_auth_token: Some(AuthenticationToken::DapAuth(random())),
-                ..self.0
-            })
+            self.with_aggregator_auth_token(AuthenticationToken::DapAuth(random()))
         }
 
         /// Associates the eventual task with the given collector authentication token.
@@ -809,35 +885,41 @@ pub mod test_util {
             self,
             collector_auth_token: Option<AuthenticationToken>,
         ) -> Self {
-            Self(Task {
-                collector_auth_token,
-                ..self.0
-            })
+            Self {
+                task: Task {
+                    collector_auth_token,
+                    ..self.task
+                },
+                ..self
+            }
         }
 
         /// Associates the eventual task with a random [`AuthenticationToken::DapAuth`] collector
         /// auth token.
         pub fn with_dap_auth_collector_token(self) -> Self {
-            Self(Task {
-                collector_auth_token: Some(AuthenticationToken::DapAuth(random())),
-                ..self.0
-            })
+            self.with_collector_auth_token(Some(AuthenticationToken::DapAuth(random())))
         }
 
         /// Sets the task expiration time.
         pub fn with_task_expiration(self, task_expiration: Option<Time>) -> Self {
-            Self(Task {
-                task_expiration,
-                ..self.0
-            })
+            Self {
+                task: Task {
+                    task_expiration,
+                    ..self.task
+                },
+                ..self
+            }
         }
 
         /// Sets the report expiry age.
         pub fn with_report_expiry_age(self, report_expiry_age: Option<Duration>) -> Self {
-            Self(Task {
-                report_expiry_age,
-                ..self.0
-            })
+            Self {
+                task: Task {
+                    report_expiry_age,
+                    ..self.task
+                },
+                ..self
+            }
         }
 
         /// Sets the task HPKE keys
@@ -846,24 +928,35 @@ pub mod test_util {
                 .into_iter()
                 .map(|hpke_keypair| (*hpke_keypair.config().id(), hpke_keypair))
                 .collect();
-            Self(Task {
-                hpke_keys,
-                ..self.0
-            })
+            Self {
+                task: Task {
+                    hpke_keys,
+                    ..self.task
+                },
+                ..self
+            }
         }
 
         /// Consumes this task builder & produces a [`Task`] with the given specifications.
         pub fn build(self) -> Task {
-            self.0.validate().unwrap();
-            self.0
+            self.build_yielding_aggregator_auth_token().0
+        }
+
+        /// Consumes this task builder & produces a [`Task`] with the given specifications, as well
+        /// as the aggregator authentication token for the task.
+        pub fn build_yielding_aggregator_auth_token(self) -> (Task, AuthenticationToken) {
+            self.task.validate().unwrap();
+            (self.task, self.aggregator_auth_token)
         }
     }
 
-    impl From<Task> for TaskBuilder {
-        fn from(task: Task) -> Self {
-            Self(task)
-        }
-    }
+    // TODO(timg): this can't be implemented anymore because a helper task won't have the unhashed agg
+    // auth token in it
+    // impl From<Task> for TaskBuilder {
+    //     fn from(task: Task) -> Self {
+    //         Self(task)
+    //     }
+    // }
 }
 
 #[cfg(test)]
@@ -874,8 +967,9 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use janus_core::{
+        auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
         hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair, HpkePrivateKey},
-        task::{AuthenticationToken, VERIFY_KEY_LENGTH},
+        task::VERIFY_KEY_LENGTH,
         test_util::roundtrip_encoding,
         time::DurationExt,
     };
@@ -905,7 +999,91 @@ mod tests {
     }
 
     #[test]
+    fn aggregator_auth_tokens_valid() {
+        let auth_token: AuthenticationToken = random();
+        for (role, aggregator_auth_token_hash, aggregator_auth_token) in [
+            (Role::Leader, None, Some(auth_token.clone())),
+            (
+                Role::Helper,
+                Some(AuthenticationTokenHash::from(&auth_token)),
+                None,
+            ),
+        ] {
+            println!("case");
+            Task::new(
+                random(),
+                "http://leader_endpoint".parse().unwrap(),
+                "http://helper_endpoint".parse().unwrap(),
+                QueryType::TimeInterval,
+                VdafInstance::Prio3Count,
+                role,
+                SecretBytes::new([0; VERIFY_KEY_LENGTH].into()),
+                0,
+                None,
+                None,
+                0,
+                Duration::from_hours(8).unwrap(),
+                Duration::from_minutes(10).unwrap(),
+                generate_test_hpke_config_and_private_key().config().clone(),
+                aggregator_auth_token_hash,
+                aggregator_auth_token,
+                if role == Role::Leader {
+                    Some(random())
+                } else {
+                    None
+                },
+                Vec::from([generate_test_hpke_config_and_private_key()]),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn aggregator_auth_tokens_invalid() {
+        let auth_token: AuthenticationToken = random();
+        let auth_token_hash = AuthenticationTokenHash::from(&auth_token);
+        for (role, aggregator_auth_token_hash, aggregator_auth_token) in [
+            // Leader must provide aggregator auth token and may not have aggregator auth token hash
+            (Role::Leader, None, None),
+            (Role::Leader, Some(auth_token_hash.clone()), None),
+            (
+                Role::Leader,
+                Some(auth_token_hash.clone()),
+                Some(auth_token.clone()),
+            ),
+            // Helper must have aggregator auth token hash and may not have aggregator auth token
+            (Role::Helper, None, None),
+            (Role::Helper, None, Some(auth_token.clone())),
+            (Role::Helper, Some(auth_token_hash), Some(auth_token)),
+        ] {
+            Task::new(
+                random(),
+                "http://leader_endpoint".parse().unwrap(),
+                "http://helper_endpoint".parse().unwrap(),
+                QueryType::TimeInterval,
+                VdafInstance::Prio3Count,
+                role,
+                SecretBytes::new([0; VERIFY_KEY_LENGTH].into()),
+                0,
+                None,
+                None,
+                0,
+                Duration::from_hours(8).unwrap(),
+                Duration::from_minutes(10).unwrap(),
+                generate_test_hpke_config_and_private_key().config().clone(),
+                aggregator_auth_token_hash,
+                aggregator_auth_token,
+                if role == Role::Leader { random() } else { None },
+                Vec::from([generate_test_hpke_config_and_private_key()]),
+            )
+            .unwrap_err();
+        }
+    }
+
+    #[test]
     fn collector_auth_tokens() {
+        let auth_token: AuthenticationToken = random();
+        let auth_token_hash = AuthenticationTokenHash::from(&auth_token);
         // As leader, we receive an error if no collector auth token is specified.
         Task::new(
             random(),
@@ -922,6 +1100,7 @@ mod tests {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
+            None,
             Some(random()),
             None,
             Vec::from([generate_test_hpke_config_and_private_key()]),
@@ -944,6 +1123,7 @@ mod tests {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
+            None,
             Some(random()),
             Some(random()),
             Vec::from([generate_test_hpke_config_and_private_key()]),
@@ -966,7 +1146,8 @@ mod tests {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
-            Some(random()),
+            Some(auth_token_hash.clone()),
+            None,
             None,
             Vec::from([generate_test_hpke_config_and_private_key()]),
         )
@@ -988,7 +1169,8 @@ mod tests {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
-            Some(random()),
+            Some(auth_token_hash),
+            None,
             Some(random()),
             Vec::from([generate_test_hpke_config_and_private_key()]),
         )
@@ -1012,6 +1194,7 @@ mod tests {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
+            None,
             Some(random()),
             Some(random()),
             Vec::from([generate_test_hpke_config_and_private_key()]),
@@ -1095,6 +1278,7 @@ mod tests {
                     HpkeAeadId::Aes128Gcm,
                     HpkePublicKey::from(b"collector hpke public key".to_vec()),
                 ),
+                None,
                 Some(
                     AuthenticationToken::new_dap_auth_token_from_string("YWdncmVnYXRvciB0b2tlbg")
                         .unwrap(),
@@ -1118,7 +1302,7 @@ mod tests {
             &[
                 Token::Struct {
                     name: "SerializedTask",
-                    len: 17,
+                    len: 18,
                 },
                 Token::Str("task_id"),
                 Token::Some,
@@ -1187,6 +1371,8 @@ mod tests {
                 Token::Str("public_key"),
                 Token::Str("Y29sbGVjdG9yIGhwa2UgcHVibGljIGtleQ"),
                 Token::StructEnd,
+                Token::Str("aggregator_auth_token_hash"),
+                Token::None,
                 Token::Str("aggregator_auth_token"),
                 Token::Some,
                 Token::Struct {
@@ -1285,10 +1471,11 @@ mod tests {
                     HpkeAeadId::Aes128Gcm,
                     HpkePublicKey::from(b"collector hpke public key".to_vec()),
                 ),
-                Some(
-                    AuthenticationToken::new_bearer_token_from_string("YWdncmVnYXRvciB0b2tlbg")
+                Some(AuthenticationTokenHash::from(
+                    &AuthenticationToken::new_bearer_token_from_string("YWdncmVnYXRvciB0b2tlbg")
                         .unwrap(),
-                ),
+                )),
+                None,
                 None,
                 [HpkeKeypair::new(
                     HpkeConfig::new(
@@ -1305,7 +1492,7 @@ mod tests {
             &[
                 Token::Struct {
                     name: "SerializedTask",
-                    len: 17,
+                    len: 18,
                 },
                 Token::Str("task_id"),
                 Token::Some,
@@ -1388,20 +1575,22 @@ mod tests {
                 Token::Str("public_key"),
                 Token::Str("Y29sbGVjdG9yIGhwa2UgcHVibGljIGtleQ"),
                 Token::StructEnd,
-                Token::Str("aggregator_auth_token"),
+                Token::Str("aggregator_auth_token_hash"),
                 Token::Some,
                 Token::Struct {
-                    name: "AuthenticationToken",
+                    name: "AuthenticationTokenHash",
                     len: 2,
                 },
                 Token::Str("type"),
                 Token::UnitVariant {
-                    name: "AuthenticationToken",
+                    name: "AuthenticationTokenHash",
                     variant: "Bearer",
                 },
-                Token::Str("token"),
-                Token::Str("YWdncmVnYXRvciB0b2tlbg"),
+                Token::Str("hash"),
+                Token::Str("MJOoBO_ysLEuG_lv2C37eEOf1Ngetsr-Ers0ZYj4vdQ"),
                 Token::StructEnd,
+                Token::Str("aggregator_auth_token"),
+                Token::None,
                 Token::Str("collector_auth_token"),
                 Token::None,
                 Token::Str("hpke_keys"),

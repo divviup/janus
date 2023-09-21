@@ -57,7 +57,7 @@ use backoff::{backoff::Backoff, ExponentialBackoff};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use derivative::Derivative;
 use http_api_problem::HttpApiProblem;
-pub use janus_core::task::AuthenticationToken;
+pub use janus_core::auth_tokens::AuthenticationToken;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkePrivateKey},
     http::response_to_problem_details,
@@ -637,11 +637,11 @@ mod tests {
     #[cfg(feature = "fpvec_bounded_l2")]
     use fixed_macro::fixed;
     use janus_core::{
+        auth_tokens::AuthenticationToken,
         hpke::{
             self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
         retries::test_http_request_exponential_backoff,
-        task::AuthenticationToken,
         test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
     };
     use janus_messages::{

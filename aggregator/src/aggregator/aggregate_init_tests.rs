@@ -17,7 +17,8 @@ use janus_aggregator_core::{
     test_util::noop_meter,
 };
 use janus_core::{
-    task::{AuthenticationToken, VdafInstance, DAP_AUTH_HEADER},
+    auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
+    task::VdafInstance,
     test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf, VdafTranscript},
     time::{Clock, MockClock, TimeExt as _},
 };
@@ -209,7 +210,7 @@ async fn setup_aggregate_init_test_without_sending_request<
     install_test_trace_subscriber();
 
     let task = TaskBuilder::new(QueryType::TimeInterval, vdaf_instance, Role::Helper)
-        .with_aggregator_auth_token(Some(auth_token))
+        .with_aggregator_auth_token(auth_token)
         .build();
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;

@@ -4,7 +4,7 @@ use janus_aggregator_core::{
     task::{QueryType, Task},
     taskprov::{PeerAggregator, VerifyKeyInit},
 };
-use janus_core::task::{AuthenticationToken, VdafInstance};
+use janus_core::{auth_tokens::AuthenticationToken, task::VdafInstance};
 use janus_messages::{
     query_type::Code as SupportedQueryType, Duration, HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId,
     Role, TaskId, Time,

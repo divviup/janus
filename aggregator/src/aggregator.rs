@@ -39,9 +39,10 @@ use janus_aggregator_core::{
 #[cfg(feature = "test-util")]
 use janus_core::test_util::dummy_vdaf;
 use janus_core::{
+    auth_tokens::AuthenticationToken,
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     http::response_to_problem_details,
-    task::{AuthenticationToken, VdafInstance, VERIFY_KEY_LENGTH},
+    task::{VdafInstance, VERIFY_KEY_LENGTH},
     time::{Clock, DurationExt, IntervalExt, TimeExt},
 };
 use janus_messages::{

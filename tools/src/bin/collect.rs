@@ -602,11 +602,11 @@ mod tests {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use clap::{error::ErrorKind, CommandFactory, Parser};
     use janus_core::{
+        auth_tokens::TokenInner,
         hpke::{
             test_util::{generate_test_hpke_config_and_private_key, SAMPLE_DIVVIUP_HPKE_CONFIG},
             DivviUpHpkeConfig, HpkeKeypair,
         },
-        task::TokenInner,
     };
     use janus_messages::{BatchId, TaskId};
     use prio::codec::Encode;

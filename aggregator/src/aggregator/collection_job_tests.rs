@@ -20,11 +20,12 @@ use janus_aggregator_core::{
     test_util::noop_meter,
 };
 use janus_core::{
+    auth_tokens::AuthenticationToken,
     hpke::{
         self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo,
         HpkeKeypair, Label,
     },
-    task::{AuthenticationToken, VdafInstance},
+    task::VdafInstance,
     test_util::{
         dummy_vdaf::{self, AggregationParam},
         install_test_trace_subscriber,
