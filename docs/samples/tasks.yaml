@@ -59,31 +59,29 @@
     aead_id: Aes128Gcm
     public_key: 4qiv6IY5jrjCV3xbaQXULmPIpvoIml1oJmeXm-yOuAo
 
-  # Authentication tokens shared beteween the aggregators, and used to
+  # Authentication token shared beteween the aggregators, and used to
   # authenticate leader-to-helper requests. In the case of a leader-role task,
-  # the leader will include the first token in a header when making requests to
-  # the helper. In the case of a helper-role task, the helper will accept
-  # requests with any of the listed authentication tokens.
+  # the leader will include the token in a header when making requests to the
+  # helper. In the case of a helper-role task, the helper will accept requests
+  # requests with  authentication tokens.
   #
   # Each token's `type` governs how it is inserted into HTTP requests if used by
   # the leader to authenticate a request to the helper.
-  aggregator_auth_tokens:
+  aggregator_auth_token:
     # DAP-Auth-Token values are encoded in unpadded base64url, and the decoded
     # value is sent in an HTTP header. For example, this token's value decodes
     # to "aggregator-235242f99406c4fd28b820c32eab0f68".
-  - type: "DapAuth"
+    type: "DapAuth"
     token: "YWdncmVnYXRvci0yMzUyNDJmOTk0MDZjNGZkMjhiODIwYzMyZWFiMGY2OA"
-    # Bearer token values are encoded in unpadded base64url.
-  - type: "Bearer"
-    token: "YWdncmVnYXRvci04NDc1NjkwZjJmYzQzMDBmYjE0NmJiMjk1NDIzNDk1NA"
 
-  # Authentication tokens shared between the leader and the collector, and used
+  # Authentication token shared between the leader and the collector, and used
   # to authenticate collector-to-leader requests. For leader tasks, this has the
   # same format as `aggregator_auth_tokens` above. For helper tasks, this will
   # be an empty list instead.
+  # Bearer token values are encoded in unpadded base64url.
   # This example decodes to "collector-abf5408e2b1601831625af3959106458".
-  collector_auth_tokens:
-  - type: "Bearer"
+  collector_auth_token:
+    type: "Bearer"
     token: "Y29sbGVjdG9yLWFiZjU0MDhlMmIxNjAxODMxNjI1YWYzOTU5MTA2NDU4"
 
   # This aggregator's HPKE keypairs. The first keypair's HPKE configuration will
@@ -122,12 +120,12 @@
     kdf_id: HkdfSha256
     aead_id: Aes128Gcm
     public_key: KHRLcWgfWxli8cdOLPsgsZPttHXh0ho3vLVLrW-63lE
-  aggregator_auth_tokens:
-  - type: "Bearer"
+  aggregator_auth_token:
+    type: "Bearer"
     token: "YWdncmVnYXRvci1jZmE4NDMyZjdkMzllMjZiYjU3OGUzMzY5Mzk1MWQzNQ"
-  # Note that this task does not have any collector authentication tokens, since
+  # Note that this task does not have a collector authentication token, since
   # it is a helper role task.
-  collector_auth_tokens: []
+  collector_auth_token:
   hpke_keys:
   - config:
       id: 37

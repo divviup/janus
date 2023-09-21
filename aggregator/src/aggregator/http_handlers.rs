@@ -1435,11 +1435,14 @@ mod tests {
     async fn aggregate_wrong_agg_auth_token() {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
+        let dap_auth_token = AuthenticationToken::DapAuth(random());
+
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
             VdafInstance::Prio3Count,
             Role::Helper,
         )
+        .with_aggregator_auth_token(Some(dap_auth_token.clone()))
         .build();
         datastore.put_task(&task).await.unwrap();
 
@@ -1452,14 +1455,10 @@ mod tests {
 
         let wrong_token_value = random();
 
-        // Send the right token, but the wrong format: we find a DapAuth token in the task's
-        // aggregator tokens and convert it to an equivalent Bearer token, which should be rejected.
-        let wrong_token_format = task
-            .aggregator_auth_tokens()
-            .iter()
-            .find(|token| matches!(token, AuthenticationToken::DapAuth(_)))
-            .map(|token| AuthenticationToken::new_bearer_token_from_bytes(token.as_ref()).unwrap())
-            .unwrap();
+        // Send the right token, but the wrong format: convert the DAP auth token to an equivalent
+        // Bearer token, which should be rejected.
+        let wrong_token_format =
+            AuthenticationToken::new_bearer_token_from_bytes(dap_auth_token.as_ref()).unwrap();
 
         for auth_token in [Some(wrong_token_value), Some(wrong_token_format), None] {
             let mut test_conn = put(task
@@ -4158,11 +4157,12 @@ mod tests {
             dummy_vdaf::AggregationParam::default().get_encoded(),
         );
 
+        let (header, value) = task
+            .collector_auth_token()
+            .unwrap()
+            .request_authentication();
         let mut test_conn = put(task.collection_job_uri(&collection_job_id).unwrap().path())
-            .with_request_header(
-                "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_ref().to_owned(),
-            )
+            .with_request_header(header, value)
             .with_request_header(
                 KnownHeaderName::ContentType,
                 CollectionReq::<TimeInterval>::MEDIA_TYPE,
@@ -4221,7 +4221,7 @@ mod tests {
             .put_collection_job_with_auth_token(
                 &collection_job_id,
                 &req,
-                Some(test_case.task.primary_aggregator_auth_token()),
+                test_case.task.aggregator_auth_token(),
             )
             .await;
 
@@ -4298,7 +4298,7 @@ mod tests {
         let mut test_conn = test_case
             .post_collection_job_with_auth_token(
                 &collection_job_id,
-                Some(test_case.task.primary_aggregator_auth_token()),
+                test_case.task.aggregator_auth_token(),
             )
             .await;
 
@@ -4526,18 +4526,16 @@ mod tests {
 
         let no_such_collection_job_id: CollectionJobId = random();
 
+        let (header, value) = test_case
+            .task
+            .collector_auth_token()
+            .unwrap()
+            .request_authentication();
         let test_conn = post(&format!(
             "/tasks/{}/collection_jobs/{no_such_collection_job_id}",
             test_case.task.id()
         ))
-        .with_request_header(
-            "DAP-Auth-Token",
-            test_case
-                .task
-                .primary_collector_auth_token()
-                .as_ref()
-                .to_owned(),
-        )
+        .with_request_header(header, value)
         .run_async(&test_case.handler)
         .await;
         assert_eq!(test_conn.status(), Some(Status::NotFound));
@@ -4694,6 +4692,12 @@ mod tests {
 
         let collection_job_id: CollectionJobId = random();
 
+        let (header, value) = test_case
+            .task
+            .collector_auth_token()
+            .unwrap()
+            .request_authentication();
+
         // Try to delete a collection job that doesn't exist
         let test_conn = delete(
             test_case
@@ -4702,14 +4706,7 @@ mod tests {
                 .unwrap()
                 .path(),
         )
-        .with_request_header(
-            "DAP-Auth-Token",
-            test_case
-                .task
-                .primary_collector_auth_token()
-                .as_ref()
-                .to_owned(),
-        )
+        .with_request_header(header, value.clone())
         .run_async(&test_case.handler)
         .await;
         assert_eq!(test_conn.status(), Some(Status::NotFound));
@@ -4734,14 +4731,7 @@ mod tests {
                 .unwrap()
                 .path(),
         )
-        .with_request_header(
-            "DAP-Auth-Token",
-            test_case
-                .task
-                .primary_collector_auth_token()
-                .as_ref()
-                .to_owned(),
-        )
+        .with_request_header(header, value)
         .run_async(&test_case.handler)
         .await;
         assert_eq!(test_conn.status(), Some(Status::NoContent));
@@ -4769,11 +4759,13 @@ mod tests {
             ReportIdChecksum::default(),
         );
 
+        let (header, value) = task
+            .aggregator_auth_token()
+            .unwrap()
+            .request_authentication();
+
         let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
-            .with_request_header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref().to_owned(),
-            )
+            .with_request_header(header, value)
             .with_request_header(
                 KnownHeaderName::ContentType,
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -4819,13 +4811,15 @@ mod tests {
             ReportIdChecksum::default(),
         );
 
+        let (header, value) = task
+            .aggregator_auth_token()
+            .unwrap()
+            .request_authentication();
+
         // Test that a request for an invalid batch fails. (Specifically, the batch interval is too
         // small.)
         let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
-            .with_request_header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref().to_owned(),
-            )
+            .with_request_header(header, value.clone())
             .with_request_header(
                 KnownHeaderName::ContentType,
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -4847,10 +4841,7 @@ mod tests {
 
         // Test that a request for a too-old batch fails.
         let test_conn = post(task.aggregate_shares_uri().unwrap().path())
-            .with_request_header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref().to_owned(),
-            )
+            .with_request_header(header, value)
             .with_request_header(
                 KnownHeaderName::ContentType,
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -4896,11 +4887,13 @@ mod tests {
             ReportIdChecksum::default(),
         );
 
+        let (header, value) = task
+            .aggregator_auth_token()
+            .unwrap()
+            .request_authentication();
+
         let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
-            .with_request_header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref().to_owned(),
-            )
+            .with_request_header(header, value)
             .with_request_header(
                 KnownHeaderName::ContentType,
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -5081,11 +5074,12 @@ mod tests {
             5,
             ReportIdChecksum::default(),
         );
+        let (header, value) = task
+            .aggregator_auth_token()
+            .unwrap()
+            .request_authentication();
         let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
-            .with_request_header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref().to_owned(),
-            )
+            .with_request_header(header, value)
             .with_request_header(
                 KnownHeaderName::ContentType,
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -5134,11 +5128,12 @@ mod tests {
                 ReportIdChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
             ),
         ] {
+            let (header, value) = task
+                .aggregator_auth_token()
+                .unwrap()
+                .request_authentication();
             let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
-                .with_request_header(
-                    "DAP-Auth-Token",
-                    task.primary_aggregator_auth_token().as_ref().to_owned(),
-                )
+                .with_request_header(header, value)
                 .with_request_header(
                     KnownHeaderName::ContentType,
                     AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -5199,11 +5194,12 @@ mod tests {
             // Request the aggregate share multiple times. If the request parameters don't change,
             // then there is no query count violation and all requests should succeed.
             for iteration in 0..3 {
+                let (header, value) = task
+                    .aggregator_auth_token()
+                    .unwrap()
+                    .request_authentication();
                 let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
-                    .with_request_header(
-                        "DAP-Auth-Token",
-                        task.primary_aggregator_auth_token().as_ref().to_owned(),
-                    )
+                    .with_request_header(header, value)
                     .with_request_header(
                         KnownHeaderName::ContentType,
                         AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -5266,11 +5262,12 @@ mod tests {
             20,
             ReportIdChecksum::get_decoded(&[8 ^ 4 ^ 3 ^ 2; 32]).unwrap(),
         );
+        let (header, value) = task
+            .aggregator_auth_token()
+            .unwrap()
+            .request_authentication();
         let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
-            .with_request_header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref().to_owned(),
-            )
+            .with_request_header(header, value)
             .with_request_header(
                 KnownHeaderName::ContentType,
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -5317,11 +5314,12 @@ mod tests {
                 ReportIdChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
             ),
         ] {
+            let (header, value) = task
+                .aggregator_auth_token()
+                .unwrap()
+                .request_authentication();
             let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
-                .with_request_header(
-                    "DAP-Auth-Token",
-                    task.primary_aggregator_auth_token().as_ref().to_owned(),
-                )
+                .with_request_header(header, value)
                 .with_request_header(
                     KnownHeaderName::ContentType,
                     AggregateShareReq::<TimeInterval>::MEDIA_TYPE,

@@ -228,7 +228,10 @@ impl CollectionJobDriver {
             AGGREGATE_SHARES_ROUTE,
             AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
             req,
-            task.primary_aggregator_auth_token(),
+            // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
+            // case, and Janus never acts as the leader with taskprov enabled.
+            task.aggregator_auth_token()
+                .ok_or_else(|| Error::InvalidConfiguration("no aggregator auth token in task"))?,
             &self.metrics.http_request_duration_histogram,
         )
         .await?;
@@ -558,7 +561,7 @@ mod tests {
     };
     use prio::codec::{Decode, Encode};
     use rand::random;
-    use std::{str, sync::Arc, time::Duration as StdDuration};
+    use std::{sync::Arc, time::Duration as StdDuration};
     use trillium_tokio::Stopper;
 
     async fn setup_collection_job_test_case(
@@ -716,7 +719,7 @@ mod tests {
             .with_time_precision(time_precision)
             .with_min_batch_size(10)
             .build();
-        let agg_auth_token = task.primary_aggregator_auth_token();
+        let agg_auth_token = task.aggregator_auth_token().unwrap();
         let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
         let aggregation_param = AggregationParam(0);
         let report_timestamp = clock
@@ -874,12 +877,10 @@ mod tests {
         );
 
         // Simulate helper failing to service the aggregate share request.
+        let (header, value) = agg_auth_token.request_authentication();
         let mocked_failed_aggregate_share = server
             .mock("POST", task.aggregate_shares_uri().unwrap().path())
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_ref()).unwrap(),
-            )
+            .match_header(header, value.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -935,12 +936,10 @@ mod tests {
             Vec::new(),
         ));
 
+        let (header, value) = agg_auth_token.request_authentication();
         let mocked_aggregate_share = server
             .mock("POST", task.aggregate_shares_uri().unwrap().path())
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_ref()).unwrap(),
-            )
+            .match_header(header, value.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,

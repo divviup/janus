@@ -14,7 +14,7 @@ use crate::{
     SecretBytes,
 };
 use chrono::NaiveDateTime;
-use futures::future::try_join_all;
+use futures::future::{try_join_all, Either};
 use janus_core::{
     hpke::{HpkeKeypair, HpkePrivateKey},
     task::{AuthenticationToken, VdafInstance},
@@ -584,81 +584,66 @@ impl<C: Clock> Transaction<'_, C> {
             .await?,
         )?;
 
-        // Aggregator auth tokens.
-        let mut aggregator_auth_token_ords = Vec::new();
-        let mut aggregator_auth_token_types = Vec::new();
-        let mut aggregator_auth_tokens = Vec::new();
-        for (ord, token) in task.aggregator_auth_tokens().iter().enumerate() {
-            let ord = i64::try_from(ord)?;
-
-            let mut row_id = [0; TaskId::LEN + size_of::<i64>()];
-            row_id[..TaskId::LEN].copy_from_slice(task.id().as_ref());
-            row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
-
+        // Aggregator auth token.
+        let aggregator_auth_token_future = if let Some(token) = task.aggregator_auth_token() {
             let encrypted_aggregator_auth_token = self.crypter.encrypt(
                 "task_aggregator_auth_tokens",
-                &row_id,
+                task.id().as_ref(),
                 "token",
                 token.as_ref(),
             )?;
+            let aggregator_auth_token_stmt = self
+                .prepare_cached(
+                    "INSERT INTO task_aggregator_auth_tokens (task_id, type, token)
+                    VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3)",
+                )
+                .await?;
 
-            aggregator_auth_token_ords.push(ord);
-            aggregator_auth_token_types.push(AuthenticationTokenType::from(token));
-            aggregator_auth_tokens.push(encrypted_aggregator_auth_token);
-        }
-        let stmt = self
-            .prepare_cached(
-                "INSERT INTO task_aggregator_auth_tokens (task_id, ord, type, token)
-                SELECT
-                    (SELECT id FROM tasks WHERE task_id = $1),
-                    * FROM UNNEST($2::BIGINT[], $3::AUTH_TOKEN_TYPE[], $4::BYTEA[])",
-            )
-            .await?;
-        let aggregator_auth_tokens_params: &[&(dyn ToSql + Sync)] = &[
-            /* task_id */ &task.id().as_ref(),
-            /* ords */ &aggregator_auth_token_ords,
-            /* token_types */ &aggregator_auth_token_types,
-            /* tokens */ &aggregator_auth_tokens,
-        ];
-        let aggregator_auth_tokens_future = self.execute(&stmt, aggregator_auth_tokens_params);
+            Either::Left(async move {
+                self.execute(
+                    &aggregator_auth_token_stmt,
+                    &[
+                        /* task_id */ &task.id().as_ref(),
+                        /* token_type */ &AuthenticationTokenType::from(token),
+                        /* token */ &encrypted_aggregator_auth_token,
+                    ],
+                )
+                .await
+            })
+        } else {
+            // no-op future so we can unconditionally pass to `try_join`, below.
+            Either::Right(futures::future::ok(0))
+        };
 
-        // Collector auth tokens.
-        let mut collector_auth_token_ords = Vec::new();
-        let mut collector_auth_token_types = Vec::new();
-        let mut collector_auth_tokens = Vec::new();
-        for (ord, token) in task.collector_auth_tokens().iter().enumerate() {
-            let ord = i64::try_from(ord)?;
-
-            let mut row_id = [0; TaskId::LEN + size_of::<i64>()];
-            row_id[..TaskId::LEN].copy_from_slice(task.id().as_ref());
-            row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
-
+        // Collector auth token.
+        let collector_auth_token_future = if let Some(token) = task.collector_auth_token() {
             let encrypted_collector_auth_token = self.crypter.encrypt(
                 "task_collector_auth_tokens",
-                &row_id,
+                task.id().as_ref(),
                 "token",
                 token.as_ref(),
             )?;
-
-            collector_auth_token_ords.push(ord);
-            collector_auth_token_types.push(AuthenticationTokenType::from(token));
-            collector_auth_tokens.push(encrypted_collector_auth_token);
-        }
-        let stmt = self
-            .prepare_cached(
-                "INSERT INTO task_collector_auth_tokens (task_id, ord, type, token)
-                SELECT
-                    (SELECT id FROM tasks WHERE task_id = $1),
-                    * FROM UNNEST($2::BIGINT[], $3::AUTH_TOKEN_TYPE[], $4::BYTEA[])",
-            )
-            .await?;
-        let collector_auth_tokens_params: &[&(dyn ToSql + Sync)] = &[
-            /* task_id */ &task.id().as_ref(),
-            /* ords */ &collector_auth_token_ords,
-            /* token_types */ &collector_auth_token_types,
-            /* tokens */ &collector_auth_tokens,
-        ];
-        let collector_auth_tokens_future = self.execute(&stmt, collector_auth_tokens_params);
+            let collector_auth_token_stmt = self
+                .prepare_cached(
+                    "INSERT INTO task_collector_auth_tokens (task_id, type, token)
+                    VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3)",
+                )
+                .await?;
+            Either::Left(async move {
+                self.execute(
+                    &collector_auth_token_stmt,
+                    &[
+                        /* task_id */ &task.id().as_ref(),
+                        /* token_type */ &AuthenticationTokenType::from(token),
+                        /* token */ &encrypted_collector_auth_token,
+                    ],
+                )
+                .await
+            })
+        } else {
+            // no-op future so we can unconditionally pass to `try_join`, below.
+            Either::Right(futures::future::ok(0))
+        };
 
         // HPKE keys.
         let mut hpke_config_ids: Vec<i16> = Vec::new();
@@ -698,9 +683,9 @@ impl<C: Clock> Transaction<'_, C> {
         let hpke_configs_future = self.execute(&stmt, hpke_configs_params);
 
         try_join!(
-            aggregator_auth_tokens_future,
-            collector_auth_tokens_future,
-            hpke_configs_future,
+            aggregator_auth_token_future,
+            collector_auth_token_future,
+            hpke_configs_future
         )?;
 
         Ok(())
@@ -738,19 +723,19 @@ impl<C: Clock> Transaction<'_, C> {
 
         let stmt = self
             .prepare_cached(
-                "SELECT ord, type, token FROM task_aggregator_auth_tokens
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1) ORDER BY ord ASC",
+                "SELECT type, token FROM task_aggregator_auth_tokens
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             )
             .await?;
-        let aggregator_auth_token_rows = self.query(&stmt, params);
+        let aggregator_auth_token_row = self.query_opt(&stmt, params);
 
         let stmt = self
             .prepare_cached(
-                "SELECT ord, type, token FROM task_collector_auth_tokens
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1) ORDER BY ord ASC",
+                "SELECT type, token FROM task_collector_auth_tokens
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             )
             .await?;
-        let collector_auth_token_rows = self.query(&stmt, params);
+        let collector_auth_token_row = self.query_opt(&stmt, params);
 
         let stmt = self
             .prepare_cached(
@@ -760,10 +745,10 @@ impl<C: Clock> Transaction<'_, C> {
             .await?;
         let hpke_key_rows = self.query(&stmt, params);
 
-        let (task_row, aggregator_auth_token_rows, collector_auth_token_rows, hpke_key_rows) = try_join!(
+        let (task_row, aggregator_auth_token_row, collector_auth_token_row, hpke_key_rows) = try_join!(
             task_row,
-            aggregator_auth_token_rows,
-            collector_auth_token_rows,
+            aggregator_auth_token_row,
+            collector_auth_token_row,
             hpke_key_rows,
         )?;
         task_row
@@ -771,8 +756,8 @@ impl<C: Clock> Transaction<'_, C> {
                 self.task_from_rows(
                     task_id,
                     &task_row,
-                    &aggregator_auth_token_rows,
-                    &collector_auth_token_rows,
+                    aggregator_auth_token_row.as_ref(),
+                    collector_auth_token_row.as_ref(),
                     &hpke_key_rows,
                 )
             })
@@ -797,7 +782,7 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT (SELECT tasks.task_id FROM tasks
                     WHERE tasks.id = task_aggregator_auth_tokens.task_id),
-                ord, type, token FROM task_aggregator_auth_tokens ORDER BY ord ASC",
+                type, token FROM task_aggregator_auth_tokens",
             )
             .await?;
         let aggregator_auth_token_rows = self.query(&stmt, &[]);
@@ -806,7 +791,7 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT (SELECT tasks.task_id FROM tasks
                     WHERE tasks.id = task_collector_auth_tokens.task_id),
-                ord, type, token FROM task_collector_auth_tokens ORDER BY ord ASC",
+                type, token FROM task_collector_auth_tokens",
             )
             .await?;
         let collector_auth_token_rows = self.query(&stmt, &[]);
@@ -833,22 +818,16 @@ impl<C: Clock> Transaction<'_, C> {
             task_row_by_id.push((task_id, row));
         }
 
-        let mut aggregator_auth_token_rows_by_task_id: HashMap<TaskId, Vec<Row>> = HashMap::new();
+        let mut aggregator_auth_token_rows_by_task_id: HashMap<TaskId, Row> = HashMap::new();
         for row in aggregator_auth_token_rows {
             let task_id = TaskId::get_decoded(row.get("task_id"))?;
-            aggregator_auth_token_rows_by_task_id
-                .entry(task_id)
-                .or_default()
-                .push(row);
+            aggregator_auth_token_rows_by_task_id.insert(task_id, row);
         }
 
-        let mut collector_auth_token_rows_by_task_id: HashMap<TaskId, Vec<Row>> = HashMap::new();
+        let mut collector_auth_token_rows_by_task_id: HashMap<TaskId, Row> = HashMap::new();
         for row in collector_auth_token_rows {
             let task_id = TaskId::get_decoded(row.get("task_id"))?;
-            collector_auth_token_rows_by_task_id
-                .entry(task_id)
-                .or_default()
-                .push(row);
+            collector_auth_token_rows_by_task_id.insert(task_id, row);
         }
 
         let mut hpke_config_rows_by_task_id: HashMap<TaskId, Vec<Row>> = HashMap::new();
@@ -866,12 +845,12 @@ impl<C: Clock> Transaction<'_, C> {
                 self.task_from_rows(
                     &task_id,
                     &row,
-                    &aggregator_auth_token_rows_by_task_id
+                    aggregator_auth_token_rows_by_task_id
                         .remove(&task_id)
-                        .unwrap_or_default(),
-                    &collector_auth_token_rows_by_task_id
+                        .as_ref(),
+                    collector_auth_token_rows_by_task_id
                         .remove(&task_id)
-                        .unwrap_or_default(),
+                        .as_ref(),
                     &hpke_config_rows_by_task_id
                         .remove(&task_id)
                         .unwrap_or_default(),
@@ -882,14 +861,12 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Construct a [`Task`] from the contents of the provided (tasks) `Row`,
     /// `hpke_aggregator_auth_tokens` rows, and `task_hpke_keys` rows.
-    ///
-    /// agg_auth_token_rows must be sorted in ascending order by `ord`.
     fn task_from_rows(
         &self,
         task_id: &TaskId,
         row: &Row,
-        aggregator_auth_token_rows: &[Row],
-        collector_auth_token_rows: &[Row],
+        aggregator_auth_token_row: Option<&Row>,
+        collector_auth_token_row: Option<&Row>,
         hpke_key_rows: &[Row],
     ) -> Result<Task, Error> {
         // Scalar task parameters.
@@ -927,47 +904,33 @@ impl<C: Clock> Transaction<'_, C> {
             )
             .map(SecretBytes::new)?;
 
-        // Aggregator authentication tokens.
-        let mut aggregator_auth_tokens = Vec::new();
-        for row in aggregator_auth_token_rows {
-            let ord: i64 = row.get("ord");
-            let auth_token_type: AuthenticationTokenType = row.get("type");
-            let encrypted_aggregator_auth_token: Vec<u8> = row.get("token");
+        let aggregator_auth_token = if let Some(row) = aggregator_auth_token_row {
+            let auth_token_type: AuthenticationTokenType = row.try_get("type")?;
+            let encrypted_aggregator_auth_token: Vec<u8> = row.try_get("token")?;
 
-            let mut row_id = [0u8; TaskId::LEN + size_of::<i64>()];
-            row_id[..TaskId::LEN].copy_from_slice(task_id.as_ref());
-            row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
+            Some(auth_token_type.as_authentication(&self.crypter.decrypt(
+                "task_aggregator_auth_tokens",
+                task_id.as_ref(),
+                "token",
+                &encrypted_aggregator_auth_token,
+            )?)?)
+        } else {
+            None
+        };
 
-            aggregator_auth_tokens.push(auth_token_type.as_authentication(
-                &self.crypter.decrypt(
-                    "task_aggregator_auth_tokens",
-                    &row_id,
-                    "token",
-                    &encrypted_aggregator_auth_token,
-                )?,
-            )?);
-        }
+        let collector_auth_token = if let Some(row) = collector_auth_token_row {
+            let auth_token_type: AuthenticationTokenType = row.try_get("type")?;
+            let encrypted_collector_auth_token: Vec<u8> = row.try_get("token")?;
 
-        // Collector authentication tokens.
-        let mut collector_auth_tokens = Vec::new();
-        for row in collector_auth_token_rows {
-            let ord: i64 = row.get("ord");
-            let auth_token_type: AuthenticationTokenType = row.get("type");
-            let encrypted_collector_auth_token: Vec<u8> = row.get("token");
-
-            let mut row_id = [0u8; TaskId::LEN + size_of::<i64>()];
-            row_id[..TaskId::LEN].copy_from_slice(task_id.as_ref());
-            row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
-
-            collector_auth_tokens.push(auth_token_type.as_authentication(
-                &self.crypter.decrypt(
-                    "task_collector_auth_tokens",
-                    &row_id,
-                    "token",
-                    &encrypted_collector_auth_token,
-                )?,
-            )?);
-        }
+            Some(auth_token_type.as_authentication(&self.crypter.decrypt(
+                "task_collector_auth_tokens",
+                task_id.as_ref(),
+                "token",
+                &encrypted_collector_auth_token,
+            )?)?)
+        } else {
+            None
+        };
 
         // HPKE keys.
         let mut hpke_keypairs = Vec::new();
@@ -1005,8 +968,8 @@ impl<C: Clock> Transaction<'_, C> {
             time_precision,
             tolerable_clock_skew,
             collector_hpke_config,
-            aggregator_auth_tokens,
-            collector_auth_tokens,
+            aggregator_auth_token,
+            collector_auth_token,
             hpke_keypairs,
         );
         // Trial validation through all known schemes. This is a workaround to avoid extending the

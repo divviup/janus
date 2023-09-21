@@ -417,7 +417,10 @@ impl AggregationJobDriver {
             AGGREGATION_JOB_ROUTE,
             AggregationJobInitializeReq::<Q>::MEDIA_TYPE,
             req,
-            task.primary_aggregator_auth_token(),
+            // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
+            // case, and Janus never acts as the leader with taskprov enabled.
+            task.aggregator_auth_token()
+                .ok_or_else(|| anyhow!("task has no aggregator auth token"))?,
             &self.http_request_duration_histogram,
         )
         .await?;
@@ -507,7 +510,10 @@ impl AggregationJobDriver {
             AGGREGATION_JOB_ROUTE,
             AggregationJobContinueReq::MEDIA_TYPE,
             req,
-            task.primary_aggregator_auth_token(),
+            // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
+            // case, and Janus never acts as the leader with taskprov enabled.
+            task.aggregator_auth_token()
+                .ok_or_else(|| anyhow!("task has no aggregator auth token"))?,
             &self.http_request_duration_histogram,
         )
         .await?;
@@ -950,7 +956,7 @@ mod tests {
         },
     };
     use rand::random;
-    use std::{borrow::Borrow, str, sync::Arc, time::Duration as StdDuration};
+    use std::{borrow::Borrow, sync::Arc, time::Duration as StdDuration};
     use trillium_tokio::Stopper;
 
     #[tokio::test]
@@ -997,7 +1003,7 @@ mod tests {
             &measurement,
         );
 
-        let agg_auth_token = task.primary_aggregator_auth_token().clone();
+        let agg_auth_token = task.aggregator_auth_token().unwrap().clone();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
             *task.id(),
@@ -1115,6 +1121,7 @@ mod tests {
         ]);
         let mocked_aggregates = join_all(helper_responses.iter().map(
             |(req_method, req_content_type, resp_content_type, resp_body)| {
+                let (header, value) = agg_auth_token.request_authentication();
                 server
                     .mock(
                         req_method,
@@ -1122,10 +1129,7 @@ mod tests {
                             .unwrap()
                             .path(),
                     )
-                    .match_header(
-                        "DAP-Auth-Token",
-                        str::from_utf8(agg_auth_token.as_ref()).unwrap(),
-                    )
+                    .match_header(header, value.as_str())
                     .match_header(CONTENT_TYPE.as_str(), *req_content_type)
                     .with_status(200)
                     .with_header(CONTENT_TYPE.as_str(), resp_content_type)
@@ -1293,7 +1297,7 @@ mod tests {
             &0,
         );
 
-        let agg_auth_token = task.primary_aggregator_auth_token();
+        let agg_auth_token = task.aggregator_auth_token().unwrap();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
             *task.id(),
@@ -1440,6 +1444,7 @@ mod tests {
             .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unauthorizedRequest\"}")
             .create_async()
             .await;
+        let (header, value) = agg_auth_token.request_authentication();
         let mocked_aggregate_success = server
             .mock(
                 "PUT",
@@ -1447,10 +1452,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_ref()).unwrap(),
-            )
+            .match_header(header, value.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -1659,7 +1661,7 @@ mod tests {
             &measurement,
         );
 
-        let agg_auth_token = task.primary_aggregator_auth_token();
+        let agg_auth_token = task.aggregator_auth_token().unwrap();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
             *task.id(),
@@ -1761,6 +1763,7 @@ mod tests {
                 message: transcript.helper_prepare_transitions[0].message.clone(),
             },
         )]));
+        let (header, value) = agg_auth_token.request_authentication();
         let mocked_aggregate_success = server
             .mock(
                 "PUT",
@@ -1768,10 +1771,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_ref()).unwrap(),
-            )
+            .match_header(header, value.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -1912,7 +1912,7 @@ mod tests {
             &0,
         );
 
-        let agg_auth_token = task.primary_aggregator_auth_token();
+        let agg_auth_token = task.aggregator_auth_token().unwrap();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
             *task.id(),
@@ -2017,6 +2017,7 @@ mod tests {
             .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unauthorizedRequest\"}")
             .create_async()
             .await;
+        let (header, value) = agg_auth_token.request_authentication();
         let mocked_aggregate_success = server
             .mock(
                 "PUT",
@@ -2024,10 +2025,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_ref()).unwrap(),
-            )
+            .match_header(header, value.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
@@ -2169,7 +2167,7 @@ mod tests {
             &measurement,
         );
 
-        let agg_auth_token = task.primary_aggregator_auth_token();
+        let agg_auth_token = task.aggregator_auth_token().unwrap();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
             *task.id(),
@@ -2272,6 +2270,7 @@ mod tests {
                 message: transcript.helper_prepare_transitions[0].message.clone(),
             },
         )]));
+        let (header, value) = agg_auth_token.request_authentication();
         let mocked_aggregate_success = server
             .mock(
                 "PUT",
@@ -2279,10 +2278,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_ref()).unwrap(),
-            )
+            .match_header(header, value.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
@@ -2436,7 +2432,7 @@ mod tests {
             &IdpfInput::from_bools(&[true]),
         );
 
-        let agg_auth_token = task.primary_aggregator_auth_token();
+        let agg_auth_token = task.aggregator_auth_token().unwrap();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
             *task.id(),
@@ -2584,6 +2580,7 @@ mod tests {
             .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedTask\"}")
             .create_async()
             .await;
+        let (header, value) = agg_auth_token.request_authentication();
         let mocked_aggregate_success = server
             .mock(
                 "POST",
@@ -2591,10 +2588,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_ref()).unwrap(),
-            )
+            .match_header(header, value.as_str())
             .match_header(CONTENT_TYPE.as_str(), AggregationJobContinueReq::MEDIA_TYPE)
             .match_body(leader_request.get_encoded())
             .with_status(200)
@@ -2840,7 +2834,7 @@ mod tests {
             &IdpfInput::from_bools(&[true]),
         );
 
-        let agg_auth_token = task.primary_aggregator_auth_token();
+        let agg_auth_token = task.aggregator_auth_token().unwrap();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
             *task.id(),
@@ -2973,6 +2967,7 @@ mod tests {
             .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedTask\"}")
             .create_async()
             .await;
+        let (header, value) = agg_auth_token.request_authentication();
         let mocked_aggregate_success = server
             .mock(
                 "POST",
@@ -2980,10 +2975,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_ref()).unwrap(),
-            )
+            .match_header(header, value.as_str())
             .match_header(CONTENT_TYPE.as_str(), AggregationJobContinueReq::MEDIA_TYPE)
             .match_body(leader_request.get_encoded())
             .with_status(200)
@@ -3366,7 +3358,7 @@ mod tests {
         )
         .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .build();
-        let agg_auth_token = task.primary_aggregator_auth_token();
+        let agg_auth_token = task.aggregator_auth_token().unwrap();
         let aggregation_job_id = random();
         let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
 
@@ -3474,6 +3466,7 @@ mod tests {
 
         // Set up three error responses from our mock helper. These will cause errors in the
         // leader, because the response body is empty and cannot be decoded.
+        let (header, value) = agg_auth_token.request_authentication();
         let failure_mock = server
             .mock(
                 "PUT",
@@ -3481,10 +3474,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_ref()).unwrap(),
-            )
+            .match_header(header, value.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -3503,10 +3493,7 @@ mod tests {
                     .unwrap()
                     .path(),
             )
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_ref()).unwrap(),
-            )
+            .match_header(header, value.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,

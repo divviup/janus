@@ -45,11 +45,14 @@ pub fn test_task_builders(
             Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
         )
         .with_min_batch_size(46)
+        // Force use of DAP-Auth-Tokens, as required by interop testing standard.
+        .with_dap_auth_aggregator_token()
+        .with_dap_auth_collector_token()
         .with_collector_hpke_config(collector_keypair.config().clone());
     let helper_task = leader_task
         .clone()
         .with_role(Role::Helper)
-        .with_collector_auth_tokens(Vec::new());
+        .with_collector_auth_token(None);
     let temporary_task = leader_task.clone().build();
     let task_parameters = TaskParameters {
         task_id: *temporary_task.id(),
@@ -60,7 +63,7 @@ pub fn test_task_builders(
         time_precision: *temporary_task.time_precision(),
         collector_hpke_config: collector_keypair.config().clone(),
         collector_private_key: collector_keypair.private_key().clone(),
-        collector_auth_token: temporary_task.primary_collector_auth_token().clone(),
+        collector_auth_token: temporary_task.collector_auth_token().unwrap().clone(),
     };
 
     (task_parameters, leader_task, helper_task)

@@ -121,7 +121,7 @@ pub(super) async fn post_task<C: Clock>(
 
     let vdaf_verify_key = SecretBytes::new(vdaf_verify_key_bytes);
 
-    let (aggregator_auth_tokens, collector_auth_tokens) = match req.role {
+    let (aggregator_auth_token, collector_auth_token) = match req.role {
         Role::Leader => {
             let aggregator_auth_token = req.aggregator_auth_token.ok_or_else(|| {
                 Error::BadRequest(
@@ -129,7 +129,7 @@ pub(super) async fn post_task<C: Clock>(
                         .to_string(),
                 )
             })?;
-            (Vec::from([aggregator_auth_token]), Vec::from([random()]))
+            (Some(aggregator_auth_token), Some(random()))
         }
 
         Role::Helper => {
@@ -140,7 +140,7 @@ pub(super) async fn post_task<C: Clock>(
                 ));
             }
 
-            (Vec::from([random()]), Vec::new())
+            (Some(random()), None)
         }
 
         _ => unreachable!(),
@@ -173,8 +173,8 @@ pub(super) async fn post_task<C: Clock>(
             /* tolerable_clock_skew */
             Duration::from_seconds(60), // 1 minute,
             /* collector_hpke_config */ req.collector_hpke_config,
-            aggregator_auth_tokens,
-            collector_auth_tokens,
+            aggregator_auth_token,
+            collector_auth_token,
             hpke_keys,
         )
         .map_err(|err| Error::BadRequest(format!("Error constructing task: {err}")))?,

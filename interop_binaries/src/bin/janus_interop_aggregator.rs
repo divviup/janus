@@ -54,18 +54,16 @@ async fn handle_add_task(
     let collector_hpke_config = HpkeConfig::get_decoded(&collector_hpke_config_bytes)
         .context("could not parse collector HPKE configuration")?;
 
-    let collector_authentication_tokens =
+    let collector_authentication_token =
         match (request.role, request.collector_authentication_token) {
             (AggregatorRole::Leader, None) => {
                 return Err(anyhow::anyhow!("collector authentication token is missing"))
             }
-            (AggregatorRole::Leader, Some(collector_authentication_token)) => {
-                Vec::from([AuthenticationToken::new_dap_auth_token_from_string(
-                    collector_authentication_token,
-                )
-                .context("invalid header value in \"collector_authentication_token\"")?])
-            }
-            (AggregatorRole::Helper, _) => Vec::new(),
+            (AggregatorRole::Leader, Some(collector_authentication_token)) => Some(
+                AuthenticationToken::new_dap_auth_token_from_string(collector_authentication_token)
+                    .context("invalid header value in \"collector_authentication_token\"")?,
+            ),
+            (AggregatorRole::Helper, _) => None,
         };
 
     let hpke_keypair = keyring.lock().await.get_random_keypair();
@@ -103,8 +101,8 @@ async fn handle_add_task(
         // other aggregators running on the same host.
         Duration::from_seconds(1),
         collector_hpke_config,
-        Vec::from([leader_authentication_token]),
-        collector_authentication_tokens,
+        Some(leader_authentication_token),
+        collector_authentication_token,
         [hpke_keypair],
     )
     .context("error constructing task")?;

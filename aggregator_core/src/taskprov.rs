@@ -302,8 +302,8 @@ impl Task {
             time_precision,
             tolerable_clock_skew,
             None,
-            Vec::new(),
-            Vec::new(),
+            None,
+            None,
             Vec::new(),
         ));
         task.validate()?;

@@ -97,11 +97,10 @@ CREATE INDEX task_id_index ON tasks(task_id);
 CREATE TABLE task_aggregator_auth_tokens(
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     task_id BIGINT NOT NULL,                           -- task ID the token is associated with
-    ord BIGINT NOT NULL,                               -- a value used to specify the ordering of the authentication tokens
     type AUTH_TOKEN_TYPE NOT NULL DEFAULT 'BEARER',    -- the type of the authentication token
     token BYTEA NOT NULL,                              -- bearer token used to authenticate messages to/from the other aggregator (encrypted)
 
-    CONSTRAINT task_aggregator_auth_tokens_unique_task_id_and_ord UNIQUE(task_id, ord),
+    CONSTRAINT task_aggregator_auth_tokens_unique_task_id UNIQUE(task_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 
@@ -109,11 +108,10 @@ CREATE TABLE task_aggregator_auth_tokens(
 CREATE TABLE task_collector_auth_tokens(
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     task_id BIGINT NOT NULL,                           -- task ID the token is associated with
-    ord BIGINT NOT NULL,                               -- a value used to specify the ordering of the authentication tokens
     type AUTH_TOKEN_TYPE NOT NULL DEFAULT 'BEARER',    -- the type of the authentication token
     token BYTEA NOT NULL,                              -- bearer token used to authenticate messages from the collector (encrypted)
 
-    CONSTRAINT task_collector_auth_tokens_unique_task_id_and_ord UNIQUE(task_id, ord),
+    CONSTRAINT task_collector_auth_tokens_unique_task_id UNIQUE(task_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 

@@ -291,12 +291,12 @@ impl From<Task> for AggregatorAddTaskRequest {
             helper: task.helper_aggregator_endpoint().clone(),
             vdaf: task.vdaf().clone().into(),
             leader_authentication_token: String::from_utf8(
-                task.primary_aggregator_auth_token().as_ref().to_vec(),
+                task.aggregator_auth_token().unwrap().as_ref().to_vec(),
             )
             .unwrap(),
             collector_authentication_token: if task.role() == &Role::Leader {
                 Some(
-                    String::from_utf8(task.primary_collector_auth_token().as_ref().to_vec())
+                    String::from_utf8(task.collector_auth_token().unwrap().as_ref().to_vec())
                         .unwrap(),
                 )
             } else {

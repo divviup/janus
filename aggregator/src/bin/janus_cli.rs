@@ -718,7 +718,7 @@ mod tests {
   vdaf: !Prio3Sum
     bits: 2
   role: Leader
-  vdaf_verify_keys:
+  vdaf_verify_key:
   max_batch_query_count: 1
   task_expiration: 9000000000
   min_batch_size: 10
@@ -731,8 +731,8 @@ mod tests {
     kdf_id: HkdfSha256
     aead_id: Aes128Gcm
     public_key: 8lAqZ7OfNV2Gi_9cNE6J9WRmPbO-k1UPtu2Bztd0-yc
-  aggregator_auth_tokens: []
-  collector_auth_tokens: []
+  aggregator_auth_token:
+  collector_auth_token:
   hpke_keys: []
 - leader_aggregator_endpoint: https://leader
   helper_aggregator_endpoint: https://helper
@@ -740,7 +740,7 @@ mod tests {
   vdaf: !Prio3Sum
     bits: 2
   role: Helper
-  vdaf_verify_keys:
+  vdaf_verify_key:
   max_batch_query_count: 1
   task_expiration: 9000000000
   min_batch_size: 10
@@ -753,8 +753,8 @@ mod tests {
     kdf_id: HkdfSha256
     aead_id: Aes128Gcm
     public_key: 8lAqZ7OfNV2Gi_9cNE6J9WRmPbO-k1UPtu2Bztd0-yc
-  aggregator_auth_tokens: []
-  collector_auth_tokens: []
+  aggregator_auth_token:
+  collector_auth_token:
   hpke_keys: []
 "#;
 
@@ -800,8 +800,8 @@ mod tests {
 
         for task in &got_tasks {
             match task.role() {
-                Role::Leader => assert_eq!(task.collector_auth_tokens().len(), 1),
-                Role::Helper => assert!(task.collector_auth_tokens().is_empty()),
+                Role::Leader => assert!(task.collector_auth_token().is_some()),
+                Role::Helper => assert!(task.collector_auth_token().is_none()),
                 role => panic!("unexpected role {role}"),
             }
         }
