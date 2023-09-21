@@ -11,7 +11,6 @@ use janus_aggregator_core::{
 };
 use janus_core::{hpke, http::extract_bearer_token, task::AuthenticationToken, time::Clock};
 use janus_messages::{HpkeConfigId, RoleParseError, TaskId};
-use ring::constant_time;
 use routes::*;
 use std::{str::FromStr, sync::Arc};
 use tracing::error;
@@ -132,9 +131,7 @@ async fn auth_check(conn: &mut Conn, (): ()) -> impl Handler {
         return Some((Status::Unauthorized, Halt));
     };
 
-    if cfg.auth_tokens.iter().any(|key| {
-        constant_time::verify_slices_are_equal(bearer_token.as_ref(), key.as_ref()).is_ok()
-    }) {
+    if cfg.auth_tokens.iter().any(|key| bearer_token == *key) {
         // Authorization succeeds.
         None
     } else {
