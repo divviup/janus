@@ -129,10 +129,12 @@ pub struct Task {
     tolerable_clock_skew: Duration,
     /// HPKE configuration for the collector.
     collector_hpke_config: Option<HpkeConfig>,
-    /// Tokens used to authenticate messages sent to or received from the other aggregator.
-    aggregator_auth_tokens: Vec<AuthenticationToken>,
-    /// Tokens used to authenticate messages sent to or received from the collector.
-    collector_auth_tokens: Vec<AuthenticationToken>,
+    /// Token used to authenticate messages sent to or received from the other aggregator. Only set
+    /// if the task was not created via taskprov.
+    aggregator_auth_token: Option<AuthenticationToken>,
+    /// Token used to authenticate messages sent to or received from the collector. Only set if this
+    /// aggregator is the leader.
+    collector_auth_token: Option<AuthenticationToken>,
     /// HPKE configurations & private keys used by this aggregator to decrypt client reports.
     hpke_keys: HashMap<HpkeConfigId, HpkeKeypair>,
 }
@@ -155,8 +157,8 @@ impl Task {
         time_precision: Duration,
         tolerable_clock_skew: Duration,
         collector_hpke_config: HpkeConfig,
-        aggregator_auth_tokens: Vec<AuthenticationToken>,
-        collector_auth_tokens: Vec<AuthenticationToken>,
+        aggregator_auth_token: Option<AuthenticationToken>,
+        collector_auth_token: Option<AuthenticationToken>,
         hpke_keys: I,
     ) -> Result<Self, Error> {
         let task = Self::new_without_validation(
@@ -174,8 +176,8 @@ impl Task {
             time_precision,
             tolerable_clock_skew,
             Some(collector_hpke_config),
-            aggregator_auth_tokens,
-            collector_auth_tokens,
+            aggregator_auth_token,
+            collector_auth_token,
             hpke_keys,
         );
         task.validate()?;
@@ -200,8 +202,8 @@ impl Task {
         time_precision: Duration,
         tolerable_clock_skew: Duration,
         collector_hpke_config: Option<HpkeConfig>,
-        aggregator_auth_tokens: Vec<AuthenticationToken>,
-        collector_auth_tokens: Vec<AuthenticationToken>,
+        aggregator_auth_token: Option<AuthenticationToken>,
+        collector_auth_token: Option<AuthenticationToken>,
         hpke_keys: I,
     ) -> Self {
         // Compute hpke_configs mapping cfg.id -> (cfg, key).
@@ -228,8 +230,8 @@ impl Task {
             time_precision,
             tolerable_clock_skew,
             collector_hpke_config,
-            aggregator_auth_tokens,
-            collector_auth_tokens,
+            aggregator_auth_token,
+            collector_auth_token,
             hpke_keys,
         }
     }
@@ -264,13 +266,13 @@ impl Task {
 
     pub(crate) fn validate(&self) -> Result<(), Error> {
         self.validate_common()?;
-        if self.aggregator_auth_tokens.is_empty() {
-            return Err(Error::InvalidParameter("aggregator_auth_tokens"));
+        if self.aggregator_auth_token.is_none() {
+            return Err(Error::InvalidParameter("aggregator_auth_token"));
         }
-        if (self.role == Role::Leader) == (self.collector_auth_tokens.is_empty()) {
+        if (self.role == Role::Leader) == (self.collector_auth_token.is_none()) {
             // Collector auth tokens are allowed & required if and only if this task is in the
             // leader role.
-            return Err(Error::InvalidParameter("collector_auth_tokens"));
+            return Err(Error::InvalidParameter("collector_auth_token"));
         }
         if self.hpke_keys.is_empty() {
             return Err(Error::InvalidParameter("hpke_keys"));
@@ -357,14 +359,14 @@ impl Task {
         self.collector_hpke_config.as_ref()
     }
 
-    /// Retrieves the aggregator authentication tokens associated with this task.
-    pub fn aggregator_auth_tokens(&self) -> &[AuthenticationToken] {
-        &self.aggregator_auth_tokens
+    /// Retrieves the aggregator authentication token associated with this task.
+    pub fn aggregator_auth_token(&self) -> Option<&AuthenticationToken> {
+        self.aggregator_auth_token.as_ref()
     }
 
-    /// Retrieves the collector authentication tokens associated with this task.
-    pub fn collector_auth_tokens(&self) -> &[AuthenticationToken] {
-        &self.collector_auth_tokens
+    /// Retrieves the collector authentication token associated with this task.
+    pub fn collector_auth_token(&self) -> Option<&AuthenticationToken> {
+        self.collector_auth_token.as_ref()
     }
 
     /// Retrieves the HPKE keys in use associated with this task.
@@ -397,35 +399,22 @@ impl Task {
         }
     }
 
-    /// Returns the [`AuthenticationToken`] currently used by this aggregator to authenticate itself
-    /// to other aggregators.
-    pub fn primary_aggregator_auth_token(&self) -> &AuthenticationToken {
-        self.aggregator_auth_tokens.iter().next_back().unwrap()
-    }
-
     /// Checks if the given aggregator authentication token is valid (i.e. matches with an
     /// authentication token recognized by this task).
     pub fn check_aggregator_auth_token(&self, auth_token: &AuthenticationToken) -> bool {
-        self.aggregator_auth_tokens
-            .iter()
-            .rev()
-            .any(|t| t == auth_token)
-    }
-
-    /// Returns the [`AuthenticationToken`] currently used by the collector to authenticate itself
-    /// to the aggregators.
-    pub fn primary_collector_auth_token(&self) -> &AuthenticationToken {
-        // Unwrap safety: self.collector_auth_tokens is never empty
-        self.collector_auth_tokens.iter().next_back().unwrap()
+        match self.aggregator_auth_token {
+            Some(ref t) => t == auth_token,
+            None => false,
+        }
     }
 
     /// Checks if the given collector authentication token is valid (i.e. matches with an
     /// authentication token recognized by this task).
     pub fn check_collector_auth_token(&self, auth_token: &AuthenticationToken) -> bool {
-        self.collector_auth_tokens
-            .iter()
-            .rev()
-            .any(|t| t == auth_token)
+        match self.collector_auth_token {
+            Some(ref t) => t == auth_token,
+            None => false,
+        }
     }
 
     /// Returns the [`VerifyKey`] used by this aggregator to prepare report shares with other
@@ -495,8 +484,8 @@ pub struct SerializedTask {
     time_precision: Duration,
     tolerable_clock_skew: Duration,
     collector_hpke_config: HpkeConfig,
-    aggregator_auth_tokens: Vec<AuthenticationToken>,
-    collector_auth_tokens: Vec<AuthenticationToken>,
+    aggregator_auth_token: Option<AuthenticationToken>,
+    collector_auth_token: Option<AuthenticationToken>,
     hpke_keys: Vec<HpkeKeypair>, // uses unpadded base64url
 }
 
@@ -532,12 +521,12 @@ impl SerializedTask {
             self.vdaf_verify_key = Some(URL_SAFE_NO_PAD.encode(vdaf_verify_key.as_ref()));
         }
 
-        if self.aggregator_auth_tokens.is_empty() {
-            self.aggregator_auth_tokens = Vec::from([random()]);
+        if self.aggregator_auth_token.is_none() {
+            self.aggregator_auth_token = Some(random());
         }
 
-        if self.collector_auth_tokens.is_empty() && self.role == Role::Leader {
-            self.collector_auth_tokens = Vec::from([random()]);
+        if self.collector_auth_token.is_none() && self.role == Role::Leader {
+            self.collector_auth_token = Some(random());
         }
 
         if self.hpke_keys.is_empty() {
@@ -577,8 +566,8 @@ impl Serialize for Task {
                 .collector_hpke_config()
                 .expect("serializable tasks must have collector_hpke_config")
                 .clone(),
-            aggregator_auth_tokens: self.aggregator_auth_tokens.clone(),
-            collector_auth_tokens: self.collector_auth_tokens.clone(),
+            aggregator_auth_token: self.aggregator_auth_token.clone(),
+            collector_auth_token: self.collector_auth_token.clone(),
             hpke_keys,
         }
         .serialize(serializer)
@@ -614,8 +603,8 @@ impl TryFrom<SerializedTask> for Task {
             serialized_task.time_precision,
             serialized_task.tolerable_clock_skew,
             serialized_task.collector_hpke_config,
-            serialized_task.aggregator_auth_tokens,
-            serialized_task.collector_auth_tokens,
+            serialized_task.aggregator_auth_token,
+            serialized_task.collector_auth_token,
             serialized_task.hpke_keys,
         )
     }
@@ -689,10 +678,10 @@ pub mod test_util {
                     .collect(),
             );
 
-            let collector_auth_tokens = if role == Role::Leader {
-                Vec::from([random(), AuthenticationToken::DapAuth(random())])
+            let collector_auth_token = if role == Role::Leader {
+                Some(random()) // Create an AuthenticationToken::Bearer by default
             } else {
-                Vec::new()
+                None
             };
 
             Self(
@@ -711,8 +700,8 @@ pub mod test_util {
                     Duration::from_hours(8).unwrap(),
                     Duration::from_minutes(10).unwrap(),
                     generate_test_hpke_config_and_private_key().config().clone(),
-                    Vec::from([random(), AuthenticationToken::DapAuth(random())]),
-                    collector_auth_tokens,
+                    Some(random()), // Create an AuthenticationToken::Bearer by default
+                    collector_auth_token,
                     Vec::from([aggregator_keypair_0, aggregator_keypair_1]),
                 )
                 .unwrap(),
@@ -795,24 +784,42 @@ pub mod test_util {
             })
         }
 
-        /// Associates the eventual task with the given aggregator authentication tokens.
-        pub fn with_aggregator_auth_tokens(
+        /// Associates the eventual task with the given aggregator authentication token.
+        pub fn with_aggregator_auth_token(
             self,
-            aggregator_auth_tokens: Vec<AuthenticationToken>,
+            aggregator_auth_token: Option<AuthenticationToken>,
         ) -> Self {
             Self(Task {
-                aggregator_auth_tokens,
+                aggregator_auth_token,
                 ..self.0
             })
         }
 
-        /// Sets the collector authentication tokens for the task.
-        pub fn with_collector_auth_tokens(
+        /// Associates the eventual task with a random [`AuthenticationToken::DapAuth`] aggregator
+        /// auth token.
+        pub fn with_dap_auth_aggregator_token(self) -> Self {
+            Self(Task {
+                aggregator_auth_token: Some(AuthenticationToken::DapAuth(random())),
+                ..self.0
+            })
+        }
+
+        /// Associates the eventual task with the given collector authentication token.
+        pub fn with_collector_auth_token(
             self,
-            collector_auth_tokens: Vec<AuthenticationToken>,
+            collector_auth_token: Option<AuthenticationToken>,
         ) -> Self {
             Self(Task {
-                collector_auth_tokens,
+                collector_auth_token,
+                ..self.0
+            })
+        }
+
+        /// Associates the eventual task with a random [`AuthenticationToken::DapAuth`] collector
+        /// auth token.
+        pub fn with_dap_auth_collector_token(self) -> Self {
+            Self(Task {
+                collector_auth_token: Some(AuthenticationToken::DapAuth(random())),
                 ..self.0
             })
         }
@@ -915,8 +922,8 @@ mod tests {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
-            Vec::from([random()]),
-            Vec::new(),
+            Some(random()),
+            None,
             Vec::from([generate_test_hpke_config_and_private_key()]),
         )
         .unwrap_err();
@@ -937,8 +944,8 @@ mod tests {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
-            Vec::from([random()]),
-            Vec::from([random()]),
+            Some(random()),
+            Some(random()),
             Vec::from([generate_test_hpke_config_and_private_key()]),
         )
         .unwrap();
@@ -959,8 +966,8 @@ mod tests {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
-            Vec::from([random()]),
-            Vec::new(),
+            Some(random()),
+            None,
             Vec::from([generate_test_hpke_config_and_private_key()]),
         )
         .unwrap();
@@ -981,8 +988,8 @@ mod tests {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
-            Vec::from([random()]),
-            Vec::from([random()]),
+            Some(random()),
+            Some(random()),
             Vec::from([generate_test_hpke_config_and_private_key()]),
         )
         .unwrap_err();
@@ -1005,8 +1012,8 @@ mod tests {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
-            Vec::from([random()]),
-            Vec::from([random()]),
+            Some(random()),
+            Some(random()),
             Vec::from([generate_test_hpke_config_and_private_key()]),
         )
         .unwrap();
@@ -1088,14 +1095,14 @@ mod tests {
                     HpkeAeadId::Aes128Gcm,
                     HpkePublicKey::from(b"collector hpke public key".to_vec()),
                 ),
-                Vec::from([AuthenticationToken::new_dap_auth_token_from_string(
-                    "YWdncmVnYXRvciB0b2tlbg",
-                )
-                .unwrap()]),
-                Vec::from([AuthenticationToken::new_bearer_token_from_string(
-                    "Y29sbGVjdG9yIHRva2Vu",
-                )
-                .unwrap()]),
+                Some(
+                    AuthenticationToken::new_dap_auth_token_from_string("YWdncmVnYXRvciB0b2tlbg")
+                        .unwrap(),
+                ),
+                Some(
+                    AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu")
+                        .unwrap(),
+                ),
                 [HpkeKeypair::new(
                     HpkeConfig::new(
                         HpkeConfigId::from(255),
@@ -1180,8 +1187,8 @@ mod tests {
                 Token::Str("public_key"),
                 Token::Str("Y29sbGVjdG9yIGhwa2UgcHVibGljIGtleQ"),
                 Token::StructEnd,
-                Token::Str("aggregator_auth_tokens"),
-                Token::Seq { len: Some(1) },
+                Token::Str("aggregator_auth_token"),
+                Token::Some,
                 Token::Struct {
                     name: "AuthenticationToken",
                     len: 2,
@@ -1194,9 +1201,8 @@ mod tests {
                 Token::Str("token"),
                 Token::Str("YWdncmVnYXRvciB0b2tlbg"),
                 Token::StructEnd,
-                Token::SeqEnd,
-                Token::Str("collector_auth_tokens"),
-                Token::Seq { len: Some(1) },
+                Token::Str("collector_auth_token"),
+                Token::Some,
                 Token::Struct {
                     name: "AuthenticationToken",
                     len: 2,
@@ -1209,7 +1215,6 @@ mod tests {
                 Token::Str("token"),
                 Token::Str("Y29sbGVjdG9yIHRva2Vu"),
                 Token::StructEnd,
-                Token::SeqEnd,
                 Token::Str("hpke_keys"),
                 Token::Seq { len: Some(1) },
                 Token::Struct {
@@ -1277,11 +1282,11 @@ mod tests {
                     HpkeAeadId::Aes128Gcm,
                     HpkePublicKey::from(b"collector hpke public key".to_vec()),
                 ),
-                Vec::from([AuthenticationToken::new_bearer_token_from_string(
-                    "YWdncmVnYXRvciB0b2tlbg",
-                )
-                .unwrap()]),
-                Vec::new(),
+                Some(
+                    AuthenticationToken::new_bearer_token_from_string("YWdncmVnYXRvciB0b2tlbg")
+                        .unwrap(),
+                ),
+                None,
                 [HpkeKeypair::new(
                     HpkeConfig::new(
                         HpkeConfigId::from(255),
@@ -1378,8 +1383,8 @@ mod tests {
                 Token::Str("public_key"),
                 Token::Str("Y29sbGVjdG9yIGhwa2UgcHVibGljIGtleQ"),
                 Token::StructEnd,
-                Token::Str("aggregator_auth_tokens"),
-                Token::Seq { len: Some(1) },
+                Token::Str("aggregator_auth_token"),
+                Token::Some,
                 Token::Struct {
                     name: "AuthenticationToken",
                     len: 2,
@@ -1392,10 +1397,8 @@ mod tests {
                 Token::Str("token"),
                 Token::Str("YWdncmVnYXRvciB0b2tlbg"),
                 Token::StructEnd,
-                Token::SeqEnd,
-                Token::Str("collector_auth_tokens"),
-                Token::Seq { len: Some(0) },
-                Token::SeqEnd,
+                Token::Str("collector_auth_token"),
+                Token::None,
                 Token::Str("hpke_keys"),
                 Token::Seq { len: Some(1) },
                 Token::Struct {

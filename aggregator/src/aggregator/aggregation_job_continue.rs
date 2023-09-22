@@ -302,11 +302,12 @@ pub mod test_util {
         request: &AggregationJobContinueReq,
         handler: &impl Handler,
     ) -> TestConn {
+        let (header, value) = task
+            .aggregator_auth_token()
+            .unwrap()
+            .request_authentication();
         post(task.aggregation_job_uri(aggregation_job_id).unwrap().path())
-            .with_request_header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref().to_owned(),
-            )
+            .with_request_header(header, value)
             .with_request_header(
                 KnownHeaderName::ContentType,
                 AggregationJobContinueReq::MEDIA_TYPE,

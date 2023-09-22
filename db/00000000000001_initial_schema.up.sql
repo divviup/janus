@@ -89,33 +89,23 @@ CREATE TABLE tasks(
     time_precision              BIGINT NOT NULL,           -- the duration to which clients are expected to round their report timestamps, in seconds
     tolerable_clock_skew        BIGINT NOT NULL,           -- the maximum acceptable clock skew to allow between client and aggregator, in seconds
     collector_hpke_config       BYTEA,                     -- the HPKE config of the collector (encoded HpkeConfig message)
-    vdaf_verify_key             BYTEA NOT NULL             -- the VDAF verification key (encrypted)
+    vdaf_verify_key             BYTEA NOT NULL,            -- the VDAF verification key (encrypted)
+
+    -- Authentication token used to authenticate messages to/from the other aggregator.
+    -- These columns are NULL if the task was provisioned by taskprov.
+    aggregator_auth_token_type  AUTH_TOKEN_TYPE,    -- the type of the authentication token
+    aggregator_auth_token       BYTEA,              -- encrypted bearer token
+    -- The aggregator_auth_token columns must either both be NULL or both be non-NULL
+    CONSTRAINT aggregator_auth_token_null CHECK ((aggregator_auth_token_type IS NULL) = (aggregator_auth_token IS NULL)),
+
+    -- Authentication token used to authenticate messages to the leader from the collector. These
+    -- columns are NULL if the task was provisioned by taskprov or if the task's role is helper.
+    collector_auth_token_type   AUTH_TOKEN_TYPE,    -- the type of the authentication token
+    collector_auth_token        BYTEA,              -- encrypted bearer token
+    -- The collector_auth_token columns must either both be NULL or both be non-NULL
+    CONSTRAINT collector_auth_token_null CHECK ((collector_auth_token_type IS NULL) = (collector_auth_token IS NULL))
 );
 CREATE INDEX task_id_index ON tasks(task_id);
-
--- The aggregator authentication tokens used by a given task.
-CREATE TABLE task_aggregator_auth_tokens(
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    task_id BIGINT NOT NULL,                           -- task ID the token is associated with
-    ord BIGINT NOT NULL,                               -- a value used to specify the ordering of the authentication tokens
-    type AUTH_TOKEN_TYPE NOT NULL DEFAULT 'BEARER',    -- the type of the authentication token
-    token BYTEA NOT NULL,                              -- bearer token used to authenticate messages to/from the other aggregator (encrypted)
-
-    CONSTRAINT task_aggregator_auth_tokens_unique_task_id_and_ord UNIQUE(task_id, ord),
-    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
-);
-
--- The collector authentication tokens used by a given task.
-CREATE TABLE task_collector_auth_tokens(
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    task_id BIGINT NOT NULL,                           -- task ID the token is associated with
-    ord BIGINT NOT NULL,                               -- a value used to specify the ordering of the authentication tokens
-    type AUTH_TOKEN_TYPE NOT NULL DEFAULT 'BEARER',    -- the type of the authentication token
-    token BYTEA NOT NULL,                              -- bearer token used to authenticate messages from the collector (encrypted)
-
-    CONSTRAINT task_collector_auth_tokens_unique_task_id_and_ord UNIQUE(task_id, ord),
-    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
-);
 
 -- The HPKE public keys (aka configs) and private keys used by a given task.
 CREATE TABLE task_hpke_keys(

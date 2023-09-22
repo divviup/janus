@@ -169,6 +169,7 @@ async fn setup_aggregate_init_test_for_vdaf<
         vdaf_instance,
         aggregation_param,
         measurement,
+        AuthenticationToken::Bearer(random()),
     )
     .await;
 
@@ -203,10 +204,13 @@ async fn setup_aggregate_init_test_without_sending_request<
     vdaf_instance: VdafInstance,
     aggregation_param: V::AggregationParam,
     measurement: V::Measurement,
+    auth_token: AuthenticationToken,
 ) -> AggregationJobInitTestCase<VERIFY_KEY_SIZE, V> {
     install_test_trace_subscriber();
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, vdaf_instance, Role::Helper).build();
+    let task = TaskBuilder::new(QueryType::TimeInterval, vdaf_instance, Role::Helper)
+        .with_aggregator_auth_token(Some(auth_token))
+        .build();
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
@@ -258,11 +262,12 @@ pub(crate) async fn put_aggregation_job(
     aggregation_job: &AggregationJobInitializeReq<TimeInterval>,
     handler: &impl Handler,
 ) -> TestConn {
+    let (header, value) = task
+        .aggregator_auth_token()
+        .unwrap()
+        .request_authentication();
     put(task.aggregation_job_uri(aggregation_job_id).unwrap().path())
-        .with_request_header(
-            DAP_AUTH_HEADER,
-            task.primary_aggregator_auth_token().as_ref().to_owned(),
-        )
+        .with_request_header(header, value)
         .with_request_header(
             KnownHeaderName::ContentType,
             AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -279,14 +284,13 @@ async fn aggregation_job_init_authorization_dap_auth_token() {
         VdafInstance::Fake,
         dummy_vdaf::AggregationParam(0),
         (),
+        AuthenticationToken::DapAuth(random()),
     )
     .await;
-    // Find a DapAuthToken among the task's aggregator auth tokens
+
     let (auth_header, auth_value) = test_case
         .task
-        .aggregator_auth_tokens()
-        .iter()
-        .find(|auth| matches!(auth, AuthenticationToken::DapAuth(_)))
+        .aggregator_auth_token()
         .unwrap()
         .request_authentication();
 
@@ -317,6 +321,7 @@ async fn aggregation_job_init_malformed_authorization_header(#[case] header_valu
         VdafInstance::Fake,
         dummy_vdaf::AggregationParam(0),
         (),
+        AuthenticationToken::Bearer(random()),
     )
     .await;
 
@@ -333,7 +338,8 @@ async fn aggregation_job_init_malformed_authorization_header(#[case] header_valu
         DAP_AUTH_HEADER,
         test_case
             .task
-            .primary_aggregator_auth_token()
+            .aggregator_auth_token()
+            .unwrap()
             .as_ref()
             .to_owned(),
     )
@@ -480,19 +486,18 @@ async fn aggregation_job_init_wrong_query() {
         test_case.prepare_inits,
     );
 
+    let (header, value) = test_case
+        .task
+        .aggregator_auth_token()
+        .unwrap()
+        .request_authentication();
+
     let mut response = put(test_case
         .task
         .aggregation_job_uri(&random())
         .unwrap()
         .path())
-    .with_request_header(
-        DAP_AUTH_HEADER,
-        test_case
-            .task
-            .primary_aggregator_auth_token()
-            .as_ref()
-            .to_owned(),
-    )
+    .with_request_header(header, value)
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,

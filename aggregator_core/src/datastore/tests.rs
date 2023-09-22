@@ -205,6 +205,88 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
+async fn put_task_invalid_aggregator_auth_tokens(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
+    let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+
+    let task = TaskBuilder::new(
+        task::QueryType::TimeInterval,
+        VdafInstance::Prio3Count,
+        Role::Leader,
+    )
+    .build();
+
+    ds.put_task(&task).await.unwrap();
+
+    for (auth_token, auth_token_type) in [("NULL", "'BEARER'"), ("'\\xDEADBEEF'::bytea", "NULL")] {
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                let err = tx
+                    .query_one(
+                        &format!(
+                            "UPDATE tasks SET aggregator_auth_token = {auth_token},
+                            aggregator_auth_token_type = {auth_token_type}"
+                        ),
+                        &[],
+                    )
+                    .await
+                    .unwrap_err();
+
+                assert_eq!(
+                    err.as_db_error().unwrap().constraint().unwrap(),
+                    "aggregator_auth_token_null"
+                );
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+    }
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn put_task_invalid_collector_auth_tokens(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
+    let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+
+    let task = TaskBuilder::new(
+        task::QueryType::TimeInterval,
+        VdafInstance::Prio3Count,
+        Role::Leader,
+    )
+    .build();
+
+    ds.put_task(&task).await.unwrap();
+
+    for (auth_token, auth_token_type) in [("NULL", "'BEARER'"), ("'\\xDEADBEEF'::bytea", "NULL")] {
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                let err = tx
+                    .query_one(
+                        &format!(
+                            "UPDATE tasks SET collector_auth_token = {auth_token},
+                            collector_auth_token_type = {auth_token_type}"
+                        ),
+                        &[],
+                    )
+                    .await
+                    .unwrap_err();
+
+                assert_eq!(
+                    err.as_db_error().unwrap().constraint().unwrap(),
+                    "collector_auth_token_null"
+                );
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+    }
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
 async fn get_task_metrics(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 

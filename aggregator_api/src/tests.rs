@@ -334,7 +334,8 @@ async fn post_task_helper_no_optional_fields() {
     assert_eq!(req.task_expiration.as_ref(), got_task.task_expiration());
     assert_eq!(req.min_batch_size, got_task.min_batch_size());
     assert_eq!(&req.time_precision, got_task.time_precision());
-    assert_eq!(1, got_task.aggregator_auth_tokens().len());
+    assert!(got_task.aggregator_auth_token().is_some());
+    assert!(got_task.collector_auth_token().is_none());
     assert_eq!(
         &req.collector_hpke_config,
         got_task.collector_hpke_config().unwrap()
@@ -543,12 +544,11 @@ async fn post_task_leader_all_optional_fields() {
         &req.collector_hpke_config,
         got_task.collector_hpke_config().unwrap()
     );
-    assert_eq!(1, got_task.aggregator_auth_tokens().len());
     assert_eq!(
         aggregator_auth_token.as_ref(),
-        got_task.aggregator_auth_tokens()[0].as_ref()
+        got_task.aggregator_auth_token().unwrap().as_ref()
     );
-    assert_eq!(1, got_task.collector_auth_tokens().len());
+    assert!(got_task.collector_auth_token().is_some());
 
     // ...and the response.
     assert_eq!(got_task_resp, TaskResp::try_from(&got_task).unwrap());
@@ -602,10 +602,7 @@ async fn get_task() {
     // Setup: write a task to the datastore.
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
-        .with_aggregator_auth_tokens(Vec::from([random()]))
-        .with_collector_auth_tokens(Vec::from([random()]))
-        .build();
+    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
 
     ds.run_tx(|tx| {
         let task = task.clone();
@@ -1758,14 +1755,14 @@ fn task_resp_serialization() {
             HpkeAeadId::Aes128Gcm,
             HpkePublicKey::from([0u8; 32].to_vec()),
         ),
-        Vec::from([AuthenticationToken::new_dap_auth_token_from_string(
-            "Y29sbGVjdG9yLWFiY2RlZjAw",
-        )
-        .unwrap()]),
-        Vec::from([AuthenticationToken::new_dap_auth_token_from_string(
-            "Y29sbGVjdG9yLWFiY2RlZjAw",
-        )
-        .unwrap()]),
+        Some(
+            AuthenticationToken::new_dap_auth_token_from_string("Y29sbGVjdG9yLWFiY2RlZjAw")
+                .unwrap(),
+        ),
+        Some(
+            AuthenticationToken::new_dap_auth_token_from_string("Y29sbGVjdG9yLWFiY2RlZjAw")
+                .unwrap(),
+        ),
         [(HpkeKeypair::new(
             HpkeConfig::new(
                 HpkeConfigId::from(13),
@@ -1831,6 +1828,7 @@ fn task_resp_serialization() {
             Token::NewtypeStruct { name: "Duration" },
             Token::U64(60),
             Token::Str("aggregator_auth_token"),
+            Token::Some,
             Token::Struct {
                 name: "AuthenticationToken",
                 len: 2,

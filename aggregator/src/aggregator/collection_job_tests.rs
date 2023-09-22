@@ -91,7 +91,7 @@ impl CollectionJobTestCase {
         self.put_collection_job_with_auth_token(
             collection_job_id,
             request,
-            Some(self.task.primary_collector_auth_token()),
+            self.task.collector_auth_token(),
         )
         .await
     }
@@ -120,7 +120,7 @@ impl CollectionJobTestCase {
     ) -> TestConn {
         self.post_collection_job_with_auth_token(
             collection_job_id,
-            Some(self.task.primary_collector_auth_token()),
+            self.task.collector_auth_token(),
         )
         .await
     }
