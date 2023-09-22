@@ -132,7 +132,7 @@ pub struct Task {
     /// Token used to authenticate messages sent to or received from the other aggregator. Only set
     /// if the task was not created via taskprov.
     aggregator_auth_token: Option<AuthenticationToken>,
-    /// Token used to authenticate messages sent to received from the collector. Only set if this
+    /// Token used to authenticate messages sent to or received from the collector. Only set if this
     /// aggregator is the leader.
     collector_auth_token: Option<AuthenticationToken>,
     /// HPKE configurations & private keys used by this aggregator to decrypt client reports.
