@@ -535,8 +535,8 @@ impl<C: Clock> Transaction<'_, C> {
                     helper_aggregator_endpoint, query_type, vdaf, max_batch_query_count,
                     task_expiration, report_expiry_age, min_batch_size, time_precision,
                     tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
-                    aggregator_auth_token_type, aggregator_auth_token, collector_auth_token_type,
-                    collector_auth_token)
+                    aggregator_auth_token_type, aggregator_auth_token, aggregator_auth_token_hash,
+                    collector_auth_token_type, collector_auth_token)
                 VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
                 )
@@ -600,6 +600,10 @@ impl<C: Clock> Transaction<'_, C> {
                             )
                         })
                         .transpose()?,
+                    /* aggregator_auth_token_hash */
+                    &task
+                        .aggregator_auth_token_hash()
+                        .map(|token_hash| token_hash.as_ref()),
                     /* collector_auth_token_type */
                     &task
                         .collector_auth_token()

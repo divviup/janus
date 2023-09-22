@@ -192,7 +192,14 @@ pub enum AuthenticationTokenHash {
     /// [2]: https://datatracker.ietf.org/doc/html/draft-dcook-ppm-dap-interop-test-design-03#section-4.3.3
     /// [3]: https://datatracker.ietf.org/doc/html/draft-dcook-ppm-dap-interop-test-design-03#section-4.4.2
     /// [4]: https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-01#name-https-sender-authentication
-    DapAuth(#[derivative(Debug = "ignore")] [u8; SHA256_OUTPUT_LEN]),
+    DapAuth(
+        #[derivative(Debug = "ignore")]
+        #[serde(
+            serialize_with = "AuthenticationTokenHash::serialize_contents",
+            deserialize_with = "AuthenticationTokenHash::deserialize_contents"
+        )]
+        [u8; SHA256_OUTPUT_LEN],
+    ),
 }
 
 impl AuthenticationTokenHash {
@@ -248,6 +255,15 @@ impl PartialEq for AuthenticationTokenHash {
 
         // We attempt constant-time comparisons of the token data to mitigate timing attacks.
         constant_time::verify_slices_are_equal(self_digest.as_ref(), other_digest.as_ref()).is_ok()
+    }
+}
+
+impl AsRef<[u8]> for AuthenticationTokenHash {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Bearer(inner) => inner.as_slice(),
+            Self::DapAuth(inner) => inner.as_slice(),
+        }
     }
 }
 

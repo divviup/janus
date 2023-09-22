@@ -94,9 +94,16 @@ CREATE TABLE tasks(
     -- Authentication token used to authenticate messages to/from the other aggregator.
     -- These columns are NULL if the task was provisioned by taskprov.
     aggregator_auth_token_type  AUTH_TOKEN_TYPE,    -- the type of the authentication token
-    aggregator_auth_token       BYTEA,              -- encrypted bearer token
-    -- The aggregator_auth_token columns must either both be NULL or both be non-NULL
-    CONSTRAINT aggregator_auth_token_null CHECK ((aggregator_auth_token_type IS NULL) = (aggregator_auth_token IS NULL)),
+    aggregator_auth_token       BYTEA,              -- encrypted bearer token (only set for leader)
+    aggregator_auth_token_hash  BYTEA,              -- hash of the token (only set for helper)
+    CONSTRAINT aggregator_auth_token_null CHECK (
+        -- If aggregator_auth_token_type is not NULL, then exactly one of aggregator_auth_token or
+        -- aggregator_auth_token_hash must be not NULL.
+        ((aggregator_auth_token_type IS NOT NULL) AND (aggregator_auth_token IS NULL) != (aggregator_auth_token_hash IS NULL)))
+        -- If aggregator_auth_token_type is NULL, then both aggregator_auth_token and
+        -- aggregator_auth_token_hash must be NULL
+        OR ((aggregator_auth_token_type IS NULL) AND (aggregator_auth_token IS NULL) AND (aggregator_auth_token_hash IS NULL))
+    ),
 
     -- Authentication token used to authenticate messages to the leader from the collector. These
     -- columns are NULL if the task was provisioned by taskprov or if the task's role is helper.
