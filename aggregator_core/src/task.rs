@@ -420,6 +420,18 @@ impl Task {
         }
     }
 
+    /// Checks if the given collector authentication token is valid (i.e. its hash is equal to this
+    /// task's aggregator auth token hash).
+    pub fn check_aggregator_auth_token(&self, auth_token: Option<&AuthenticationToken>) -> bool {
+        // Technically we _could_ validate incoming auth tokens against self.aggregator_auth_token,
+        // but that value is only set for leader tasks, and the leader should never receive
+        // aggregation protocol requests, only make them.
+        match (auth_token, self.aggregator_auth_token_hash()) {
+            (Some(auth_token), Some(token_hash)) => token_hash.validate(auth_token),
+            _ => false,
+        }
+    }
+
     /// Checks if the given collector authentication token is valid (i.e. matches with an
     /// authentication token recognized by this task).
     pub fn check_collector_auth_token(&self, auth_token: &AuthenticationToken) -> bool {

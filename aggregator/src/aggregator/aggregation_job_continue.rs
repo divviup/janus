@@ -290,6 +290,7 @@ impl VdafOps {
 pub mod test_util {
     use crate::aggregator::http_handlers::test_util::{decode_response_body, take_problem_details};
     use janus_aggregator_core::task::Task;
+    use janus_core::auth_tokens::AuthenticationToken;
     use janus_messages::{AggregationJobContinueReq, AggregationJobId, AggregationJobResp};
     use prio::codec::Encode;
     use serde_json::json;
@@ -298,14 +299,12 @@ pub mod test_util {
 
     async fn post_aggregation_job(
         task: &Task,
+        aggregator_auth_token: &AuthenticationToken,
         aggregation_job_id: &AggregationJobId,
         request: &AggregationJobContinueReq,
         handler: &impl Handler,
     ) -> TestConn {
-        let (header, value) = task
-            .aggregator_auth_token()
-            .unwrap()
-            .request_authentication();
+        let (header, value) = aggregator_auth_token.request_authentication();
         post(task.aggregation_job_uri(aggregation_job_id).unwrap().path())
             .with_request_header(header, value)
             .with_request_header(
@@ -319,11 +318,19 @@ pub mod test_util {
 
     pub async fn post_aggregation_job_and_decode(
         task: &Task,
+        aggregator_auth_token: &AuthenticationToken,
         aggregation_job_id: &AggregationJobId,
         request: &AggregationJobContinueReq,
         handler: &impl Handler,
     ) -> AggregationJobResp {
-        let mut test_conn = post_aggregation_job(task, aggregation_job_id, request, handler).await;
+        let mut test_conn = post_aggregation_job(
+            task,
+            aggregator_auth_token,
+            aggregation_job_id,
+            request,
+            handler,
+        )
+        .await;
 
         assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
@@ -332,12 +339,20 @@ pub mod test_util {
 
     pub async fn post_aggregation_job_expecting_status(
         task: &Task,
+        aggregator_auth_token: &AuthenticationToken,
         aggregation_job_id: &AggregationJobId,
         request: &AggregationJobContinueReq,
         handler: &impl Handler,
         want_status: Status,
     ) -> TestConn {
-        let test_conn = post_aggregation_job(task, aggregation_job_id, request, handler).await;
+        let test_conn = post_aggregation_job(
+            task,
+            aggregator_auth_token,
+            aggregation_job_id,
+            request,
+            handler,
+        )
+        .await;
 
         assert_eq!(want_status, test_conn.status().unwrap());
 
@@ -346,6 +361,7 @@ pub mod test_util {
 
     pub async fn post_aggregation_job_expecting_error(
         task: &Task,
+        aggregator_auth_token: &AuthenticationToken,
         aggregation_job_id: &AggregationJobId,
         request: &AggregationJobContinueReq,
         handler: &impl Handler,
@@ -355,6 +371,7 @@ pub mod test_util {
     ) {
         let mut test_conn = post_aggregation_job_expecting_status(
             task,
+            aggregator_auth_token,
             aggregation_job_id,
             request,
             handler,
@@ -397,6 +414,7 @@ mod tests {
         test_util::noop_meter,
     };
     use janus_core::{
+        auth_tokens::AuthenticationToken,
         task::{VdafInstance, VERIFY_KEY_LENGTH},
         test_util::install_test_trace_subscriber,
         time::{IntervalExt, MockClock},
@@ -422,6 +440,7 @@ mod tests {
         V: Aggregator<VERIFY_KEY_LENGTH, 16>,
     > {
         task: Task,
+        aggregator_auth_token: AuthenticationToken,
         datastore: Arc<Datastore<MockClock>>,
         prepare_init_generator: PrepareInitGenerator<VERIFY_KEY_LENGTH, V>,
         aggregation_job_id: AggregationJobId,
@@ -439,12 +458,12 @@ mod tests {
         install_test_trace_subscriber();
 
         let aggregation_job_id = random();
-        let task = TaskBuilder::new(
+        let (task, aggregator_auth_token) = TaskBuilder::new(
             QueryType::TimeInterval,
             VdafInstance::Poplar1 { bits: 1 },
             Role::Helper,
         )
-        .build();
+        .build_yielding_aggregator_auth_token();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let meter = noop_meter();
@@ -539,6 +558,7 @@ mod tests {
 
         AggregationJobContinueTestCase {
             task,
+            aggregator_auth_token,
             datastore,
             prepare_init_generator,
             aggregation_job_id,
@@ -557,6 +577,7 @@ mod tests {
 
         let first_continue_response = post_aggregation_job_and_decode(
             &test_case.task,
+            &test_case.aggregator_auth_token,
             &test_case.aggregation_job_id,
             &test_case.first_continue_request,
             &test_case.handler,
@@ -593,6 +614,7 @@ mod tests {
 
         post_aggregation_job_expecting_error(
             &test_case.task,
+            &test_case.aggregator_auth_token,
             &test_case.aggregation_job_id,
             &step_zero_request,
             &test_case.handler,
@@ -611,6 +633,7 @@ mod tests {
         // helper should send back the exact same response.
         let second_continue_resp = post_aggregation_job_and_decode(
             &test_case.task,
+            &test_case.aggregator_auth_token,
             &test_case.aggregation_job_id,
             &test_case.first_continue_request,
             &test_case.handler,
@@ -682,6 +705,7 @@ mod tests {
 
         let _ = post_aggregation_job_expecting_status(
             &test_case.task,
+            &test_case.aggregator_auth_token,
             &test_case.aggregation_job_id,
             &modified_request,
             &test_case.handler,
@@ -764,6 +788,7 @@ mod tests {
 
         post_aggregation_job_expecting_error(
             &test_case.task,
+            &test_case.aggregator_auth_token,
             &test_case.aggregation_job_id,
             &past_step_request,
             &test_case.handler,
@@ -787,6 +812,7 @@ mod tests {
 
         post_aggregation_job_expecting_error(
             &test_case.task,
+            &test_case.aggregator_auth_token,
             &test_case.aggregation_job_id,
             &future_step_request,
             &test_case.handler,

@@ -121,6 +121,7 @@ pub(super) struct AggregationJobInitTestCase<
 > {
     pub(super) clock: MockClock,
     pub(super) task: Task,
+    pub(super) aggregator_auth_token: AuthenticationToken,
     pub(super) prepare_init_generator: PrepareInitGenerator<VERIFY_KEY_SIZE, V>,
     pub(super) prepare_inits: Vec<PrepareInit>,
     pub(super) aggregation_job_id: AggregationJobId,
@@ -176,6 +177,7 @@ async fn setup_aggregate_init_test_for_vdaf<
 
     let mut response = put_aggregation_job(
         &test_case.task,
+        &test_case.aggregator_auth_token,
         &test_case.aggregation_job_id,
         &test_case.aggregation_job_init_req,
         &test_case.handler,
@@ -205,12 +207,12 @@ async fn setup_aggregate_init_test_without_sending_request<
     vdaf_instance: VdafInstance,
     aggregation_param: V::AggregationParam,
     measurement: V::Measurement,
-    auth_token: AuthenticationToken,
+    aggregator_auth_token: AuthenticationToken,
 ) -> AggregationJobInitTestCase<VERIFY_KEY_SIZE, V> {
     install_test_trace_subscriber();
 
     let task = TaskBuilder::new(QueryType::TimeInterval, vdaf_instance, Role::Helper)
-        .with_aggregator_auth_token(auth_token)
+        .with_aggregator_auth_token(aggregator_auth_token.clone())
         .build();
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
@@ -245,6 +247,7 @@ async fn setup_aggregate_init_test_without_sending_request<
     AggregationJobInitTestCase {
         clock,
         task,
+        aggregator_auth_token,
         prepare_inits,
         prepare_init_generator,
         aggregation_job_id,
@@ -259,14 +262,12 @@ async fn setup_aggregate_init_test_without_sending_request<
 
 pub(crate) async fn put_aggregation_job(
     task: &Task,
+    aggregator_auth_token: &AuthenticationToken,
     aggregation_job_id: &AggregationJobId,
     aggregation_job: &AggregationJobInitializeReq<TimeInterval>,
     handler: &impl Handler,
 ) -> TestConn {
-    let (header, value) = task
-        .aggregator_auth_token()
-        .unwrap()
-        .request_authentication();
+    let (header, value) = aggregator_auth_token.request_authentication();
     put(task.aggregation_job_uri(aggregation_job_id).unwrap().path())
         .with_request_header(header, value)
         .with_request_header(
@@ -289,11 +290,7 @@ async fn aggregation_job_init_authorization_dap_auth_token() {
     )
     .await;
 
-    let (auth_header, auth_value) = test_case
-        .task
-        .aggregator_auth_token()
-        .unwrap()
-        .request_authentication();
+    let (auth_header, auth_value) = test_case.aggregator_auth_token.request_authentication();
 
     let response = put(test_case
         .task
@@ -337,12 +334,7 @@ async fn aggregation_job_init_malformed_authorization_header(#[case] header_valu
     .with_request_header(KnownHeaderName::Authorization, header_value.to_string())
     .with_request_header(
         DAP_AUTH_HEADER,
-        test_case
-            .task
-            .aggregator_auth_token()
-            .unwrap()
-            .as_ref()
-            .to_owned(),
+        test_case.aggregator_auth_token.as_ref().to_owned(),
     )
     .with_request_header(
         KnownHeaderName::ContentType,
@@ -368,6 +360,7 @@ async fn aggregation_job_mutation_aggregation_job() {
 
     let response = put_aggregation_job(
         &test_case.task,
+        &test_case.aggregator_auth_token,
         &test_case.aggregation_job_id,
         &mutated_aggregation_job_init_req,
         &test_case.handler,
@@ -407,6 +400,7 @@ async fn aggregation_job_mutation_report_shares() {
         );
         let response = put_aggregation_job(
             &test_case.task,
+            &test_case.aggregator_auth_token,
             &test_case.aggregation_job_id,
             &mutated_aggregation_job_init_req,
             &test_case.handler,
@@ -446,6 +440,7 @@ async fn aggregation_job_mutation_report_aggregations() {
 
     let response = put_aggregation_job(
         &test_case.task,
+        &test_case.aggregator_auth_token,
         &test_case.aggregation_job_id,
         &mutated_aggregation_job_init_req,
         &test_case.handler,
@@ -462,6 +457,7 @@ async fn aggregation_job_init_two_step_vdaf_idempotence() {
     // Send the aggregation job init request again. We should get an identical response back.
     let mut response = put_aggregation_job(
         &test_case.task,
+        &test_case.aggregator_auth_token,
         &test_case.aggregation_job_id,
         &test_case.aggregation_job_init_req,
         &test_case.handler,
@@ -487,11 +483,7 @@ async fn aggregation_job_init_wrong_query() {
         test_case.prepare_inits,
     );
 
-    let (header, value) = test_case
-        .task
-        .aggregator_auth_token()
-        .unwrap()
-        .request_authentication();
+    let (header, value) = test_case.aggregator_auth_token.request_authentication();
 
     let mut response = put(test_case
         .task

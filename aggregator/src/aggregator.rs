@@ -355,14 +355,15 @@ impl<C: Clock> Aggregator<C> {
     ) -> Result<AggregationJobResp, Error> {
         let task_aggregator = match self.task_aggregator_for(task_id).await? {
             Some(task_aggregator) => {
-                if !auth_token
-                    .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
-                    .unwrap_or(false)
-                {
-                    return Err(Error::UnauthorizedRequest(*task_id));
-                }
                 if task_aggregator.task.role() != &Role::Helper {
                     return Err(Error::UnrecognizedTask(*task_id));
+                }
+
+                if !task_aggregator
+                    .task
+                    .check_aggregator_auth_token(auth_token.as_ref())
+                {
+                    return Err(Error::UnauthorizedRequest(*task_id));
                 }
                 task_aggregator
             }
@@ -426,9 +427,9 @@ impl<C: Clock> Aggregator<C> {
                 auth_token.as_ref(),
             )
             .await?;
-        } else if !auth_token
-            .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
-            .unwrap_or(false)
+        } else if !task_aggregator
+            .task
+            .check_aggregator_auth_token(auth_token.as_ref())
         {
             return Err(Error::UnauthorizedRequest(*task_id));
         }
@@ -566,9 +567,9 @@ impl<C: Clock> Aggregator<C> {
 
                 peer_aggregator.collector_hpke_config()
             } else {
-                if !auth_token
-                    .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
-                    .unwrap_or(false)
+                if !task_aggregator
+                    .task
+                    .check_aggregator_auth_token(auth_token.as_ref())
                 {
                     return Err(Error::UnauthorizedRequest(*task_id));
                 }

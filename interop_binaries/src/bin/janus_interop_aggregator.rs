@@ -11,12 +11,15 @@ use janus_aggregator_core::{
     task::{self, Task},
     SecretBytes,
 };
-use janus_core::{auth_tokens::AuthenticationToken, time::RealClock};
+use janus_core::{
+    auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
+    time::RealClock,
+};
 use janus_interop_binaries::{
     status::{ERROR, SUCCESS},
     AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole, HpkeConfigRegistry, Keyring,
 };
-use janus_messages::{Duration, HpkeConfig, Time};
+use janus_messages::{Duration, HpkeConfig, Role, Time};
 use opentelemetry::metrics::Meter;
 use prio::codec::Decode;
 use serde::{Deserialize, Serialize};
@@ -38,6 +41,7 @@ async fn handle_add_task(
     keyring: &Mutex<HpkeConfigRegistry>,
     request: AggregatorAddTaskRequest,
 ) -> anyhow::Result<()> {
+    let role = request.role.into();
     let vdaf = request.vdaf.into();
     let leader_authentication_token =
         AuthenticationToken::new_dap_auth_token_from_string(request.leader_authentication_token)
@@ -90,7 +94,7 @@ async fn handle_add_task(
         request.helper,
         query_type,
         vdaf,
-        request.role.into(),
+        role,
         vdaf_verify_key,
         request.max_batch_query_count,
         request.task_expiration.map(Time::from_seconds_since_epoch),
@@ -101,7 +105,16 @@ async fn handle_add_task(
         // other aggregators running on the same host.
         Duration::from_seconds(1),
         collector_hpke_config,
-        Some(leader_authentication_token),
+        if role == Role::Leader {
+            None
+        } else {
+            Some(AuthenticationTokenHash::from(&leader_authentication_token))
+        },
+        if role == Role::Leader {
+            Some(leader_authentication_token)
+        } else {
+            None
+        },
         collector_authentication_token,
         [hpke_keypair],
     )

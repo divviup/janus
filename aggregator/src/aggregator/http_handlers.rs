@@ -1385,8 +1385,14 @@ mod tests {
         );
         let aggregation_job_id: AggregationJobId = random();
 
-        let mut test_conn =
-            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        let mut test_conn = put_aggregation_job(
+            &task,
+            task.aggregator_auth_token().unwrap(),
+            &aggregation_job_id,
+            &request,
+            &handler,
+        )
+        .await;
         assert!(!test_conn.status().unwrap().is_success());
 
         let problem_details = take_problem_details(&mut test_conn).await;
@@ -1500,8 +1506,9 @@ mod tests {
     async fn aggregate_init() {
         let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
+        let (task, aggregator_auth_token) =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper)
+                .build_yielding_aggregator_auth_token();
 
         let vdaf = dummy_vdaf::Vdaf::new();
         let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
@@ -1799,8 +1806,14 @@ mod tests {
         // Send request, parse response. Do this twice to prove that the request is idempotent.
         let aggregation_job_id: AggregationJobId = random();
         for _ in 0..2 {
-            let mut test_conn =
-                put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+            let mut test_conn = put_aggregation_job(
+                &task,
+                &aggregator_auth_token,
+                &aggregation_job_id,
+                &request,
+                &handler,
+            )
+            .await;
             assert_eq!(test_conn.status(), Some(Status::Ok));
             assert_headers!(
                 &test_conn,
@@ -1944,8 +1957,9 @@ mod tests {
     async fn aggregate_init_with_reports_encrypted_by_global_key() {
         let (clock, _ephemeral_datastore, datastore, _) = setup_http_handler_test().await;
 
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
+        let (task, aggregator_auth_token) =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper)
+                .build_yielding_aggregator_auth_token();
         datastore.put_task(&task).await.unwrap();
         let vdaf = dummy_vdaf::Vdaf::new();
         let aggregation_param = dummy_vdaf::AggregationParam(0);
@@ -2114,8 +2128,14 @@ mod tests {
             ]),
         );
 
-        let mut test_conn =
-            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        let mut test_conn = put_aggregation_job(
+            &task,
+            &aggregator_auth_token,
+            &aggregation_job_id,
+            &request,
+            &handler,
+        )
+        .await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
 
@@ -2199,8 +2219,14 @@ mod tests {
             Vec::from([mutated_timestamp_prepare_init.clone()]),
         );
 
-        let mut test_conn =
-            put_aggregation_job(&test_case.task, &random(), &request, &test_case.handler).await;
+        let mut test_conn = put_aggregation_job(
+            &test_case.task,
+            &test_case.aggregator_auth_token,
+            &random(),
+            &request,
+            &test_case.handler,
+        )
+        .await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
 
@@ -2248,12 +2274,12 @@ mod tests {
     async fn aggregate_init_prep_init_failed() {
         let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
-        let task = TaskBuilder::new(
+        let (task, aggregator_auth_token) = TaskBuilder::new(
             QueryType::TimeInterval,
             VdafInstance::FakeFailsPrepInit,
             Role::Helper,
         )
-        .build();
+        .build_yielding_aggregator_auth_token();
         let prep_init_generator = PrepareInitGenerator::new(
             clock.clone(),
             task.clone(),
@@ -2272,8 +2298,14 @@ mod tests {
 
         // Send request, and parse response.
         let aggregation_job_id: AggregationJobId = random();
-        let mut test_conn =
-            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        let mut test_conn = put_aggregation_job(
+            &task,
+            &aggregator_auth_token,
+            &aggregation_job_id,
+            &request,
+            &handler,
+        )
+        .await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_headers!(
             &test_conn,
@@ -2299,12 +2331,12 @@ mod tests {
     async fn aggregate_init_prep_step_failed() {
         let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
-        let task = TaskBuilder::new(
+        let (task, aggregator_auth_token) = TaskBuilder::new(
             QueryType::TimeInterval,
             VdafInstance::FakeFailsPrepStep,
             Role::Helper,
         )
-        .build();
+        .build_yielding_aggregator_auth_token();
         let prep_init_generator = PrepareInitGenerator::new(
             clock.clone(),
             task.clone(),
@@ -2322,8 +2354,14 @@ mod tests {
         );
 
         let aggregation_job_id: AggregationJobId = random();
-        let mut test_conn =
-            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        let mut test_conn = put_aggregation_job(
+            &task,
+            &aggregator_auth_token,
+            &aggregation_job_id,
+            &request,
+            &handler,
+        )
+        .await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_headers!(
             &test_conn,
@@ -2349,8 +2387,9 @@ mod tests {
     async fn aggregate_init_duplicated_report_id() {
         let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
+        let (task, aggregator_auth_token) =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper)
+                .build_yielding_aggregator_auth_token();
         let prep_init_generator = PrepareInitGenerator::new(
             clock.clone(),
             task.clone(),
@@ -2369,8 +2408,14 @@ mod tests {
         );
         let aggregation_job_id: AggregationJobId = random();
 
-        let mut test_conn =
-            put_aggregation_job(&task, &aggregation_job_id, &request, &handler).await;
+        let mut test_conn = put_aggregation_job(
+            &task,
+            &aggregator_auth_token,
+            &aggregation_job_id,
+            &request,
+            &handler,
+        )
+        .await;
 
         let want_status = 400;
         assert_eq!(
@@ -2390,12 +2435,12 @@ mod tests {
         let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let aggregation_job_id = random();
-        let task = TaskBuilder::new(
+        let (task, aggregator_auth_token) = TaskBuilder::new(
             QueryType::TimeInterval,
             VdafInstance::Poplar1 { bits: 1 },
             Role::Helper,
         )
-        .build();
+        .build_yielding_aggregator_auth_token();
 
         let vdaf = Arc::new(Poplar1::<XofShake128, 16>::new(1));
         let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
@@ -2595,8 +2640,14 @@ mod tests {
         );
 
         // Send request, and parse response.
-        let aggregate_resp =
-            post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
+        let aggregate_resp = post_aggregation_job_and_decode(
+            &task,
+            &aggregator_auth_token,
+            &aggregation_job_id,
+            &request,
+            &handler,
+        )
+        .await;
 
         // Validate response.
         assert_eq!(
@@ -2696,12 +2747,12 @@ mod tests {
     async fn aggregate_continue_accumulate_batch_aggregation() {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
-        let task = TaskBuilder::new(
+        let (task, aggregator_auth_token) = TaskBuilder::new(
             QueryType::TimeInterval,
             VdafInstance::Poplar1 { bits: 1 },
             Role::Helper,
         )
-        .build();
+        .build_yielding_aggregator_auth_token();
         let aggregation_job_id_0 = random();
         let aggregation_job_id_1 = random();
         let first_batch_interval_clock = MockClock::default();
@@ -2950,8 +3001,14 @@ mod tests {
         );
 
         // Send request, and parse response.
-        let _ =
-            post_aggregation_job_and_decode(&task, &aggregation_job_id_0, &request, &handler).await;
+        let _ = post_aggregation_job_and_decode(
+            &task,
+            &aggregator_auth_token,
+            &aggregation_job_id_0,
+            &request,
+            &handler,
+        )
+        .await;
 
         // Map the batch aggregation ordinal value to 0, as it may vary due to sharding.
         let first_batch_got_batch_aggregations: Vec<_> = datastore
@@ -3251,8 +3308,14 @@ mod tests {
             ]),
         );
 
-        let _ =
-            post_aggregation_job_and_decode(&task, &aggregation_job_id_1, &request, &handler).await;
+        let _ = post_aggregation_job_and_decode(
+            &task,
+            &aggregator_auth_token,
+            &aggregation_job_id_1,
+            &request,
+            &handler,
+        )
+        .await;
 
         // Map the batch aggregation ordinal value to 0, as it may vary due to sharding, and merge
         // batch aggregations over the same interval. (the task & aggregation parameter will always
@@ -3387,12 +3450,12 @@ mod tests {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
-        let task = TaskBuilder::new(
+        let (task, aggregator_auth_token) = TaskBuilder::new(
             QueryType::TimeInterval,
             VdafInstance::Poplar1 { bits: 1 },
             Role::Helper,
         )
-        .build();
+        .build_yielding_aggregator_auth_token();
         let report_id = random();
         let aggregation_param = Poplar1AggregationParam::try_from_prefixes(Vec::from([
             IdpfInput::from_bools(&[false]),
@@ -3484,8 +3547,14 @@ mod tests {
             )]),
         );
 
-        let resp =
-            post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
+        let resp = post_aggregation_job_and_decode(
+            &task,
+            &aggregator_auth_token,
+            &aggregation_job_id,
+            &request,
+            &handler,
+        )
+        .await;
         assert_eq!(resp.prepare_resps().len(), 1);
         assert_eq!(
             resp.prepare_resps()[0],
@@ -3501,12 +3570,12 @@ mod tests {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
-        let task = TaskBuilder::new(
+        let (task, aggregator_auth_token) = TaskBuilder::new(
             QueryType::TimeInterval,
             VdafInstance::Poplar1 { bits: 1 },
             Role::Helper,
         )
-        .build();
+        .build_yielding_aggregator_auth_token();
         let vdaf = Poplar1::new_shake128(1);
         let report_id = random();
         let aggregation_param = Poplar1AggregationParam::try_from_prefixes(Vec::from([
@@ -3593,8 +3662,14 @@ mod tests {
             )]),
         );
 
-        let aggregate_resp =
-            post_aggregation_job_and_decode(&task, &aggregation_job_id, &request, &handler).await;
+        let aggregate_resp = post_aggregation_job_and_decode(
+            &task,
+            &aggregator_auth_token,
+            &aggregation_job_id,
+            &request,
+            &handler,
+        )
+        .await;
         assert_eq!(
             aggregate_resp,
             AggregationJobResp::new(Vec::from([PrepareResp::new(
@@ -3671,12 +3746,12 @@ mod tests {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
-        let task = TaskBuilder::new(
+        let (task, aggregator_auth_token) = TaskBuilder::new(
             QueryType::TimeInterval,
             VdafInstance::Poplar1 { bits: 1 },
             Role::Helper,
         )
-        .build();
+        .build_yielding_aggregator_auth_token();
         let report_id = random();
         let aggregation_param = Poplar1AggregationParam::try_from_prefixes(Vec::from([
             IdpfInput::from_bools(&[false]),
@@ -3769,6 +3844,7 @@ mod tests {
 
         post_aggregation_job_expecting_error(
             &task,
+            &aggregator_auth_token,
             &aggregation_job_id,
             &request,
             &handler,
@@ -3784,12 +3860,12 @@ mod tests {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
-        let task = TaskBuilder::new(
+        let (task, aggregator_auth_token) = TaskBuilder::new(
             QueryType::TimeInterval,
             VdafInstance::Poplar1 { bits: 1 },
             Role::Helper,
         )
-        .build();
+        .build_yielding_aggregator_auth_token();
         let report_id_0 = random();
         let aggregation_param = Poplar1AggregationParam::try_from_prefixes(Vec::from([
             IdpfInput::from_bools(&[false]),
@@ -3941,6 +4017,7 @@ mod tests {
         );
         post_aggregation_job_expecting_error(
             &task,
+            &aggregator_auth_token,
             &aggregation_job_id,
             &request,
             &handler,
@@ -3956,8 +4033,9 @@ mod tests {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
+        let (task, aggregator_auth_token) =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper)
+                .build_yielding_aggregator_auth_token();
         let aggregation_job_id = random();
         let report_metadata = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
@@ -4027,6 +4105,7 @@ mod tests {
         );
         post_aggregation_job_expecting_error(
             &task,
+            &aggregator_auth_token,
             &aggregation_job_id,
             &request,
             &handler,
@@ -4793,9 +4872,10 @@ mod tests {
 
         // Prepare parameters.
         const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(3600);
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper)
-            .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
-            .build();
+        let (task, aggregator_auth_token) =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper)
+                .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+                .build_yielding_aggregator_auth_token();
         datastore.put_task(&task).await.unwrap();
 
         let request = AggregateShareReq::new(
@@ -4812,10 +4892,7 @@ mod tests {
             ReportIdChecksum::default(),
         );
 
-        let (header, value) = task
-            .aggregator_auth_token()
-            .unwrap()
-            .request_authentication();
+        let (header, value) = aggregator_auth_token.request_authentication();
 
         // Test that a request for an invalid batch fails. (Specifically, the batch interval is too
         // small.)
@@ -4870,12 +4947,13 @@ mod tests {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let collector_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper)
-            .with_max_batch_query_count(1)
-            .with_time_precision(Duration::from_seconds(500))
-            .with_min_batch_size(10)
-            .with_collector_hpke_config(collector_hpke_keypair.config().clone())
-            .build();
+        let (task, aggregator_auth_token) =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper)
+                .with_max_batch_query_count(1)
+                .with_time_precision(Duration::from_seconds(500))
+                .with_min_batch_size(10)
+                .with_collector_hpke_config(collector_hpke_keypair.config().clone())
+                .build_yielding_aggregator_auth_token();
         datastore.put_task(&task).await.unwrap();
 
         // There are no batch aggregations in the datastore yet
@@ -4888,10 +4966,7 @@ mod tests {
             ReportIdChecksum::default(),
         );
 
-        let (header, value) = task
-            .aggregator_auth_token()
-            .unwrap()
-            .request_authentication();
+        let (header, value) = aggregator_auth_token.request_authentication();
 
         let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
             .with_request_header(header, value)
@@ -5075,10 +5150,7 @@ mod tests {
             5,
             ReportIdChecksum::default(),
         );
-        let (header, value) = task
-            .aggregator_auth_token()
-            .unwrap()
-            .request_authentication();
+        let (header, value) = aggregator_auth_token.request_authentication();
         let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
             .with_request_header(header, value)
             .with_request_header(
@@ -5129,10 +5201,7 @@ mod tests {
                 ReportIdChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
             ),
         ] {
-            let (header, value) = task
-                .aggregator_auth_token()
-                .unwrap()
-                .request_authentication();
+            let (header, value) = aggregator_auth_token.request_authentication();
             let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
                 .with_request_header(header, value)
                 .with_request_header(
@@ -5195,10 +5264,7 @@ mod tests {
             // Request the aggregate share multiple times. If the request parameters don't change,
             // then there is no query count violation and all requests should succeed.
             for iteration in 0..3 {
-                let (header, value) = task
-                    .aggregator_auth_token()
-                    .unwrap()
-                    .request_authentication();
+                let (header, value) = aggregator_auth_token.request_authentication();
                 let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
                     .with_request_header(header, value)
                     .with_request_header(
@@ -5263,10 +5329,7 @@ mod tests {
             20,
             ReportIdChecksum::get_decoded(&[8 ^ 4 ^ 3 ^ 2; 32]).unwrap(),
         );
-        let (header, value) = task
-            .aggregator_auth_token()
-            .unwrap()
-            .request_authentication();
+        let (header, value) = aggregator_auth_token.request_authentication();
         let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
             .with_request_header(header, value)
             .with_request_header(
@@ -5315,10 +5378,7 @@ mod tests {
                 ReportIdChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
             ),
         ] {
-            let (header, value) = task
-                .aggregator_auth_token()
-                .unwrap()
-                .request_authentication();
+            let (header, value) = aggregator_auth_token.request_authentication();
             let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
                 .with_request_header(header, value)
                 .with_request_header(
