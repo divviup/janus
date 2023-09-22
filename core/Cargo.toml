@@ -14,7 +14,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-fpvec_bounded_l2 = ["prio/experimental"]
+fpvec_bounded_l2 = ["dep:fixed", "prio/experimental"]
 test-util = [
     "dep:assert_matches",
     "dep:k8s-openapi",
@@ -37,6 +37,7 @@ backoff = { version = "0.4.0", features = ["tokio"] }
 base64.workspace = true
 chrono = { workspace = true, features = ["clock"] }
 derivative.workspace = true
+fixed = { version = "1.24", optional = true }
 futures = "0.3.28"
 hex = "0.4"
 hpke-dispatch = { version = "0.5.1", features = ["serde"] }

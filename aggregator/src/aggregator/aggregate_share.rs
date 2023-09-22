@@ -4,7 +4,10 @@ use super::Error;
 use janus_aggregator_core::{datastore::models::BatchAggregation, task::AggregatorTask};
 use janus_core::report_id::ReportIdChecksumExt;
 use janus_messages::{query_type::QueryType, ReportIdChecksum};
-use prio::vdaf::{self, Aggregatable};
+use prio::{
+    dp::DifferentialPrivacyStrategy,
+    vdaf::{self, Aggregatable},
+};
 
 /// Computes the aggregate share over the provided batch aggregations.
 /// The assumption is that all aggregation jobs contributing to those batch aggregations have
@@ -14,7 +17,8 @@ use prio::vdaf::{self, Aggregatable};
 pub(crate) async fn compute_aggregate_share<
     const SEED_SIZE: usize,
     Q: QueryType,
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
+    S: DifferentialPrivacyStrategy,
+    A: vdaf::AggregatorWithNoise<SEED_SIZE, 16, S>,
 >(
     task: &AggregatorTask,
     batch_aggregations: &[BatchAggregation<SEED_SIZE, Q, A>],
