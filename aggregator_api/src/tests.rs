@@ -335,7 +335,7 @@ async fn post_task_helper_no_optional_fields() {
     assert_eq!(req.task_expiration.as_ref(), got_task.task_expiration());
     assert_eq!(req.min_batch_size, got_task.min_batch_size());
     assert_eq!(&req.time_precision, got_task.time_precision());
-    assert!(got_task.aggregator_auth_token().is_some());
+    assert!(got_task.aggregator_auth_token_hash().is_some());
     assert!(got_task.collector_auth_token().is_none());
     assert_eq!(
         &req.collector_hpke_config,
@@ -343,7 +343,10 @@ async fn post_task_helper_no_optional_fields() {
     );
 
     // ...and the response.
-    assert_eq!(got_task_resp, TaskResp::try_from(&got_task).unwrap());
+    assert_eq!(
+        got_task_resp,
+        TaskResp::try_from_task(&got_task, got_task_resp.aggregator_auth_token.as_ref()).unwrap()
+    );
 }
 
 #[tokio::test]
@@ -552,7 +555,10 @@ async fn post_task_leader_all_optional_fields() {
     assert!(got_task.collector_auth_token().is_some());
 
     // ...and the response.
-    assert_eq!(got_task_resp, TaskResp::try_from(&got_task).unwrap());
+    assert_eq!(
+        got_task_resp,
+        TaskResp::try_from_task(&got_task, Some(&aggregator_auth_token)).unwrap()
+    );
 }
 
 /// Test the POST /tasks endpoint, with a leader task with all of the optional fields provided.
@@ -599,7 +605,7 @@ async fn post_task_leader_no_aggregator_auth_token() {
 }
 
 #[tokio::test]
-async fn get_task() {
+async fn get_task_leader() {
     // Setup: write a task to the datastore.
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
@@ -616,7 +622,7 @@ async fn get_task() {
     .unwrap();
 
     // Verify: getting the task returns the expected result.
-    let want_task_resp = TaskResp::try_from(&task).unwrap();
+    let want_task_resp = TaskResp::try_from_task(&task, task.aggregator_auth_token()).unwrap();
     let mut conn = get(&format!("/tasks/{}", task.id()))
         .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
         .with_request_header("Accept", CONTENT_TYPE)
@@ -654,6 +660,43 @@ async fn get_task() {
         Status::Unauthorized,
         "",
     );
+}
+
+#[tokio::test]
+async fn get_task_helper() {
+    // Setup: write a task to the datastore.
+    let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
+
+    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
+
+    ds.run_tx(|tx| {
+        let task = task.clone();
+        Box::pin(async move {
+            tx.put_task(&task).await?;
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
+
+    // Verify: getting the task returns the expected result.
+    let want_task_resp = TaskResp::try_from_task(&task, None).unwrap();
+    let mut conn = get(&format!("/tasks/{}", task.id()))
+        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+        .with_request_header("Accept", CONTENT_TYPE)
+        .run_async(&handler)
+        .await;
+    assert_status!(conn, Status::Ok);
+    let got_task_resp = serde_json::from_slice(
+        &conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(want_task_resp, got_task_resp);
 }
 
 #[tokio::test]
@@ -1769,6 +1812,7 @@ fn task_resp_serialization() {
             HpkeAeadId::Aes128Gcm,
             HpkePublicKey::from([0u8; 32].to_vec()),
         ),
+        None,
         Some(
             AuthenticationToken::new_dap_auth_token_from_string("Y29sbGVjdG9yLWFiY2RlZjAw")
                 .unwrap(),
@@ -1790,7 +1834,7 @@ fn task_resp_serialization() {
     )
     .unwrap();
     assert_tokens(
-        &TaskResp::try_from(&task).unwrap(),
+        &TaskResp::try_from_task(&task, task.aggregator_auth_token()).unwrap(),
         &[
             Token::Struct {
                 name: "TaskResp",

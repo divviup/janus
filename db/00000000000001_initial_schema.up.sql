@@ -99,7 +99,7 @@ CREATE TABLE tasks(
     CONSTRAINT aggregator_auth_token_null CHECK (
         -- If aggregator_auth_token_type is not NULL, then exactly one of aggregator_auth_token or
         -- aggregator_auth_token_hash must be not NULL.
-        ((aggregator_auth_token_type IS NOT NULL) AND (aggregator_auth_token IS NULL) != (aggregator_auth_token_hash IS NULL)))
+        ((aggregator_auth_token_type IS NOT NULL) AND (aggregator_auth_token IS NULL) != (aggregator_auth_token_hash IS NULL))
         -- If aggregator_auth_token_type is NULL, then both aggregator_auth_token and
         -- aggregator_auth_token_hash must be NULL
         OR ((aggregator_auth_token_type IS NULL) AND (aggregator_auth_token IS NULL) AND (aggregator_auth_token_hash IS NULL))

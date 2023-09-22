@@ -14,7 +14,9 @@ use janus_aggregator_core::{
     taskprov::PeerAggregator,
     SecretBytes,
 };
-use janus_core::{hpke::generate_hpke_config_and_private_key, time::Clock};
+use janus_core::{
+    auth_tokens::AuthenticationTokenHash, hpke::generate_hpke_config_and_private_key, time::Clock,
+};
 use janus_messages::HpkeConfigId;
 use janus_messages::{
     query_type::Code as SupportedQueryType, Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, Role,
@@ -129,7 +131,7 @@ pub(super) async fn post_task<C: Clock>(
                         .to_string(),
                 )
             })?;
-            (Some(aggregator_auth_token), Some(random()))
+            (aggregator_auth_token, Some(random()))
         }
 
         Role::Helper => {
@@ -139,8 +141,7 @@ pub(super) async fn post_task<C: Clock>(
                         .to_string(),
                 ));
             }
-
-            (Some(random()), None)
+            (random(), None)
         }
 
         _ => unreachable!(),
@@ -173,7 +174,18 @@ pub(super) async fn post_task<C: Clock>(
             /* tolerable_clock_skew */
             Duration::from_seconds(60), // 1 minute,
             /* collector_hpke_config */ req.collector_hpke_config,
-            aggregator_auth_token,
+            /* aggregator_auth_token_hash */
+            if req.role == Role::Helper {
+                Some(AuthenticationTokenHash::from(&aggregator_auth_token))
+            } else {
+                None
+            },
+            /* aggregator_auth_token */
+            if req.role == Role::Leader {
+                Some(aggregator_auth_token.clone())
+            } else {
+                None
+            },
             collector_auth_token,
             hpke_keys,
         )
@@ -212,7 +224,8 @@ pub(super) async fn post_task<C: Clock>(
     .await?;
 
     Ok(Json(
-        TaskResp::try_from(task.as_ref()).map_err(|err| Error::Internal(err.to_string()))?,
+        TaskResp::try_from_task(task.as_ref(), Some(&aggregator_auth_token))
+            .map_err(|err| Error::Internal(err.to_string()))?,
     ))
 }
 
@@ -230,7 +243,7 @@ pub(super) async fn get_task<C: Clock>(
         .ok_or(Error::NotFound)?;
 
     Ok(Json(
-        TaskResp::try_from(&task).map_err(|err| Error::Internal(err.to_string()))?,
+        TaskResp::try_from_task(&task, None).map_err(|err| Error::Internal(err.to_string()))?,
     ))
 }
 

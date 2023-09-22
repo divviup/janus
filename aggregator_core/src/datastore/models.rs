@@ -5,7 +5,7 @@ use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::NaiveDateTime;
 use derivative::Derivative;
 use janus_core::{
-    auth_tokens::AuthenticationToken,
+    auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     hpke::HpkeKeypair,
     report_id::ReportIdChecksumExt,
     task::VdafInstance,
@@ -59,6 +59,19 @@ impl AuthenticationTokenType {
         }
         .map_err(|e| Error::DbState(format!("invalid DAP auth token in database: {e:?}")))
     }
+
+    pub fn as_authentication_token_hash(
+        &self,
+        hash_bytes: &[u8],
+    ) -> Result<AuthenticationTokenHash, Error> {
+        let hash_array = hash_bytes
+            .try_into()
+            .map_err(|e| Error::DbState(format!("invalid auth token hash in database: {e:?}")))?;
+        Ok(match self {
+            Self::DapAuthToken => AuthenticationTokenHash::DapAuth(hash_array),
+            Self::AuthorizationBearerToken => AuthenticationTokenHash::Bearer(hash_array),
+        })
+    }
 }
 
 impl From<&AuthenticationToken> for AuthenticationTokenType {
@@ -66,6 +79,16 @@ impl From<&AuthenticationToken> for AuthenticationTokenType {
         match value {
             AuthenticationToken::DapAuth(_) => Self::DapAuthToken,
             AuthenticationToken::Bearer(_) => Self::AuthorizationBearerToken,
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl From<&AuthenticationTokenHash> for AuthenticationTokenType {
+    fn from(value: &AuthenticationTokenHash) -> Self {
+        match value {
+            AuthenticationTokenHash::DapAuth(_) => Self::DapAuthToken,
+            AuthenticationTokenHash::Bearer(_) => Self::AuthorizationBearerToken,
             _ => unreachable!(),
         }
     }

@@ -168,6 +168,7 @@ impl Distribution<TokenInner> for Standard {
 #[derive(Clone, Derivative, Deserialize, Serialize, Eq)]
 #[derivative(Debug)]
 #[serde(tag = "type", content = "hash")]
+#[non_exhaustive]
 pub enum AuthenticationTokenHash {
     /// A bearer token, presented as the value of the "Authorization" HTTP header as specified in
     /// [RFC 6750 section 2.1][1].

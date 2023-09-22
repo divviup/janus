@@ -108,11 +108,9 @@ pub(crate) struct TaskResp {
     /// How much clock skew to allow between client and aggregator. Reports from
     /// farther than this duration into the future will be rejected.
     pub(crate) tolerable_clock_skew: Duration,
-    /// The authentication token for inter-aggregator communication in this task. If `role` is
-    /// Helper, this token is used by the aggregator to authenticate requests from the Leader. Not
-    /// set if `role` is Leader..
-    // TODO(#1509): This field will have to change as Janus helpers will only store a salted
-    // hash of aggregator auth tokens.
+    /// The authentication token for inter-aggregator communication in this task. Will only be set
+    /// if `role` is Leader, or in the response to `POST /tasks/` for the Helper, as the Helper does
+    /// not store the unhashed authentication token.
     pub(crate) aggregator_auth_token: Option<AuthenticationToken>,
     /// The authentication token used by the task's Collector to authenticate to the Leader.
     /// `Some` if `role` is Leader, `None` otherwise.
@@ -125,10 +123,11 @@ pub(crate) struct TaskResp {
     pub(crate) aggregator_hpke_configs: Vec<HpkeConfig>,
 }
 
-impl TryFrom<&Task> for TaskResp {
-    type Error = &'static str;
-
-    fn try_from(task: &Task) -> Result<Self, Self::Error> {
+impl TaskResp {
+    pub(crate) fn try_from_task(
+        task: &Task,
+        aggregator_auth_token: Option<&AuthenticationToken>,
+    ) -> Result<Self, &'static str> {
         // We have to resolve impedance mismatches between the aggregator API's view of a task
         // and `aggregator_core::task::Task`. For now, we deal with this in code, but someday
         // the two representations will be harmonized.
@@ -162,7 +161,13 @@ impl TryFrom<&Task> for TaskResp {
             min_batch_size: task.min_batch_size(),
             time_precision: *task.time_precision(),
             tolerable_clock_skew: *task.tolerable_clock_skew(),
-            aggregator_auth_token: task.aggregator_auth_token().cloned(),
+            // The helper task does not contain the unhashed aggregator auth token, but the response
+            // to the task creation request must so that the token can be provided to the leader.
+            aggregator_auth_token: if task.role() == &Role::Helper {
+                aggregator_auth_token.cloned()
+            } else {
+                task.aggregator_auth_token().cloned()
+            },
             collector_auth_token: task.collector_auth_token().cloned(),
             collector_hpke_config: task
                 .collector_hpke_config()
