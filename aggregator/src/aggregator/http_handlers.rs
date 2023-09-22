@@ -22,7 +22,6 @@ use opentelemetry::{
 use prio::codec::{Decode, Encode};
 use ring::digest::{digest, SHA256};
 use routefinder::Captures;
-use serde::Deserialize;
 use std::time::Duration as StdDuration;
 use std::{io::Cursor, sync::Arc};
 use tracing::warn;
@@ -263,24 +262,12 @@ async fn aggregator_handler_with_aggregator<C: Clock>(
     ))
 }
 
-/// Deserialization helper struct to extract a "task_id" parameter from a query string.
-#[derive(Deserialize)]
-struct HpkeConfigQuery {
-    /// The optional "task_id" parameter, in base64url-encoded form.
-    #[serde(default)]
-    task_id: Option<String>,
-}
-
 /// API handler for the "/hpke_config" GET endpoint.
 async fn hpke_config<C: Clock>(
     conn: &mut Conn,
     State(aggregator): State<Arc<Aggregator<C>>>,
 ) -> Result<(CacheControlDirective, EncodedBody<HpkeConfig>), Error> {
-    let query = serde_urlencoded::from_str::<HpkeConfigQuery>(conn.querystring())
-        .map_err(|err| Error::BadRequest(format!("couldn't parse query string: {err}")))?;
-    let hpke_config = aggregator
-        .handle_hpke_config(query.task_id.as_ref().map(AsRef::as_ref))
-        .await?;
+    let hpke_config = aggregator.handle_hpke_config().await?;
 
     // Handle CORS, if the request header is present.
     if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
@@ -367,7 +354,7 @@ async fn aggregate<C: Clock>(
             // authentication. This assumes that the task ID is at the start of the message content.
             let task_id = TaskId::decode(&mut Cursor::new(&body))?;
             let auth_token = parse_auth_token(&task_id, conn)?;
-            let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
+            let taskprov_task_config = parse_taskprov_header(&task_id, conn)?;
 
             let response = aggregator
                 .handle_aggregate_init(&task_id, &body, auth_token, taskprov_task_config.as_ref())
@@ -383,7 +370,7 @@ async fn aggregate<C: Clock>(
             // authentication. This assumes that the task ID is at the start of the message content.
             let task_id = TaskId::decode(&mut Cursor::new(&body))?;
             let auth_token = parse_auth_token(&task_id, conn)?;
-            let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
+            let taskprov_task_config = parse_taskprov_header(&task_id, conn)?;
 
             let response = aggregator
                 .handle_aggregate_continue(
@@ -484,7 +471,7 @@ async fn aggregate_share<C: Clock>(
     // authentication. This assumes that the task ID is at the start of the message content.
     let task_id = TaskId::decode(&mut Cursor::new(&body))?;
     let auth_token = parse_auth_token(&task_id, conn)?;
-    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
+    let taskprov_task_config = parse_taskprov_header(&task_id, conn)?;
 
     let share = aggregator
         .handle_aggregate_share(&task_id, &body, auth_token, taskprov_task_config.as_ref())
@@ -548,41 +535,29 @@ fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<Authenticati
         .transpose()
 }
 
-fn parse_taskprov_header<C: Clock>(
-    aggregator: &Aggregator<C>,
-    task_id: &TaskId,
-    conn: &Conn,
-) -> Result<Option<TaskConfig>, Error> {
-    if aggregator.cfg.taskprov_config.enabled {
-        match conn.request_headers().get(TASKPROV_HEADER) {
-            Some(taskprov_header) => {
-                let task_config_encoded =
-                    &URL_SAFE_NO_PAD.decode(taskprov_header).map_err(|_| {
-                        Error::UnrecognizedMessage(
-                            Some(*task_id),
-                            "taskprov header could not be decoded",
-                        )
-                    })?;
+fn parse_taskprov_header(task_id: &TaskId, conn: &Conn) -> Result<Option<TaskConfig>, Error> {
+    match conn.request_headers().get(TASKPROV_HEADER) {
+        Some(taskprov_header) => {
+            let task_config_encoded = &URL_SAFE_NO_PAD.decode(taskprov_header).map_err(|_| {
+                Error::UnrecognizedMessage(Some(*task_id), "taskprov header could not be decoded")
+            })?;
 
-                if task_id.as_ref() != digest(&SHA256, task_config_encoded).as_ref() {
-                    Err(Error::UnrecognizedMessage(
-                        Some(*task_id),
-                        "derived taskprov task ID does not match task config",
-                    ))
-                } else {
-                    // TODO(#1684): Parsing the taskprov header like this before we've been able
-                    // to actually authenticate the client is undesireable. We should rework this
-                    // such that the authorization header is handled before parsing the untrusted
-                    // input.
-                    Ok(Some(TaskConfig::decode(&mut Cursor::new(
-                        task_config_encoded,
-                    ))?))
-                }
+            if task_id.as_ref() != digest(&SHA256, task_config_encoded).as_ref() {
+                Err(Error::UnrecognizedMessage(
+                    Some(*task_id),
+                    "derived taskprov task ID does not match task config",
+                ))
+            } else {
+                // TODO(#1684): Parsing the taskprov header like this before we've been able
+                // to actually authenticate the client is undesireable. We should rework this
+                // such that the authorization header is handled before parsing the untrusted
+                // input.
+                Ok(Some(TaskConfig::decode(&mut Cursor::new(
+                    task_config_encoded,
+                ))?))
             }
-            None => Ok(None),
         }
-    } else {
-        Ok(None)
+        None => Ok(None),
     }
 }
 
@@ -608,26 +583,23 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        aggregator::{
-            aggregate_init_tests::{post_aggregation_job, setup_aggregate_init_test},
-            aggregation_job_continue::test_util::{
-                post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
-            },
-            collection_job_tests::setup_collection_job_test_case,
-            empty_batch_aggregations,
-            http_handlers::{
-                aggregator_handler, aggregator_handler_with_aggregator,
-                test_util::{take_problem_details, take_response_body},
-            },
-            tests::{
-                create_report, create_report_custom, default_aggregator_config,
-                generate_helper_report_share, generate_helper_report_share_for_plaintext,
-                BATCH_AGGREGATION_SHARD_COUNT,
-            },
-            Config,
+    use crate::aggregator::{
+        aggregate_init_tests::{post_aggregation_job, setup_aggregate_init_test},
+        aggregation_job_continue::test_util::{
+            post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
         },
-        config::TaskprovConfig,
+        collection_job_tests::setup_collection_job_test_case,
+        empty_batch_aggregations,
+        http_handlers::{
+            aggregator_handler, aggregator_handler_with_aggregator,
+            test_util::{take_problem_details, take_response_body},
+        },
+        tests::{
+            create_report, create_report_custom, default_aggregator_config,
+            generate_helper_report_share, generate_helper_report_share_for_plaintext,
+            BATCH_AGGREGATION_SHARD_COUNT,
+        },
+        Config,
     };
     use assert_matches::assert_matches;
     use futures::future::try_join_all;
@@ -642,7 +614,6 @@ mod tests {
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
         task::{test_util::TaskBuilder, QueryType, VerifyKey},
-        taskprov,
         test_util::noop_meter,
     };
     use janus_core::{
@@ -684,81 +655,6 @@ mod tests {
         prelude::{delete, get, post},
         TestConn,
     };
-
-    #[tokio::test]
-    async fn hpke_config() {
-        install_test_trace_subscriber();
-
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count,
-            Role::Leader,
-        )
-        .build();
-        let unknown_task_id: TaskId = random();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone()).await;
-
-        datastore.put_task(&task).await.unwrap();
-
-        let want_hpke_key = task.current_hpke_key().clone();
-
-        let handler = aggregator_handler(
-            Arc::new(datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
-
-        // No task ID provided and no global keys are configured.
-        let mut test_conn = get("/hpke_config").run_async(&handler).await;
-        assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        assert_eq!(
-            take_problem_details(&mut test_conn).await,
-            json!({
-                "status": 400u16,
-                "type": "urn:ietf:params:ppm:dap:error:missingTaskID",
-                "title": "HPKE configuration was requested without specifying a task ID.",
-            })
-        );
-
-        // Unknown task ID provided
-        let mut test_conn = get(&format!("/hpke_config?task_id={unknown_task_id}"))
-            .run_async(&handler)
-            .await;
-        // Expected status and problem type should be per the protocol
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.1
-        assert_eq!(test_conn.status(), Some(Status::BadRequest));
-        assert_eq!(
-            take_problem_details(&mut test_conn).await,
-            json!({
-                "status": 400u16,
-                "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
-                "title": "An endpoint received a message with an unknown task ID.",
-                "taskid": format!("{unknown_task_id}"),
-            })
-        );
-
-        // Recognized task ID provided
-        let mut test_conn = get(&format!("/hpke_config?task_id={}", task.id()))
-            .run_async(&handler)
-            .await;
-
-        assert_eq!(test_conn.status(), Some(Status::Ok));
-        assert_headers!(
-            &test_conn,
-            "cache-control" => "max-age=86400",
-            "content-type" => (HpkeConfig::MEDIA_TYPE),
-        );
-
-        let bytes = take_response_body(&mut test_conn).await;
-        let hpke_config = HpkeConfig::get_decoded(&bytes).unwrap();
-        assert_eq!(&hpke_config, want_hpke_key.config());
-        check_hpke_config_is_usable(&hpke_config, &want_hpke_key);
-    }
 
     #[tokio::test]
     async fn global_hpke_config() {
@@ -877,84 +773,7 @@ mod tests {
             .unwrap();
         aggregator.refresh_caches().await.unwrap();
         let test_conn = get("/hpke_config").run_async(&handler).await;
-        assert_eq!(test_conn.status(), Some(Status::BadRequest));
-    }
-
-    #[tokio::test]
-    async fn global_hpke_config_with_taskprov() {
-        install_test_trace_subscriber();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-
-        // Insert an HPKE config, i.e. start the application with a keypair already
-        // in the database.
-        let first_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(1);
-        datastore
-            .run_tx(|tx| {
-                let keypair = first_hpke_keypair.clone();
-                Box::pin(async move {
-                    tx.put_global_hpke_keypair(&keypair).await?;
-                    tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
-                        .await?;
-                    Ok(())
-                })
-            })
-            .await
-            .unwrap();
-
-        // Insert a taskprov task. This task won't have its task-specific HPKE key.
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count,
-            Role::Leader,
-        )
-        .build();
-        let task_id = *task.id();
-        let task = taskprov::Task::new(
-            task_id,
-            task.aggregator_endpoints().to_vec(),
-            *task.query_type(),
-            task.vdaf().clone(),
-            *task.role(),
-            task.vdaf_verify_keys().to_vec(),
-            task.max_batch_query_count(),
-            task.task_expiration().cloned(),
-            task.report_expiry_age().cloned(),
-            task.min_batch_size(),
-            *task.time_precision(),
-            *task.tolerable_clock_skew(),
-        )
-        .unwrap();
-        datastore.put_task(&task.into()).await.unwrap();
-
-        let cfg = Config {
-            taskprov_config: TaskprovConfig { enabled: true },
-            ..Default::default()
-        };
-
-        let aggregator = Arc::new(
-            crate::aggregator::Aggregator::new(
-                datastore.clone(),
-                clock.clone(),
-                &noop_meter(),
-                cfg,
-            )
-            .await
-            .unwrap(),
-        );
-        let handler = aggregator_handler_with_aggregator(aggregator.clone(), &noop_meter())
-            .await
-            .unwrap();
-
-        let mut test_conn = get(&format!("/hpke_config?task_id={}", task_id))
-            .run_async(&handler)
-            .await;
-        assert_eq!(test_conn.status(), Some(Status::Ok));
-        let bytes = take_response_body(&mut test_conn).await;
-        let hpke_config = HpkeConfig::get_decoded(&bytes).unwrap();
-        assert_eq!(hpke_config, first_hpke_keypair.config().clone());
-        check_hpke_config_is_usable(&hpke_config, &first_hpke_keypair);
+        assert_eq!(test_conn.status(), Some(Status::InternalServerError));
     }
 
     fn check_hpke_config_is_usable(hpke_config: &HpkeConfig, hpke_keypair: &HpkeKeypair) {
@@ -991,6 +810,22 @@ mod tests {
         let datastore = ephemeral_datastore.datastore(clock.clone()).await;
 
         datastore.put_task(&task).await.unwrap();
+
+        // Insert an HPKE config, i.e. start the application with a keypair already
+        // in the database.
+        let hpke_keypair = generate_test_hpke_config_and_private_key_with_id(1);
+        datastore
+            .run_tx(|tx| {
+                let keypair = hpke_keypair.clone();
+                Box::pin(async move {
+                    tx.put_global_hpke_keypair(&keypair).await?;
+                    tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
 
         let handler = aggregator_handler(
             Arc::new(datastore),

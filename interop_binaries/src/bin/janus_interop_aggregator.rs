@@ -7,17 +7,21 @@ use janus_aggregator::{
     config::{BinaryConfig, CommonConfig},
 };
 use janus_aggregator_core::{
-    datastore::Datastore,
+    datastore::{models::HpkeKeyState, Datastore},
     task::{self, Task},
     SecretBytes,
 };
-use janus_core::{task::AuthenticationToken, time::RealClock};
+use janus_core::{
+    hpke::generate_hpke_config_and_private_key, task::AuthenticationToken, time::RealClock,
+};
 use janus_interop_binaries::{
     status::{ERROR, SUCCESS},
     AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole, FetchBatchIdsRequest,
     FetchBatchIdsResponse, HpkeConfigRegistry, Keyring,
 };
-use janus_messages::{BatchId, Duration, HpkeConfig, TaskId, Time};
+use janus_messages::{
+    BatchId, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, TaskId, Time,
+};
 use opentelemetry::metrics::Meter;
 use prio::codec::Decode;
 use serde::{Deserialize, Serialize};
@@ -283,6 +287,31 @@ async fn main() -> anyhow::Result<()> {
         // Dockerfile.interop_aggregator
         let migrator = Migrator::new(Path::new("/etc/janus/migrations")).await?;
         migrator.run(&mut connection).await?;
+
+        // subscriber-01 only: insert a global HPKE key, since this instance of Janus only
+        // advertises global keys.
+        datastore
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    let keypairs = tx.get_global_hpke_keypairs().await?;
+                    if keypairs.is_empty() {
+                        let keypair = generate_hpke_config_and_private_key(
+                            HpkeConfigId::from(1),
+                            HpkeKemId::X25519HkdfSha256,
+                            HpkeKdfId::HkdfSha256,
+                            HpkeAeadId::Aes128Gcm,
+                        );
+                        tx.put_global_hpke_keypair(&keypair).await?;
+                        tx.set_global_hpke_keypair_state(
+                            keypair.config().id(),
+                            &HpkeKeyState::Active,
+                        )
+                        .await?;
+                    }
+                    Ok(())
+                })
+            })
+            .await?;
 
         // Run an HTTP server with both the DAP aggregator endpoints and the interoperation test
         // endpoints.

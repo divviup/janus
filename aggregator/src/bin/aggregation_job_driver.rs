@@ -5,7 +5,7 @@ use janus_aggregator::{
     binary_utils::{
         janus_main, job_driver::JobDriver, setup_signal_handler, BinaryOptions, CommonBinaryOptions,
     },
-    config::{BinaryConfig, CommonConfig, JobDriverConfig, TaskprovConfig},
+    config::{BinaryConfig, CommonConfig, JobDriverConfig},
 };
 use janus_core::{time::RealClock, TokioRuntime};
 use serde::{Deserialize, Serialize};
@@ -113,8 +113,6 @@ struct Config {
     common_config: CommonConfig,
     #[serde(flatten)]
     job_driver_config: JobDriverConfig,
-    #[serde(default)]
-    taskprov_config: TaskprovConfig,
 
     /// Defines the number of shards to break each batch aggregation into. Increasing this value
     /// will reduce the amount of database contention during leader aggregation, while increasing
@@ -138,7 +136,7 @@ mod tests {
     use clap::CommandFactory;
     use janus_aggregator::config::{
         test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-        CommonConfig, JobDriverConfig, TaskprovConfig,
+        CommonConfig, JobDriverConfig,
     };
     use janus_core::test_util::roundtrip_encoding;
     use std::net::{Ipv4Addr, SocketAddr};
@@ -166,7 +164,6 @@ mod tests {
                 maximum_attempts_before_failure: 5,
             },
             batch_aggregation_shard_count: 32,
-            taskprov_config: TaskprovConfig::default(),
         })
     }
 
