@@ -288,7 +288,7 @@ async fn main() -> anyhow::Result<()> {
         let migrator = Migrator::new(Path::new("/etc/janus/migrations")).await?;
         migrator.run(&mut connection).await?;
 
-        // subscriber-01 only: insert a global HPKE key, since this instance branch of Janus only
+        // subscriber-01 only: insert a global HPKE key, since this instance of Janus only
         // advertises global keys.
         datastore
             .run_tx(|tx| {
