@@ -218,18 +218,24 @@ async fn put_task_invalid_aggregator_auth_tokens(ephemeral_datastore: EphemeralD
 
     ds.put_task(&task).await.unwrap();
 
-    for (auth_token, auth_token_type) in [("NULL", "'BEARER'"), ("\\xDEADBEEF::bytea", "NULL")] {
+    for (auth_token, auth_token_type) in [("NULL", "'BEARER'"), ("'\\xDEADBEEF'::bytea", "NULL")] {
         ds.run_tx(|tx| {
             Box::pin(async move {
-                tx.query_one(
-                    &format!(
-                        "UPDATE tasks SET aggregator_auth_token = {auth_token},
+                let err = tx
+                    .query_one(
+                        &format!(
+                            "UPDATE tasks SET aggregator_auth_token = {auth_token},
                             aggregator_auth_token_type = {auth_token_type}"
-                    ),
-                    &[],
-                )
-                .await
-                .unwrap_err();
+                        ),
+                        &[],
+                    )
+                    .await
+                    .unwrap_err();
+
+                assert_eq!(
+                    err.as_db_error().unwrap().constraint().unwrap(),
+                    "aggregator_auth_token_null"
+                );
                 Ok(())
             })
         })
@@ -253,18 +259,24 @@ async fn put_task_invalid_collector_auth_tokens(ephemeral_datastore: EphemeralDa
 
     ds.put_task(&task).await.unwrap();
 
-    for (auth_token, auth_token_type) in [("NULL", "'BEARER'"), ("\\xDEADBEEF::bytea", "NULL")] {
+    for (auth_token, auth_token_type) in [("NULL", "'BEARER'"), ("'\\xDEADBEEF'::bytea", "NULL")] {
         ds.run_tx(|tx| {
             Box::pin(async move {
-                tx.query_one(
-                    &format!(
-                        "UPDATE tasks SET collector_auth_token = {auth_token},
+                let err = tx
+                    .query_one(
+                        &format!(
+                            "UPDATE tasks SET collector_auth_token = {auth_token},
                             collector_auth_token_type = {auth_token_type}"
-                    ),
-                    &[],
-                )
-                .await
-                .unwrap_err();
+                        ),
+                        &[],
+                    )
+                    .await
+                    .unwrap_err();
+
+                assert_eq!(
+                    err.as_db_error().unwrap().constraint().unwrap(),
+                    "collector_auth_token_null"
+                );
                 Ok(())
             })
         })
