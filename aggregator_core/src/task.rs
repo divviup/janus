@@ -1266,7 +1266,10 @@ mod tests {
                     max_batch_size: 10,
                     batch_time_window_size: None,
                 },
-                VdafInstance::Prio3CountVec { length: 8 },
+                VdafInstance::Prio3CountVec {
+                    length: 8,
+                    chunk_length: 3,
+                },
                 Role::Helper,
                 SecretBytes::new(b"1234567812345678".to_vec()),
                 1,
@@ -1326,10 +1329,12 @@ mod tests {
                 Token::StructVariant {
                     name: "VdafInstance",
                     variant: "Prio3CountVec",
-                    len: 1,
+                    len: 2,
                 },
                 Token::Str("length"),
                 Token::U64(8),
+                Token::Str("chunk_length"),
+                Token::U64(3),
                 Token::StructVariantEnd,
                 Token::Str("role"),
                 Token::UnitVariant {

@@ -25,13 +25,17 @@ pub enum VdafInstance {
     /// A `Prio3` counter.
     Prio3Count,
     /// A vector of `Prio3` counters.
-    Prio3CountVec { length: usize },
+    Prio3CountVec { length: usize, chunk_length: usize },
     /// A `Prio3` sum.
     Prio3Sum { bits: usize },
     /// A vector of `Prio3` sums.
-    Prio3SumVec { bits: usize, length: usize },
+    Prio3SumVec {
+        bits: usize,
+        length: usize,
+        chunk_length: usize,
+    },
     /// A `Prio3` histogram with `length` buckets in it.
-    Prio3Histogram { length: usize },
+    Prio3Histogram { length: usize, chunk_length: usize },
     /// A `Prio3` 16-bit fixed point vector sum with bounded L2 norm.
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3FixedPoint16BitBoundedL2VecSum { length: usize },
@@ -71,19 +75,6 @@ impl VdafInstance {
             _ => VERIFY_KEY_LENGTH,
         }
     }
-
-    /// Returns a suboptimal estimate of the chunk size to use in ParallelSum gadgets. See [VDAF]
-    /// for discussion of chunk size.
-    ///
-    /// # Bugs
-    ///
-    /// Janus should allow chunk size to be configured ([#1900][issue]).
-    ///
-    /// [VDAF]: https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-vdaf-07#name-selection-of-parallelsum-ch
-    /// [issue]: https://github.com/divviup/janus/issues/1900
-    pub fn chunk_size(measurement_length: usize) -> usize {
-        (measurement_length as f64).sqrt().floor() as usize
-    }
 }
 
 impl TryFrom<&taskprov::VdafType> for VdafInstance {
@@ -95,11 +86,12 @@ impl TryFrom<&taskprov::VdafType> for VdafInstance {
             taskprov::VdafType::Prio3Sum { bits } => Ok(Self::Prio3Sum {
                 bits: *bits as usize,
             }),
-            taskprov::VdafType::Prio3Histogram { buckets } => Ok(Self::Prio3Histogram {
-                // taskprov does not yet deal with the VDAF-06 representation of histograms. In the
-                // meantime, we translate the bucket boundaries to a length that Janus understands.
-                // https://github.com/wangshan/draft-wang-ppm-dap-taskprov/issues/33
-                length: buckets.len() + 1, // +1 to account for the top bucket extending to infinity
+            taskprov::VdafType::Prio3Histogram {
+                length,
+                chunk_length,
+            } => Ok(Self::Prio3Histogram {
+                length: *length as usize,
+                chunk_length: *chunk_length as usize,
             }),
             taskprov::VdafType::Poplar1 { bits } => Ok(Self::Poplar1 {
                 bits: *bits as usize,
@@ -165,13 +157,16 @@ macro_rules! vdaf_dispatch_impl_base {
                 $body
             }
 
-            ::janus_core::task::VdafInstance::Prio3CountVec { length } => {
+            ::janus_core::task::VdafInstance::Prio3CountVec {
+                length,
+                chunk_length,
+            } => {
                 // Prio3CountVec is implemented as a 1-bit sum vec
                 let $vdaf = ::prio::vdaf::prio3::Prio3::new_sum_vec_multithreaded(
                     2,
                     1,
                     *length,
-                    janus_core::task::VdafInstance::chunk_size(*length),
+                    *chunk_length,
                 )?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
                 const $VERIFY_KEY_LEN: usize = ::janus_core::task::VERIFY_KEY_LENGTH;
@@ -185,24 +180,27 @@ macro_rules! vdaf_dispatch_impl_base {
                 $body
             }
 
-            ::janus_core::task::VdafInstance::Prio3SumVec { bits, length } => {
+            ::janus_core::task::VdafInstance::Prio3SumVec {
+                bits,
+                length,
+                chunk_length,
+            } => {
                 let $vdaf = ::prio::vdaf::prio3::Prio3::new_sum_vec_multithreaded(
                     2,
                     *bits,
                     *length,
-                    janus_core::task::VdafInstance::chunk_size(*bits * *length),
+                    *chunk_length,
                 )?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
                 const $VERIFY_KEY_LEN: usize = ::janus_core::task::VERIFY_KEY_LENGTH;
                 $body
             }
 
-            ::janus_core::task::VdafInstance::Prio3Histogram { length } => {
-                let $vdaf = ::prio::vdaf::prio3::Prio3::new_histogram(
-                    2,
-                    *length,
-                    janus_core::task::VdafInstance::chunk_size(*length),
-                )?;
+            ::janus_core::task::VdafInstance::Prio3Histogram {
+                length,
+                chunk_length,
+            } => {
+                let $vdaf = ::prio::vdaf::prio3::Prio3::new_histogram(2, *length, *chunk_length)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Histogram;
                 const $VERIFY_KEY_LEN: usize = ::janus_core::task::VERIFY_KEY_LENGTH;
                 $body
@@ -789,15 +787,20 @@ mod tests {
             }],
         );
         assert_tokens(
-            &VdafInstance::Prio3CountVec { length: 8 },
+            &VdafInstance::Prio3CountVec {
+                length: 8,
+                chunk_length: 3,
+            },
             &[
                 Token::StructVariant {
                     name: "VdafInstance",
                     variant: "Prio3CountVec",
-                    len: 1,
+                    len: 2,
                 },
                 Token::Str("length"),
                 Token::U64(8),
+                Token::Str("chunk_length"),
+                Token::U64(3),
                 Token::StructVariantEnd,
             ],
         );
@@ -815,15 +818,20 @@ mod tests {
             ],
         );
         assert_tokens(
-            &VdafInstance::Prio3Histogram { length: 6 },
+            &VdafInstance::Prio3Histogram {
+                length: 6,
+                chunk_length: 2,
+            },
             &[
                 Token::StructVariant {
                     name: "VdafInstance",
                     variant: "Prio3Histogram",
-                    len: 1,
+                    len: 2,
                 },
                 Token::Str("length"),
                 Token::U64(6),
+                Token::Str("chunk_length"),
+                Token::U64(2),
                 Token::StructVariantEnd,
             ],
         );

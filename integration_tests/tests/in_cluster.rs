@@ -169,15 +169,28 @@ impl InClusterJanusPair {
                 VdafInstance::Prio3Sum { bits } => Vdaf::Sum {
                     bits: bits.try_into().unwrap(),
                 },
-                VdafInstance::Prio3SumVec { bits, length } => Vdaf::SumVec {
+                VdafInstance::Prio3SumVec {
+                    bits,
+                    length,
+                    chunk_length,
+                } => Vdaf::SumVec {
                     bits: bits.try_into().unwrap(),
                     length: length.try_into().unwrap(),
+                    chunk_length: Some(chunk_length.try_into().unwrap()),
                 },
-                VdafInstance::Prio3Histogram { length } => Vdaf::Histogram(Histogram::Length {
+                VdafInstance::Prio3Histogram {
+                    length,
+                    chunk_length,
+                } => Vdaf::Histogram(Histogram::Length {
                     length: length.try_into().unwrap(),
+                    chunk_length: Some(chunk_length.try_into().unwrap()),
                 }),
-                VdafInstance::Prio3CountVec { length } => Vdaf::CountVec {
+                VdafInstance::Prio3CountVec {
+                    length,
+                    chunk_length,
+                } => Vdaf::CountVec {
                     length: length.try_into().unwrap(),
+                    chunk_length: Some(chunk_length.try_into().unwrap()),
                 },
                 other => panic!("unsupported vdaf {other:?}"),
             },
@@ -285,7 +298,10 @@ async fn in_cluster_histogram() {
 
     // Start port forwards and set up task.
     let janus_pair = InClusterJanusPair::new(
-        VdafInstance::Prio3Histogram { length: 4 },
+        VdafInstance::Prio3Histogram {
+            length: 4,
+            chunk_length: 2,
+        },
         QueryType::TimeInterval,
     )
     .await;

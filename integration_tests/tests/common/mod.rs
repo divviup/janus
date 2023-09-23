@@ -282,14 +282,12 @@ pub async fn submit_measurements_and_verify_aggregate(
             )
             .await;
         }
-        VdafInstance::Prio3SumVec { bits, length } => {
-            let vdaf = Prio3::new_sum_vec_multithreaded(
-                2,
-                *bits,
-                *length,
-                VdafInstance::chunk_size(*bits * *length),
-            )
-            .unwrap();
+        VdafInstance::Prio3SumVec {
+            bits,
+            length,
+            chunk_length,
+        } => {
+            let vdaf = Prio3::new_sum_vec_multithreaded(2, *bits, *length, *chunk_length).unwrap();
 
             let measurements = iter::repeat_with(|| {
                 iter::repeat_with(|| (random::<u128>()) >> (128 - bits))
@@ -327,8 +325,11 @@ pub async fn submit_measurements_and_verify_aggregate(
             )
             .await;
         }
-        VdafInstance::Prio3Histogram { length } => {
-            let vdaf = Prio3::new_histogram(2, *length, VdafInstance::chunk_size(*length)).unwrap();
+        VdafInstance::Prio3Histogram {
+            length,
+            chunk_length,
+        } => {
+            let vdaf = Prio3::new_histogram(2, *length, *chunk_length).unwrap();
 
             let mut aggregate_result = vec![0; *length];
             let measurements = iter::repeat_with(|| {
@@ -358,10 +359,11 @@ pub async fn submit_measurements_and_verify_aggregate(
             )
             .await;
         }
-        VdafInstance::Prio3CountVec { length } => {
-            let vdaf =
-                Prio3::new_sum_vec_multithreaded(2, 1, *length, VdafInstance::chunk_size(*length))
-                    .unwrap();
+        VdafInstance::Prio3CountVec {
+            length,
+            chunk_length,
+        } => {
+            let vdaf = Prio3::new_sum_vec_multithreaded(2, 1, *length, *chunk_length).unwrap();
 
             let measurements = iter::repeat_with(|| {
                 iter::repeat_with(|| random::<bool>() as u128)

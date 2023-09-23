@@ -58,7 +58,10 @@ async fn janus_divviup_ts_histogram() {
 
     run_divviup_ts_integration_test(
         &container_client(),
-        VdafInstance::Prio3Histogram { length: 4 },
+        VdafInstance::Prio3Histogram {
+            length: 4,
+            chunk_length: 2,
+        },
     )
     .await;
 }

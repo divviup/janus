@@ -58,23 +58,28 @@ fn json_encode_vdaf(vdaf: &VdafInstance) -> Value {
         VdafInstance::Prio3Count => json!({
             "type": "Prio3Count"
         }),
-        VdafInstance::Prio3CountVec { length } => json!({
-            "type": "Prio3CountVec",
-            "length": format!("{length}"),
-        }),
         VdafInstance::Prio3Sum { bits } => json!({
             "type": "Prio3Sum",
             "bits": format!("{bits}"),
         }),
-        VdafInstance::Prio3SumVec { bits, length } => json!({
+        VdafInstance::Prio3SumVec {
+            bits,
+            length,
+            chunk_length,
+        } => json!({
             "type": "Prio3SumVec",
             "bits": format!("{bits}"),
             "length": format!("{length}"),
+            "chunk_length": format!("{chunk_length}"),
         }),
-        VdafInstance::Prio3Histogram { length } => {
+        VdafInstance::Prio3Histogram {
+            length,
+            chunk_length,
+        } => {
             json!({
                 "type": "Prio3Histogram",
                 "length": format!("{length}"),
+                "chunk_length": format!("{chunk_length}"),
             })
         }
         _ => panic!("VDAF {vdaf:?} is not yet supported"),

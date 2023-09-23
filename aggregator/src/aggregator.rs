@@ -801,13 +801,11 @@ impl<C: Clock> TaskAggregator<C> {
                 VdafOps::Prio3Count(Arc::new(vdaf), verify_key)
             }
 
-            VdafInstance::Prio3CountVec { length } => {
-                let vdaf = Prio3::new_sum_vec_multithreaded(
-                    2,
-                    1,
-                    *length,
-                    VdafInstance::chunk_size(*length),
-                )?;
+            VdafInstance::Prio3CountVec {
+                length,
+                chunk_length,
+            } => {
+                let vdaf = Prio3::new_sum_vec_multithreaded(2, 1, *length, *chunk_length)?;
                 let verify_key = task.vdaf_verify_key()?;
                 VdafOps::Prio3CountVec(Arc::new(vdaf), verify_key)
             }
@@ -818,19 +816,21 @@ impl<C: Clock> TaskAggregator<C> {
                 VdafOps::Prio3Sum(Arc::new(vdaf), verify_key)
             }
 
-            VdafInstance::Prio3SumVec { bits, length } => {
-                let vdaf = Prio3::new_sum_vec_multithreaded(
-                    2,
-                    *bits,
-                    *length,
-                    VdafInstance::chunk_size(*bits * *length),
-                )?;
+            VdafInstance::Prio3SumVec {
+                bits,
+                length,
+                chunk_length,
+            } => {
+                let vdaf = Prio3::new_sum_vec_multithreaded(2, *bits, *length, *chunk_length)?;
                 let verify_key = task.vdaf_verify_key()?;
                 VdafOps::Prio3SumVec(Arc::new(vdaf), verify_key)
             }
 
-            VdafInstance::Prio3Histogram { length } => {
-                let vdaf = Prio3::new_histogram(2, *length, VdafInstance::chunk_size(*length))?;
+            VdafInstance::Prio3Histogram {
+                length,
+                chunk_length,
+            } => {
+                let vdaf = Prio3::new_histogram(2, *length, *chunk_length)?;
                 let verify_key = task.vdaf_verify_key()?;
                 VdafOps::Prio3Histogram(Arc::new(vdaf), verify_key)
             }
