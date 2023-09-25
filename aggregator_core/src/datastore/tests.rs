@@ -166,7 +166,6 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
             .unwrap();
         assert_eq!(None, retrieved_task);
 
-        println!("test case {task:?}");
         ds.put_task(&task).await.unwrap();
 
         let retrieved_task = ds
