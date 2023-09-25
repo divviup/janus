@@ -8,7 +8,7 @@ use janus_aggregator::{
 };
 use janus_aggregator_core::{
     datastore::Datastore,
-    task::{self, Task},
+    task::{self, AggregatorTask, AggregatorTaskParameters},
     SecretBytes,
 };
 use janus_core::{auth_tokens::AuthenticationToken, time::RealClock};
@@ -38,6 +38,10 @@ async fn handle_add_task(
     keyring: &Mutex<HpkeConfigRegistry>,
     request: AggregatorAddTaskRequest,
 ) -> anyhow::Result<()> {
+    let peer_aggregator_endpoint = match request.role {
+        AggregatorRole::Leader => request.helper,
+        AggregatorRole::Helper => request.leader,
+    };
     let vdaf = request.vdaf.into();
     let leader_authentication_token =
         AuthenticationToken::new_dap_auth_token_from_string(request.leader_authentication_token)
@@ -54,17 +58,25 @@ async fn handle_add_task(
     let collector_hpke_config = HpkeConfig::get_decoded(&collector_hpke_config_bytes)
         .context("could not parse collector HPKE configuration")?;
 
-    let collector_authentication_token =
-        match (request.role, request.collector_authentication_token) {
-            (AggregatorRole::Leader, None) => {
-                return Err(anyhow::anyhow!("collector authentication token is missing"))
+    let aggregator_parameters = match (request.role, request.collector_authentication_token) {
+        (AggregatorRole::Leader, None) => {
+            return Err(anyhow::anyhow!("collector authentication token is missing"))
+        }
+        (AggregatorRole::Leader, Some(collector_authentication_token)) => {
+            AggregatorTaskParameters::Leader {
+                aggregator_auth_token: leader_authentication_token,
+                collector_auth_token: AuthenticationToken::new_dap_auth_token_from_string(
+                    collector_authentication_token,
+                )
+                .context("invalid header value in \"collector_authentication_token\"")?,
+                collector_hpke_config,
             }
-            (AggregatorRole::Leader, Some(collector_authentication_token)) => Some(
-                AuthenticationToken::new_dap_auth_token_from_string(collector_authentication_token)
-                    .context("invalid header value in \"collector_authentication_token\"")?,
-            ),
-            (AggregatorRole::Helper, _) => None,
-        };
+        }
+        (AggregatorRole::Helper, _) => AggregatorTaskParameters::Helper {
+            aggregator_auth_token: leader_authentication_token,
+            collector_hpke_config,
+        },
+    };
 
     let hpke_keypair = keyring.lock().await.get_random_keypair();
 
@@ -84,13 +96,11 @@ async fn handle_add_task(
         }
     };
 
-    let task = Task::new(
+    let task = AggregatorTask::new(
         request.task_id,
-        request.leader,
-        request.helper,
+        peer_aggregator_endpoint,
         query_type,
         vdaf,
-        request.role.into(),
         vdaf_verify_key,
         request.max_batch_query_count,
         request.task_expiration.map(Time::from_seconds_since_epoch),
@@ -100,10 +110,8 @@ async fn handle_add_task(
         // We can be strict about clock skew since this executable is only intended for use with
         // other aggregators running on the same host.
         Duration::from_seconds(1),
-        collector_hpke_config,
-        Some(leader_authentication_token),
-        collector_authentication_token,
         [hpke_keypair],
+        aggregator_parameters,
     )
     .context("error constructing task")?;
 

@@ -9,7 +9,7 @@ use janus_aggregator_core::{
         AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
     },
     datastore::{self, Datastore},
-    task::{self, Task},
+    task::{self, AggregatorTask},
 };
 use janus_core::{
     time::{Clock, DurationExt as _, TimeExt as _},
@@ -211,7 +211,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         self: Arc<Self>,
         stopper: Stopper,
         job_creation_time_histogram: Histogram<f64>,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
     ) {
         debug!(task_id = %task.id(), "Job creation worker started");
         let mut next_run_instant = Instant::now();
@@ -259,7 +259,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     async fn create_aggregation_jobs_for_task(
         self: Arc<Self>,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
     ) -> anyhow::Result<bool> {
         match (task.query_type(), task.vdaf()) {
             (task::QueryType::TimeInterval, VdafInstance::Prio3Count) => {
@@ -534,7 +534,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()>,
     >(
         self: Arc<Self>,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
     ) -> anyhow::Result<bool>
     where
@@ -635,7 +635,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()>,
     >(
         self: Arc<Self>,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         task_max_batch_size: u64,
         task_batch_time_window_size: Option<janus_messages::Duration>,
@@ -739,22 +739,18 @@ mod tests {
         // even if the main test loops on calling yield_now().
 
         let report_time = Time::from_seconds_since_epoch(0);
-        let leader_task = TaskBuilder::new(
-            TaskQueryType::TimeInterval,
-            VdafInstance::Prio3Count,
-            Role::Leader,
-        )
-        .build();
+        let leader_task = TaskBuilder::new(TaskQueryType::TimeInterval, VdafInstance::Prio3Count)
+            .build()
+            .leader_view()
+            .unwrap();
         let batch_identifier =
             TimeInterval::to_batch_identifier(&leader_task, &(), &report_time).unwrap();
         let leader_report = LeaderStoredReport::new_dummy(*leader_task.id(), report_time);
 
-        let helper_task = TaskBuilder::new(
-            TaskQueryType::TimeInterval,
-            VdafInstance::Prio3Count,
-            Role::Helper,
-        )
-        .build();
+        let helper_task = TaskBuilder::new(TaskQueryType::TimeInterval, VdafInstance::Prio3Count)
+            .build()
+            .helper_view()
+            .unwrap();
         let helper_report = LeaderStoredReport::new_dummy(*helper_task.id(), report_time);
 
         ds.run_tx(|tx| {
@@ -861,12 +857,10 @@ mod tests {
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
 
         let task = Arc::new(
-            TaskBuilder::new(
-                TaskQueryType::TimeInterval,
-                VdafInstance::Prio3Count,
-                Role::Leader,
-            )
-            .build(),
+            TaskBuilder::new(TaskQueryType::TimeInterval, VdafInstance::Prio3Count)
+                .build()
+                .leader_view()
+                .unwrap(),
         );
 
         // Create 2 max-size batches, a min-size batch, one extra report (which will be added to the
@@ -972,12 +966,10 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone()).await;
         let task = Arc::new(
-            TaskBuilder::new(
-                TaskQueryType::TimeInterval,
-                VdafInstance::Prio3Count,
-                Role::Leader,
-            )
-            .build(),
+            TaskBuilder::new(TaskQueryType::TimeInterval, VdafInstance::Prio3Count)
+                .build()
+                .leader_view()
+                .unwrap(),
         );
         let report_time = clock.now();
         let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
@@ -1103,12 +1095,10 @@ mod tests {
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
 
         let task = Arc::new(
-            TaskBuilder::new(
-                TaskQueryType::TimeInterval,
-                VdafInstance::Prio3Count,
-                Role::Leader,
-            )
-            .build(),
+            TaskBuilder::new(TaskQueryType::TimeInterval, VdafInstance::Prio3Count)
+                .build()
+                .leader_view()
+                .unwrap(),
         );
 
         // Create a min-size batch.
@@ -1237,10 +1227,11 @@ mod tests {
                     batch_time_window_size: None,
                 },
                 VdafInstance::Prio3Count,
-                Role::Leader,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
-            .build(),
+            .build()
+            .leader_view()
+            .unwrap(),
         );
 
         // Create MIN_BATCH_SIZE + MAX_BATCH_SIZE reports. We expect aggregation jobs to be created
@@ -1405,10 +1396,11 @@ mod tests {
                     batch_time_window_size: None,
                 },
                 VdafInstance::Prio3Count,
-                Role::Leader,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
-            .build(),
+            .build()
+            .leader_view()
+            .unwrap(),
         );
 
         // Create a small number of reports. No batches or aggregation jobs should be created, and
@@ -1518,10 +1510,11 @@ mod tests {
                     batch_time_window_size: None,
                 },
                 VdafInstance::Prio3Count,
-                Role::Leader,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
-            .build(),
+            .build()
+            .leader_view()
+            .unwrap(),
         );
 
         // Create enough reports to produce two batches, but not enough to meet the minimum number
@@ -1703,10 +1696,11 @@ mod tests {
                     batch_time_window_size: None,
                 },
                 VdafInstance::Prio3Count,
-                Role::Leader,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
-            .build(),
+            .build()
+            .leader_view()
+            .unwrap(),
         );
 
         // Create enough reports to produce two batches, and produce a non-maximum size aggregation
@@ -1896,10 +1890,11 @@ mod tests {
                     batch_time_window_size: Some(batch_time_window_size),
                 },
                 VdafInstance::Prio3Count,
-                Role::Leader,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
-            .build(),
+            .build()
+            .leader_view()
+            .unwrap(),
         );
 
         // Create MIN_BATCH_SIZE + MAX_BATCH_SIZE reports in two different time buckets.

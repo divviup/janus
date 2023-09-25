@@ -18,7 +18,7 @@ use janus_aggregator_core::{
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
     },
-    task::{test_util::TaskBuilder, QueryType, Task},
+    task::{test_util::TaskBuilder, AggregatorTask, AggregatorTaskParameters, QueryType},
     taskprov::test_util::PeerAggregatorBuilder,
     SecretBytes,
 };
@@ -99,8 +99,10 @@ async fn get_task_ids() {
         .run_tx(|tx| {
             Box::pin(async move {
                 let tasks: Vec<_> = iter::repeat_with(|| {
-                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
+                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
                         .build()
+                        .leader_view()
+                        .unwrap()
                 })
                 .take(10)
                 .collect();
@@ -324,9 +326,8 @@ async fn post_task_helper_no_optional_fields() {
 
     // Verify that the task written to the datastore matches the request...
     assert_eq!(
-        // The other aggregator endpoint in the datastore task is fake
         &req.peer_aggregator_endpoint,
-        got_task.leader_aggregator_endpoint()
+        got_task.peer_aggregator_endpoint()
     );
     assert_eq!(&req.query_type, got_task.query_type());
     assert_eq!(&req.vdaf, got_task.vdaf());
@@ -529,9 +530,8 @@ async fn post_task_leader_all_optional_fields() {
 
     // Verify that the task written to the datastore matches the request...
     assert_eq!(
-        // The other aggregator endpoint in the datastore task is fake
         &req.peer_aggregator_endpoint,
-        got_task.helper_aggregator_endpoint()
+        got_task.peer_aggregator_endpoint()
     );
     assert_eq!(&req.query_type, got_task.query_type());
     assert_eq!(&req.vdaf, got_task.vdaf());
@@ -603,7 +603,10 @@ async fn get_task() {
     // Setup: write a task to the datastore.
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
+    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
+        .build()
+        .leader_view()
+        .unwrap();
 
     ds.run_tx(|tx| {
         let task = task.clone();
@@ -664,9 +667,10 @@ async fn delete_task() {
     let task_id = ds
         .run_tx(|tx| {
             Box::pin(async move {
-                let task =
-                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
-                        .build();
+                let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
+                    .build()
+                    .leader_view()
+                    .unwrap();
 
                 tx.put_task(&task).await?;
 
@@ -739,9 +743,10 @@ async fn get_task_metrics() {
     let task_id = ds
         .run_tx(|tx| {
             Box::pin(async move {
-                let task =
-                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
-                        .build();
+                let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
+                    .build()
+                    .leader_view()
+                    .unwrap();
                 let task_id = *task.id();
                 tx.put_task(&task).await?;
 
@@ -1742,9 +1747,8 @@ fn post_task_req_serialization() {
 
 #[test]
 fn task_resp_serialization() {
-    let task = Task::new(
+    let task = AggregatorTask::new(
         TaskId::from([0u8; 32]),
-        "https://leader.com/".parse().unwrap(),
         "https://helper.com/".parse().unwrap(),
         QueryType::FixedSize {
             max_batch_size: 999,
@@ -1754,7 +1758,6 @@ fn task_resp_serialization() {
             length: 5,
             chunk_length: 2,
         },
-        Role::Leader,
         SecretBytes::new(b"vdaf verify key!".to_vec()),
         1,
         None,
@@ -1762,21 +1765,6 @@ fn task_resp_serialization() {
         100,
         Duration::from_seconds(3600),
         Duration::from_seconds(60),
-        HpkeConfig::new(
-            HpkeConfigId::from(7),
-            HpkeKemId::X25519HkdfSha256,
-            HpkeKdfId::HkdfSha256,
-            HpkeAeadId::Aes128Gcm,
-            HpkePublicKey::from([0u8; 32].to_vec()),
-        ),
-        Some(
-            AuthenticationToken::new_dap_auth_token_from_string("Y29sbGVjdG9yLWFiY2RlZjAw")
-                .unwrap(),
-        ),
-        Some(
-            AuthenticationToken::new_dap_auth_token_from_string("Y29sbGVjdG9yLWFiY2RlZjAw")
-                .unwrap(),
-        ),
         [(HpkeKeypair::new(
             HpkeConfig::new(
                 HpkeConfigId::from(13),
@@ -1787,6 +1775,23 @@ fn task_resp_serialization() {
             ),
             HpkePrivateKey::new(b"unused".to_vec()),
         ))],
+        AggregatorTaskParameters::Leader {
+            aggregator_auth_token: AuthenticationToken::new_dap_auth_token_from_string(
+                "Y29sbGVjdG9yLWFiY2RlZjAw",
+            )
+            .unwrap(),
+            collector_auth_token: AuthenticationToken::new_dap_auth_token_from_string(
+                "Y29sbGVjdG9yLWFiY2RlZjAw",
+            )
+            .unwrap(),
+            collector_hpke_config: HpkeConfig::new(
+                HpkeConfigId::from(7),
+                HpkeKemId::X25519HkdfSha256,
+                HpkeKdfId::HkdfSha256,
+                HpkeAeadId::Aes128Gcm,
+                HpkePublicKey::from([0u8; 32].to_vec()),
+            ),
+        },
     )
     .unwrap();
     assert_tokens(

@@ -9,7 +9,7 @@ use janus_aggregator_core::{
         Transaction,
     },
     query_type::AccumulableQueryType,
-    task::Task,
+    task::AggregatorTask,
 };
 use janus_core::{
     report_id::ReportIdChecksumExt,
@@ -33,7 +33,7 @@ pub struct Accumulator<
     Q: AccumulableQueryType,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
 > {
-    task: Arc<Task>,
+    task: Arc<AggregatorTask>,
     shard_count: u64,
     #[derivative(Debug = "ignore")]
     aggregation_parameter: A::AggregationParam,
@@ -55,7 +55,7 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
 {
     /// Creates a new accumulator.
     pub fn new(
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         shard_count: u64,
         aggregation_parameter: A::AggregationParam,
     ) -> Self {

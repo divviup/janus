@@ -2,8 +2,8 @@
 
 use janus_aggregator_core::task::QueryType;
 use janus_collector::AuthenticationToken;
-use janus_core::{hpke::HpkePrivateKey, vdaf::VdafInstance};
-use janus_messages::{Duration, HpkeConfig, TaskId};
+use janus_core::{hpke::HpkeKeypair, vdaf::VdafInstance};
+use janus_messages::{Duration, TaskId};
 use url::Url;
 
 pub mod client;
@@ -20,8 +20,7 @@ pub struct TaskParameters {
     pub vdaf: VdafInstance,
     pub min_batch_size: u64,
     pub time_precision: Duration,
-    pub collector_hpke_config: HpkeConfig,
-    pub collector_private_key: HpkePrivateKey,
+    pub collector_hpke_keypair: HpkeKeypair,
     pub collector_auth_token: AuthenticationToken,
 }
 

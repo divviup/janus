@@ -78,8 +78,7 @@ CREATE TABLE tasks(
     id                          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     task_id                     BYTEA UNIQUE NOT NULL,     -- 32-byte TaskID as defined by the DAP specification
     aggregator_role             AGGREGATOR_ROLE NOT NULL,  -- the role of this aggregator for this task
-    leader_aggregator_endpoint  TEXT NOT NULL,             -- Leader's API endpoint
-    helper_aggregator_endpoint  TEXT NOT NULL,             -- Helper's API endpoint
+    peer_aggregator_endpoint    TEXT NOT NULL,             -- peer aggregator's API endpoint
     query_type                  JSONB NOT NULL,            -- the query type in use for this task, along with its parameters
     vdaf                        JSON NOT NULL,             -- the VDAF instance in use for this task, along with its parameters
     max_batch_query_count       BIGINT NOT NULL,           -- the maximum number of times a given batch may be collected

@@ -1,6 +1,6 @@
 //! These tests check interoperation between the divviup-ts client and Janus aggregators.
 
-use common::{submit_measurements_and_verify_aggregate, test_task_builders};
+use common::{submit_measurements_and_verify_aggregate, test_task_builder};
 use janus_aggregator_core::task::QueryType;
 use janus_core::{
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
@@ -11,16 +11,17 @@ use janus_integration_tests::{
     janus::Janus,
 };
 use janus_interop_binaries::test_util::generate_network_name;
+use janus_messages::Role;
 use testcontainers::clients::Cli;
 
 mod common;
 
 async fn run_divviup_ts_integration_test(container_client: &Cli, vdaf: VdafInstance) {
-    let (task_parameters, leader_task, helper_task) =
-        test_task_builders(vdaf, QueryType::TimeInterval);
+    let (task_parameters, task_builder) = test_task_builder(vdaf, QueryType::TimeInterval);
+    let task = task_builder.build();
     let network = generate_network_name();
-    let leader = Janus::new(container_client, &network, &leader_task.build()).await;
-    let helper = Janus::new(container_client, &network, &helper_task.build()).await;
+    let leader = Janus::new(container_client, &network, &task, Role::Leader).await;
+    let helper = Janus::new(container_client, &network, &task, Role::Helper).await;
 
     let client_backend = ClientBackend::Container {
         container_client,

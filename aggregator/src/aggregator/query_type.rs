@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use janus_aggregator_core::{
     datastore::{self, models::LeaderStoredReport, Transaction},
     query_type::{AccumulableQueryType, CollectableQueryType as CoreCollectableQueryType},
-    task::Task,
+    task::AggregatorTask,
 };
 use janus_core::time::Clock;
 use janus_messages::{
@@ -99,7 +99,7 @@ pub trait CollectableQueryType: CoreCollectableQueryType + AccumulableQueryType 
     >(
         tx: &Transaction<'_, C>,
         vdaf: &A,
-        task: &Task,
+        task: &AggregatorTask,
         batch_identifier: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
     ) -> Result<(), datastore::Error>
@@ -116,7 +116,7 @@ impl CollectableQueryType for TimeInterval {
     >(
         tx: &Transaction<'_, C>,
         vdaf: &A,
-        task: &Task,
+        task: &AggregatorTask,
         collect_interval: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
     ) -> Result<(), datastore::Error>
@@ -198,7 +198,7 @@ impl CollectableQueryType for FixedSize {
     >(
         tx: &Transaction<'_, C>,
         vdaf: &A,
-        task: &Task,
+        task: &AggregatorTask,
         batch_id: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
     ) -> Result<(), datastore::Error>

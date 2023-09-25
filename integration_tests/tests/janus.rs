@@ -1,4 +1,4 @@
-use common::{submit_measurements_and_verify_aggregate, test_task_builders};
+use common::{submit_measurements_and_verify_aggregate, test_task_builder};
 use janus_aggregator_core::task::QueryType;
 use janus_core::{
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
@@ -6,6 +6,7 @@ use janus_core::{
 };
 use janus_integration_tests::{client::ClientBackend, janus::Janus, TaskParameters};
 use janus_interop_binaries::test_util::generate_network_name;
+use janus_messages::Role;
 use testcontainers::clients::Cli;
 
 mod common;
@@ -30,11 +31,12 @@ impl<'a> JanusPair<'a> {
         vdaf: VdafInstance,
         query_type: QueryType,
     ) -> JanusPair<'a> {
-        let (task_parameters, leader_task, helper_task) = test_task_builders(vdaf, query_type);
+        let (task_parameters, task_builder) = test_task_builder(vdaf, query_type);
+        let task = task_builder.build();
 
         let network = generate_network_name();
-        let leader = Janus::new(container_client, &network, &leader_task.build()).await;
-        let helper = Janus::new(container_client, &network, &helper_task.build()).await;
+        let leader = Janus::new(container_client, &network, &task, Role::Leader).await;
+        let helper = Janus::new(container_client, &network, &task, Role::Helper).await;
 
         Self {
             task_parameters,

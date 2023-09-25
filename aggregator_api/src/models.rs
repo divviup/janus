@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
     datastore::models::{GlobalHpkeKeypair, HpkeKeyState},
-    task::{QueryType, Task},
+    task::{AggregatorTask, QueryType},
     taskprov::{PeerAggregator, VerifyKeyInit},
 };
 use janus_core::{auth_tokens::AuthenticationToken, vdaf::VdafInstance};
@@ -125,23 +125,10 @@ pub(crate) struct TaskResp {
     pub(crate) aggregator_hpke_configs: Vec<HpkeConfig>,
 }
 
-impl TryFrom<&Task> for TaskResp {
+impl TryFrom<&AggregatorTask> for TaskResp {
     type Error = &'static str;
 
-    fn try_from(task: &Task) -> Result<Self, Self::Error> {
-        // We have to resolve impedance mismatches between the aggregator API's view of a task
-        // and `aggregator_core::task::Task`. For now, we deal with this in code, but someday
-        // the two representations will be harmonized.
-        // https://github.com/divviup/janus/issues/1524
-
-        // Return the aggregator endpoint URL for the role opposite our own
-        let peer_aggregator_endpoint = match task.role() {
-            Role::Leader => task.helper_aggregator_endpoint(),
-            Role::Helper => task.leader_aggregator_endpoint(),
-            _ => return Err("illegal aggregator role in task"),
-        }
-        .clone();
-
+    fn try_from(task: &AggregatorTask) -> Result<Self, Self::Error> {
         let mut aggregator_hpke_configs: Vec<_> = task
             .hpke_keys()
             .values()
@@ -151,7 +138,7 @@ impl TryFrom<&Task> for TaskResp {
 
         Ok(Self {
             task_id: *task.id(),
-            peer_aggregator_endpoint,
+            peer_aggregator_endpoint: task.peer_aggregator_endpoint().clone(),
             query_type: *task.query_type(),
             vdaf: task.vdaf().clone(),
             role: *task.role(),

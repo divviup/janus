@@ -10,7 +10,7 @@ use crate::{
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
     datastore::{self, Datastore},
-    task::Task,
+    task::{AggregatorTask, AggregatorTaskParameters, CommonTaskParameters},
     taskprov::PeerAggregator,
     SecretBytes,
 };
@@ -121,7 +121,22 @@ pub(super) async fn post_task<C: Clock>(
 
     let vdaf_verify_key = SecretBytes::new(vdaf_verify_key_bytes);
 
-    let (aggregator_auth_token, collector_auth_token) = match req.role {
+    let common_task_parameters = CommonTaskParameters::new(
+        task_id,
+        /* query_type */ req.query_type,
+        /* vdaf */ req.vdaf,
+        vdaf_verify_key,
+        /* max_batch_query_count */ req.max_batch_query_count,
+        /* task_expiration */ req.task_expiration,
+        /* report_expiry_age */
+        Some(Duration::from_seconds(3600 * 24 * 7 * 2)), // 2 weeks
+        /* min_batch_size */ req.min_batch_size,
+        /* time_precision */ req.time_precision,
+        /* tolerable_clock_skew */
+        Duration::from_seconds(60), // 1 minute,
+    );
+
+    let (peer_aggregator_endpoint, aggregator_parameters) = match req.role {
         Role::Leader => {
             let aggregator_auth_token = req.aggregator_auth_token.ok_or_else(|| {
                 Error::BadRequest(
@@ -129,7 +144,14 @@ pub(super) async fn post_task<C: Clock>(
                         .to_string(),
                 )
             })?;
-            (Some(aggregator_auth_token), Some(random()))
+            (
+                helper_aggregator_endpoint,
+                AggregatorTaskParameters::Leader {
+                    aggregator_auth_token,
+                    collector_auth_token: random(),
+                    collector_hpke_config: req.collector_hpke_config,
+                },
+            )
         }
 
         Role::Helper => {
@@ -140,42 +162,31 @@ pub(super) async fn post_task<C: Clock>(
                 ));
             }
 
-            (Some(random()), None)
+            (
+                leader_aggregator_endpoint,
+                AggregatorTaskParameters::Helper {
+                    aggregator_auth_token: random(),
+                    collector_hpke_config: req.collector_hpke_config,
+                },
+            )
         }
 
         _ => unreachable!(),
     };
 
-    // Unwrap safety: we always use a supported KEM.
-    let hpke_keys = Vec::from([generate_hpke_config_and_private_key(
-        random(),
-        HpkeKemId::X25519HkdfSha256,
-        HpkeKdfId::HkdfSha256,
-        HpkeAeadId::Aes128Gcm,
-    )
-    .unwrap()]);
-
     let task = Arc::new(
-        Task::new(
-            task_id,
-            leader_aggregator_endpoint,
-            helper_aggregator_endpoint,
-            /* query_type */ req.query_type,
-            /* vdaf */ req.vdaf,
-            /* role */ req.role,
-            vdaf_verify_key,
-            /* max_batch_query_count */ req.max_batch_query_count,
-            /* task_expiration */ req.task_expiration,
-            /* report_expiry_age */
-            Some(Duration::from_seconds(3600 * 24 * 7 * 2)), // 2 weeks
-            /* min_batch_size */ req.min_batch_size,
-            /* time_precision */ req.time_precision,
-            /* tolerable_clock_skew */
-            Duration::from_seconds(60), // 1 minute,
-            /* collector_hpke_config */ req.collector_hpke_config,
-            aggregator_auth_token,
-            collector_auth_token,
-            hpke_keys,
+        AggregatorTask::new_with_common_parameters(
+            common_task_parameters,
+            peer_aggregator_endpoint,
+            // Unwrap safety: we always use a supported KEM.
+            [generate_hpke_config_and_private_key(
+                random(),
+                HpkeKemId::X25519HkdfSha256,
+                HpkeKdfId::HkdfSha256,
+                HpkeAeadId::Aes128Gcm,
+            )
+            .unwrap()],
+            aggregator_parameters,
         )
         .map_err(|err| Error::BadRequest(format!("Error constructing task: {err}")))?,
     );
@@ -186,8 +197,7 @@ pub(super) async fn post_task<C: Clock>(
             if let Some(existing_task) = tx.get_task(task.id()).await? {
             // Check whether the existing task in the DB corresponds to the incoming task, ignoring
             // those fields that are randomly generated.
-            if existing_task.leader_aggregator_endpoint() == task.leader_aggregator_endpoint()
-                && existing_task.helper_aggregator_endpoint() == task.helper_aggregator_endpoint()
+            if existing_task.peer_aggregator_endpoint() == task.peer_aggregator_endpoint()
                 && existing_task.query_type() == task.query_type()
                 && existing_task.vdaf() == task.vdaf()
                 && existing_task.opaque_vdaf_verify_key() == task.opaque_vdaf_verify_key()

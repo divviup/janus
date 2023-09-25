@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use futures::future::join_all;
-use janus_aggregator_core::{datastore::Datastore, task::Task};
+use janus_aggregator_core::{datastore::Datastore, task::AggregatorTask};
 use janus_core::time::Clock;
 use std::sync::Arc;
 use tokio::try_join;
@@ -53,7 +53,7 @@ impl<C: Clock> GarbageCollector<C> {
         Ok(())
     }
 
-    async fn gc_task(&self, task: Arc<Task>) -> Result<()> {
+    async fn gc_task(&self, task: Arc<AggregatorTask>) -> Result<()> {
         self.datastore
             .run_tx(|tx| {
                 let task = Arc::clone(&task);
@@ -122,13 +122,11 @@ mod tests {
             .run_tx(|tx| {
                 let (clock, vdaf) = (clock.clone(), vdaf.clone());
                 Box::pin(async move {
-                    let task = TaskBuilder::new(
-                        task::QueryType::TimeInterval,
-                        VdafInstance::Fake,
-                        Role::Leader,
-                    )
-                    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
-                    .build();
+                    let task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
+                        .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+                        .build()
+                        .leader_view()
+                        .unwrap();
                     tx.put_task(&task).await?;
 
                     // Client report artifacts.
@@ -304,13 +302,11 @@ mod tests {
             .run_tx(|tx| {
                 let clock = clock.clone();
                 Box::pin(async move {
-                    let task = TaskBuilder::new(
-                        task::QueryType::TimeInterval,
-                        VdafInstance::Fake,
-                        Role::Helper,
-                    )
-                    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
-                    .build();
+                    let task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
+                        .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+                        .build()
+                        .helper_view()
+                        .unwrap();
                     tx.put_task(&task).await?;
 
                     // Client report artifacts.
@@ -499,10 +495,11 @@ mod tests {
                             batch_time_window_size: None,
                         },
                         VdafInstance::Fake,
-                        Role::Leader,
                     )
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
-                    .build();
+                    .build()
+                    .leader_view()
+                    .unwrap();
                     tx.put_task(&task).await?;
 
                     // Client report artifacts.
@@ -684,10 +681,11 @@ mod tests {
                             batch_time_window_size: None,
                         },
                         VdafInstance::Fake,
-                        Role::Helper,
                     )
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
-                    .build();
+                    .build()
+                    .helper_view()
+                    .unwrap();
                     tx.put_task(&task).await?;
 
                     // Client report artifacts.

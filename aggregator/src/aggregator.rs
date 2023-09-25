@@ -33,8 +33,8 @@ use janus_aggregator_core::{
         Datastore, Error as DatastoreError, Transaction,
     },
     query_type::AccumulableQueryType,
-    task::{self, Task, VerifyKey},
-    taskprov::{self, PeerAggregator},
+    task::{self, AggregatorTask, AggregatorTaskParameters, VerifyKey},
+    taskprov::PeerAggregator,
 };
 #[cfg(feature = "test-util")]
 use janus_core::test_util::dummy_vdaf;
@@ -646,7 +646,7 @@ impl<C: Clock> Aggregator<C> {
         task_config: &TaskConfig,
         aggregator_auth_token: Option<&AuthenticationToken>,
     ) -> Result<(), Error> {
-        let (peer_aggregator, leader_url, helper_url) = self
+        let (peer_aggregator, leader_url, _) = self
             .taskprov_authorize_request(peer_role, task_id, task_config, aggregator_auth_token)
             .await?;
 
@@ -662,25 +662,13 @@ impl<C: Clock> Aggregator<C> {
                     Error::InvalidTask(*task_id, OptOutReason::InvalidParameter(err.to_string()))
                 })?;
 
-        let our_role = match peer_role {
-            Role::Leader => Role::Helper,
-            Role::Helper => Role::Leader,
-            _ => {
-                return Err(Error::Internal(
-                    "role should have only been Helper or Leader".to_string(),
-                ))
-            }
-        };
-
         let vdaf_verify_key = peer_aggregator.derive_vdaf_verify_key(task_id, &vdaf_instance);
 
-        let task = taskprov::Task::new(
+        let task = AggregatorTask::new(
             *task_id,
             leader_url,
-            helper_url,
             task_config.query_config().query().try_into()?,
             vdaf_instance,
-            our_role,
             vdaf_verify_key,
             task_config.query_config().max_batch_query_count() as u64,
             Some(*task_config.task_expiration()),
@@ -688,6 +676,9 @@ impl<C: Clock> Aggregator<C> {
             task_config.query_config().min_batch_size() as u64,
             *task_config.query_config().time_precision(),
             *peer_aggregator.tolerable_clock_skew(),
+            // Taskprov task has no per-task HPKE keys
+            [],
+            AggregatorTaskParameters::TaskProvHelper,
         )
         .map_err(|err| Error::InvalidTask(*task_id, OptOutReason::TaskParameters(err)))?;
         self.datastore
@@ -784,7 +775,7 @@ impl<C: Clock> Aggregator<C> {
 // Aggregate requests) using a parallelized library like Rayon.
 pub struct TaskAggregator<C: Clock> {
     /// The task being aggregated.
-    task: Arc<Task>,
+    task: Arc<AggregatorTask>,
     /// VDAF-specific operations.
     vdaf_ops: VdafOps,
     /// Report writer, with support for batching.
@@ -794,7 +785,7 @@ pub struct TaskAggregator<C: Clock> {
 impl<C: Clock> TaskAggregator<C> {
     /// Create a new aggregator. `report_recipient` is used to decrypt reports received by this
     /// aggregator.
-    fn new(task: Task, report_writer: Arc<ReportWriteBatcher<C>>) -> Result<Self, Error> {
+    fn new(task: AggregatorTask, report_writer: Arc<ReportWriteBatcher<C>>) -> Result<Self, Error> {
         let vdaf_ops = match task.vdaf() {
             VdafInstance::Prio3Count => {
                 let vdaf = Prio3::new_count(2)?;
@@ -1182,7 +1173,7 @@ impl VdafOps {
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
         upload_decrypt_failure_counter: &Counter<u64>,
         upload_decode_failure_counter: &Counter<u64>,
-        task: &Task,
+        task: &AggregatorTask,
         report_writer: &ReportWriteBatcher<C>,
         report: Report,
     ) -> Result<(), Arc<Error>> {
@@ -1232,7 +1223,7 @@ impl VdafOps {
         datastore: &Datastore<C>,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
         aggregate_step_failure_counter: &Counter<u64>,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
@@ -1282,7 +1273,7 @@ impl VdafOps {
         &self,
         datastore: &Datastore<C>,
         aggregate_step_failure_counter: &Counter<u64>,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         req: Arc<AggregationJobContinueReq>,
@@ -1328,7 +1319,7 @@ impl VdafOps {
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
         upload_decrypt_failure_counter: &Counter<u64>,
         upload_decode_failure_counter: &Counter<u64>,
-        task: &Task,
+        task: &AggregatorTask,
         report_writer: &ReportWriteBatcher<C>,
         report: Report,
     ) -> Result<(), Arc<Error>>
@@ -1525,7 +1516,7 @@ impl VdafOps {
     /// the sense that no new rows would need to be written to service the job.
     async fn check_aggregation_job_idempotence<'b, const SEED_SIZE: usize, Q, A, C>(
         tx: &Transaction<'b, C>,
-        task: &Task,
+        task: &AggregatorTask,
         incoming_aggregation_job: &AggregationJob<SEED_SIZE, Q, A>,
     ) -> Result<bool, Error>
     where
@@ -1563,7 +1554,7 @@ impl VdafOps {
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
         vdaf: &A,
         aggregate_step_failure_counter: &Counter<u64>,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         verify_key: &VerifyKey<SEED_SIZE>,
@@ -2053,7 +2044,7 @@ impl VdafOps {
         datastore: &Datastore<C>,
         vdaf: Arc<A>,
         aggregate_step_failure_counter: &Counter<u64>,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         leader_aggregation_job: Arc<AggregationJobContinueReq>,
@@ -2185,7 +2176,7 @@ impl VdafOps {
     async fn handle_create_collection_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         collection_job_id: &CollectionJobId,
         collection_req_bytes: &[u8],
     ) -> Result<(), Error> {
@@ -2222,7 +2213,7 @@ impl VdafOps {
         C: Clock,
     >(
         datastore: &Datastore<C>,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         collection_job_id: &CollectionJobId,
         req_bytes: &[u8],
@@ -2486,7 +2477,7 @@ impl VdafOps {
     async fn handle_get_collection_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         collection_job_id: &CollectionJobId,
     ) -> Result<Option<Vec<u8>>, Error> {
         match task.query_type() {
@@ -2523,7 +2514,7 @@ impl VdafOps {
         C: Clock,
     >(
         datastore: &Datastore<C>,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         collection_job_id: &CollectionJobId,
     ) -> Result<Option<Vec<u8>>, Error>
@@ -2662,7 +2653,7 @@ impl VdafOps {
     async fn handle_delete_collection_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         collection_job_id: &CollectionJobId,
     ) -> Result<(), Error> {
         match task.query_type() {
@@ -2698,7 +2689,7 @@ impl VdafOps {
         C: Clock,
     >(
         datastore: &Datastore<C>,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         collection_job_id: &CollectionJobId,
     ) -> Result<(), Error>
@@ -2748,7 +2739,7 @@ impl VdafOps {
         &self,
         datastore: &Datastore<C>,
         clock: &C,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         req_bytes: &[u8],
         collector_hpke_config: &HpkeConfig,
@@ -2787,7 +2778,7 @@ impl VdafOps {
     >(
         datastore: &Datastore<C>,
         clock: &C,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         req_bytes: &[u8],
         batch_aggregation_shard_count: u64,
@@ -2983,7 +2974,7 @@ fn empty_batch_aggregations<
     Q: CollectableQueryType,
     A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
 >(
-    task: &Task,
+    task: &AggregatorTask,
     batch_aggregation_shard_count: u64,
     batch_identifier: &Q::BatchIdentifier,
     aggregation_param: &A::AggregationParam,
@@ -3125,7 +3116,7 @@ mod tests {
             test_util::{ephemeral_datastore, EphemeralDatastore},
             Datastore,
         },
-        task::{test_util::TaskBuilder, QueryType, Task},
+        task::{test_util::TaskBuilder, AggregatorTask, QueryType, Task},
         test_util::noop_meter,
     };
     use janus_core::{
@@ -3163,7 +3154,7 @@ mod tests {
     }
 
     pub(super) fn create_report_custom(
-        task: &Task,
+        task: &AggregatorTask,
         report_timestamp: Time,
         id: ReportId,
         hpke_key: &HpkeKeypair,
@@ -3204,7 +3195,7 @@ mod tests {
         )
     }
 
-    pub(super) fn create_report(task: &Task, report_timestamp: Time) -> Report {
+    pub(super) fn create_report(task: &AggregatorTask, report_timestamp: Time) -> Report {
         create_report_custom(task, report_timestamp, random(), task.current_hpke_key())
     }
 
@@ -3220,17 +3211,14 @@ mod tests {
     ) {
         let clock = MockClock::default();
         let vdaf = Prio3Count::new_count(2).unwrap();
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
-            Role::Leader,
-        )
-        .build();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
+
+        let leader_task = task.leader_view().unwrap();
 
         let ephemeral_datastore = ephemeral_datastore().await;
         let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
-        datastore.put_task(&task).await.unwrap();
+        datastore.put_task(&leader_task).await.unwrap();
 
         let aggregator = Aggregator::new(Arc::clone(&datastore), clock.clone(), &noop_meter(), cfg)
             .await
@@ -3257,7 +3245,8 @@ mod tests {
                 ..Default::default()
             })
             .await;
-        let report = create_report(&task, clock.now());
+        let leader_task = task.leader_view().unwrap();
+        let report = create_report(&leader_task, clock.now());
 
         aggregator
             .handle_upload(task.id(), &report.get_encoded())
@@ -3284,10 +3273,10 @@ mod tests {
 
         // Reports may not be mutated
         let mutated_report = create_report_custom(
-            &task,
+            &leader_task,
             clock.now(),
             *report.metadata().id(),
-            task.current_hpke_key(),
+            leader_task.current_hpke_key(),
         );
         let error = aggregator
             .handle_upload(task.id(), &mutated_report.get_encoded())
@@ -3313,9 +3302,10 @@ mod tests {
             })
             .await;
 
-        let reports: Vec<_> = iter::repeat_with(|| create_report(&task, clock.now()))
-            .take(BATCH_SIZE)
-            .collect();
+        let reports: Vec<_> =
+            iter::repeat_with(|| create_report(&task.leader_view().unwrap(), clock.now()))
+                .take(BATCH_SIZE)
+                .collect();
         let want_report_ids: HashSet<_> = reports.iter().map(|r| *r.metadata().id()).collect();
 
         let aggregator = Arc::new(aggregator);
@@ -3349,11 +3339,12 @@ mod tests {
 
         let (_, aggregator, clock, task, _, _ephemeral_datastore) =
             setup_upload_test(default_aggregator_config()).await;
-        let report = create_report(&task, clock.now());
+        let leader_task = task.leader_view().unwrap();
+        let report = create_report(&leader_task, clock.now());
 
         let unused_hpke_config_id = (0..)
             .map(HpkeConfigId::from)
-            .find(|id| !task.hpke_keys().contains_key(id))
+            .find(|id| !leader_task.hpke_keys().contains_key(id))
             .unwrap();
 
         let report = Report::new(
@@ -3382,7 +3373,10 @@ mod tests {
 
         let (vdaf, aggregator, clock, task, datastore, _ephemeral_datastore) =
             setup_upload_test(default_aggregator_config()).await;
-        let report = create_report(&task, clock.now().add(task.tolerable_clock_skew()).unwrap());
+        let report = create_report(
+            &task.leader_view().unwrap(),
+            clock.now().add(task.tolerable_clock_skew()).unwrap(),
+        );
 
         aggregator
             .handle_upload(task.id(), &report.get_encoded())
@@ -3409,7 +3403,7 @@ mod tests {
         let (_, aggregator, clock, task, _, _ephemeral_datastore) =
             setup_upload_test(default_aggregator_config()).await;
         let report = create_report(
-            &task,
+            &task.leader_view().unwrap(),
             clock
                 .now()
                 .add(task.tolerable_clock_skew())
@@ -3436,7 +3430,7 @@ mod tests {
 
         let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
             setup_upload_test(default_aggregator_config()).await;
-        let report = create_report(&task, clock.now());
+        let report = create_report(&task.leader_view().unwrap(), clock.now());
 
         // Insert a collection job for the batch interval including our report.
         let batch_interval = Interval::new(
@@ -3489,16 +3483,17 @@ mod tests {
                 ..Default::default()
             })
             .await;
+        let leader_task = task.leader_view().unwrap();
 
         // Same ID as the task to test having both keys to choose from.
         let global_hpke_keypair_same_id = generate_test_hpke_config_and_private_key_with_id(
-            (*task.current_hpke_key().config().id()).into(),
+            (*leader_task.current_hpke_key().config().id()).into(),
         );
         // Different ID to test misses on the task key.
         let global_hpke_keypair_different_id = generate_test_hpke_config_and_private_key_with_id(
             (0..)
                 .map(HpkeConfigId::from)
-                .find(|id| !task.hpke_keys().contains_key(id))
+                .find(|id| !leader_task.hpke_keys().contains_key(id))
                 .unwrap()
                 .into(),
         );
@@ -3521,10 +3516,15 @@ mod tests {
         aggregator.refresh_caches().await.unwrap();
 
         for report in [
-            create_report(&task, clock.now()),
-            create_report_custom(&task, clock.now(), random(), &global_hpke_keypair_same_id),
+            create_report(&leader_task, clock.now()),
             create_report_custom(
-                &task,
+                &leader_task,
+                clock.now(),
+                random(),
+                &global_hpke_keypair_same_id,
+            ),
+            create_report_custom(
+                &leader_task,
                 clock.now(),
                 random(),
                 &global_hpke_keypair_different_id,

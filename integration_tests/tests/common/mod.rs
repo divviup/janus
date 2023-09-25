@@ -3,7 +3,6 @@ use itertools::Itertools;
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
 use janus_collector::{Collection, Collector, CollectorParameters};
 use janus_core::{
-    hpke::test_util::generate_test_hpke_config_and_private_key,
     retries::test_http_request_exponential_backoff,
     time::{Clock, RealClock, TimeExt},
     vdaf::VdafInstance,
@@ -15,7 +14,7 @@ use janus_integration_tests::{
 use janus_messages::{
     problem_type::DapProblemType,
     query_type::{self, FixedSize},
-    Duration, FixedSizeQuery, Interval, Query, Role,
+    Duration, FixedSizeQuery, Interval, Query,
 };
 use prio::vdaf::{self, prio3::Prio3};
 use rand::{random, thread_rng, Rng};
@@ -23,12 +22,11 @@ use std::{iter, time::Duration as StdDuration};
 use tokio::time::{self, sleep};
 use url::Url;
 
-/// Returns a tuple of [`TaskParameters`], a task builder for the leader, and a task builder for the
-/// helper.
-pub fn test_task_builders(
+/// Returns a tuple of [`TaskParameters`] and a task builder.
+pub fn test_task_builder(
     vdaf: VdafInstance,
     query_type: QueryType,
-) -> (TaskParameters, TaskBuilder, TaskBuilder) {
+) -> (TaskParameters, TaskBuilder) {
     let endpoint_random_value = hex::encode(random::<[u8; 4]>());
     let endpoint_fragments = EndpointFragments {
         leader_endpoint_host: format!("leader-{endpoint_random_value}"),
@@ -36,8 +34,7 @@ pub fn test_task_builders(
         helper_endpoint_host: format!("helper-{endpoint_random_value}"),
         helper_endpoint_path: "/".to_string(),
     };
-    let collector_keypair = generate_test_hpke_config_and_private_key();
-    let leader_task = TaskBuilder::new(query_type, vdaf.clone(), Role::Leader)
+    let task_builder = TaskBuilder::new(query_type, vdaf.clone())
         .with_leader_aggregator_endpoint(
             Url::parse(&format!("http://leader-{endpoint_random_value}:8080/")).unwrap(),
         )
@@ -47,26 +44,19 @@ pub fn test_task_builders(
         .with_min_batch_size(46)
         // Force use of DAP-Auth-Tokens, as required by interop testing standard.
         .with_dap_auth_aggregator_token()
-        .with_dap_auth_collector_token()
-        .with_collector_hpke_config(collector_keypair.config().clone());
-    let helper_task = leader_task
-        .clone()
-        .with_role(Role::Helper)
-        .with_collector_auth_token(None);
-    let temporary_task = leader_task.clone().build();
+        .with_dap_auth_collector_token();
     let task_parameters = TaskParameters {
-        task_id: *temporary_task.id(),
+        task_id: *task_builder.task_id(),
         endpoint_fragments,
         query_type,
         vdaf,
-        min_batch_size: temporary_task.min_batch_size(),
-        time_precision: *temporary_task.time_precision(),
-        collector_hpke_config: collector_keypair.config().clone(),
-        collector_private_key: collector_keypair.private_key().clone(),
-        collector_auth_token: temporary_task.collector_auth_token().unwrap().clone(),
+        min_batch_size: task_builder.min_batch_size(),
+        time_precision: *task_builder.time_precision(),
+        collector_hpke_keypair: task_builder.collector_hpke_keypair().clone(),
+        collector_auth_token: task_builder.collector_auth_token().clone(),
     };
 
-    (task_parameters, leader_task, helper_task)
+    (task_parameters, task_builder)
 }
 
 /// A set of inputs and an expected output for a VDAF's aggregation.
@@ -138,8 +128,8 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
         task_parameters.task_id,
         leader_endpoint,
         task_parameters.collector_auth_token.clone(),
-        task_parameters.collector_hpke_config.clone(),
-        task_parameters.collector_private_key.clone(),
+        task_parameters.collector_hpke_keypair.config().clone(),
+        task_parameters.collector_hpke_keypair.private_key().clone(),
     )
     .with_http_request_backoff(test_http_request_exponential_backoff())
     .with_collect_poll_backoff(

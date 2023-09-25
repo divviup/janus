@@ -11,7 +11,7 @@ use janus_aggregator_core::{
         },
         Error, Transaction,
     },
-    task::Task,
+    task::AggregatorTask,
 };
 use janus_core::time::{Clock, IntervalExt};
 use janus_messages::{AggregationJobId, Interval, PrepareError, ReportId};
@@ -30,7 +30,7 @@ pub struct AggregationJobWriter<
     Q: CollectableQueryType,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
 > {
-    task: Arc<Task>,
+    task: Arc<AggregatorTask>,
     aggregation_jobs: HashMap<AggregationJobId, AggregationJobInfo<SEED_SIZE, Q, A>>,
 
     // batch identifier -> aggregation job -> ord of report aggregation; populated by all report
@@ -52,7 +52,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
     AggregationJobWriter<SEED_SIZE, Q, A>
 {
     /// Creates a new, empty aggregation job writer.
-    pub fn new(task: Arc<Task>) -> Self {
+    pub fn new(task: Arc<AggregatorTask>) -> Self {
         Self {
             task,
             aggregation_jobs: HashMap::new(),

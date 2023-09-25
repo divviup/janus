@@ -279,15 +279,8 @@ pub struct AggregatorAddTaskRequest {
     pub task_expiration: Option<u64>,  // in seconds since the epoch
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AddTaskResponse {
-    pub status: String,
-    #[serde(default)]
-    pub error: Option<String>,
-}
-
-impl From<Task> for AggregatorAddTaskRequest {
-    fn from(task: Task) -> Self {
+impl AggregatorAddTaskRequest {
+    pub fn from_task(task: Task, role: Role) -> Self {
         let (query_type, max_batch_size) = match task.query_type() {
             QueryType::TimeInterval => (TimeInterval::CODE as u8, None),
             QueryType::FixedSize { max_batch_size, .. } => {
@@ -300,18 +293,15 @@ impl From<Task> for AggregatorAddTaskRequest {
             helper: task.helper_aggregator_endpoint().clone(),
             vdaf: task.vdaf().clone().into(),
             leader_authentication_token: String::from_utf8(
-                task.aggregator_auth_token().unwrap().as_ref().to_vec(),
+                task.aggregator_auth_token().as_ref().to_vec(),
             )
             .unwrap(),
-            collector_authentication_token: if task.role() == &Role::Leader {
-                Some(
-                    String::from_utf8(task.collector_auth_token().unwrap().as_ref().to_vec())
-                        .unwrap(),
-                )
+            collector_authentication_token: if role == Role::Leader {
+                Some(String::from_utf8(task.collector_auth_token().as_ref().to_vec()).unwrap())
             } else {
                 None
             },
-            role: (*task.role()).try_into().unwrap(),
+            role: role.try_into().unwrap(),
             vdaf_verify_key: URL_SAFE_NO_PAD.encode(task.opaque_vdaf_verify_key().as_ref()),
             max_batch_query_count: task.max_batch_query_count(),
             query_type,
@@ -319,10 +309,17 @@ impl From<Task> for AggregatorAddTaskRequest {
             max_batch_size,
             time_precision: task.time_precision().as_seconds(),
             collector_hpke_config: URL_SAFE_NO_PAD
-                .encode(task.collector_hpke_config().unwrap().get_encoded()),
+                .encode(task.collector_hpke_keypair().config().get_encoded()),
             task_expiration: task.task_expiration().map(Time::as_seconds_since_epoch),
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AddTaskResponse {
+    pub status: String,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 pub fn install_tracing_subscriber() -> anyhow::Result<()> {

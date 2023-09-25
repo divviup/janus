@@ -4,7 +4,7 @@ use crate::{
         models::{AggregateShareJob, Batch, BatchAggregation, CollectionJob},
         Transaction,
     },
-    task::Task,
+    task::AggregatorTask,
 };
 use async_trait::async_trait;
 use futures::future::try_join_all;
@@ -22,7 +22,7 @@ pub trait AccumulableQueryType: QueryType {
     /// arguments are somewhat arbitrary in the sense they are what "works out" to allow the
     /// necessary functionality to be implemented for all query types.
     fn to_batch_identifier(
-        _: &Task,
+        _: &AggregatorTask,
         _: &Self::PartialBatchIdentifier,
         client_timestamp: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error>;
@@ -73,7 +73,7 @@ pub trait AccumulableQueryType: QueryType {
 #[async_trait]
 impl AccumulableQueryType for TimeInterval {
     fn to_batch_identifier(
-        task: &Task,
+        task: &AggregatorTask,
         _: &Self::PartialBatchIdentifier,
         client_timestamp: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error> {
@@ -141,7 +141,7 @@ impl AccumulableQueryType for TimeInterval {
 #[async_trait]
 impl AccumulableQueryType for FixedSize {
     fn to_batch_identifier(
-        _: &Task,
+        _: &AggregatorTask,
         batch_id: &Self::PartialBatchIdentifier,
         _: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error> {
@@ -207,7 +207,7 @@ pub trait CollectableQueryType: AccumulableQueryType {
     /// Retrieves the batch identifier for a given query.
     async fn collection_identifier_for_query<C: Clock>(
         tx: &Transaction<'_, C>,
-        task: &Task,
+        task: &AggregatorTask,
         query: &Query<Self>,
     ) -> Result<Option<Self::BatchIdentifier>, datastore::Error>;
 
@@ -215,14 +215,14 @@ pub trait CollectableQueryType: AccumulableQueryType {
     /// requests which refers to multiple batches. This method takes a batch identifier received in
     /// a collection request and provides an iterator over the individual batches' identifiers.
     fn batch_identifiers_for_collection_identifier(
-        _: &Task,
+        _: &AggregatorTask,
         collection_identifier: &Self::BatchIdentifier,
     ) -> Self::Iter;
 
     /// Validates a collection identifier, per the boundary checks in
     /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6>.
     fn validate_collection_identifier(
-        task: &Task,
+        task: &AggregatorTask,
         collection_identifier: &Self::BatchIdentifier,
     ) -> bool;
 
@@ -230,7 +230,7 @@ pub trait CollectableQueryType: AccumulableQueryType {
     /// they have been aggregated or not.
     async fn count_client_reports<C: Clock>(
         tx: &Transaction<'_, C>,
-        task: &Task,
+        task: &AggregatorTask,
         collection_identifier: &Self::BatchIdentifier,
     ) -> Result<u64, datastore::Error>;
 
@@ -242,7 +242,7 @@ pub trait CollectableQueryType: AccumulableQueryType {
         C: Clock,
     >(
         tx: &Transaction<C>,
-        task: &Task,
+        task: &AggregatorTask,
         vdaf: &A,
         collection_identifier: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
@@ -280,7 +280,7 @@ pub trait CollectableQueryType: AccumulableQueryType {
         C: Clock,
     >(
         tx: &Transaction<C>,
-        task: &Task,
+        task: &AggregatorTask,
         collection_identifier: &Self::BatchIdentifier,
         aggregation_param: &A::AggregationParam,
     ) -> Result<Vec<Batch<SEED_SIZE, Self, A>>, datastore::Error>
@@ -322,21 +322,21 @@ impl CollectableQueryType for TimeInterval {
 
     async fn collection_identifier_for_query<C: Clock>(
         _: &Transaction<'_, C>,
-        _: &Task,
+        _: &AggregatorTask,
         query: &Query<Self>,
     ) -> Result<Option<Self::BatchIdentifier>, datastore::Error> {
         Ok(Some(*query.batch_interval()))
     }
 
     fn batch_identifiers_for_collection_identifier(
-        task: &Task,
+        task: &AggregatorTask,
         batch_interval: &Self::BatchIdentifier,
     ) -> Self::Iter {
         TimeIntervalBatchIdentifierIter::new(task, batch_interval)
     }
 
     fn validate_collection_identifier(
-        task: &Task,
+        task: &AggregatorTask,
         collection_identifier: &Self::BatchIdentifier,
     ) -> bool {
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
@@ -351,7 +351,7 @@ impl CollectableQueryType for TimeInterval {
 
     async fn count_client_reports<C: Clock>(
         tx: &Transaction<'_, C>,
-        task: &Task,
+        task: &AggregatorTask,
         batch_interval: &Self::BatchIdentifier,
     ) -> Result<u64, datastore::Error> {
         tx.count_client_reports_for_interval(task.id(), batch_interval)
@@ -379,7 +379,7 @@ pub struct TimeIntervalBatchIdentifierIter {
 }
 
 impl TimeIntervalBatchIdentifierIter {
-    fn new(task: &Task, batch_interval: &Interval) -> Self {
+    fn new(task: &AggregatorTask, batch_interval: &Interval) -> Self {
         // Sanity check that the given interval is of an appropriate length. We use an assert as
         // this is expected to be checked before this method is used.
         assert_eq!(
@@ -428,7 +428,7 @@ impl CollectableQueryType for FixedSize {
 
     async fn collection_identifier_for_query<C: Clock>(
         tx: &Transaction<'_, C>,
-        task: &Task,
+        task: &AggregatorTask,
         query: &Query<Self>,
     ) -> Result<Option<Self::BatchIdentifier>, datastore::Error> {
         match query.fixed_size_query() {
@@ -441,19 +441,19 @@ impl CollectableQueryType for FixedSize {
     }
 
     fn batch_identifiers_for_collection_identifier(
-        _: &Task,
+        _: &AggregatorTask,
         batch_id: &Self::BatchIdentifier,
     ) -> Self::Iter {
         iter::once(*batch_id)
     }
 
-    fn validate_collection_identifier(_: &Task, _: &Self::BatchIdentifier) -> bool {
+    fn validate_collection_identifier(_: &AggregatorTask, _: &Self::BatchIdentifier) -> bool {
         true
     }
 
     async fn count_client_reports<C: Clock>(
         tx: &Transaction<'_, C>,
-        task: &Task,
+        task: &AggregatorTask,
         batch_id: &Self::BatchIdentifier,
     ) -> Result<u64, datastore::Error> {
         tx.count_client_reports_for_batch_id(task.id(), batch_id)
@@ -476,14 +476,16 @@ mod tests {
         task::{test_util::TaskBuilder, QueryType},
     };
     use janus_core::vdaf::VdafInstance;
-    use janus_messages::{query_type::TimeInterval, Duration, Interval, Role, Time};
+    use janus_messages::{query_type::TimeInterval, Duration, Interval, Time};
 
     #[test]
     fn validate_collect_identifier() {
         let time_precision_secs = 3600;
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
             .with_time_precision(Duration::from_seconds(time_precision_secs))
-            .build();
+            .build()
+            .leader_view()
+            .unwrap();
 
         struct TestCase {
             name: &'static str,

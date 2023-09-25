@@ -675,7 +675,6 @@ mod tests {
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
         task::{test_util::TaskBuilder, QueryType, VerifyKey},
-        taskprov,
         test_util::noop_meter,
     };
     use janus_core::{
@@ -752,12 +751,10 @@ mod tests {
     async fn hpke_config() {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
-            Role::Leader,
-        )
-        .build();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            .build()
+            .leader_view()
+            .unwrap();
         datastore.put_task(&task).await.unwrap();
 
         let unknown_task_id: TaskId = random();
@@ -968,30 +965,9 @@ mod tests {
             .unwrap();
 
         // Insert a taskprov task. This task won't have its task-specific HPKE key.
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
-            Role::Leader,
-        )
-        .build();
-        let task_id = *task.id();
-        let task = taskprov::Task::new(
-            task_id,
-            task.leader_aggregator_endpoint().clone(),
-            task.helper_aggregator_endpoint().clone(),
-            *task.query_type(),
-            task.vdaf().clone(),
-            *task.role(),
-            task.opaque_vdaf_verify_key().clone(),
-            task.max_batch_query_count(),
-            task.task_expiration().cloned(),
-            task.report_expiry_age().cloned(),
-            task.min_batch_size(),
-            *task.time_precision(),
-            *task.tolerable_clock_skew(),
-        )
-        .unwrap();
-        datastore.put_task(&task.into()).await.unwrap();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
+        let taskprov_helper_task = task.taskprov_helper_view().unwrap();
+        datastore.put_task(&taskprov_helper_task).await.unwrap();
 
         let cfg = Config {
             taskprov_config: TaskprovConfig { enabled: true },
@@ -1012,7 +988,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut test_conn = get(&format!("/hpke_config?task_id={}", task_id))
+        let mut test_conn = get(&format!("/hpke_config?task_id={}", task.id()))
             .run_async(&handler)
             .await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
@@ -1052,12 +1028,10 @@ mod tests {
     async fn hpke_config_cors_headers() {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
-            Role::Leader,
-        )
-        .build();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            .build()
+            .leader_view()
+            .unwrap();
         datastore.put_task(&task).await.unwrap();
 
         // Check for appropriate CORS headers in response to a preflight request.
@@ -1114,16 +1088,14 @@ mod tests {
         let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         const REPORT_EXPIRY_AGE: u64 = 1_000_000;
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
-            Role::Leader,
-        )
-        .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
-        .build();
-        datastore.put_task(&task).await.unwrap();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
+            .build();
 
-        let report = create_report(&task, clock.now());
+        let leader_task = task.leader_view().unwrap();
+        datastore.put_task(&leader_task).await.unwrap();
+
+        let report = create_report(&leader_task, clock.now());
 
         // Upload a report. Do this twice to prove that PUT is idempotent.
         for _ in 0..2 {
@@ -1141,10 +1113,10 @@ mod tests {
 
         // Verify that new reports using an existing report ID are rejected with reportRejected
         let duplicate_id_report = create_report_custom(
-            &task,
+            &leader_task,
             clock.now(),
             *accepted_report_id,
-            task.current_hpke_key(),
+            leader_task.current_hpke_key(),
         );
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
@@ -1192,7 +1164,7 @@ mod tests {
         // the error type outdatedConfig.
         let unused_hpke_config_id = (0..)
             .map(HpkeConfigId::from)
-            .find(|id| !task.hpke_keys().contains_key(id))
+            .find(|id| !leader_task.hpke_keys().contains_key(id))
             .unwrap();
         let bad_report = Report::new(
             report.metadata().clone(),
@@ -1249,16 +1221,13 @@ mod tests {
         .await;
 
         // Reports with timestamps past the task's expiration should be rejected.
-        let task_expire_soon = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
-            Role::Leader,
-        )
-        .with_task_expiration(Some(clock.now().add(&Duration::from_seconds(60)).unwrap()))
-        .build();
-        datastore.put_task(&task_expire_soon).await.unwrap();
+        let task_expire_soon = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            .with_task_expiration(Some(clock.now().add(&Duration::from_seconds(60)).unwrap()))
+            .build();
+        let leader_task_expire_soon = task_expire_soon.leader_view().unwrap();
+        datastore.put_task(&leader_task_expire_soon).await.unwrap();
         let report_2 = create_report(
-            &task_expire_soon,
+            &leader_task_expire_soon,
             clock.now().add(&Duration::from_seconds(120)).unwrap(),
         );
         let mut test_conn = put(task_expire_soon.report_upload_uri().unwrap().path())
@@ -1328,14 +1297,10 @@ mod tests {
     async fn upload_handler_helper() {
         let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
-            Role::Helper,
-        )
-        .build();
-        datastore.put_task(&task).await.unwrap();
-        let report = create_report(&task, clock.now());
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
+        let helper_task = task.helper_view().unwrap();
+        datastore.put_task(&helper_task).await.unwrap();
+        let report = create_report(&helper_task, clock.now());
 
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
@@ -1370,13 +1335,11 @@ mod tests {
     async fn aggregate_leader() {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
-            Role::Leader,
-        )
-        .build();
-        datastore.put_task(&task).await.unwrap();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
+        datastore
+            .put_task(&task.leader_view().unwrap())
+            .await
+            .unwrap();
 
         let request = AggregationJobInitializeReq::new(
             Vec::new(),
@@ -1438,14 +1401,14 @@ mod tests {
 
         let dap_auth_token = AuthenticationToken::DapAuth(random());
 
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
-            Role::Helper,
-        )
-        .with_aggregator_auth_token(Some(dap_auth_token.clone()))
-        .build();
-        datastore.put_task(&task).await.unwrap();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            .with_aggregator_auth_token(dap_auth_token.clone())
+            .build();
+
+        datastore
+            .put_task(&task.helper_view().unwrap())
+            .await
+            .unwrap();
 
         let request = AggregationJobInitializeReq::new(
             Vec::new(),
@@ -1500,16 +1463,17 @@ mod tests {
     async fn aggregate_init() {
         let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake).build();
+
+        let helper_task = task.helper_view().unwrap();
 
         let vdaf = dummy_vdaf::Vdaf::new();
         let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
-        let hpke_key = task.current_hpke_key();
+        let hpke_key = helper_task.current_hpke_key();
         let measurement = ();
         let prep_init_generator = PrepareInitGenerator::new(
             clock.clone(),
-            task.clone(),
+            helper_task.clone(),
             vdaf.clone(),
             dummy_vdaf::AggregationParam(0),
         );
@@ -1563,7 +1527,7 @@ mod tests {
 
         let wrong_hpke_config = loop {
             let hpke_config = generate_test_hpke_config_and_private_key().config().clone();
-            if task.hpke_keys().contains_key(hpke_config.id()) {
+            if helper_task.hpke_keys().contains_key(hpke_config.id()) {
                 continue;
             }
             break hpke_config;
@@ -1683,7 +1647,7 @@ mod tests {
 
         let (conflicting_aggregation_job, non_conflicting_aggregation_job) = datastore
             .run_tx(|tx| {
-                let task = task.clone();
+                let task = helper_task.clone();
                 let report_share_4 = prepare_init_4.report_share().clone();
                 let report_share_5 = prepare_init_5.report_share().clone();
                 let report_share_8 = prepare_init_8.report_share().clone();
@@ -1944,24 +1908,29 @@ mod tests {
     async fn aggregate_init_with_reports_encrypted_by_global_key() {
         let (clock, _ephemeral_datastore, datastore, _) = setup_http_handler_test().await;
 
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
-        datastore.put_task(&task).await.unwrap();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake).build();
+
+        let helper_task = task.helper_view().unwrap();
+        datastore.put_task(&helper_task).await.unwrap();
         let vdaf = dummy_vdaf::Vdaf::new();
         let aggregation_param = dummy_vdaf::AggregationParam(0);
-        let prep_init_generator =
-            PrepareInitGenerator::new(clock.clone(), task.clone(), vdaf.clone(), aggregation_param);
+        let prep_init_generator = PrepareInitGenerator::new(
+            clock.clone(),
+            helper_task.clone(),
+            vdaf.clone(),
+            aggregation_param,
+        );
 
         // Insert some global HPKE keys.
         // Same ID as the task to test having both keys to choose from.
         let global_hpke_keypair_same_id = generate_test_hpke_config_and_private_key_with_id(
-            (*task.current_hpke_key().config().id()).into(),
+            (*helper_task.current_hpke_key().config().id()).into(),
         );
         // Different ID to test misses on the task key.
         let global_hpke_keypair_different_id = generate_test_hpke_config_and_private_key_with_id(
             (0..)
                 .map(HpkeConfigId::from)
-                .find(|id| !task.hpke_keys().contains_key(id))
+                .find(|id| !helper_task.hpke_keys().contains_key(id))
                 .unwrap()
                 .into(),
         );
@@ -2248,20 +2217,17 @@ mod tests {
     async fn aggregate_init_prep_init_failed() {
         let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::FakeFailsPrepInit,
-            Role::Helper,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::FakeFailsPrepInit).build();
+        let helper_task = task.helper_view().unwrap();
         let prep_init_generator = PrepareInitGenerator::new(
             clock.clone(),
-            task.clone(),
+            helper_task.clone(),
             dummy_vdaf::Vdaf::new(),
             dummy_vdaf::AggregationParam(0),
         );
 
-        datastore.put_task(&task).await.unwrap();
+        datastore.put_task(&helper_task).await.unwrap();
 
         let (prepare_init, _) = prep_init_generator.next(&());
         let request = AggregationJobInitializeReq::new(
@@ -2299,20 +2265,17 @@ mod tests {
     async fn aggregate_init_prep_step_failed() {
         let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::FakeFailsPrepStep,
-            Role::Helper,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::FakeFailsPrepStep).build();
+        let helper_task = task.helper_view().unwrap();
         let prep_init_generator = PrepareInitGenerator::new(
             clock.clone(),
-            task.clone(),
+            helper_task.clone(),
             dummy_vdaf::Vdaf::new(),
             dummy_vdaf::AggregationParam(0),
         );
 
-        datastore.put_task(&task).await.unwrap();
+        datastore.put_task(&helper_task).await.unwrap();
 
         let (prepare_init, _) = prep_init_generator.next(&());
         let request = AggregationJobInitializeReq::new(
@@ -2349,16 +2312,17 @@ mod tests {
     async fn aggregate_init_duplicated_report_id() {
         let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake).build();
+
+        let helper_task = task.helper_view().unwrap();
         let prep_init_generator = PrepareInitGenerator::new(
             clock.clone(),
-            task.clone(),
+            helper_task.clone(),
             dummy_vdaf::Vdaf::new(),
             dummy_vdaf::AggregationParam(0),
         );
 
-        datastore.put_task(&task).await.unwrap();
+        datastore.put_task(&helper_task).await.unwrap();
 
         let (prepare_init, _) = prep_init_generator.next(&());
 
@@ -2390,16 +2354,13 @@ mod tests {
         let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         let aggregation_job_id = random();
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Poplar1 { bits: 1 },
-            Role::Helper,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
+        let helper_task = task.helper_view().unwrap();
 
         let vdaf = Arc::new(Poplar1::<XofShake128, 16>::new(1));
         let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
-        let hpke_key = task.current_hpke_key();
+        let hpke_key = helper_task.current_hpke_key();
         let measurement = IdpfInput::from_bools(&[true]);
         let aggregation_param =
             Poplar1AggregationParam::try_from_prefixes(vec![measurement.clone()]).unwrap();
@@ -2487,7 +2448,7 @@ mod tests {
 
         datastore
             .run_tx(|tx| {
-                let task = task.clone();
+                let task = helper_task.clone();
                 let (report_share_0, report_share_1, report_share_2) = (
                     report_share_0.clone(),
                     report_share_1.clone(),
@@ -2696,12 +2657,9 @@ mod tests {
     async fn aggregate_continue_accumulate_batch_aggregation() {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Poplar1 { bits: 1 },
-            Role::Helper,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
+        let helper_task = task.helper_view().unwrap();
         let aggregation_job_id_0 = random();
         let aggregation_job_id_1 = random();
         let first_batch_interval_clock = MockClock::default();
@@ -2714,7 +2672,7 @@ mod tests {
 
         let vdaf = Poplar1::new(1);
         let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
-        let hpke_key = task.current_hpke_key();
+        let hpke_key = helper_task.current_hpke_key();
         let measurement = IdpfInput::from_bools(&[true]);
         let aggregation_param =
             Poplar1AggregationParam::try_from_prefixes(vec![measurement.clone()]).unwrap();
@@ -2817,7 +2775,7 @@ mod tests {
         .unwrap();
         let second_batch_want_batch_aggregations =
             empty_batch_aggregations::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>(
-                &task,
+                &helper_task,
                 BATCH_AGGREGATION_SHARD_COUNT,
                 &second_batch_identifier,
                 &aggregation_param,
@@ -2826,7 +2784,7 @@ mod tests {
 
         datastore
             .run_tx(|tx| {
-                let task = task.clone();
+                let task = helper_task.clone();
                 let (report_share_0, report_share_1, report_share_2) = (
                     report_share_0.clone(),
                     report_share_1.clone(),
@@ -2957,7 +2915,7 @@ mod tests {
         let first_batch_got_batch_aggregations: Vec<_> = datastore
             .run_tx(|tx| {
                 let (task, vdaf, report_metadata_0, aggregation_param) = (
-                    task.clone(),
+                    helper_task.clone(),
                     vdaf.clone(),
                     report_metadata_0.clone(),
                     aggregation_param.clone(),
@@ -3039,7 +2997,7 @@ mod tests {
         let second_batch_got_batch_aggregations = datastore
             .run_tx(|tx| {
                 let (task, vdaf, report_metadata_2, aggregation_param) = (
-                    task.clone(),
+                    helper_task.clone(),
                     vdaf.clone(),
                     report_metadata_2.clone(),
                     aggregation_param.clone(),
@@ -3157,7 +3115,7 @@ mod tests {
 
         datastore
             .run_tx(|tx| {
-                let task = task.clone();
+                let task = helper_task.clone();
                 let (report_share_3, report_share_4, report_share_5) = (
                     report_share_3.clone(),
                     report_share_4.clone(),
@@ -3260,7 +3218,7 @@ mod tests {
         let merged_first_batch_aggregation = datastore
             .run_tx(|tx| {
                 let (task, vdaf, report_metadata_0, aggregation_param) = (
-                    task.clone(),
+                    helper_task.clone(),
                     vdaf.clone(),
                     report_metadata_0.clone(),
                     aggregation_param.clone(),
@@ -3347,7 +3305,7 @@ mod tests {
         let second_batch_got_batch_aggregations = datastore
             .run_tx(|tx| {
                 let (task, vdaf, report_metadata_2, aggregation_param) = (
-                    task.clone(),
+                    helper_task.clone(),
                     vdaf.clone(),
                     report_metadata_2.clone(),
                     aggregation_param.clone(),
@@ -3387,12 +3345,9 @@ mod tests {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Poplar1 { bits: 1 },
-            Role::Helper,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
+        let helper_task = task.helper_view().unwrap();
         let report_id = random();
         let aggregation_param = Poplar1AggregationParam::try_from_prefixes(Vec::from([
             IdpfInput::from_bools(&[false]),
@@ -3415,7 +3370,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let (task, aggregation_param, report_metadata, transcript) = (
-                    task.clone(),
+                    helper_task.clone(),
                     aggregation_param.clone(),
                     report_metadata.clone(),
                     transcript.clone(),
@@ -3501,12 +3456,9 @@ mod tests {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Poplar1 { bits: 1 },
-            Role::Helper,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
+        let helper_task = task.helper_view().unwrap();
         let vdaf = Poplar1::new_shake128(1);
         let report_id = random();
         let aggregation_param = Poplar1AggregationParam::try_from_prefixes(Vec::from([
@@ -3525,7 +3477,7 @@ mod tests {
         let helper_report_share = generate_helper_report_share::<Poplar1<XofShake128, 16>>(
             *task.id(),
             report_metadata.clone(),
-            task.current_hpke_key().config(),
+            helper_task.current_hpke_key().config(),
             &transcript.public_share,
             Vec::new(),
             &transcript.helper_input_share,
@@ -3535,7 +3487,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let (task, aggregation_param, report_metadata, transcript, helper_report_share) = (
-                    task.clone(),
+                    helper_task.clone(),
                     aggregation_param.clone(),
                     report_metadata.clone(),
                     transcript.clone(),
@@ -3671,12 +3623,9 @@ mod tests {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Poplar1 { bits: 1 },
-            Role::Helper,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
+        let helper_task = task.helper_view().unwrap();
         let report_id = random();
         let aggregation_param = Poplar1AggregationParam::try_from_prefixes(Vec::from([
             IdpfInput::from_bools(&[false]),
@@ -3696,7 +3645,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let (task, aggregation_param, report_metadata, transcript) = (
-                    task.clone(),
+                    helper_task.clone(),
                     aggregation_param.clone(),
                     report_metadata.clone(),
                     transcript.clone(),
@@ -3784,12 +3733,9 @@ mod tests {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Poplar1 { bits: 1 },
-            Role::Helper,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
+        let helper_task = task.helper_view().unwrap();
         let report_id_0 = random();
         let aggregation_param = Poplar1AggregationParam::try_from_prefixes(Vec::from([
             IdpfInput::from_bools(&[false]),
@@ -3827,7 +3773,7 @@ mod tests {
                     transcript_0,
                     transcript_1,
                 ) = (
-                    task.clone(),
+                    helper_task.clone(),
                     aggregation_param.clone(),
                     report_metadata_0.clone(),
                     report_metadata_1.clone(),
@@ -3956,8 +3902,8 @@ mod tests {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake).build();
+        let helper_task = task.helper_view().unwrap();
         let aggregation_job_id = random();
         let report_metadata = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
@@ -3967,7 +3913,7 @@ mod tests {
         // Setup datastore.
         datastore
             .run_tx(|tx| {
-                let (task, report_metadata) = (task.clone(), report_metadata.clone());
+                let (task, report_metadata) = (helper_task.clone(), report_metadata.clone());
                 Box::pin(async move {
                     tx.put_task(&task).await?;
                     tx.put_report_share(
@@ -4141,10 +4087,11 @@ mod tests {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
             .with_min_batch_size(1)
             .build();
-        datastore.put_task(&task).await.unwrap();
+        let leader_task = task.leader_view().unwrap();
+        datastore.put_task(&leader_task).await.unwrap();
 
         let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
@@ -4158,10 +4105,7 @@ mod tests {
             dummy_vdaf::AggregationParam::default().get_encoded(),
         );
 
-        let (header, value) = task
-            .collector_auth_token()
-            .unwrap()
-            .request_authentication();
+        let (header, value) = task.collector_auth_token().request_authentication();
         let mut test_conn = put(task.collection_job_uri(&collection_job_id).unwrap().path())
             .with_request_header(header, value)
             .with_request_header(
@@ -4222,7 +4166,7 @@ mod tests {
             .put_collection_job_with_auth_token(
                 &collection_job_id,
                 &req,
-                test_case.task.aggregator_auth_token(),
+                Some(test_case.task.aggregator_auth_token()),
             )
             .await;
 
@@ -4299,7 +4243,7 @@ mod tests {
         let mut test_conn = test_case
             .post_collection_job_with_auth_token(
                 &collection_job_id,
-                test_case.task.aggregator_auth_token(),
+                Some(test_case.task.aggregator_auth_token()),
             )
             .await;
 
@@ -4338,7 +4282,7 @@ mod tests {
         let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
 
         let batch_interval = TimeInterval::to_batch_identifier(
-            &test_case.task,
+            &test_case.task.leader_view().unwrap(),
             &(),
             &Time::from_seconds_since_epoch(0),
         )
@@ -4430,7 +4374,7 @@ mod tests {
                 let helper_aggregate_share_bytes = helper_aggregate_share.get_encoded();
                 Box::pin(async move {
                     let encrypted_helper_aggregate_share = hpke::seal(
-                        task.collector_hpke_config().unwrap(),
+                        task.collector_hpke_keypair().config(),
                         &HpkeApplicationInfo::new(
                             &Label::AggregateShare,
                             &Role::Helper,
@@ -4483,8 +4427,8 @@ mod tests {
         assert_eq!(collect_resp.interval(), &batch_interval);
 
         let decrypted_leader_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_config().unwrap(),
-            test_case.collector_hpke_keypair.private_key(),
+            test_case.task.collector_hpke_keypair().config(),
+            test_case.task.collector_hpke_keypair().private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
             collect_resp.leader_encrypted_aggregate_share(),
             &AggregateShareAad::new(
@@ -4502,8 +4446,8 @@ mod tests {
         );
 
         let decrypted_helper_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_config().unwrap(),
-            test_case.collector_hpke_keypair.private_key(),
+            test_case.task.collector_hpke_keypair().config(),
+            test_case.task.collector_hpke_keypair().private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
             collect_resp.helper_encrypted_aggregate_share(),
             &AggregateShareAad::new(
@@ -4530,7 +4474,6 @@ mod tests {
         let (header, value) = test_case
             .task
             .collector_auth_token()
-            .unwrap()
             .request_authentication();
         let test_conn = post(&format!(
             "/tasks/{}/collection_jobs/{no_such_collection_job_id}",
@@ -4696,7 +4639,6 @@ mod tests {
         let (header, value) = test_case
             .task
             .collector_auth_token()
-            .unwrap()
             .request_authentication();
 
         // Try to delete a collection job that doesn't exist
@@ -4747,9 +4689,9 @@ mod tests {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
-        datastore.put_task(&task).await.unwrap();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake).build();
+        let leader_task = task.leader_view().unwrap();
+        datastore.put_task(&leader_task).await.unwrap();
 
         let request = AggregateShareReq::new(
             BatchSelector::new_time_interval(
@@ -4760,10 +4702,7 @@ mod tests {
             ReportIdChecksum::default(),
         );
 
-        let (header, value) = task
-            .aggregator_auth_token()
-            .unwrap()
-            .request_authentication();
+        let (header, value) = task.aggregator_auth_token().request_authentication();
 
         let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
             .with_request_header(header, value)
@@ -4793,10 +4732,11 @@ mod tests {
 
         // Prepare parameters.
         const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(3600);
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper)
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
             .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
             .build();
-        datastore.put_task(&task).await.unwrap();
+        let helper_task = task.helper_view().unwrap();
+        datastore.put_task(&helper_task).await.unwrap();
 
         let request = AggregateShareReq::new(
             BatchSelector::new_time_interval(
@@ -4812,10 +4752,7 @@ mod tests {
             ReportIdChecksum::default(),
         );
 
-        let (header, value) = task
-            .aggregator_auth_token()
-            .unwrap()
-            .request_authentication();
+        let (header, value) = task.aggregator_auth_token().request_authentication();
 
         // Test that a request for an invalid batch fails. (Specifically, the batch interval is too
         // small.)
@@ -4869,14 +4806,13 @@ mod tests {
     async fn aggregate_share_request() {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
-        let collector_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper)
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
             .with_max_batch_query_count(1)
             .with_time_precision(Duration::from_seconds(500))
             .with_min_batch_size(10)
-            .with_collector_hpke_config(collector_hpke_keypair.config().clone())
             .build();
-        datastore.put_task(&task).await.unwrap();
+        let helper_task = task.helper_view().unwrap();
+        datastore.put_task(&helper_task).await.unwrap();
 
         // There are no batch aggregations in the datastore yet
         let request = AggregateShareReq::new(
@@ -4888,10 +4824,7 @@ mod tests {
             ReportIdChecksum::default(),
         );
 
-        let (header, value) = task
-            .aggregator_auth_token()
-            .unwrap()
-            .request_authentication();
+        let (header, value) = task.aggregator_auth_token().request_authentication();
 
         let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
             .with_request_header(header, value)
@@ -4917,7 +4850,7 @@ mod tests {
         // Put some batch aggregations in the DB.
         datastore
             .run_tx(|tx| {
-                let task = task.clone();
+                let task = helper_task.clone();
                 Box::pin(async move {
                     for aggregation_param in [
                         dummy_vdaf::AggregationParam(0),
@@ -5075,10 +5008,7 @@ mod tests {
             5,
             ReportIdChecksum::default(),
         );
-        let (header, value) = task
-            .aggregator_auth_token()
-            .unwrap()
-            .request_authentication();
+        let (header, value) = task.aggregator_auth_token().request_authentication();
         let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
             .with_request_header(header, value)
             .with_request_header(
@@ -5129,10 +5059,7 @@ mod tests {
                 ReportIdChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
             ),
         ] {
-            let (header, value) = task
-                .aggregator_auth_token()
-                .unwrap()
-                .request_authentication();
+            let (header, value) = task.aggregator_auth_token().request_authentication();
             let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
                 .with_request_header(header, value)
                 .with_request_header(
@@ -5195,10 +5122,7 @@ mod tests {
             // Request the aggregate share multiple times. If the request parameters don't change,
             // then there is no query count violation and all requests should succeed.
             for iteration in 0..3 {
-                let (header, value) = task
-                    .aggregator_auth_token()
-                    .unwrap()
-                    .request_authentication();
+                let (header, value) = task.aggregator_auth_token().request_authentication();
                 let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
                     .with_request_header(header, value)
                     .with_request_header(
@@ -5222,8 +5146,8 @@ mod tests {
                     decode_response_body(&mut test_conn).await;
 
                 let aggregate_share = hpke::open(
-                    collector_hpke_keypair.config(),
-                    collector_hpke_keypair.private_key(),
+                    task.collector_hpke_keypair().config(),
+                    task.collector_hpke_keypair().private_key(),
                     &HpkeApplicationInfo::new(
                         &Label::AggregateShare,
                         &Role::Helper,
@@ -5263,10 +5187,7 @@ mod tests {
             20,
             ReportIdChecksum::get_decoded(&[8 ^ 4 ^ 3 ^ 2; 32]).unwrap(),
         );
-        let (header, value) = task
-            .aggregator_auth_token()
-            .unwrap()
-            .request_authentication();
+        let (header, value) = task.aggregator_auth_token().request_authentication();
         let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
             .with_request_header(header, value)
             .with_request_header(
@@ -5315,10 +5236,7 @@ mod tests {
                 ReportIdChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
             ),
         ] {
-            let (header, value) = task
-                .aggregator_auth_token()
-                .unwrap()
-                .request_authentication();
+            let (header, value) = task.aggregator_auth_token().request_authentication();
             let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
                 .with_request_header(header, value)
                 .with_request_header(

@@ -16,9 +16,14 @@ pub struct Janus<'a> {
 impl<'a> Janus<'a> {
     /// Create and start a new hermetic Janus test instance in the given Docker network, configured
     /// to service the given task. The aggregator port is also exposed to the host.
-    pub async fn new(container_client: &'a Cli, network: &str, task: &Task) -> Janus<'a> {
+    pub async fn new(
+        container_client: &'a Cli,
+        network: &str,
+        task: &Task,
+        role: Role,
+    ) -> Janus<'a> {
         // Start the Janus interop aggregator container running.
-        let endpoint = match task.role() {
+        let endpoint = match role {
             Role::Leader => task.leader_aggregator_endpoint(),
             Role::Helper => task.helper_aggregator_endpoint(),
             _ => panic!("unexpected task role"),
@@ -36,7 +41,7 @@ impl<'a> Janus<'a> {
         await_http_server(port).await;
 
         // Write the given task to the Janus instance we started.
-        interop_api::aggregator_add_task(port, task.clone()).await;
+        interop_api::aggregator_add_task(port, task.clone(), role).await;
 
         Self { container }
     }

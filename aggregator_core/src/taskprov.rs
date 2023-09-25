@@ -1,11 +1,8 @@
-use crate::{
-    task::{self, Error, QueryType},
-    SecretBytes,
-};
+use crate::{task::Error, SecretBytes};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use janus_core::{auth_tokens::AuthenticationToken, vdaf::VdafInstance};
-use janus_messages::{Duration, HpkeConfig, Role, TaskId, Time};
+use janus_messages::{Duration, HpkeConfig, Role, TaskId};
 use rand::{distributions::Standard, prelude::Distribution};
 use ring::hkdf::{KeyType, Salt, HKDF_SHA256};
 use serde::{
@@ -263,77 +260,6 @@ struct VdafVerifyKeyLength(usize);
 impl KeyType for VdafVerifyKeyLength {
     fn len(&self) -> usize {
         self.0
-    }
-}
-
-/// Newtype for [`task::Task`], which omits certain fields that aren't required for taskprov tasks.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Task(pub(super) task::Task);
-
-impl Task {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        task_id: TaskId,
-        leader_aggregator_endpoint: Url,
-        helper_aggregator_endpoint: Url,
-        query_type: QueryType,
-        vdaf: VdafInstance,
-        role: Role,
-        vdaf_verify_key: SecretBytes,
-        max_batch_query_count: u64,
-        task_expiration: Option<Time>,
-        report_expiry_age: Option<Duration>,
-        min_batch_size: u64,
-        time_precision: Duration,
-        tolerable_clock_skew: Duration,
-    ) -> Result<Self, Error> {
-        let task = Self(task::Task::new_without_validation(
-            task_id,
-            leader_aggregator_endpoint,
-            helper_aggregator_endpoint,
-            query_type,
-            vdaf,
-            role,
-            vdaf_verify_key,
-            max_batch_query_count,
-            task_expiration,
-            report_expiry_age,
-            min_batch_size,
-            time_precision,
-            tolerable_clock_skew,
-            None,
-            None,
-            None,
-            Vec::new(),
-        ));
-        task.validate()?;
-        Ok(task)
-    }
-
-    pub(super) fn validate(&self) -> Result<(), Error> {
-        self.0.validate_common()?;
-        if let QueryType::FixedSize {
-            batch_time_window_size,
-            ..
-        } = self.0.query_type()
-        {
-            if batch_time_window_size.is_some() {
-                return Err(Error::InvalidParameter(
-                    "batch_time_window_size is not supported for taskprov",
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    pub fn task(&self) -> &task::Task {
-        &self.0
-    }
-}
-
-impl From<Task> for task::Task {
-    fn from(value: Task) -> Self {
-        value.0
     }
 }
 

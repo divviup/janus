@@ -10,7 +10,7 @@ use janus_aggregator_core::{
         Transaction,
     },
     query_type::AccumulableQueryType,
-    task::Task,
+    task::AggregatorTask,
 };
 use janus_core::time::Clock;
 use janus_messages::{
@@ -32,7 +32,7 @@ impl VdafOps {
     /// `report_aggregations` with the step `n+1` ping pong messages in `leader_aggregation_job`.
     pub(super) async fn step_aggregation_job<const SEED_SIZE: usize, C, Q, A>(
         tx: &Transaction<'_, C>,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         batch_aggregation_shard_count: u64,
         helper_aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
@@ -302,10 +302,7 @@ pub mod test_util {
         request: &AggregationJobContinueReq,
         handler: &impl Handler,
     ) -> TestConn {
-        let (header, value) = task
-            .aggregator_auth_token()
-            .unwrap()
-            .request_authentication();
+        let (header, value) = task.aggregator_auth_token().request_authentication();
         post(task.aggregation_job_uri(aggregation_job_id).unwrap().path())
             .with_request_header(header, value)
             .with_request_header(
@@ -439,12 +436,9 @@ mod tests {
         install_test_trace_subscriber();
 
         let aggregation_job_id = random();
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Poplar1 { bits: 1 },
-            Role::Helper,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
+        let helper_task = task.helper_view().unwrap();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let meter = noop_meter();
@@ -456,7 +450,7 @@ mod tests {
         .unwrap();
         let prepare_init_generator = PrepareInitGenerator::new(
             clock.clone(),
-            task.clone(),
+            helper_task.clone(),
             Poplar1::new_shake128(1),
             aggregation_param.clone(),
         );
@@ -467,7 +461,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let (task, aggregation_param, prepare_init, transcript) = (
-                    task.clone(),
+                    helper_task.clone(),
                     aggregation_param.clone(),
                     prepare_init.clone(),
                     transcript.clone(),

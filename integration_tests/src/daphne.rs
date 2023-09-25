@@ -20,8 +20,13 @@ impl<'a> Daphne<'a> {
 
     /// Create and start a new hermetic Daphne test instance in the given Docker network, configured
     /// to service the given task. The aggregator port is also exposed to the host.
-    pub async fn new(container_client: &'a Cli, network: &str, task: &Task) -> Daphne<'a> {
-        let (endpoint, image_name_and_tag) = match task.role() {
+    pub async fn new(
+        container_client: &'a Cli,
+        network: &str,
+        task: &Task,
+        role: Role,
+    ) -> Daphne<'a> {
+        let (endpoint, image_name_and_tag) = match role {
             Role::Leader => panic!("A leader container image for Daphne is not yet available"),
             Role::Helper => (
                 task.helper_aggregator_endpoint(),
@@ -55,7 +60,7 @@ impl<'a> Daphne<'a> {
         };
 
         // Write the given task to the Daphne instance we started.
-        interop_api::aggregator_add_task(port, task).await;
+        interop_api::aggregator_add_task(port, task, role).await;
 
         Self { daphne_container }
     }
