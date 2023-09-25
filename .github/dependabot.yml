@@ -8,6 +8,10 @@ updates:
       interval: "weekly"
     target-branch: "main"
     open-pull-requests-limit: 20
+    ignore:
+      - dependency-name: prio
+        update-types:
+          - version-update:semver-minor
     groups:
       serde:
         patterns:
@@ -63,6 +67,10 @@ updates:
       interval: "weekly"
     target-branch: "release/0.subscriber-01"
     open-pull-requests-limit: 20
+    ignore:
+      - dependency-name: prio
+        update-types:
+          - version-update:semver-minor
     groups:
       serde:
         patterns:
@@ -118,6 +126,10 @@ updates:
       interval: "weekly"
     target-branch: "release/0.5"
     open-pull-requests-limit: 20
+    ignore:
+      - dependency-name: prio
+        update-types:
+          - version-update:semver-minor
     groups:
       serde:
         patterns:
