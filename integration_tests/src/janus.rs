@@ -35,6 +35,7 @@ impl<'a> Janus<'a> {
         // Wait for the container to start listening on its port.
         await_http_server(port).await;
 
+        println!("starting {} aggregator", task.role());
         // Write the given task to the Janus instance we started.
         interop_api::aggregator_add_task(port, task.clone()).await;
 

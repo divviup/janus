@@ -868,16 +868,24 @@ pub mod test_util {
             aggregator_auth_token: AuthenticationToken,
         ) -> Self {
             let task = match self.task.role {
-                Role::Leader => Task {
-                    aggregator_auth_token: Some(aggregator_auth_token.clone()),
-                    ..self.task
-                },
-                Role::Helper => Task {
-                    aggregator_auth_token_hash: Some(AuthenticationTokenHash::from(
-                        &aggregator_auth_token,
-                    )),
-                    ..self.task
-                },
+                Role::Leader => {
+                    println!("plugging in auth token as leader");
+                    Task {
+                        aggregator_auth_token: Some(aggregator_auth_token.clone()),
+                        aggregator_auth_token_hash: None,
+                        ..self.task
+                    }
+                }
+                Role::Helper => {
+                    println!("plugging in auth token hash as helper");
+                    Task {
+                        aggregator_auth_token: None,
+                        aggregator_auth_token_hash: Some(AuthenticationTokenHash::from(
+                            &aggregator_auth_token,
+                        )),
+                        ..self.task
+                    }
+                }
                 _ => panic!("illegal role"),
             };
             Self {

@@ -52,6 +52,9 @@ pub fn test_task_builders(
     let helper_task = leader_task
         .clone()
         .with_role(Role::Helper)
+        // Reset the aggregator auth token after changing the role so that the
+        // token _hash_ will be stored.
+        .with_aggregator_auth_token(leader_task.aggregator_auth_token().clone())
         .with_collector_auth_token(None);
     let temporary_task = leader_task.clone().build();
     let task_parameters = TaskParameters {
