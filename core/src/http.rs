@@ -1,4 +1,4 @@
-use crate::task::AuthenticationToken;
+use crate::auth_tokens::AuthenticationToken;
 use anyhow::{anyhow, Context};
 use http_api_problem::{HttpApiProblem, PROBLEM_JSON_MEDIA_TYPE};
 use reqwest::{header::CONTENT_TYPE, Response};

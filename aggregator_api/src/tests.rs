@@ -23,6 +23,7 @@ use janus_aggregator_core::{
     SecretBytes,
 };
 use janus_core::{
+    auth_tokens::AuthenticationToken,
     hpke::{
         generate_hpke_config_and_private_key,
         test_util::{
@@ -31,12 +32,12 @@ use janus_core::{
         },
         HpkeKeypair, HpkePrivateKey,
     },
-    task::{AuthenticationToken, VdafInstance},
     test_util::{
         dummy_vdaf::{self, AggregationParam},
         install_test_trace_subscriber,
     },
     time::MockClock,
+    vdaf::VdafInstance,
 };
 use janus_messages::{
     query_type::TimeInterval, AggregationJobStep, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId,

@@ -8,7 +8,7 @@ use janus_aggregator_core::{
     datastore::test_util::ephemeral_datastore,
     task::{test_util::TaskBuilder, QueryType},
 };
-use janus_core::{task::VdafInstance, test_util::install_test_trace_subscriber, time::RealClock};
+use janus_core::{test_util::install_test_trace_subscriber, time::RealClock, vdaf::VdafInstance};
 use janus_messages::Role;
 use reqwest::Url;
 use serde_yaml::{Mapping, Value};

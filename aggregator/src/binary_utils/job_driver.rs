@@ -300,9 +300,9 @@ mod tests {
         test_util::noop_meter,
     };
     use janus_core::{
-        task::VdafInstance,
         test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},
         time::MockClock,
+        vdaf::VdafInstance,
         Runtime,
     };
     use janus_messages::{AggregationJobId, TaskId};

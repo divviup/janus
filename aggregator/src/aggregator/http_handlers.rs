@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{datastore::Datastore, instrumented};
 use janus_core::{
+    auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
     http::extract_bearer_token,
-    task::{AuthenticationToken, DAP_AUTH_HEADER},
     taskprov::TASKPROV_HEADER,
     time::Clock,
 };
@@ -679,6 +679,7 @@ mod tests {
         test_util::noop_meter,
     };
     use janus_core::{
+        auth_tokens::AuthenticationToken,
         hpke::{
             self,
             test_util::{
@@ -688,9 +689,9 @@ mod tests {
             HpkeApplicationInfo, HpkeKeypair, Label,
         },
         report_id::ReportIdChecksumExt,
-        task::{AuthenticationToken, VdafInstance, VERIFY_KEY_LENGTH},
         test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf},
         time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
+        vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
     };
     use janus_messages::{
         query_type::TimeInterval, AggregateShare as AggregateShareMessage, AggregateShareAad,

@@ -9,7 +9,7 @@ use janus_aggregator_core::{
     datastore::{self, Datastore},
     instrumented,
 };
-use janus_core::{hpke, http::extract_bearer_token, task::AuthenticationToken, time::Clock};
+use janus_core::{auth_tokens::AuthenticationToken, hpke, http::extract_bearer_token, time::Clock};
 use janus_messages::{HpkeConfigId, RoleParseError, TaskId};
 use routes::*;
 use std::{str::FromStr, sync::Arc};

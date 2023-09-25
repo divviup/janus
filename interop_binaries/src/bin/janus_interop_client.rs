@@ -7,8 +7,8 @@ use fixed::types::extra::{U15, U31, U63};
 use fixed::{FixedI16, FixedI32, FixedI64};
 use janus_client::ClientParameters;
 use janus_core::{
-    task::VdafInstance,
     time::{MockClock, RealClock},
+    vdaf::VdafInstance,
 };
 use janus_interop_binaries::{
     install_tracing_subscriber,

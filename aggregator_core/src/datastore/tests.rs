@@ -23,12 +23,12 @@ use janus_core::{
     hpke::{
         self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
     },
-    task::{VdafInstance, VERIFY_KEY_LENGTH},
     test_util::{
         dummy_vdaf::{self, AggregateShare, AggregationParam},
         install_test_trace_subscriber, run_vdaf,
     },
     time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
+    vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
 };
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},

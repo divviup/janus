@@ -11,7 +11,7 @@ use janus_aggregator_core::{
     task::{self, Task},
     SecretBytes,
 };
-use janus_core::{task::AuthenticationToken, time::RealClock};
+use janus_core::{auth_tokens::AuthenticationToken, time::RealClock};
 use janus_interop_binaries::{
     status::{ERROR, SUCCESS},
     AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole, HpkeConfigRegistry, Keyring,

@@ -4,9 +4,11 @@ use crate::SecretBytes;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use janus_core::{
+    auth_tokens::AuthenticationToken,
     hpke::{generate_hpke_config_and_private_key, HpkeKeypair},
-    task::{url_ensure_trailing_slash, AuthenticationToken, VdafInstance},
     time::TimeExt,
+    url_ensure_trailing_slash,
+    vdaf::VdafInstance,
 };
 use janus_messages::{
     taskprov, AggregationJobId, CollectionJobId, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId,
@@ -626,9 +628,10 @@ pub mod test_util {
         SecretBytes,
     };
     use janus_core::{
+        auth_tokens::AuthenticationToken,
         hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair},
-        task::{AuthenticationToken, VdafInstance, VERIFY_KEY_LENGTH},
         time::DurationExt,
+        vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
     };
     use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId, Time};
     use rand::{distributions::Standard, random, thread_rng, Rng};
@@ -874,10 +877,11 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use janus_core::{
+        auth_tokens::AuthenticationToken,
         hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair, HpkePrivateKey},
-        task::{AuthenticationToken, VERIFY_KEY_LENGTH},
         test_util::roundtrip_encoding,
         time::DurationExt,
+        vdaf::VERIFY_KEY_LENGTH,
     };
     use janus_messages::{
         Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,

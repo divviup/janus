@@ -20,16 +20,17 @@ use janus_aggregator_core::{
     test_util::noop_meter,
 };
 use janus_core::{
+    auth_tokens::AuthenticationToken,
     hpke::{
         self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo,
         HpkeKeypair, Label,
     },
-    task::{AuthenticationToken, VdafInstance},
     test_util::{
         dummy_vdaf::{self, AggregationParam},
         install_test_trace_subscriber,
     },
     time::{Clock, IntervalExt, MockClock},
+    vdaf::VdafInstance,
 };
 use janus_messages::{
     query_type::{FixedSize, QueryType as QueryTypeTrait, TimeInterval},

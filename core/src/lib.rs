@@ -2,16 +2,18 @@
 
 use std::future::Future;
 use tokio::task::JoinHandle;
+use url::Url;
 
+pub mod auth_tokens;
 pub mod hpke;
 pub mod http;
 pub mod report_id;
 pub mod retries;
-pub mod task;
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util;
 pub mod time;
+pub mod vdaf;
 
 /// This trait provides a mockable facade for [`tokio::task::spawn`].
 pub trait Runtime {
@@ -38,4 +40,16 @@ impl Runtime for TokioRuntime {
 
 pub mod taskprov {
     pub const TASKPROV_HEADER: &str = "dap-taskprov";
+}
+
+/// Returns the given [`Url`], possibly modified to end with a slash.
+///
+/// Aggregator endpoint URLs should end with a slash if they will be used with [`Url::join`],
+/// because that method will drop the last path component of the base URL if it does not end with a
+/// slash.
+pub fn url_ensure_trailing_slash(mut url: Url) -> Url {
+    if !url.as_str().ends_with('/') {
+        url.set_path(&format!("{}/", url.path()));
+    }
+    url
 }

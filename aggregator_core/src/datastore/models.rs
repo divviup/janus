@@ -5,10 +5,11 @@ use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::NaiveDateTime;
 use derivative::Derivative;
 use janus_core::{
+    auth_tokens::AuthenticationToken,
     hpke::HpkeKeypair,
     report_id::ReportIdChecksumExt,
-    task::{AuthenticationToken, VdafInstance},
     time::{DurationExt, IntervalExt, TimeExt},
+    vdaf::VdafInstance,
 };
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},

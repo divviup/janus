@@ -90,12 +90,12 @@ mod tests {
         task::{self, test_util::TaskBuilder},
     };
     use janus_core::{
-        task::VdafInstance,
         test_util::{
             dummy_vdaf::{self, AggregateShare, AggregationParam},
             install_test_trace_subscriber,
         },
         time::{Clock, IntervalExt, MockClock, TimeExt},
+        vdaf::VdafInstance,
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},

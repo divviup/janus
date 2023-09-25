@@ -1,8 +1,8 @@
 use common::{submit_measurements_and_verify_aggregate, test_task_builders};
 use janus_aggregator_core::task::{QueryType, Task};
 use janus_core::{
-    task::VdafInstance,
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
+    vdaf::VdafInstance,
 };
 use janus_integration_tests::{client::ClientBackend, daphne::Daphne, janus::Janus};
 use janus_interop_binaries::test_util::generate_network_name;
