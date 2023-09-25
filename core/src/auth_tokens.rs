@@ -2,8 +2,11 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use http::{header::AUTHORIZATION, HeaderValue};
 use rand::{distributions::Standard, prelude::Distribution};
-use ring::constant_time;
-use serde::{de::Error, Deserialize, Deserializer, Serialize};
+use ring::{
+    constant_time,
+    digest::{digest, SHA256, SHA256_OUTPUT_LEN},
+};
+use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 use std::str;
 
 /// HTTP header where auth tokens are provided in messages between participants.
@@ -291,9 +294,115 @@ impl Distribution<BearerToken> for Standard {
     }
 }
 
+/// The hash of an authentication token, which may be used to validate tokens in incoming requests
+/// but not to authenticate outgoing requests.
+#[derive(Clone, Derivative, Deserialize, Serialize, Eq)]
+#[derivative(Debug)]
+#[serde(tag = "type", content = "hash")]
+#[non_exhaustive]
+pub enum AuthenticationTokenHash {
+    /// A bearer token, presented as the value of the "Authorization" HTTP header as specified in
+    /// [RFC 6750 section 2.1][1].
+    ///
+    /// The token is not necessarily an OAuth token.
+    ///
+    /// [1]: https://datatracker.ietf.org/doc/html/rfc6750#section-2.1
+    Bearer(
+        #[derivative(Debug = "ignore")]
+        #[serde(
+            serialize_with = "AuthenticationTokenHash::serialize_contents",
+            deserialize_with = "AuthenticationTokenHash::deserialize_contents"
+        )]
+        [u8; SHA256_OUTPUT_LEN],
+    ),
+
+    /// Token presented as the value of the "DAP-Auth-Token" HTTP header. Conforms to
+    /// [draft-dcook-ppm-dap-interop-test-design-03][1], sections [4.3.3][2] and [4.4.2][3], and
+    /// [draft-ietf-dap-ppm-01 section 3.2][4].
+    ///
+    /// [1]: https://datatracker.ietf.org/doc/html/draft-dcook-ppm-dap-interop-test-design-03
+    /// [2]: https://datatracker.ietf.org/doc/html/draft-dcook-ppm-dap-interop-test-design-03#section-4.3.3
+    /// [3]: https://datatracker.ietf.org/doc/html/draft-dcook-ppm-dap-interop-test-design-03#section-4.4.2
+    /// [4]: https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-01#name-https-sender-authentication
+    DapAuth(
+        #[derivative(Debug = "ignore")]
+        #[serde(
+            serialize_with = "AuthenticationTokenHash::serialize_contents",
+            deserialize_with = "AuthenticationTokenHash::deserialize_contents"
+        )]
+        [u8; SHA256_OUTPUT_LEN],
+    ),
+}
+
+impl AuthenticationTokenHash {
+    /// Returns true if the incoming unhashed token matches this token hash, false otherwise.
+    pub fn validate(&self, incoming_token: &AuthenticationToken) -> bool {
+        &Self::from(incoming_token) == self
+    }
+
+    fn serialize_contents<S: Serializer>(
+        value: &[u8; SHA256_OUTPUT_LEN],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&URL_SAFE_NO_PAD.encode(value))
+    }
+
+    fn deserialize_contents<'de, D>(deserializer: D) -> Result<[u8; SHA256_OUTPUT_LEN], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let b64_digest: String = Deserialize::deserialize(deserializer)?;
+        let decoded = URL_SAFE_NO_PAD
+            .decode(b64_digest)
+            .map_err(D::Error::custom)?;
+
+        decoded
+            .try_into()
+            .map_err(|_| D::Error::custom("digest has wrong length"))
+    }
+}
+
+impl From<&AuthenticationToken> for AuthenticationTokenHash {
+    fn from(value: &AuthenticationToken) -> Self {
+        // unwrap safety: try_into is converting from &[u8] to [u8; SHA256_OUTPUT_LEN]. SHA256
+        // output will always be that length, so this conversion should never fail.
+        let digest = digest(&SHA256, value.as_ref()).as_ref().try_into().unwrap();
+
+        match value {
+            AuthenticationToken::Bearer(_) => Self::Bearer(digest),
+            AuthenticationToken::DapAuth(_) => Self::DapAuth(digest),
+        }
+    }
+}
+
+impl PartialEq for AuthenticationTokenHash {
+    fn eq(&self, other: &Self) -> bool {
+        let (self_digest, other_digest) = match (self, other) {
+            (Self::Bearer(self_digest), Self::Bearer(other_digest)) => (self_digest, other_digest),
+            (Self::DapAuth(self_digest), Self::DapAuth(other_digest)) => {
+                (self_digest, other_digest)
+            }
+            _ => return false,
+        };
+
+        // We attempt constant-time comparisons of the token data to mitigate timing attacks.
+        constant_time::verify_slices_are_equal(self_digest.as_ref(), other_digest.as_ref()).is_ok()
+    }
+}
+
+impl AsRef<[u8]> for AuthenticationTokenHash {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Bearer(inner) => inner.as_slice(),
+            Self::DapAuth(inner) => inner.as_slice(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::auth_tokens::AuthenticationToken;
+    use crate::auth_tokens::{AuthenticationToken, AuthenticationTokenHash};
+    use rand::random;
 
     #[test]
     fn valid_dap_auth_token() {
@@ -329,5 +438,47 @@ mod tests {
             .unwrap_err();
         serde_yaml::from_str::<AuthenticationToken>("{type: \"Bearer\", token: \"AAAA==AAA\"}")
             .unwrap_err();
+    }
+
+    #[rstest::rstest]
+    #[case::bearer(r#"{ type: "Bearer", hash: "MJOoBO_ysLEuG_lv2C37eEOf1Ngetsr-Ers0ZYj4vdQ" }"#)]
+    #[case::dap_auth(r#"{ type: "DapAuth", hash: "MJOoBO_ysLEuG_lv2C37eEOf1Ngetsr-Ers0ZYj4vdQ" }"#)]
+    #[test]
+    fn serde_aggregator_token_hash_valid(#[case] yaml: &str) {
+        serde_yaml::from_str::<AuthenticationTokenHash>(yaml).unwrap();
+    }
+
+    #[rstest::rstest]
+    #[case::bearer_token_invalid_encoding(r#"{ type: "Bearer", hash: "+" }"#)]
+    #[case::bearer_token_wrong_length(
+        r#"{ type: "Bearer", hash: "MJOoBO_ysLEuG_lv2C37eEOf1Ngetsr-Ers0ZYj4" }"#
+    )]
+    #[case::dap_auth_token_invalid_encoding(r#"{ type: "DapAuth", hash: "+" }"#)]
+    #[case::dap_auth_token_wrong_length(
+        r#"{ type: "DapAuth", hash: "MJOoBO_ysLEuG_lv2C37eEOf1Ngetsr-Ers0ZYj4" }"#
+    )]
+    #[test]
+    fn serde_aggregator_token_hash_invalid(#[case] yaml: &str) {
+        serde_yaml::from_str::<AuthenticationTokenHash>(yaml).unwrap_err();
+    }
+
+    #[test]
+    fn validate_token() {
+        let dap_auth_token_1 = AuthenticationToken::DapAuth(random());
+        let dap_auth_token_2 = AuthenticationToken::DapAuth(random());
+        let bearer_token_1 = AuthenticationToken::Bearer(random());
+        let bearer_token_2 = AuthenticationToken::Bearer(random());
+
+        assert_eq!(dap_auth_token_1, dap_auth_token_1);
+        assert_ne!(dap_auth_token_1, dap_auth_token_2);
+        assert_eq!(bearer_token_1, bearer_token_1);
+        assert_ne!(bearer_token_1, bearer_token_2);
+        assert_ne!(dap_auth_token_1, bearer_token_1);
+
+        assert!(AuthenticationTokenHash::from(&dap_auth_token_1).validate(&dap_auth_token_1));
+        assert!(!AuthenticationTokenHash::from(&dap_auth_token_1).validate(&dap_auth_token_2));
+        assert!(AuthenticationTokenHash::from(&bearer_token_1).validate(&bearer_token_1));
+        assert!(!AuthenticationTokenHash::from(&bearer_token_1).validate(&bearer_token_2));
+        assert!(!AuthenticationTokenHash::from(&dap_auth_token_1).validate(&bearer_token_1));
     }
 }

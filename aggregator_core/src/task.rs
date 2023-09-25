@@ -4,7 +4,7 @@ use crate::SecretBytes;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use janus_core::{
-    auth_tokens::AuthenticationToken,
+    auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     hpke::{generate_hpke_config_and_private_key, HpkeKeypair},
     time::TimeExt,
     url_ensure_trailing_slash,
@@ -401,22 +401,35 @@ impl Task {
         }
     }
 
-    /// Checks if the given aggregator authentication token is valid (i.e. matches with an
+    /// Checks if the given aggregator authentication token is valid (i.e. matches with the
     /// authentication token recognized by this task).
-    pub fn check_aggregator_auth_token(&self, auth_token: &AuthenticationToken) -> bool {
-        match self.aggregator_auth_token {
-            Some(ref t) => t == auth_token,
-            None => false,
-        }
+    pub fn check_aggregator_auth_token(
+        &self,
+        incoming_auth_token: Option<&AuthenticationToken>,
+    ) -> bool {
+        // TODO(#1509): leader should hold only an AuthenticationToken and refuse to use it for
+        // incoming token validation. Helper should hold only an AuthenticationTokenHash, making the
+        // AuthenticationTokenHash::from call here unnecessary.
+        self.aggregator_auth_token()
+            .map(AuthenticationTokenHash::from)
+            .zip(incoming_auth_token)
+            .map(|(own_token_hash, incoming_token)| own_token_hash.validate(incoming_token))
+            .unwrap_or(false)
     }
 
-    /// Checks if the given collector authentication token is valid (i.e. matches with an
+    /// Checks if the given collector authentication token is valid (i.e. matches with the
     /// authentication token recognized by this task).
-    pub fn check_collector_auth_token(&self, auth_token: &AuthenticationToken) -> bool {
-        match self.collector_auth_token {
-            Some(ref t) => t == auth_token,
-            None => false,
-        }
+    pub fn check_collector_auth_token(
+        &self,
+        incoming_auth_token: Option<&AuthenticationToken>,
+    ) -> bool {
+        // TODO(#1509): Leader should hold only an AuthenticaitonTokenHash, making the
+        // AuthenticationTokenHash::from call here unnecessary.
+        self.collector_auth_token()
+            .map(AuthenticationTokenHash::from)
+            .zip(incoming_auth_token)
+            .map(|(own_token_hash, incoming_token)| own_token_hash.validate(incoming_token))
+            .unwrap_or(false)
     }
 
     /// Returns the [`VerifyKey`] used by this aggregator to prepare report shares with other
