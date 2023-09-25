@@ -6,7 +6,7 @@ runs:
     - name: Ensure all migrations have the proper filename
       shell: bash
       run: |
-        REGEX='^(README.md)|([0-9]{14}_[a-z_]+\.(down|up)\.sql$)'
+        REGEX='^(README.md)|([0-9]{14}_[a-z0-9_]+\.(down|up)\.sql$)'
         INVALID_FILES=$(find db/ -mindepth 1 -printf "%f\n" | grep -Pv "$REGEX" || true)
 
         if [ -n "$INVALID_FILES" ]; then
