@@ -43,6 +43,11 @@ updates:
     schedule:
       interval: "weekly"
     target-branch: "main"
+    groups:
+      docker:
+        patterns:
+          - docker/*
+          - crazymax/ghaction-github-runtime
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
@@ -93,6 +98,11 @@ updates:
     schedule:
       interval: "weekly"
     target-branch: "release/0.subscriber-01"
+    groups:
+      docker:
+        patterns:
+          - docker/*
+          - crazymax/ghaction-github-runtime
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
@@ -143,6 +153,11 @@ updates:
     schedule:
       interval: "weekly"
     target-branch: "release/0.5"
+    groups:
+      docker:
+        patterns:
+          - docker/*
+          - crazymax/ghaction-github-runtime
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
