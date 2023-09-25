@@ -16,9 +16,10 @@ use crate::{
 use chrono::NaiveDateTime;
 use futures::future::try_join_all;
 use janus_core::{
+    auth_tokens::AuthenticationToken,
     hpke::{HpkeKeypair, HpkePrivateKey},
-    task::{AuthenticationToken, VdafInstance},
     time::{Clock, TimeExt},
+    vdaf::VdafInstance,
 };
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},

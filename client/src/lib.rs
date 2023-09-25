@@ -9,8 +9,8 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
     http::response_to_problem_details,
     retries::{http_request_exponential_backoff, retry_http_request},
-    task::url_ensure_trailing_slash,
     time::{Clock, TimeExt},
+    url_ensure_trailing_slash,
 };
 use janus_messages::{
     Duration, HpkeConfig, HpkeConfigList, InputShareAad, PlaintextInputShare, Report, ReportId,

@@ -545,13 +545,13 @@ mod tests {
         test_util::noop_meter,
     };
     use janus_core::{
-        task::VdafInstance,
         test_util::{
             dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber,
             runtime::TestRuntimeManager,
         },
         time::{Clock, IntervalExt, MockClock, TimeExt},
+        vdaf::VdafInstance,
         Runtime,
     };
     use janus_messages::{

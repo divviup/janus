@@ -931,9 +931,9 @@ mod tests {
             self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
         report_id::ReportIdChecksumExt,
-        task::{VdafInstance, VERIFY_KEY_LENGTH},
         test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
         time::{Clock, IntervalExt, MockClock, TimeExt},
+        vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
         Runtime,
     };
     use janus_messages::{

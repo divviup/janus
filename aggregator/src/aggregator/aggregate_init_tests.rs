@@ -17,9 +17,10 @@ use janus_aggregator_core::{
     test_util::noop_meter,
 };
 use janus_core::{
-    task::{AuthenticationToken, VdafInstance, DAP_AUTH_HEADER},
+    auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
     test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf, VdafTranscript},
     time::{Clock, MockClock, TimeExt as _},
+    vdaf::VdafInstance,
 };
 use janus_messages::{
     query_type::TimeInterval, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,

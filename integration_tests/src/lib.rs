@@ -2,7 +2,7 @@
 
 use janus_aggregator_core::task::QueryType;
 use janus_collector::AuthenticationToken;
-use janus_core::{hpke::HpkePrivateKey, task::VdafInstance};
+use janus_core::{hpke::HpkePrivateKey, vdaf::VdafInstance};
 use janus_messages::{Duration, HpkeConfig, TaskId};
 use url::Url;
 

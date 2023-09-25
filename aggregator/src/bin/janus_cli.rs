@@ -467,9 +467,9 @@ mod tests {
         task::{test_util::TaskBuilder, QueryType, Task},
     };
     use janus_core::{
-        task::VdafInstance,
         test_util::{kubernetes, roundtrip_encoding},
         time::RealClock,
+        vdaf::VdafInstance,
     };
     use janus_messages::{Role, TaskId};
     use ring::aead::{UnboundKey, AES_128_GCM};

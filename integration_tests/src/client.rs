@@ -2,7 +2,7 @@ use crate::TaskParameters;
 use anyhow::anyhow;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_client::{aggregator_hpke_config, default_http_client, Client, ClientParameters};
-use janus_core::{task::VdafInstance, time::RealClock};
+use janus_core::{time::RealClock, vdaf::VdafInstance};
 use janus_interop_binaries::ContainerLogsDropGuard;
 use janus_messages::{Duration, Role, TaskId};
 use prio::{

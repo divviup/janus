@@ -11,7 +11,7 @@ use janus_aggregator::{
 };
 use janus_aggregator_api::{self, aggregator_api_handler};
 use janus_aggregator_core::datastore::Datastore;
-use janus_core::{task::AuthenticationToken, time::RealClock};
+use janus_core::{auth_tokens::AuthenticationToken, time::RealClock};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use std::{
     future::{ready, Future},

@@ -30,10 +30,10 @@ use janus_core::{
         HpkeKeypair, Label,
     },
     report_id::ReportIdChecksumExt,
-    task::VERIFY_KEY_LENGTH,
     taskprov::TASKPROV_HEADER,
     test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
     time::{Clock, DurationExt, MockClock, TimeExt},
+    vdaf::VERIFY_KEY_LENGTH,
 };
 use janus_messages::{
     codec::{Decode, Encode},

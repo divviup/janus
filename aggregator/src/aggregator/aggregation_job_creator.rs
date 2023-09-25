@@ -12,8 +12,8 @@ use janus_aggregator_core::{
     task::{self, Task},
 };
 use janus_core::{
-    task::{VdafInstance, VERIFY_KEY_LENGTH},
     time::{Clock, DurationExt as _, TimeExt as _},
+    vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
 };
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
@@ -706,9 +706,9 @@ mod tests {
         test_util::noop_meter,
     };
     use janus_core::{
-        task::{VdafInstance, VERIFY_KEY_LENGTH},
         test_util::{dummy_vdaf, install_test_trace_subscriber},
         time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
+        vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
     };
     use janus_messages::{
         codec::ParameterizedDecode,

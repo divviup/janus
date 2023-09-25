@@ -397,9 +397,9 @@ mod tests {
         test_util::noop_meter,
     };
     use janus_core::{
-        task::{VdafInstance, VERIFY_KEY_LENGTH},
         test_util::install_test_trace_subscriber,
         time::{IntervalExt, MockClock},
+        vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
     };
     use janus_messages::{
         query_type::TimeInterval, AggregationJobContinueReq, AggregationJobId, AggregationJobResp,

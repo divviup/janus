@@ -2,9 +2,9 @@ use backoff::{backoff::Backoff, ExponentialBackoffBuilder};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use futures::future::join_all;
 use janus_core::{
-    task::VERIFY_KEY_LENGTH,
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
     time::{Clock, RealClock, TimeExt},
+    vdaf::VERIFY_KEY_LENGTH,
 };
 use janus_interop_binaries::{
     test_util::{await_ready_ok, generate_network_name, generate_unique_name},

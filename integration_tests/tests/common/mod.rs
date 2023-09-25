@@ -5,8 +5,8 @@ use janus_collector::{Collection, Collector, CollectorParameters};
 use janus_core::{
     hpke::test_util::generate_test_hpke_config_and_private_key,
     retries::test_http_request_exponential_backoff,
-    task::VdafInstance,
     time::{Clock, RealClock, TimeExt},
+    vdaf::VdafInstance,
 };
 use janus_integration_tests::{
     client::{ClientBackend, ClientImplementation, InteropClientEncoding},

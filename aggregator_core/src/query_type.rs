@@ -475,7 +475,7 @@ mod tests {
         query_type::CollectableQueryType,
         task::{test_util::TaskBuilder, QueryType},
     };
-    use janus_core::task::VdafInstance;
+    use janus_core::vdaf::VdafInstance;
     use janus_messages::{query_type::TimeInterval, Duration, Interval, Role, Time};
 
     #[test]

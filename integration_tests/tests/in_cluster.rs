@@ -6,12 +6,12 @@ use divviup_client::{
 };
 use janus_aggregator_core::task::QueryType;
 use janus_core::{
-    task::AuthenticationToken,
-    task::VdafInstance,
+    auth_tokens::AuthenticationToken,
     test_util::{
         install_test_trace_subscriber,
         kubernetes::{Cluster, PortForward},
     },
+    vdaf::VdafInstance,
 };
 use janus_integration_tests::{client::ClientBackend, TaskParameters};
 use janus_messages::TaskId;
