@@ -20,7 +20,7 @@ hex = "0.4"
 num_enum = "0.7.0"
 # We can't pull prio in from the workspace because that would enable default features, and we do not
 # want prio/crypto-dependencies
-prio = { version = "0.15.1", default-features = false, features = ["multithreaded", "experimental"] }
+prio = { version = "0.15.2", default-features = false, features = ["multithreaded", "experimental"] }
 rand = "0.8"
 serde.workspace = true
 thiserror.workspace = true

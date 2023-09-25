@@ -1840,7 +1840,7 @@ dependencies = [
  "opentelemetry-semantic-conventions",
  "postgres-protocol",
  "postgres-types",
- "prio 0.15.1",
+ "prio 0.15.2",
  "prometheus",
  "rand",
  "regex",
@@ -1938,7 +1938,7 @@ dependencies = [
  "opentelemetry",
  "postgres-protocol",
  "postgres-types",
- "prio 0.15.1",
+ "prio 0.15.2",
  "rand",
  "regex",
  "reqwest",
@@ -1985,7 +1985,7 @@ dependencies = [
  "janus_core",
  "janus_messages 0.6.0-prerelease-1",
  "mockito",
- "prio 0.15.1",
+ "prio 0.15.2",
  "rand",
  "reqwest",
  "thiserror",
@@ -2011,7 +2011,7 @@ dependencies = [
  "janus_core",
  "janus_messages 0.6.0-prerelease-1",
  "mockito",
- "prio 0.15.1",
+ "prio 0.15.2",
  "rand",
  "reqwest",
  "retry-after",
@@ -2042,7 +2042,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "mockito",
- "prio 0.15.1",
+ "prio 0.15.2",
  "rand",
  "reqwest",
  "ring",
@@ -2085,7 +2085,7 @@ dependencies = [
  "janus_messages 0.6.0-prerelease-1",
  "k8s-openapi",
  "kube",
- "prio 0.15.1",
+ "prio 0.15.2",
  "rand",
  "reqwest",
  "serde",
@@ -2118,7 +2118,7 @@ dependencies = [
  "janus_interop_binaries",
  "janus_messages 0.6.0-prerelease-1",
  "opentelemetry",
- "prio 0.15.1",
+ "prio 0.15.2",
  "rand",
  "regex",
  "reqwest",
@@ -2167,7 +2167,7 @@ dependencies = [
  "derivative",
  "hex",
  "num_enum",
- "prio 0.15.1",
+ "prio 0.15.2",
  "rand",
  "serde",
  "serde_test",
@@ -2189,7 +2189,7 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_messages 0.6.0-prerelease-1",
- "prio 0.15.1",
+ "prio 0.15.2",
  "rand",
  "reqwest",
  "serde_json",
@@ -2560,6 +2560,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
+ "serde",
 ]
 
 [[package]]
@@ -3020,9 +3021,9 @@ dependencies = [
 
 [[package]]
 name = "prio"
-version = "0.15.1"
+version = "0.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2e546dc580118e2120309c8aa7bb0da8deabd4b848289c486e9429a27c05594"
+checksum = "06023d4cf59f8c136ac9a11affa42d25f1ecf251a5065585be0b9d7a07c01217"
 dependencies = [
  "aes",
  "bitvec",
