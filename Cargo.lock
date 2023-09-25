@@ -1094,9 +1094,9 @@ dependencies = [
 
 [[package]]
 name = "fiat-crypto"
-version = "0.1.20"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e825f6987101665dea6ec934c09ec6d721de7bc1bf92248e1d5810c8cd636b77"
+checksum = "d0870c84016d4b481be5c9f323c24f65e31e901ae618f0e80f4308fb00de1d2d"
 
 [[package]]
 name = "filetime"
@@ -2956,9 +2956,9 @@ checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
 
 [[package]]
 name = "prio"
-version = "0.12.2"
+version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9028a8aba9ba6b647c6d6931c20473d1119079a68d9898c07a488c5180dccb58"
+checksum = "56d6fbe33c4d999c3ba5e5f2673cfeadffd2c8e1ffd58ab67a3cf06cd576d834"
 dependencies = [
  "aes",
  "base64 0.21.4",
