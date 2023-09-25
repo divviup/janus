@@ -606,7 +606,7 @@ mod tests {
             test_util::{generate_test_hpke_config_and_private_key, SAMPLE_DIVVIUP_HPKE_CONFIG},
             DivviUpHpkeConfig, HpkeKeypair,
         },
-        task::TokenInner,
+        task::{BearerToken, DapAuthToken},
     };
     use janus_messages::{BatchId, TaskId};
     use prio::codec::Encode;
@@ -1054,8 +1054,8 @@ mod tests {
             "--vdaf=count".to_string(),
         ]);
 
-        let dap_auth_token: TokenInner = random();
-        let bearer_token: TokenInner = random();
+        let dap_auth_token: DapAuthToken = random();
+        let bearer_token: BearerToken = random();
 
         let dap_auth_token_argument = format!("--dap-auth-token={}", dap_auth_token.as_str());
         let authorization_bearer_token_argument =
