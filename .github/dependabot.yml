@@ -48,6 +48,8 @@ updates:
     schedule:
       interval: "weekly"
     target-branch: "main"
+    ignore:
+      - dependency-name: "postgres"
 
   # Manage dependencies on the `release/0.subscriber-01` branch
   - package-ecosystem: "cargo"
@@ -96,6 +98,8 @@ updates:
     schedule:
       interval: "weekly"
     target-branch: "release/0.subscriber-01"
+    ignore:
+      - dependency-name: "postgres"
 
   # Manage dependencies on the `release/0.5` branch
   - package-ecosystem: "cargo"
@@ -144,3 +148,5 @@ updates:
     schedule:
       interval: "weekly"
     target-branch: "release/0.5"
+    ignore:
+      - dependency-name: "postgres"
