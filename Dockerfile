@@ -1,4 +1,4 @@
-FROM rust:1.72.0-alpine AS chef
+FROM rust:1.72.1-alpine AS chef
 RUN apk add --no-cache libc-dev
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 RUN cargo install cargo-chef --version 0.1.60 && \
