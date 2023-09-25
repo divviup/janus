@@ -2044,6 +2044,7 @@ dependencies = [
  "mockito",
  "prio 0.15.2",
  "rand",
+ "regex",
  "reqwest",
  "ring",
  "rstest",

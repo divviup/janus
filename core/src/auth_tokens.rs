@@ -2,12 +2,13 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use http::{header::AUTHORIZATION, HeaderValue};
 use rand::{distributions::Standard, prelude::Distribution};
+use regex::Regex;
 use ring::{
     constant_time,
     digest::{digest, SHA256, SHA256_OUTPUT_LEN},
 };
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
-use std::str;
+use std::{str, sync::OnceLock};
 
 /// HTTP header where auth tokens are provided in messages between participants.
 pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
@@ -204,36 +205,15 @@ impl BearerToken {
     /// Validate that a bearer token value matches the format in
     /// https://datatracker.ietf.org/doc/html/rfc6750#section-2.1.
     fn validate(value: &str) -> Result<(), anyhow::Error> {
-        let mut iter = value.chars();
-        let mut any_non_equals = false;
-        // First loop: consume "normal" characters, stop when we see an equals sign for padding or
-        // reach the end of the input.
-        for c in &mut iter {
-            match c {
-                'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '.' | '_' | '~' | '+' | '/' => {
-                    any_non_equals = true;
-                }
-                '=' => {
-                    if !any_non_equals {
-                        return Err(anyhow::anyhow!("bearer token may not start with '='"));
-                    }
-                    break;
-                }
-                _ => return Err(anyhow::anyhow!("bearer token may not contain '{c}'")),
-            }
+        static REGEX: OnceLock<Regex> = OnceLock::new();
+
+        let regex = REGEX.get_or_init(|| Regex::new("^[-A-Za-z0-9._~+/]+=*$").unwrap());
+
+        if regex.is_match(value) {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("bearer token has invalid format"))
         }
-        // Second loop: consume any further padding characters, if present.
-        for c in &mut iter {
-            match c {
-                '=' => {}
-                _ => {
-                    return Err(anyhow::anyhow!(
-                        "bearer token may only contain '=' at the end"
-                    ))
-                }
-            }
-        }
-        Ok(())
     }
 }
 
