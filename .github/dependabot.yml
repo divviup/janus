@@ -8,6 +8,10 @@ updates:
       interval: "weekly"
     target-branch: "main"
     open-pull-requests-limit: 20
+    ignore:
+      - dependency-name: prio
+        update-types:
+          - version-update:semver-minor
     groups:
       serde:
         patterns:
@@ -43,11 +47,18 @@ updates:
     schedule:
       interval: "weekly"
     target-branch: "main"
+    groups:
+      docker:
+        patterns:
+          - docker/*
+          - crazymax/ghaction-github-runtime
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
     target-branch: "main"
+    ignore:
+      - dependency-name: "postgres"
 
   # Manage dependencies on the `release/0.subscriber-01` branch
   - package-ecosystem: "cargo"
@@ -56,6 +67,10 @@ updates:
       interval: "weekly"
     target-branch: "release/0.subscriber-01"
     open-pull-requests-limit: 20
+    ignore:
+      - dependency-name: prio
+        update-types:
+          - version-update:semver-minor
     groups:
       serde:
         patterns:
@@ -91,11 +106,18 @@ updates:
     schedule:
       interval: "weekly"
     target-branch: "release/0.subscriber-01"
+    groups:
+      docker:
+        patterns:
+          - docker/*
+          - crazymax/ghaction-github-runtime
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
     target-branch: "release/0.subscriber-01"
+    ignore:
+      - dependency-name: "postgres"
 
   # Manage dependencies on the `release/0.5` branch
   - package-ecosystem: "cargo"
@@ -104,6 +126,10 @@ updates:
       interval: "weekly"
     target-branch: "release/0.5"
     open-pull-requests-limit: 20
+    ignore:
+      - dependency-name: prio
+        update-types:
+          - version-update:semver-minor
     groups:
       serde:
         patterns:
@@ -139,8 +165,15 @@ updates:
     schedule:
       interval: "weekly"
     target-branch: "release/0.5"
+    groups:
+      docker:
+        patterns:
+          - docker/*
+          - crazymax/ghaction-github-runtime
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
     target-branch: "release/0.5"
+    ignore:
+      - dependency-name: "postgres"
