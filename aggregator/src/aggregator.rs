@@ -585,7 +585,7 @@ impl<C: Clock> Aggregator<C> {
     }
 
     /// Opts in or out of a taskprov task.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self, aggregator_auth_token), err)]
     async fn taskprov_opt_in(
         &self,
         peer_role: &Role,
@@ -680,7 +680,7 @@ impl<C: Clock> Aggregator<C> {
     /// Validate and authorize a taskprov request. Returns values necessary for determining whether
     /// we can opt into the task. This function might return an opt-out error for conditions that
     /// are relevant for all DAP workflows (e.g. task expiration).
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self, aggregator_auth_token), err)]
     async fn taskprov_authorize_request(
         &self,
         peer_role: &Role,
