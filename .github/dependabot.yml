@@ -38,6 +38,10 @@ updates:
         patterns:
           - tokio-postgres
           - postgres-*
+      deadpool:
+        patterns:
+          - deadpool
+          - deadpool-*
       error-handling:
         patterns:
           - thiserror
@@ -97,6 +101,10 @@ updates:
         patterns:
           - tokio-postgres
           - postgres-*
+      deadpool:
+        patterns:
+          - deadpool
+          - deadpool-*
       error-handling:
         patterns:
           - thiserror
@@ -156,6 +164,10 @@ updates:
         patterns:
           - tokio-postgres
           - postgres-*
+      deadpool:
+        patterns:
+          - deadpool
+          - deadpool-*
       error-handling:
         patterns:
           - thiserror
