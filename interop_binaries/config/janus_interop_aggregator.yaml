@@ -7,11 +7,3 @@ health_check_listen_address: 0.0.0.0:8000
 logging_config:
   force_json_output: true
 listen_address: 0.0.0.0:8080
-taskprov_config:
-  collector_hpke_config:
-    id: 183
-    kem_id: X25519HkdfSha256
-    kdf_id: HkdfSha256
-    aead_id: Aes128Gcm
-    public_key: 4qiv6IY5jrjCV3xbaQXULmPIpvoIml1oJmeXm-yOuAo
-  tolerable_clock_skew: 60

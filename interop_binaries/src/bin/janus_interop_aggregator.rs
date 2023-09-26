@@ -5,7 +5,7 @@ use janus_aggregator::{
     aggregator::{self, http_handlers::aggregator_handler},
     binary_utils::{janus_main, BinaryOptions, CommonBinaryOptions},
     cache::GlobalHpkeKeypairCache,
-    config::{BinaryConfig, CommonConfig, TaskprovConfig},
+    config::{BinaryConfig, CommonConfig},
 };
 use janus_aggregator_core::{
     datastore::{models::HpkeKeyState, Datastore},
@@ -281,8 +281,6 @@ struct Config {
     /// Path prefix, e.g. `/dap/`, to serve DAP from.
     #[serde(default = "default_dap_serving_prefix")]
     dap_serving_prefix: String,
-
-    taskprov_config: TaskprovConfig,
 }
 
 impl BinaryConfig for Config {
