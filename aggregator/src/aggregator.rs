@@ -601,10 +601,10 @@ impl<C: Clock> Aggregator<C> {
             .iter()
             .map(|url| url.try_into())
             .collect::<Result<Vec<Url>, _>>()?;
-        if aggregator_urls.len() < 2 {
+        if aggregator_urls.len() != 2 {
             return Err(Error::UnrecognizedMessage(
                 Some(*task_id),
-                "taskprov configuration is missing one or both aggregators",
+                "taskprov configuration must contain exactly 2 aggregators",
             ));
         }
 
