@@ -40,8 +40,8 @@ bytes = "1.5.0"
 chrono.workspace = true
 clap = { version = "4.4.4", features = ["derive", "env"] }
 console-subscriber = { version = "0.1.10", optional = true }
-deadpool = { version = "0.9.5", features = ["rt_tokio_1"] }
-deadpool-postgres = "0.10.5"
+deadpool = { version = "0.10.0", features = ["rt_tokio_1"] }
+deadpool-postgres = "0.11.0"
 derivative = "2.2.0"
 futures = "0.3.28"
 fixed = { version = "1.23", optional = true }
