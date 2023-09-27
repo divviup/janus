@@ -20,7 +20,7 @@ homepage = "https://divviup.org"
 license = "MPL-2.0"
 repository = "https://github.com/divviup/janus"
 rust-version = "1.70.0"
-version = "0.6.0-prerelease-1"
+version = "0.6.0-prerelease-2"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -30,16 +30,16 @@ base64 = "0.21.3"
 # https://docs.rs/chrono/latest/chrono/#duration
 chrono = { version = "0.4", default-features = false }
 itertools = "0.10"
-janus_aggregator = { version = "0.6.0-prerelease-1", path = "aggregator" }
-janus_aggregator_api = { version = "0.6.0-prerelease-1", path = "aggregator_api" }
-janus_aggregator_core = { version = "0.6.0-prerelease-1", path = "aggregator_core" }
-janus_build_script_utils = { version = "0.6.0-prerelease-1", path = "build_script_utils" }
-janus_client = { version = "0.6.0-prerelease-1", path = "client" }
-janus_collector = { version = "0.6.0-prerelease-1", path = "collector" }
-janus_core = { version = "0.6.0-prerelease-1", path = "core" }
-janus_integration_tests = { version = "0.6.0-prerelease-1", path = "integration_tests" }
-janus_interop_binaries = { version = "0.6.0-prerelease-1", path = "interop_binaries" }
-janus_messages = { version = "0.6.0-prerelease-1", path = "messages" }
+janus_aggregator = { version = "0.6.0-prerelease-2", path = "aggregator" }
+janus_aggregator_api = { version = "0.6.0-prerelease-2", path = "aggregator_api" }
+janus_aggregator_core = { version = "0.6.0-prerelease-2", path = "aggregator_core" }
+janus_build_script_utils = { version = "0.6.0-prerelease-2", path = "build_script_utils" }
+janus_client = { version = "0.6.0-prerelease-2", path = "client" }
+janus_collector = { version = "0.6.0-prerelease-2", path = "collector" }
+janus_core = { version = "0.6.0-prerelease-2", path = "core" }
+janus_integration_tests = { version = "0.6.0-prerelease-2", path = "integration_tests" }
+janus_interop_binaries = { version = "0.6.0-prerelease-2", path = "interop_binaries" }
+janus_messages = { version = "0.6.0-prerelease-2", path = "messages" }
 k8s-openapi = { version = "0.18.0", features = ["v1_24"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
 kube = { version = "0.82.2", default-features = false, features = ["client", "rustls-tls"] }
 opentelemetry = { version = "0.20", features = ["metrics"] }
