@@ -134,11 +134,10 @@ impl ClientParameters {
 pub async fn aggregator_hpke_config(
     client_parameters: &ClientParameters,
     aggregator_role: &Role,
-    task_id: &TaskId,
     http_client: &reqwest::Client,
 ) -> Result<HpkeConfig, Error> {
     let mut request_url = client_parameters.hpke_config_endpoint(aggregator_role)?;
-    request_url.set_query(Some(&format!("task_id={task_id}")));
+    request_url.set_query(Some(&format!("task_id={}", client_parameters.task_id)));
     let hpke_config_response = retry_http_request(
         client_parameters.http_request_retry_parameters.clone(),
         || async { http_client.get(request_url.clone()).send().await },
