@@ -216,6 +216,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
 }
 
 pub async fn submit_measurements_and_verify_aggregate(
+    test_name: &str,
     task_parameters: &TaskParameters,
     (leader_port, helper_port): (u16, u16),
     client_backend: &ClientBackend<'_>,
@@ -242,7 +243,12 @@ pub async fn submit_measurements_and_verify_aggregate(
             };
 
             let client_implementation = client_backend
-                .build(task_parameters, (leader_port, helper_port), vdaf.clone())
+                .build(
+                    test_name,
+                    task_parameters,
+                    (leader_port, helper_port),
+                    vdaf.clone(),
+                )
                 .await
                 .unwrap();
 
@@ -269,7 +275,12 @@ pub async fn submit_measurements_and_verify_aggregate(
             };
 
             let client_implementation = client_backend
-                .build(task_parameters, (leader_port, helper_port), vdaf.clone())
+                .build(
+                    test_name,
+                    task_parameters,
+                    (leader_port, helper_port),
+                    vdaf.clone(),
+                )
                 .await
                 .unwrap();
 
@@ -312,7 +323,12 @@ pub async fn submit_measurements_and_verify_aggregate(
             };
 
             let client_implementation = client_backend
-                .build(task_parameters, (leader_port, helper_port), vdaf.clone())
+                .build(
+                    test_name,
+                    task_parameters,
+                    (leader_port, helper_port),
+                    vdaf.clone(),
+                )
                 .await
                 .unwrap();
 
@@ -346,7 +362,12 @@ pub async fn submit_measurements_and_verify_aggregate(
             };
 
             let client_implementation = client_backend
-                .build(task_parameters, (leader_port, helper_port), vdaf.clone())
+                .build(
+                    test_name,
+                    task_parameters,
+                    (leader_port, helper_port),
+                    vdaf.clone(),
+                )
                 .await
                 .unwrap();
 
@@ -388,7 +409,12 @@ pub async fn submit_measurements_and_verify_aggregate(
             };
 
             let client_implementation = client_backend
-                .build(task_parameters, (leader_port, helper_port), vdaf.clone())
+                .build(
+                    test_name,
+                    task_parameters,
+                    (leader_port, helper_port),
+                    vdaf.clone(),
+                )
                 .await
                 .unwrap();
 

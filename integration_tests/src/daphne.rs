@@ -3,7 +3,7 @@
 use crate::interop_api;
 use janus_aggregator_core::task::{test_util::TaskBuilder, Task};
 use janus_interop_binaries::{
-    test_util::await_http_server, ContainerLogsDropGuard, ContainerLogsSource,
+    get_rust_log_level, test_util::await_http_server, ContainerLogsDropGuard, ContainerLogsSource,
 };
 use janus_messages::{Role, Time};
 use testcontainers::{clients::Cli, images::generic::GenericImage, RunnableImage};
@@ -20,7 +20,12 @@ impl<'a> Daphne<'a> {
 
     /// Create and start a new hermetic Daphne test instance in the given Docker network, configured
     /// to service the given task. The aggregator port is also exposed to the host.
-    pub async fn new(container_client: &'a Cli, network: &str, task: &Task) -> Daphne<'a> {
+    pub async fn new(
+        test_name: &str,
+        container_client: &'a Cli,
+        network: &str,
+        task: &Task,
+    ) -> Daphne<'a> {
         let (endpoint, image_name_and_tag) = match task.role() {
             Role::Leader => panic!("A leader container image for Daphne is not yet available"),
             Role::Helper => (
@@ -34,8 +39,11 @@ impl<'a> Daphne<'a> {
         // Start the Daphne test container running.
         let runnable_image = RunnableImage::from(GenericImage::new(image_name, image_tag))
             .with_network(network)
+            // Daphne uses the DAP_TRACING environment variable for its tracing subscriber.
+            .with_env_var(("DAP_TRACING", get_rust_log_level().1))
             .with_container_name(endpoint.host_str().unwrap());
         let daphne_container = ContainerLogsDropGuard::new(
+            test_name,
             container_client.run(runnable_image),
             ContainerLogsSource::Docker,
         );

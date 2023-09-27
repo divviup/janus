@@ -13,6 +13,7 @@ mod common;
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "Daphne does not yet publish a leader container image"]
 async fn daphne_janus() {
+    static TEST_NAME: &'static str = "daphne_janus";
     install_test_trace_subscriber();
 
     // Start servers.
@@ -35,11 +36,12 @@ async fn daphne_janus() {
         .unwrap();
 
     let container_client = container_client();
-    let leader = Daphne::new(&container_client, &network, &leader_task).await;
-    let helper = Janus::new(&container_client, &network, &helper_task).await;
+    let leader = Daphne::new(TEST_NAME, &container_client, &network, &leader_task).await;
+    let helper = Janus::new(TEST_NAME, &container_client, &network, &helper_task).await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        TEST_NAME,
         &task_parameters,
         (leader.port(), helper.port()),
         &ClientBackend::InProcess,
@@ -51,6 +53,7 @@ async fn daphne_janus() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "Daphne does not currently support DAP-07 (issue #1669)"]
 async fn janus_daphne() {
+    static TEST_NAME: &'static str = "daphne_janus";
     install_test_trace_subscriber();
 
     // Start servers.
@@ -73,11 +76,12 @@ async fn janus_daphne() {
         .unwrap();
 
     let container_client = container_client();
-    let leader = Janus::new(&container_client, &network, &leader_task).await;
-    let helper = Daphne::new(&container_client, &network, &helper_task).await;
+    let leader = Janus::new(TEST_NAME, &container_client, &network, &leader_task).await;
+    let helper = Daphne::new(TEST_NAME, &container_client, &network, &helper_task).await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        TEST_NAME,
         &task_parameters,
         (leader.port(), helper.port()),
         &ClientBackend::InProcess,

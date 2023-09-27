@@ -7,6 +7,7 @@ use janus_core::{
     vdaf::VERIFY_KEY_LENGTH,
 };
 use janus_interop_binaries::{
+    get_rust_log_level,
     test_util::{await_ready_ok, generate_network_name, generate_unique_name},
     testcontainer::{Aggregator, Client, Collector},
     ContainerLogsDropGuard,
@@ -38,6 +39,7 @@ enum QueryKind {
 /// interoperation test binaries, and return the aggregate result. This follows the outline of
 /// the "Test Runner Operation" section in draft-dcook-ppm-dap-interop-test-design.
 async fn run(
+    test_name: &str,
     query_kind: QueryKind,
     vdaf_object: serde_json::Value,
     measurements: &[serde_json::Value],
@@ -61,9 +63,11 @@ async fn run(
     let network = generate_network_name();
 
     let client_container = ContainerLogsDropGuard::new_janus(
+        test_name,
         container_client.run(
             RunnableImage::from(Client::default())
                 .with_network(&network)
+                .with_env_var(get_rust_log_level())
                 .with_container_name(generate_unique_name("client")),
         ),
     );
@@ -71,9 +75,11 @@ async fn run(
 
     let leader_name = generate_unique_name("leader");
     let leader_container = ContainerLogsDropGuard::new_janus(
+        test_name,
         container_client.run(
             RunnableImage::from(Aggregator::default())
                 .with_network(&network)
+                .with_env_var(get_rust_log_level())
                 .with_container_name(leader_name.clone()),
         ),
     );
@@ -81,18 +87,22 @@ async fn run(
 
     let helper_name = generate_unique_name("helper");
     let helper_container = ContainerLogsDropGuard::new_janus(
+        test_name,
         container_client.run(
             RunnableImage::from(Aggregator::default())
                 .with_network(&network)
+                .with_env_var(get_rust_log_level())
                 .with_container_name(helper_name.clone()),
         ),
     );
     let helper_port = helper_container.get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT);
 
     let collector_container = ContainerLogsDropGuard::new_janus(
+        test_name,
         container_client.run(
             RunnableImage::from(Collector::default())
                 .with_network(&network)
+                .with_env_var(get_rust_log_level())
                 .with_container_name(generate_unique_name("collector")),
         ),
     );
@@ -569,6 +579,7 @@ async fn run(
 #[tokio::test]
 async fn e2e_prio3_count() {
     let result = run(
+        "e2e_prio3_count",
         QueryKind::TimeInterval,
         json!({"type": "Prio3Count"}),
         &[
@@ -600,6 +611,7 @@ async fn e2e_prio3_count() {
 #[tokio::test]
 async fn e2e_prio3_sum() {
     let result = run(
+        "e2e_prio3_sum",
         QueryKind::TimeInterval,
         json!({"type": "Prio3Sum", "bits": "64"}),
         &[
@@ -620,6 +632,7 @@ async fn e2e_prio3_sum() {
 #[tokio::test]
 async fn e2e_prio3_sum_vec() {
     let result = run(
+        "e2e_prio3_sum_vec",
         QueryKind::TimeInterval,
         json!({
             "type": "Prio3SumVec",
@@ -644,6 +657,7 @@ async fn e2e_prio3_sum_vec() {
 #[tokio::test]
 async fn e2e_prio3_histogram() {
     let result = run(
+        "e2e_prio3_histogram",
         QueryKind::TimeInterval,
         json!({
             "type": "Prio3Histogram",
@@ -675,6 +689,7 @@ async fn e2e_prio3_fixed16vec() {
     let fp16_8_inv = fixed!(0.125: I1F15);
     let fp16_16_inv = fixed!(0.0625: I1F15);
     let result = run(
+        "e2e_prio3_fixed16vec",
         QueryKind::TimeInterval,
         json!({"type": "Prio3FixedPoint16BitBoundedL2VecSum", "length": "3"}),
         &[
@@ -711,6 +726,7 @@ async fn e2e_prio3_fixed32vec() {
     let fp32_8_inv = fixed!(0.125: I1F31);
     let fp32_16_inv = fixed!(0.0625: I1F31);
     let result = run(
+        "e2e_prio3_fixed32vec",
         QueryKind::TimeInterval,
         json!({"type": "Prio3FixedPoint32BitBoundedL2VecSum", "length": "3"}),
         &[
@@ -747,6 +763,7 @@ async fn e2e_prio3_fixed64vec() {
     let fp64_8_inv = fixed!(0.125: I1F63);
     let fp64_16_inv = fixed!(0.0625: I1F63);
     let result = run(
+        "e2e_prio3_fixed64vec",
         QueryKind::TimeInterval,
         json!({"type": "Prio3FixedPoint64BitBoundedL2VecSum", "length": "3"}),
         &[
@@ -783,6 +800,7 @@ async fn e2e_prio3_fixed16vec_fixed_size() {
     let fp16_8_inv = fixed!(0.125: I1F15);
     let fp16_16_inv = fixed!(0.0625: I1F15);
     let result = run(
+        "e2e_prio3_fixed16vec_fixed_size",
         QueryKind::FixedSize,
         json!({"type": "Prio3FixedPoint16BitBoundedL2VecSum", "length": "3"}),
         &[
@@ -819,6 +837,7 @@ async fn e2e_prio3_fixed32vec_fixed_size() {
     let fp32_8_inv = fixed!(0.125: I1F31);
     let fp32_16_inv = fixed!(0.0625: I1F31);
     let result = run(
+        "e2e_prio3_fixed32vec_fixed_size",
         QueryKind::FixedSize,
         json!({"type": "Prio3FixedPoint32BitBoundedL2VecSum", "length": "3"}),
         &[
@@ -855,6 +874,7 @@ async fn e2e_prio3_fixed64vec_fixed_size() {
     let fp64_8_inv = fixed!(0.125: I1F63);
     let fp64_16_inv = fixed!(0.0625: I1F63);
     let result = run(
+        "e2e_prio3_fixed64vec_fixed_size",
         QueryKind::FixedSize,
         json!({"type": "Prio3FixedPoint64BitBoundedL2VecSum", "length": "3"}),
         &[
@@ -888,6 +908,7 @@ async fn e2e_prio3_fixed64vec_fixed_size() {
 #[tokio::test]
 async fn e2e_prio3_count_fixed_size() {
     let result = run(
+        "e2e_prio3_count_fixed_size",
         QueryKind::FixedSize,
         json!({"type": "Prio3Count"}),
         &[
