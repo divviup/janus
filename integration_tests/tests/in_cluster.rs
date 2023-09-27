@@ -150,9 +150,9 @@ impl InClusterJanusPair {
                 account.id,
                 &HpkeConfigContents::new(
                     u8::from(*hpke_config.id()).into(),
-                    (*hpke_config.kem_id() as u16).try_into().unwrap(),
-                    (*hpke_config.kdf_id() as u16).try_into().unwrap(),
-                    (*hpke_config.aead_id() as u16).try_into().unwrap(),
+                    u16::from(*hpke_config.kem_id()).try_into().unwrap(),
+                    u16::from(*hpke_config.kdf_id()).try_into().unwrap(),
+                    u16::from(*hpke_config.aead_id()).try_into().unwrap(),
                     hpke_config.public_key().as_ref().to_vec().into(),
                 ),
                 Some("Integration test key"),

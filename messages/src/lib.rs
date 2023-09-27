@@ -7,7 +7,7 @@ use self::query_type::{FixedSize, QueryType, TimeInterval};
 use anyhow::anyhow;
 use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
-use num_enum::TryFromPrimitive;
+use num_enum::{FromPrimitive, IntoPrimitive, TryFromPrimitive};
 use prio::{
     codec::{
         decode_u16_items, decode_u32_items, encode_u16_items, encode_u32_items, CodecError, Decode,
@@ -41,9 +41,6 @@ pub enum Error {
     /// An illegal arithmetic operation on a [`Time`] or [`Duration`].
     #[error("{0}")]
     IllegalTimeArithmetic(&'static str),
-    /// An unsupported algorithm identifier was encountered.
-    #[error("Unsupported {0} algorithm identifier {1}")]
-    UnsupportedAlgorithmIdentifier(&'static str, u16),
 }
 
 /// Wire-representation of an ASCII-encoded URL with minimum length 1 and maximum
@@ -742,19 +739,30 @@ impl<'de> Deserialize<'de> for TaskId {
 }
 
 /// DAP protocol message representing an HPKE key encapsulation mechanism.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, FromPrimitive, IntoPrimitive, Serialize, Deserialize,
+)]
 #[repr(u16)]
 #[non_exhaustive]
 pub enum HpkeKemId {
     /// NIST P-256 keys and HKDF-SHA256.
     P256HkdfSha256 = 0x0010,
+    /// NIST P-384 keys and HKDF-SHA384.
+    P384HkdfSha384 = 0x0011,
+    /// NIST P-521 keys and HKDF-SHA512.
+    P521HkdfSha512 = 0x0012,
     /// X25519 keys and HKDF-SHA256.
     X25519HkdfSha256 = 0x0020,
+    /// X448 keys and HKDF-SHA512.
+    X448HkdfSha512 = 0x0021,
+    /// Unrecognized algorithm identifiers.
+    #[num_enum(catch_all)]
+    Other(u16),
 }
 
 impl Encode for HpkeKemId {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        (*self as u16).encode(bytes);
+        u16::from(*self).encode(bytes);
     }
 
     fn encoded_len(&self) -> Option<usize> {
@@ -765,14 +773,14 @@ impl Encode for HpkeKemId {
 impl Decode for HpkeKemId {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u16::decode(bytes)?;
-        Self::try_from(val).map_err(|_| {
-            CodecError::Other(Error::UnsupportedAlgorithmIdentifier("HpkeKemId", val).into())
-        })
+        Ok(Self::from(val))
     }
 }
 
 /// DAP protocol message representing an HPKE key derivation function.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, FromPrimitive, IntoPrimitive, Serialize, Deserialize,
+)]
 #[repr(u16)]
 #[non_exhaustive]
 pub enum HpkeKdfId {
@@ -782,11 +790,14 @@ pub enum HpkeKdfId {
     HkdfSha384 = 0x0002,
     /// HMAC Key Derivation Function SHA512.
     HkdfSha512 = 0x0003,
+    /// Unrecognized algorithm identifiers.
+    #[num_enum(catch_all)]
+    Other(u16),
 }
 
 impl Encode for HpkeKdfId {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        (*self as u16).encode(bytes);
+        u16::from(*self).encode(bytes);
     }
 
     fn encoded_len(&self) -> Option<usize> {
@@ -797,14 +808,14 @@ impl Encode for HpkeKdfId {
 impl Decode for HpkeKdfId {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u16::decode(bytes)?;
-        Self::try_from(val).map_err(|_| {
-            CodecError::Other(Error::UnsupportedAlgorithmIdentifier("HpkeKdfId", val).into())
-        })
+        Ok(Self::from(val))
     }
 }
 
 /// DAP protocol message representing an HPKE AEAD.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, FromPrimitive, IntoPrimitive, Serialize, Deserialize,
+)]
 #[repr(u16)]
 #[non_exhaustive]
 pub enum HpkeAeadId {
@@ -814,11 +825,14 @@ pub enum HpkeAeadId {
     Aes256Gcm = 0x0002,
     /// ChaCha20Poly1305.
     ChaCha20Poly1305 = 0x0003,
+    /// Unrecognized algorithm identifiers.
+    #[num_enum(catch_all)]
+    Other(u16),
 }
 
 impl Encode for HpkeAeadId {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        (*self as u16).encode(bytes);
+        u16::from(*self).encode(bytes);
     }
 
     fn encoded_len(&self) -> Option<usize> {
@@ -829,9 +843,7 @@ impl Encode for HpkeAeadId {
 impl Decode for HpkeAeadId {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u16::decode(bytes)?;
-        Self::try_from(val).map_err(|_| {
-            CodecError::Other(Error::UnsupportedAlgorithmIdentifier("HpkeAeadId", val).into())
-        })
+        Ok(Self::from(val))
     }
 }
 
@@ -3249,76 +3261,67 @@ mod tests {
                     )
                 ),
             ),
+            (
+                HpkeConfig::new(
+                    HpkeConfigId::from(12),
+                    HpkeKemId::Other(0x9999),
+                    HpkeKdfId::HkdfSha512,
+                    HpkeAeadId::Aes256Gcm,
+                    HpkePublicKey::from(Vec::new()),
+                ),
+                concat!(
+                    "0C",   // id
+                    "9999", // kem_id
+                    "0003", // kdf_id
+                    "0002", // aead_id
+                    concat!(
+                        // public_key
+                        "0000", // length
+                        "",     // opaque data
+                    )
+                ),
+            ),
+            (
+                HpkeConfig::new(
+                    HpkeConfigId::from(12),
+                    HpkeKemId::P256HkdfSha256,
+                    HpkeKdfId::Other(0x9999),
+                    HpkeAeadId::Aes256Gcm,
+                    HpkePublicKey::from(Vec::new()),
+                ),
+                concat!(
+                    "0C",   // id
+                    "0010", // kem_id
+                    "9999", // kdf_id
+                    "0002", // aead_id
+                    concat!(
+                        // public_key
+                        "0000", // length
+                        "",     // opaque data
+                    )
+                ),
+            ),
+            (
+                HpkeConfig::new(
+                    HpkeConfigId::from(12),
+                    HpkeKemId::P256HkdfSha256,
+                    HpkeKdfId::HkdfSha512,
+                    HpkeAeadId::Other(0x9999),
+                    HpkePublicKey::from(Vec::new()),
+                ),
+                concat!(
+                    "0C",   // id
+                    "0010", // kem_id
+                    "0003", // kdf_id
+                    "9999", // aead_id
+                    concat!(
+                        // public_key
+                        "0000", // length
+                        "",     // opaque data
+                    )
+                ),
+            ),
         ])
-    }
-
-    #[test]
-    fn decode_unknown_hpke_algorithms() {
-        let unknown_kem_id = hex::decode(concat!(
-            "0C",   // id
-            "9999", // kem_id
-            "0003", // kdf_id
-            "0002", // aead_id
-            concat!(
-                // public_key
-                "0000", // length
-                "",     // opaque data
-            )
-        ))
-        .unwrap();
-
-        let err = HpkeConfig::get_decoded(&unknown_kem_id).unwrap_err();
-        assert_matches!(
-            err,
-            CodecError::Other(e) => assert_matches!(
-                e.downcast::<super::Error>().unwrap().as_ref(),
-                &super::Error::UnsupportedAlgorithmIdentifier("HpkeKemId", 0x9999)
-            )
-        );
-
-        let unknown_kdf_id = hex::decode(concat!(
-            "0C",   // id
-            "0010", // kem_id
-            "9999", // kdf_id
-            "0002", // aead_id
-            concat!(
-                // public_key
-                "0000", // length
-                "",     // opaque data
-            )
-        ))
-        .unwrap();
-
-        let err = HpkeConfig::get_decoded(&unknown_kdf_id).unwrap_err();
-        assert_matches!(
-            err,
-            CodecError::Other(e) => assert_matches!(
-                e.downcast::<super::Error>().unwrap().as_ref(),
-                &super::Error::UnsupportedAlgorithmIdentifier("HpkeKdfId", 0x9999)
-            )
-        );
-
-        let unknown_aead_id = hex::decode(concat!(
-            "0C",   // id
-            "0010", // kem_id
-            "0003", // kdf_id
-            "9999", // aead_id
-            concat!(
-                // public_key
-                "0000", // length
-                "",     // opaque data
-            )
-        ))
-        .unwrap();
-
-        let err = HpkeConfig::get_decoded(&unknown_aead_id).unwrap_err();
-        assert_matches!(
-            err,
-            CodecError::Other(e) => assert_matches!(
-                e.downcast::<super::Error>().unwrap().as_ref(),
-                &super::Error::UnsupportedAlgorithmIdentifier("HpkeAeadId", 0x9999)
-            )
-        );
     }
 
     #[test]

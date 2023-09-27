@@ -26,17 +26,23 @@ pub enum Error {
     UnsupportedKem,
 }
 
+/// Checks whether the algorithms used by the provided [`HpkeConfig`] are supported.
+pub fn is_hpke_config_supported(config: &HpkeConfig) -> Result<(), Error> {
+    hpke_dispatch_config_from_hpke_config(config)?;
+    Ok(())
+}
+
 fn hpke_dispatch_config_from_hpke_config(
     config: &HpkeConfig,
 ) -> Result<hpke_dispatch::Config, Error> {
     Ok(hpke_dispatch::Config {
-        aead: (*config.aead_id() as u16)
+        aead: u16::from(*config.aead_id())
             .try_into()
             .map_err(|_| Error::InvalidConfiguration("did not recognize aead"))?,
-        kdf: (*config.kdf_id() as u16)
+        kdf: u16::from(*config.kdf_id())
             .try_into()
             .map_err(|_| Error::InvalidConfiguration("did not recognize kdf"))?,
-        kem: (*config.kem_id() as u16)
+        kem: u16::from(*config.kem_id())
             .try_into()
             .map_err(|_| Error::InvalidConfiguration("did not recognize kem"))?,
     })
@@ -463,7 +469,7 @@ mod tests {
         const ASSOCIATED_DATA: &[u8] = b"round trip test associated data";
         const MESSAGE: &[u8] = b"round trip test message";
 
-        let kem = Kem::try_from(kem_id as u16).unwrap();
+        let kem = Kem::try_from(u16::from(kem_id)).unwrap();
 
         let Keypair {
             private_key,
@@ -559,18 +565,19 @@ mod tests {
                 // We are only interested in the "base" mode.
                 continue;
             }
-            let kem_id = if let Ok(kem_id) = test_vector.kem_id.try_into() {
-                kem_id
-            } else {
-                // Skip unsupported KEMs.
-                continue;
+            let kem_id = match HpkeKemId::from(test_vector.kem_id) {
+                kem_id @ HpkeKemId::P256HkdfSha256 | kem_id @ HpkeKemId::X25519HkdfSha256 => kem_id,
+                _ => {
+                    // Skip unsupported KEMs.
+                    continue;
+                }
             };
-            let kdf_id = test_vector.kdf_id.try_into().unwrap();
+            let kdf_id = test_vector.kdf_id.into();
             if test_vector.aead_id == 0xffff {
                 // Skip export-only test vectors.
                 continue;
             }
-            let aead_id = test_vector.aead_id.try_into().unwrap();
+            let aead_id = test_vector.aead_id.into();
 
             for encryption in test_vector.encryptions {
                 if encryption.nonce != test_vector.base_nonce {
@@ -604,7 +611,11 @@ mod tests {
                 .unwrap();
                 assert_eq!(plaintext, encryption.pt);
 
-                algorithms_tested.insert((kem_id as u16, kdf_id as u16, aead_id as u16));
+                algorithms_tested.insert((
+                    u16::from(kem_id),
+                    u16::from(kdf_id),
+                    u16::from(aead_id),
+                ));
             }
         }
 
