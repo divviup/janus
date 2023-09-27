@@ -23,7 +23,6 @@ use std::{
     process::{Command, Stdio},
     str::FromStr,
     sync::Arc,
-    thread::panicking,
 };
 use testcontainers::{Container, Image};
 use tokio::sync::Mutex;
@@ -438,12 +437,6 @@ impl<'d, I: Image> ContainerLogsDropGuard<'d, I> {
 
 impl<'d, I: Image> Drop for ContainerLogsDropGuard<'d, I> {
     fn drop(&mut self) {
-        if !panicking() {
-            return;
-        }
-        // If we're panicking then we're probably in the middle of test failure. In this case,
-        // export logs if log_export_path() suggests doing so.
-        //
         // The unwraps in this code block would induce a double panic, but we accept this risk
         // since it happens only in test code. This is also our main method of debugging
         // integration tests, so if it's broken we should be alerted and have it fixed ASAP.
