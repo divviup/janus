@@ -48,7 +48,7 @@ impl<'a> JanusPair<'a> {
 /// This test exercises Prio3Count with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_janus_count() {
-    static TEST_NAME: &'static str = "janus_janus_count";
+    static TEST_NAME: &str = "janus_janus_count";
     install_test_trace_subscriber();
 
     // Start servers.
@@ -74,7 +74,7 @@ async fn janus_janus_count() {
 /// This test exercises Prio3Sum with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_janus_sum_16() {
-    static TEST_NAME: &'static str = "janus_janus_sum_16";
+    static TEST_NAME: &str = "janus_janus_sum_16";
     install_test_trace_subscriber();
 
     // Start servers.
@@ -100,7 +100,7 @@ async fn janus_janus_sum_16() {
 /// This test exercises Prio3Histogram with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_janus_histogram_4_buckets() {
-    static TEST_NAME: &'static str = "janus_janus_histogram_4_buckets";
+    static TEST_NAME: &str = "janus_janus_histogram_4_buckets";
     install_test_trace_subscriber();
 
     // Start servers.
@@ -129,7 +129,7 @@ async fn janus_janus_histogram_4_buckets() {
 /// This test exercises the fixed-size query type with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_janus_fixed_size() {
-    static TEST_NAME: &'static str = "janus_janus_fixed_size";
+    static TEST_NAME: &str = "janus_janus_fixed_size";
     install_test_trace_subscriber();
 
     // Start servers.
@@ -158,7 +158,7 @@ async fn janus_janus_fixed_size() {
 // This test exercises Prio3SumVec with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_janus_sum_vec() {
-    static TEST_NAME: &'static str = "janus_janus_sum_vec";
+    static TEST_NAME: &str = "janus_janus_sum_vec";
     install_test_trace_subscriber();
 
     let container_client = container_client();

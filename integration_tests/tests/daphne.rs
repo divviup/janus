@@ -13,7 +13,7 @@ mod common;
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "Daphne does not yet publish a leader container image"]
 async fn daphne_janus() {
-    static TEST_NAME: &'static str = "daphne_janus";
+    static TEST_NAME: &str = "daphne_janus";
     install_test_trace_subscriber();
 
     // Start servers.
@@ -53,7 +53,7 @@ async fn daphne_janus() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "Daphne does not currently support DAP-07 (issue #1669)"]
 async fn janus_daphne() {
-    static TEST_NAME: &'static str = "daphne_janus";
+    static TEST_NAME: &str = "daphne_janus";
     install_test_trace_subscriber();
 
     // Start servers.

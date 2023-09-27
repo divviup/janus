@@ -268,6 +268,7 @@ async fn in_cluster_count() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        "in_cluster_count",
         &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,
@@ -285,6 +286,7 @@ async fn in_cluster_sum() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        "in_cluster_sum",
         &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,
@@ -308,6 +310,7 @@ async fn in_cluster_histogram() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        "in_cluster_histogram",
         &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,
@@ -331,6 +334,7 @@ async fn in_cluster_fixed_size() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        "in_cluster_fixed_size",
         &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,
