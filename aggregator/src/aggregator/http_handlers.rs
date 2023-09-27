@@ -1,26 +1,22 @@
 use super::{Aggregator, Config, Error};
 use crate::aggregator::problem_details::ProblemDetailsConnExt;
 use async_trait::async_trait;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{datastore::Datastore, instrumented};
 use janus_core::{
     http::extract_bearer_token,
     task::{AuthenticationToken, DAP_AUTH_HEADER},
-    taskprov::TASKPROV_HEADER,
     time::Clock,
 };
 use janus_messages::{
-    problem_type::DapProblemType, query_type::TimeInterval, taskprov::TaskConfig,
-    AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
-    AggregateShareReq, AggregateShareResp, CollectReq, CollectResp, CollectionJobId, HpkeConfig,
-    Report, TaskId,
+    problem_type::DapProblemType, query_type::TimeInterval, AggregateContinueReq,
+    AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp, AggregateShareReq,
+    AggregateShareResp, CollectReq, CollectResp, CollectionJobId, HpkeConfig, Report, TaskId,
 };
 use opentelemetry::{
     metrics::{Counter, Meter, Unit},
     KeyValue,
 };
 use prio::codec::{Decode, Encode};
-use ring::digest::{digest, SHA256};
 use routefinder::Captures;
 use std::time::Duration as StdDuration;
 use std::{io::Cursor, sync::Arc};
@@ -354,10 +350,9 @@ async fn aggregate<C: Clock>(
             // authentication. This assumes that the task ID is at the start of the message content.
             let task_id = TaskId::decode(&mut Cursor::new(&body))?;
             let auth_token = parse_auth_token(&task_id, conn)?;
-            let taskprov_task_config = parse_taskprov_header(&task_id, conn)?;
 
             let response = aggregator
-                .handle_aggregate_init(&task_id, &body, auth_token, taskprov_task_config.as_ref())
+                .handle_aggregate_init(&task_id, &body, auth_token)
                 .await?;
             Ok(BytesBody::new(
                 response.get_encoded(),
@@ -370,15 +365,9 @@ async fn aggregate<C: Clock>(
             // authentication. This assumes that the task ID is at the start of the message content.
             let task_id = TaskId::decode(&mut Cursor::new(&body))?;
             let auth_token = parse_auth_token(&task_id, conn)?;
-            let taskprov_task_config = parse_taskprov_header(&task_id, conn)?;
 
             let response = aggregator
-                .handle_aggregate_continue(
-                    &task_id,
-                    &body,
-                    auth_token,
-                    taskprov_task_config.as_ref(),
-                )
+                .handle_aggregate_continue(&task_id, &body, auth_token)
                 .await?;
             Ok(BytesBody::new(
                 response.get_encoded(),
@@ -471,10 +460,9 @@ async fn aggregate_share<C: Clock>(
     // authentication. This assumes that the task ID is at the start of the message content.
     let task_id = TaskId::decode(&mut Cursor::new(&body))?;
     let auth_token = parse_auth_token(&task_id, conn)?;
-    let taskprov_task_config = parse_taskprov_header(&task_id, conn)?;
 
     let share = aggregator
-        .handle_aggregate_share(&task_id, &body, auth_token, taskprov_task_config.as_ref())
+        .handle_aggregate_share(&task_id, &body, auth_token)
         .await?;
 
     Ok(EncodedBody::new(share, AggregateShareResp::MEDIA_TYPE))
@@ -533,32 +521,6 @@ fn parse_auth_token(task_id: &TaskId, conn: &Conn) -> Result<Option<Authenticati
                 .map_err(|e| Error::BadRequest(format!("bad DAP-Auth-Token header: {e}")))
         })
         .transpose()
-}
-
-fn parse_taskprov_header(task_id: &TaskId, conn: &Conn) -> Result<Option<TaskConfig>, Error> {
-    match conn.request_headers().get(TASKPROV_HEADER) {
-        Some(taskprov_header) => {
-            let task_config_encoded = &URL_SAFE_NO_PAD.decode(taskprov_header).map_err(|_| {
-                Error::UnrecognizedMessage(Some(*task_id), "taskprov header could not be decoded")
-            })?;
-
-            if task_id.as_ref() != digest(&SHA256, task_config_encoded).as_ref() {
-                Err(Error::UnrecognizedMessage(
-                    Some(*task_id),
-                    "derived taskprov task ID does not match task config",
-                ))
-            } else {
-                // TODO(#1684): Parsing the taskprov header like this before we've been able
-                // to actually authenticate the client is undesireable. We should rework this
-                // such that the authorization header is handled before parsing the untrusted
-                // input.
-                Ok(Some(TaskConfig::decode(&mut Cursor::new(
-                    task_config_encoded,
-                ))?))
-            }
-        }
-        None => Ok(None),
-    }
 }
 
 #[cfg(feature = "test-util")]

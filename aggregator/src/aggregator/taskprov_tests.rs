@@ -27,7 +27,6 @@ use janus_core::{
     },
     report_id::ReportIdChecksumExt,
     task::{AuthenticationToken, PRIO3_VERIFY_KEY_LENGTH},
-    taskprov::TASKPROV_HEADER,
     test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
     time::{Clock, DurationExt, MockClock, TimeExt},
 };
@@ -232,10 +231,6 @@ async fn taskprov_aggregate_init() {
             KnownHeaderName::ContentType,
             AggregateInitializeReq::<FixedSize>::MEDIA_TYPE,
         )
-        .with_request_header(
-            TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
-        )
         .with_request_body(request.get_encoded())
         .run_async(&test.handler)
         .await;
@@ -255,10 +250,6 @@ async fn taskprov_aggregate_init() {
         .with_request_header(
             KnownHeaderName::ContentType,
             AggregateInitializeReq::<FixedSize>::MEDIA_TYPE,
-        )
-        .with_request_header(
-            TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
         )
         .with_request_body(request.get_encoded())
         .run_async(&test.handler)
@@ -331,10 +322,6 @@ async fn taskprov_opt_out_task_expired() {
             KnownHeaderName::ContentType,
             AggregateInitializeReq::<FixedSize>::MEDIA_TYPE,
         )
-        .with_request_header(
-            TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
-        )
         .with_request_body(request.get_encoded())
         .run_async(&test.handler)
         .await;
@@ -404,11 +391,6 @@ async fn taskprov_opt_out_mismatched_task_id() {
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregateInitializeReq::<FixedSize>::MEDIA_TYPE,
-    )
-    .with_request_header(
-        TASKPROV_HEADER,
-        // Use a different task than the URL's.
-        URL_SAFE_NO_PAD.encode(another_task_config.get_encoded()),
     )
     .with_request_body(request.get_encoded())
     .run_async(&test.handler)
@@ -481,10 +463,6 @@ async fn taskprov_opt_out_missing_aggregator() {
     .with_request_header(
         KnownHeaderName::ContentType,
         AggregateInitializeReq::<FixedSize>::MEDIA_TYPE,
-    )
-    .with_request_header(
-        TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(another_task_config_encoded),
     )
     .with_request_body(request.get_encoded())
     .run_async(&test.handler)
@@ -585,10 +563,6 @@ async fn taskprov_aggregate_continue() {
             KnownHeaderName::ContentType,
             AggregateContinueReq::MEDIA_TYPE,
         )
-        .with_request_header(
-            TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
-        )
         .with_request_body(request.get_encoded())
         .run_async(&test.handler)
         .await;
@@ -610,10 +584,6 @@ async fn taskprov_aggregate_continue() {
             AggregateContinueReq::MEDIA_TYPE,
         )
         .with_request_body(request.get_encoded())
-        .with_request_header(
-            TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
-        )
         .run_async(&test.handler)
         .await;
 
@@ -703,10 +673,6 @@ async fn taskprov_aggregate_share() {
             KnownHeaderName::ContentType,
             AggregateShareReq::<FixedSize>::MEDIA_TYPE,
         )
-        .with_request_header(
-            TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
-        )
         .with_request_body(request.get_encoded())
         .run_async(&test.handler)
         .await;
@@ -728,10 +694,6 @@ async fn taskprov_aggregate_share() {
             AggregateShareReq::<FixedSize>::MEDIA_TYPE,
         )
         .with_request_body(request.get_encoded())
-        .with_request_header(
-            TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
-        )
         .run_async(&test.handler)
         .await;
 
@@ -779,10 +741,6 @@ async fn end_to_end() {
             KnownHeaderName::ContentType,
             AggregateInitializeReq::<FixedSize>::MEDIA_TYPE,
         )
-        .with_request_header(
-            TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
-        )
         .with_request_body(aggregate_init_request.get_encoded())
         .run_async(&test.handler)
         .await;
@@ -819,10 +777,6 @@ async fn end_to_end() {
             KnownHeaderName::ContentType,
             AggregateContinueReq::MEDIA_TYPE,
         )
-        .with_request_header(
-            TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
-        )
         .with_request_body(aggregate_continue_request.get_encoded())
         .run_async(&test.handler)
         .await;
@@ -851,10 +805,6 @@ async fn end_to_end() {
         .with_request_header(
             KnownHeaderName::ContentType,
             AggregateShareReq::<FixedSize>::MEDIA_TYPE,
-        )
-        .with_request_header(
-            TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
         )
         .with_request_body(aggregate_share_request.get_encoded())
         .run_async(&test.handler)

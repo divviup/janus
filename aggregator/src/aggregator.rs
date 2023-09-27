@@ -39,12 +39,13 @@ use janus_core::{
 };
 use janus_messages::{
     problem_type::DapProblemType,
-    query_type::{FixedSize, TimeInterval},
+    query_type::{FixedSize, QueryType, TimeInterval},
     taskprov::TaskConfig,
     AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
     AggregateShareReq, AggregateShareResp, BatchSelector, CollectReq, CollectResp, CollectionJobId,
-    Duration, HpkeCiphertext, HpkeConfig, Interval, PartialBatchSelector, PrepareStep,
-    PrepareStepResult, Report, ReportIdChecksum, ReportShare, ReportShareError, Role, TaskId,
+    Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfig, Interval, PartialBatchSelector,
+    PrepareStep, PrepareStepResult, Report, ReportIdChecksum, ReportShare, ReportShareError, Role,
+    TaskId,
 };
 #[cfg(feature = "test-util")]
 use janus_messages::{HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId};
@@ -66,6 +67,7 @@ use prio::{
 };
 use rand::random;
 use reqwest::Client;
+use ring::digest::{digest, SHA256};
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     fmt::Debug,
@@ -308,29 +310,52 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
-        taskprov_task_config: Option<&TaskConfig>,
     ) -> Result<AggregateInitializeResp, Error> {
+        self.authorize_helper_request(task_id, auth_token.as_ref())
+            .await?;
+
         let task_aggregator = match self.task_aggregator_for(task_id).await? {
             Some(task_aggregator) => {
-                if !auth_token
-                    .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
-                    .unwrap_or(false)
-                {
-                    return Err(Error::UnauthorizedRequest(*task_id));
-                }
                 if task_aggregator.task.role() != &Role::Helper {
                     return Err(Error::UnrecognizedTask(*task_id));
                 }
                 task_aggregator
             }
-            None if taskprov_task_config.is_some() => {
-                self.taskprov_opt_in(
-                    &Role::Leader,
-                    task_id,
-                    taskprov_task_config.unwrap(),
-                    auth_token.as_ref(),
-                )
-                .await?;
+            // subscriber-01: Unconditionally send all unknown tasks through the opt in flow.
+            None => {
+                // We need to decode the task configuration without having any prior knowledge of the
+                // task. Decoding an AggregateInitializeReq requires we know the query type of the
+                // task. There's a chicken-and-egg problem.
+                //
+                // Solve this by by trial for each query type. The opt-in and insertion
+                // of a task is not in the hotpath, so this is not too painful for performance.
+                //
+                // The best-case number of overall decodes of an AggregateInitialzeReq is 2, and the
+                // worst-case is 3. One additional decoding is done further downstream in
+                // handle_aggregate_init_generic. We could optimize later on by:
+                //   - Remove an unused query type, if we can determine one of them is unused.
+                //   - Extensively refactor handle_aggregate_init and VdafOps to take an
+                //     AggregateInitializeReq directly.
+                debug!(?task_id, "taskprov: decoding trial 1: TimeInterval");
+                match self
+                    .taskprov_opt_in::<TimeInterval>(&Role::Leader, task_id, req_bytes)
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(err) => match err {
+                        Error::MessageDecode(err) => {
+                            debug!(?task_id, ?err, "taskprov: decoding trial 2: FixedSize");
+                            match self
+                                .taskprov_opt_in::<FixedSize>(&Role::Leader, task_id, req_bytes)
+                                .await
+                            {
+                                Ok(_) => {}
+                                Err(err) => return Err(err),
+                            }
+                        }
+                        _ => return Err(err),
+                    },
+                }
 
                 // Retry fetching the aggregator, since the last function would have just inserted
                 // its task.
@@ -341,9 +366,6 @@ impl<C: Clock> Aggregator<C> {
                 self.task_aggregator_for(task_id).await?.ok_or_else(|| {
                     Error::Internal("unexpectedly failed to create task".to_string())
                 })?
-            }
-            _ => {
-                return Err(Error::UnrecognizedTask(*task_id));
             }
         };
 
@@ -362,29 +384,16 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
-        taskprov_task_config: Option<&TaskConfig>,
     ) -> Result<AggregateContinueResp, Error> {
+        self.authorize_helper_request(task_id, auth_token.as_ref())
+            .await?;
+
         let task_aggregator = self
             .task_aggregator_for(task_id)
             .await?
             .ok_or(Error::UnrecognizedTask(*task_id))?;
         if task_aggregator.task.role() != &Role::Helper {
             return Err(Error::UnrecognizedTask(*task_id));
-        }
-
-        if taskprov_task_config.is_some() {
-            self.taskprov_authorize_request(
-                &Role::Leader,
-                task_id,
-                taskprov_task_config.unwrap(),
-                auth_token.as_ref(),
-            )
-            .await?;
-        } else if !auth_token
-            .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
-            .unwrap_or(false)
-        {
-            return Err(Error::UnauthorizedRequest(*task_id));
         }
 
         let req = AggregateContinueReq::get_decoded(req_bytes)?;
@@ -491,8 +500,10 @@ impl<C: Clock> Aggregator<C> {
         task_id: &TaskId,
         req_bytes: &[u8],
         auth_token: Option<AuthenticationToken>,
-        taskprov_task_config: Option<&TaskConfig>,
     ) -> Result<AggregateShareResp, Error> {
+        self.authorize_helper_request(task_id, auth_token.as_ref())
+            .await?;
+
         let task_aggregator = self
             .task_aggregator_for(task_id)
             .await?
@@ -501,40 +512,14 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnrecognizedTask(*task_id));
         }
 
-        // Authorize the request and retrieve the collector's HPKE config. If this is a taskprov task, we
-        // have to use the peer aggregator's collector config rather than the main task.
-        let collector_hpke_config = if taskprov_task_config.is_some() {
-            self.taskprov_authorize_request(
-                &Role::Leader,
-                task_id,
-                taskprov_task_config.unwrap(),
-                auth_token.as_ref(),
-            )
-            .await?;
-            &self.cfg.collector_hpke_config
-        } else {
-            if !auth_token
-                .map(|t| task_aggregator.task.check_aggregator_auth_token(&t))
-                .unwrap_or(false)
-            {
-                return Err(Error::UnauthorizedRequest(*task_id));
-            }
-
-            task_aggregator
-                .task
-                .collector_hpke_config()
-                .ok_or_else(|| {
-                    Error::Internal("task is missing collector_hpke_config".to_string())
-                })?
-        };
-
         task_aggregator
             .handle_aggregate_share(
                 &self.datastore,
                 &self.clock,
                 self.cfg.batch_aggregation_shard_count,
                 req_bytes,
-                collector_hpke_config,
+                // subscriber-01 only: always use the global collector HPKE config.
+                &self.cfg.collector_hpke_config,
             )
             .await
     }
@@ -584,17 +569,19 @@ impl<C: Clock> Aggregator<C> {
         }
     }
 
-    /// Opts in or out of a taskprov task.
-    #[tracing::instrument(skip(self, aggregator_auth_token), err)]
-    async fn taskprov_opt_in(
+    /// Opts in or out of a taskprov task with the given [`QueryType`]
+    async fn taskprov_opt_in<Q: QueryType>(
         &self,
         peer_role: &Role,
         task_id: &TaskId,
-        task_config: &TaskConfig,
-        aggregator_auth_token: Option<&AuthenticationToken>,
+        req_bytes: &[u8],
     ) -> Result<(), Error> {
-        self.taskprov_authorize_request(peer_role, task_id, task_config, aggregator_auth_token)
-            .await?;
+        let req = AggregateInitializeReq::<Q>::get_decoded(req_bytes)?;
+        let task_config = decode_taskprov_task_config(task_id, &req)?;
+
+        if self.clock.now() > *task_config.task_expiration() {
+            return Err(Error::InvalidTask(*task_id, OptOutReason::TaskExpired));
+        }
 
         let aggregator_urls = task_config
             .aggregator_endpoints()
@@ -677,33 +664,23 @@ impl<C: Clock> Aggregator<C> {
         Ok(())
     }
 
-    /// Validate and authorize a taskprov request. Returns values necessary for determining whether
-    /// we can opt into the task. This function might return an opt-out error for conditions that
-    /// are relevant for all DAP workflows (e.g. task expiration).
-    #[tracing::instrument(skip(self, aggregator_auth_token), err)]
-    async fn taskprov_authorize_request(
+    /// subscriber-01 only: We ignore task-specific authorization tokens and just use the global
+    /// auth token for every helper request.
+    async fn authorize_helper_request(
         &self,
-        peer_role: &Role,
         task_id: &TaskId,
-        task_config: &TaskConfig,
-        aggregator_auth_token: Option<&AuthenticationToken>,
+        auth_token: Option<&AuthenticationToken>,
     ) -> Result<(), Error> {
-        let request_token = aggregator_auth_token.ok_or(Error::UnauthorizedRequest(*task_id))?;
         if !self
             .cfg
             .auth_tokens
             .iter()
-            .any(|token| token == request_token)
+            .any(|token| Some(token) == auth_token)
         {
-            return Err(Error::UnauthorizedRequest(*task_id));
+            Err(Error::UnauthorizedRequest(*task_id))
+        } else {
+            Ok(())
         }
-
-        if self.clock.now() > *task_config.task_expiration() {
-            return Err(Error::InvalidTask(*task_id, OptOutReason::TaskExpired));
-        }
-
-        debug!(?task_id, ?task_config, "taskprov: authorized request");
-        Ok(())
     }
 
     #[cfg(feature = "test-util")]
@@ -1352,6 +1329,18 @@ impl VdafOps {
     {
         let req = AggregateInitializeReq::<Q>::get_decoded(req_bytes)?;
         assert_eq!(req.task_id(), task.id()); // sanity check, must be guaranteed by caller
+
+        // Validate the included taskprov configuration, but discard the result.
+        //
+        // subscriber-01 only: Taskprov makes allowance for AggregateInitializeReq's which don't
+        // contain a taskprov config at all, allowing for servicing of tasks provisioned in some
+        // other way. We don't support this for two reasons:
+        //   - subscriber-01 will only have taskprov provisioned tasks.
+        //   - we would have to track the provenance of tasks to avoid a bug where an AggregateInitReq
+        //     with no taskprov extension could be submitted to a taskprov task.
+        // Hence, we will reject AggregateInitReqs whose report shares don't have the taskprov
+        // extension.
+        decode_taskprov_task_config(task.id(), &req)?;
 
         // If two ReportShare messages have the same report ID, then the helper MUST abort with
         // error "unrecognizedMessage". (§4.4.4.1)
@@ -2635,6 +2624,54 @@ async fn send_request_to_helper<T: Encode>(
             Err(error.into())
         }
     }
+}
+
+/// Validates and extracts the taskprov configuration from the extension fields of the report shares
+/// of an [`AggregateInitializeReq`].
+fn decode_taskprov_task_config<Q: QueryType>(
+    task_id: &TaskId,
+    req: &AggregateInitializeReq<Q>,
+) -> Result<TaskConfig, Error> {
+    let taskprov_extensions: Vec<&Extension> = req
+        .report_shares()
+        .iter()
+        .map(|report_share| {
+            report_share
+                .metadata()
+                .extensions()
+                .iter()
+                .find(|extension| extension.extension_type() == &ExtensionType::Taskprov)
+                .ok_or(Error::UnrecognizedMessage(
+                    Some(*task_id),
+                    "all report shares must have the taskprov extension",
+                ))
+        })
+        .collect::<Result<_, _>>()?;
+
+    if taskprov_extensions.is_empty() {
+        return Err(Error::UnrecognizedMessage(
+            Some(*task_id),
+            "no report shares present in AggregateInitializeReq",
+        ));
+    } else if !taskprov_extensions
+        .windows(2)
+        .all(|report_shares| report_shares[0] == report_shares[1])
+    {
+        return Err(Error::UnrecognizedMessage(
+            Some(*task_id),
+            "all taskprov extension payloads must be the same",
+        ));
+    }
+
+    let task_config_encoded = taskprov_extensions[0].extension_data();
+    if task_id.as_ref() != digest(&SHA256, task_config_encoded).as_ref() {
+        return Err(Error::UnrecognizedMessage(
+            Some(*task_id),
+            "derived taskprov task ID does not match task config",
+        ));
+    }
+
+    Ok(TaskConfig::get_decoded(task_config_encoded)?)
 }
 
 #[cfg(test)]

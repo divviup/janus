@@ -35,7 +35,3 @@ impl Runtime for TokioRuntime {
         tokio::task::spawn(future)
     }
 }
-
-pub mod taskprov {
-    pub const TASKPROV_HEADER: &str = "dap-taskprov";
-}
