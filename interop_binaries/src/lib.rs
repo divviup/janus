@@ -539,7 +539,7 @@ impl Default for Keyring {
 }
 
 /// Returns the environment variable RUST_LOG. If it's unset or otherwise invalid, return the
-/// default value of "debug".
+/// default value of "info".
 pub fn get_rust_log_level() -> (&'static str, String) {
     (
         "RUST_LOG",
