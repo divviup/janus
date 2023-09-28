@@ -3,7 +3,7 @@ use anyhow::anyhow;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_client::{aggregator_hpke_config, default_http_client, Client, ClientParameters};
 use janus_core::{time::RealClock, vdaf::VdafInstance};
-use janus_interop_binaries::ContainerLogsDropGuard;
+use janus_interop_binaries::{get_rust_log_level, ContainerLogsDropGuard};
 use janus_messages::{Duration, Role, TaskId};
 use prio::{
     codec::Encode,
@@ -157,6 +157,7 @@ pub enum ClientBackend<'a> {
 impl<'a> ClientBackend<'a> {
     pub async fn build<V>(
         &self,
+        test_name: &str,
         task_parameters: &TaskParameters,
         (leader_port, helper_port): (u16, u16),
         vdaf: V,
@@ -177,6 +178,7 @@ impl<'a> ClientBackend<'a> {
                 container_image,
                 network,
             } => Ok(ClientImplementation::new_container(
+                test_name,
                 container_client,
                 container_image.clone(),
                 network,
@@ -257,6 +259,7 @@ where
     }
 
     pub fn new_container(
+        test_name: &str,
         container_client: &'d Cli,
         container_image: InteropClient,
         network: &str,
@@ -265,12 +268,15 @@ where
     ) -> Self {
         let random_part = hex::encode(random::<[u8; 4]>());
         let client_container_name = format!("client-{random_part}");
-        let container = container_client.run(
-            RunnableImage::from(container_image)
-                .with_network(network)
-                .with_container_name(client_container_name),
+        let container = ContainerLogsDropGuard::new_janus(
+            test_name,
+            container_client.run(
+                RunnableImage::from(container_image)
+                    .with_network(network)
+                    .with_env_var(get_rust_log_level())
+                    .with_container_name(client_container_name),
+            ),
         );
-        let container = ContainerLogsDropGuard::new_janus(container);
         let host_port = container.get_host_port_ipv4(8080);
         let http_client = reqwest::Client::new();
         let (leader_aggregator_endpoint, helper_aggregator_endpoint) = task_parameters

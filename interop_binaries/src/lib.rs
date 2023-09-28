@@ -23,7 +23,6 @@ use std::{
     process::{Command, Stdio},
     str::FromStr,
     sync::Arc,
-    thread::panicking,
 };
 use testcontainers::{Container, Image};
 use tokio::sync::Mutex;
@@ -399,6 +398,7 @@ struct ContainerInspectEntry {
 }
 
 pub struct ContainerLogsDropGuard<'d, I: Image> {
+    test_name: String,
     container: Container<'d, I>,
     source: ContainerLogsSource,
 }
@@ -411,12 +411,24 @@ pub enum ContainerLogsSource {
 }
 
 impl<'d, I: Image> ContainerLogsDropGuard<'d, I> {
-    pub fn new(container: Container<I>, source: ContainerLogsSource) -> ContainerLogsDropGuard<I> {
-        ContainerLogsDropGuard { container, source }
+    pub fn new(
+        test_name: &str,
+        container: Container<'d, I>,
+        source: ContainerLogsSource,
+    ) -> ContainerLogsDropGuard<'d, I> {
+        ContainerLogsDropGuard {
+            test_name: test_name.into(),
+            container,
+            source,
+        }
     }
 
-    pub fn new_janus(container: Container<I>) -> ContainerLogsDropGuard<I> {
+    pub fn new_janus(
+        test_name: &str,
+        container: Container<'d, I>,
+    ) -> ContainerLogsDropGuard<'d, I> {
         ContainerLogsDropGuard {
+            test_name: test_name.into(),
             container,
             source: ContainerLogsSource::Path("/logs".to_string()),
         }
@@ -425,16 +437,11 @@ impl<'d, I: Image> ContainerLogsDropGuard<'d, I> {
 
 impl<'d, I: Image> Drop for ContainerLogsDropGuard<'d, I> {
     fn drop(&mut self) {
-        if !panicking() {
-            return;
-        }
-        // If we're panicking then we're probably in the middle of test failure. In this case,
-        // export logs if log_export_path() suggests doing so.
-        //
         // The unwraps in this code block would induce a double panic, but we accept this risk
         // since it happens only in test code. This is also our main method of debugging
         // integration tests, so if it's broken we should be alerted and have it fixed ASAP.
         if let Some(base_dir) = log_export_path() {
+            let base_dir = base_dir.join(&self.test_name);
             create_dir_all(&base_dir).expect("could not create log output directory");
 
             let id = self.container.id();
@@ -529,6 +536,15 @@ impl Default for Keyring {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Returns the environment variable RUST_LOG. If it's unset or otherwise invalid, return the
+/// default value of "info".
+pub fn get_rust_log_level() -> (&'static str, String) {
+    (
+        "RUST_LOG",
+        env::var("RUST_LOG").unwrap_or("info".to_string()),
+    )
 }
 
 #[cfg(feature = "test-util")]

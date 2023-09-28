@@ -3,7 +3,8 @@
 use crate::interop_api;
 use janus_aggregator_core::task::Task;
 use janus_interop_binaries::{
-    test_util::await_http_server, testcontainer::Aggregator, ContainerLogsDropGuard,
+    get_rust_log_level, test_util::await_http_server, testcontainer::Aggregator,
+    ContainerLogsDropGuard,
 };
 use janus_messages::Role;
 use testcontainers::{clients::Cli, RunnableImage};
@@ -16,7 +17,12 @@ pub struct Janus<'a> {
 impl<'a> Janus<'a> {
     /// Create and start a new hermetic Janus test instance in the given Docker network, configured
     /// to service the given task. The aggregator port is also exposed to the host.
-    pub async fn new(container_client: &'a Cli, network: &str, task: &Task) -> Janus<'a> {
+    pub async fn new(
+        test_name: &str,
+        container_client: &'a Cli,
+        network: &str,
+        task: &Task,
+    ) -> Janus<'a> {
         // Start the Janus interop aggregator container running.
         let endpoint = match task.role() {
             Role::Leader => task.leader_aggregator_endpoint(),
@@ -24,9 +30,11 @@ impl<'a> Janus<'a> {
             _ => panic!("unexpected task role"),
         };
         let container = ContainerLogsDropGuard::new_janus(
+            test_name,
             container_client.run(
                 RunnableImage::from(Aggregator::default())
                     .with_network(network)
+                    .with_env_var(get_rust_log_level())
                     .with_container_name(endpoint.host_str().unwrap()),
             ),
         );

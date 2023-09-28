@@ -26,6 +26,7 @@ impl<'a> JanusPair<'a> {
     /// Set up a new pair of containerized Janus test instances, and set up a new task in each using
     /// the given VDAF and query type.
     pub async fn new(
+        test_name: &str,
         container_client: &'a Cli,
         vdaf: VdafInstance,
         query_type: QueryType,
@@ -33,8 +34,8 @@ impl<'a> JanusPair<'a> {
         let (task_parameters, leader_task, helper_task) = test_task_builders(vdaf, query_type);
 
         let network = generate_network_name();
-        let leader = Janus::new(container_client, &network, &leader_task.build()).await;
-        let helper = Janus::new(container_client, &network, &helper_task.build()).await;
+        let leader = Janus::new(test_name, container_client, &network, &leader_task.build()).await;
+        let helper = Janus::new(test_name, container_client, &network, &helper_task.build()).await;
 
         Self {
             task_parameters,
@@ -47,11 +48,13 @@ impl<'a> JanusPair<'a> {
 /// This test exercises Prio3Count with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_janus_count() {
+    static TEST_NAME: &str = "janus_janus_count";
     install_test_trace_subscriber();
 
     // Start servers.
     let container_client = container_client();
     let janus_pair = JanusPair::new(
+        TEST_NAME,
         &container_client,
         VdafInstance::Prio3Count,
         QueryType::TimeInterval,
@@ -60,6 +63,7 @@ async fn janus_janus_count() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        TEST_NAME,
         &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,
@@ -70,11 +74,13 @@ async fn janus_janus_count() {
 /// This test exercises Prio3Sum with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_janus_sum_16() {
+    static TEST_NAME: &str = "janus_janus_sum_16";
     install_test_trace_subscriber();
 
     // Start servers.
     let container_client = container_client();
     let janus_pair = JanusPair::new(
+        TEST_NAME,
         &container_client,
         VdafInstance::Prio3Sum { bits: 16 },
         QueryType::TimeInterval,
@@ -83,6 +89,7 @@ async fn janus_janus_sum_16() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        TEST_NAME,
         &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,
@@ -93,11 +100,13 @@ async fn janus_janus_sum_16() {
 /// This test exercises Prio3Histogram with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_janus_histogram_4_buckets() {
+    static TEST_NAME: &str = "janus_janus_histogram_4_buckets";
     install_test_trace_subscriber();
 
     // Start servers.
     let container_client = container_client();
     let janus_pair = JanusPair::new(
+        TEST_NAME,
         &container_client,
         VdafInstance::Prio3Histogram {
             length: 4,
@@ -109,6 +118,7 @@ async fn janus_janus_histogram_4_buckets() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        TEST_NAME,
         &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,
@@ -119,11 +129,13 @@ async fn janus_janus_histogram_4_buckets() {
 /// This test exercises the fixed-size query type with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_janus_fixed_size() {
+    static TEST_NAME: &str = "janus_janus_fixed_size";
     install_test_trace_subscriber();
 
     // Start servers.
     let container_client = container_client();
     let janus_pair = JanusPair::new(
+        TEST_NAME,
         &container_client,
         VdafInstance::Prio3Count,
         QueryType::FixedSize {
@@ -135,6 +147,7 @@ async fn janus_janus_fixed_size() {
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        TEST_NAME,
         &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,
@@ -145,10 +158,12 @@ async fn janus_janus_fixed_size() {
 // This test exercises Prio3SumVec with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_janus_sum_vec() {
+    static TEST_NAME: &str = "janus_janus_sum_vec";
     install_test_trace_subscriber();
 
     let container_client = container_client();
     let janus_pair = JanusPair::new(
+        TEST_NAME,
         &container_client,
         VdafInstance::Prio3SumVec {
             bits: 16,
@@ -160,6 +175,7 @@ async fn janus_janus_sum_vec() {
     .await;
 
     submit_measurements_and_verify_aggregate(
+        TEST_NAME,
         &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,
