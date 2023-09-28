@@ -333,7 +333,9 @@ async fn taskprov_aggregate_init() {
                 .state()
                 .eq(&AggregationJobState::InProgress)
     );
-    assert_eq!(test.task, got_task.unwrap());
+    // TODO(#1524): This assertion temporarily just checks the task ID because of the lossy
+    // conversion between task::Task and task::AggregatorTask.
+    assert_eq!(test.task.id(), got_task.unwrap().id());
 }
 
 #[tokio::test]

@@ -971,7 +971,7 @@ mod tests {
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
             VdafInstance::Prio3Count,
-            Role::Leader,
+            Role::Helper,
         )
         .build();
         let task_id = *task.id();

@@ -479,6 +479,155 @@ impl Task {
             self.tasks_path()
         ))?)
     }
+
+    /// Render the leader aggregator's view of this task.
+    pub fn leader_view(&self) -> Result<AggregatorTask, Error> {
+        AggregatorTask::new(
+            self.task_id,
+            self.helper_aggregator_endpoint.clone(),
+            self.query_type,
+            self.vdaf.clone(),
+            self.vdaf_verify_key.clone(),
+            self.max_batch_query_count,
+            self.task_expiration,
+            self.report_expiry_age,
+            self.min_batch_size,
+            self.time_precision,
+            self.tolerable_clock_skew,
+            self.hpke_keys.values().cloned().collect::<Vec<_>>(),
+            AggregatorTaskParameters::Leader {
+                aggregator_auth_token: self
+                    .aggregator_auth_token
+                    .clone()
+                    .ok_or_else(|| Error::InvalidParameter("no aggregator auth token in task"))?,
+                collector_auth_token: self
+                    .collector_auth_token
+                    .clone()
+                    .ok_or_else(|| Error::InvalidParameter("no collector auth token in task"))?,
+                collector_hpke_config: self
+                    .collector_hpke_config
+                    .clone()
+                    .ok_or_else(|| Error::InvalidParameter("no collector HPKE config in task"))?,
+            },
+        )
+    }
+
+    /// Render the helper aggregator's view of this task.
+    pub fn helper_view(&self) -> Result<AggregatorTask, Error> {
+        AggregatorTask::new(
+            self.task_id,
+            self.helper_aggregator_endpoint.clone(),
+            self.query_type,
+            self.vdaf.clone(),
+            self.vdaf_verify_key.clone(),
+            self.max_batch_query_count,
+            self.task_expiration,
+            self.report_expiry_age,
+            self.min_batch_size,
+            self.time_precision,
+            self.tolerable_clock_skew,
+            self.hpke_keys.values().cloned().collect::<Vec<_>>(),
+            AggregatorTaskParameters::Helper {
+                aggregator_auth_token: self
+                    .aggregator_auth_token
+                    .clone()
+                    .ok_or_else(|| Error::InvalidParameter("no aggregator auth token in task"))?,
+                collector_hpke_config: self
+                    .collector_hpke_config
+                    .clone()
+                    .ok_or_else(|| Error::InvalidParameter("no collector HPKE config in task"))?,
+            },
+        )
+    }
+
+    /// Render a taskprov helper aggregator's view of this task.
+    pub fn taskprov_helper_view(&self) -> Result<AggregatorTask, Error> {
+        AggregatorTask::new(
+            self.task_id,
+            self.helper_aggregator_endpoint.clone(),
+            self.query_type,
+            self.vdaf.clone(),
+            self.vdaf_verify_key.clone(),
+            self.max_batch_query_count,
+            self.task_expiration,
+            self.report_expiry_age,
+            self.min_batch_size,
+            self.time_precision,
+            self.tolerable_clock_skew,
+            self.hpke_keys.values().cloned().collect::<Vec<_>>(),
+            AggregatorTaskParameters::TaskProvHelper,
+        )
+    }
+}
+
+impl From<AggregatorTask> for Task {
+    fn from(aggregator_task: AggregatorTask) -> Self {
+        // An `AggregatorTask` only contains the other aggregator's URL, which means we can't
+        // accurately set the own endpoint URL. However that value is never used, and in most cases
+        // will have been the fake value set in the aggregator API.
+        // unwrap safety: we know this URL is valid
+        let fake_aggregator_url = Url::parse("http://never-used.example.com").unwrap();
+        let (
+            role,
+            leader_aggregator_endpoint,
+            helper_aggregator_endpoint,
+            aggregator_auth_token,
+            collector_auth_token,
+            collector_hpke_config,
+        ) = match aggregator_task.aggregator_parameters() {
+            AggregatorTaskParameters::Leader {
+                aggregator_auth_token,
+                collector_auth_token,
+                collector_hpke_config,
+            } => (
+                Role::Leader,
+                fake_aggregator_url,
+                aggregator_task.peer_aggregator_endpoint.clone(),
+                Some(aggregator_auth_token.clone()),
+                Some(collector_auth_token.clone()),
+                Some(collector_hpke_config.clone()),
+            ),
+            AggregatorTaskParameters::Helper {
+                aggregator_auth_token,
+                collector_hpke_config,
+            } => (
+                Role::Helper,
+                aggregator_task.peer_aggregator_endpoint.clone(),
+                fake_aggregator_url,
+                Some(aggregator_auth_token.clone()),
+                None,
+                Some(collector_hpke_config.clone()),
+            ),
+            AggregatorTaskParameters::TaskProvHelper => (
+                Role::Helper,
+                aggregator_task.peer_aggregator_endpoint.clone(),
+                fake_aggregator_url,
+                None,
+                None,
+                None,
+            ),
+        };
+
+        Self {
+            task_id: *aggregator_task.id(),
+            leader_aggregator_endpoint,
+            helper_aggregator_endpoint,
+            query_type: aggregator_task.query_type().clone(),
+            vdaf: aggregator_task.vdaf().clone(),
+            role,
+            vdaf_verify_key: aggregator_task.opaque_vdaf_verify_key().clone(),
+            max_batch_query_count: aggregator_task.max_batch_query_count(),
+            task_expiration: aggregator_task.task_expiration().cloned(),
+            report_expiry_age: aggregator_task.report_expiry_age().cloned(),
+            min_batch_size: aggregator_task.min_batch_size(),
+            time_precision: *aggregator_task.time_precision(),
+            tolerable_clock_skew: *aggregator_task.tolerable_clock_skew(),
+            collector_hpke_config,
+            aggregator_auth_token,
+            collector_auth_token,
+            hpke_keys: aggregator_task.hpke_keys().clone(),
+        }
+    }
 }
 
 /// Task parameters common to all views of a DAP task.
