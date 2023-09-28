@@ -82,5 +82,6 @@ COPY --from=builder-aggregator \
     /src/target/$PROFILE/aggregation_job_driver \
     /src/target/$PROFILE/collection_job_driver \
     /usr/local/bin/
+ENV RUST_LOG=info
 EXPOSE 8080
 ENTRYPOINT ["/usr/bin/supervisord", "-c", "/etc/janus/supervisord.conf"]
