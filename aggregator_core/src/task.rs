@@ -7,12 +7,11 @@ use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     hpke::{generate_hpke_config_and_private_key, HpkeKeypair},
     time::TimeExt,
-    url_ensure_trailing_slash,
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    taskprov, AggregationJobId, CollectionJobId, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId,
-    HpkeKdfId, HpkeKemId, Role, TaskId, Time,
+    taskprov, AggregationJobId, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId,
+    HpkeKemId, Role, TaskId, Time,
 };
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
@@ -90,272 +89,6 @@ impl<const SEED_SIZE: usize> TryFrom<&SecretBytes> for VerifyKey<SEED_SIZE> {
     fn try_from(value: &SecretBytes) -> Result<VerifyKey<SEED_SIZE>, TryFromSliceError> {
         let array = <[u8; SEED_SIZE] as TryFrom<&[u8]>>::try_from(&value.0)?;
         Ok(VerifyKey::new(array))
-    }
-}
-
-/// The parameters for a DAP task.
-#[derive(Clone, Derivative, PartialEq, Eq)]
-#[derivative(Debug)]
-pub struct Task {
-    /// Common task parameters
-    common_parameters: CommonTaskParameters,
-    /// URL relative to which the leader aggregator's API endpoints are found.
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
-    leader_aggregator_endpoint: Url,
-    /// URL relative to which the leader aggregator's API endpoints are found.
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
-    helper_aggregator_endpoint: Url,
-    /// HPKE configuration and private key used by the collector to decrypt aggregate shares.
-    collector_hpke_keypair: HpkeKeypair,
-    /// Token used to authenticate messages exchanged between the aggregators in the aggregation
-    /// sub-protocol.
-    aggregator_auth_token: AuthenticationToken,
-    /// Token used to authenticate messages exchanged between the collector and leader in the
-    /// collection sub-protocol.
-    collector_auth_token: AuthenticationToken,
-    /// HPKE configurations & private keys used by the leader to decrypt client reports.
-    leader_hpke_keys: HashMap<HpkeConfigId, HpkeKeypair>,
-    /// HPKE configurations & private keys used by the helper to decrypt client reports.
-    helper_hpke_keys: HashMap<HpkeConfigId, HpkeKeypair>,
-}
-
-impl Task {
-    /// Create a new [`Task`] from the provided values.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new<I: IntoIterator<Item = HpkeKeypair>>(
-        task_id: TaskId,
-        leader_aggregator_endpoint: Url,
-        helper_aggregator_endpoint: Url,
-        query_type: QueryType,
-        vdaf: VdafInstance,
-        vdaf_verify_key: SecretBytes,
-        max_batch_query_count: u64,
-        task_expiration: Option<Time>,
-        report_expiry_age: Option<Duration>,
-        min_batch_size: u64,
-        time_precision: Duration,
-        tolerable_clock_skew: Duration,
-        collector_hpke_keypair: HpkeKeypair,
-        aggregator_auth_token: AuthenticationToken,
-        collector_auth_token: AuthenticationToken,
-        leader_hpke_keys: I,
-        helper_hpke_keys: I,
-    ) -> Self {
-        // Compute hpke_configs mapping cfg.id -> (cfg, key).
-        let leader_hpke_keys: HashMap<HpkeConfigId, HpkeKeypair> = leader_hpke_keys
-            .into_iter()
-            .map(|keypair| (*keypair.config().id(), keypair))
-            .collect();
-
-        let helper_hpke_keys: HashMap<HpkeConfigId, HpkeKeypair> = helper_hpke_keys
-            .into_iter()
-            .map(|keypair| (*keypair.config().id(), keypair))
-            .collect();
-
-        Self {
-            common_parameters: CommonTaskParameters {
-                task_id,
-                query_type,
-                vdaf,
-                vdaf_verify_key,
-                max_batch_query_count,
-                task_expiration,
-                report_expiry_age,
-                min_batch_size,
-                time_precision,
-                tolerable_clock_skew,
-            },
-            // Ensure provided aggregator endpoints end with a slash, as we will be joining
-            // additional path segments into these endpoints & the Url::join implementation is
-            // persnickety about the slash at the end of the path.
-            leader_aggregator_endpoint: url_ensure_trailing_slash(leader_aggregator_endpoint),
-            helper_aggregator_endpoint: url_ensure_trailing_slash(helper_aggregator_endpoint),
-            aggregator_auth_token,
-            collector_auth_token,
-            collector_hpke_keypair,
-            leader_hpke_keys,
-            helper_hpke_keys,
-        }
-    }
-
-    /// Retrieves the task ID associated with this task.
-    pub fn id(&self) -> &TaskId {
-        self.common_parameters.id()
-    }
-
-    /// Retrieves the Leader's aggregator endpoint associated with this task.
-    pub fn leader_aggregator_endpoint(&self) -> &Url {
-        &self.leader_aggregator_endpoint
-    }
-
-    /// Retrieves the Helper's aggregator endpoint associated with this task.
-    pub fn helper_aggregator_endpoint(&self) -> &Url {
-        &self.helper_aggregator_endpoint
-    }
-
-    /// Retrieves the query type associated with this task.
-    pub fn query_type(&self) -> &QueryType {
-        self.common_parameters.query_type()
-    }
-
-    /// Retrieves the VDAF associated with this task.
-    pub fn vdaf(&self) -> &VdafInstance {
-        self.common_parameters.vdaf()
-    }
-
-    /// Retrieves the VDAF verification key associated with this task, as opaque secret bytes.
-    pub fn opaque_vdaf_verify_key(&self) -> &SecretBytes {
-        self.common_parameters.opaque_vdaf_verify_key()
-    }
-
-    /// Retrieves the max batch query count parameter associated with this task.
-    pub fn max_batch_query_count(&self) -> u64 {
-        self.common_parameters.max_batch_query_count()
-    }
-
-    /// Retrieves the task expiration associated with this task.
-    pub fn task_expiration(&self) -> Option<&Time> {
-        self.common_parameters.task_expiration()
-    }
-
-    /// Retrieves the report expiry age associated with this task.
-    pub fn report_expiry_age(&self) -> Option<&Duration> {
-        self.common_parameters.report_expiry_age()
-    }
-
-    /// Retrieves the min batch size parameter associated with this task.
-    pub fn min_batch_size(&self) -> u64 {
-        self.common_parameters.min_batch_size()
-    }
-
-    /// Retrieves the time precision parameter associated with this task.
-    pub fn time_precision(&self) -> &Duration {
-        self.common_parameters.time_precision()
-    }
-
-    /// Retrieves the tolerable clock skew parameter associated with this task.
-    pub fn tolerable_clock_skew(&self) -> &Duration {
-        self.common_parameters.tolerable_clock_skew()
-    }
-
-    /// Retrieves the collector HPKE keypair associated with this task.
-    pub fn collector_hpke_keypair(&self) -> &HpkeKeypair {
-        &self.collector_hpke_keypair
-    }
-
-    /// Retrieves the aggregator authentication token associated with this task.
-    pub fn aggregator_auth_token(&self) -> &AuthenticationToken {
-        &self.aggregator_auth_token
-    }
-
-    /// Retrieves the collector authentication token associated with this task.
-    pub fn collector_auth_token(&self) -> &AuthenticationToken {
-        &self.collector_auth_token
-    }
-
-    /// Returns true if the `batch_size` is valid given this task's query type and batch size
-    /// parameters, per
-    /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6>
-    pub fn validate_batch_size(&self, batch_size: u64) -> bool {
-        self.common_parameters.validate_batch_size(batch_size)
-    }
-
-    /// Returns the [`VerifyKey`] used by this aggregator to prepare report shares with other
-    /// aggregators.
-    ///
-    /// # Errors
-    ///
-    /// If the verify key is not the correct length as required by the VDAF, an error will be
-    /// returned.
-    pub fn vdaf_verify_key<const SEED_SIZE: usize>(&self) -> Result<VerifyKey<SEED_SIZE>, Error> {
-        self.common_parameters.vdaf_verify_key()
-    }
-
-    /// Returns the relative path for tasks, relative to which other API endpoints are defined.
-    fn tasks_path(&self) -> String {
-        format!("tasks/{}", self.id())
-    }
-
-    /// Returns the URI at which reports may be uploaded for this task.
-    pub fn report_upload_uri(&self) -> Result<Url, Error> {
-        Ok(self
-            .leader_aggregator_endpoint()
-            .join(&format!("{}/reports", self.tasks_path()))?)
-    }
-
-    /// Returns the URI at which the helper resource for the specified aggregation job ID can be
-    /// accessed.
-    pub fn aggregation_job_uri(&self, aggregation_job_id: &AggregationJobId) -> Result<Url, Error> {
-        Ok(self.helper_aggregator_endpoint().join(&format!(
-            "{}/aggregation_jobs/{aggregation_job_id}",
-            self.tasks_path()
-        ))?)
-    }
-
-    /// Returns the URI at which the helper aggregate shares resource can be accessed.
-    pub fn aggregate_shares_uri(&self) -> Result<Url, Error> {
-        Ok(self
-            .helper_aggregator_endpoint()
-            .join(&format!("{}/aggregate_shares", self.tasks_path()))?)
-    }
-
-    /// Returns the URI at which the leader resource for the specified collection job ID can be
-    /// accessed.
-    pub fn collection_job_uri(&self, collection_job_id: &CollectionJobId) -> Result<Url, Error> {
-        Ok(self.leader_aggregator_endpoint().join(&format!(
-            "{}/collection_jobs/{collection_job_id}",
-            self.tasks_path()
-        ))?)
-    }
-
-    /// Render the leader aggregator's view of this task.
-    pub fn leader_view(&self) -> Result<AggregatorTask, Error> {
-        AggregatorTask::new_with_common_parameters(
-            self.common_parameters.clone(),
-            self.helper_aggregator_endpoint.clone(),
-            self.leader_hpke_keys.values().cloned().collect::<Vec<_>>(),
-            AggregatorTaskParameters::Leader {
-                aggregator_auth_token: self.aggregator_auth_token.clone(),
-                collector_auth_token: self.collector_auth_token.clone(),
-                collector_hpke_config: self.collector_hpke_keypair.config().clone(),
-            },
-        )
-    }
-
-    /// Render the helper aggregator's view of this task.
-    pub fn helper_view(&self) -> Result<AggregatorTask, Error> {
-        AggregatorTask::new_with_common_parameters(
-            self.common_parameters.clone(),
-            self.leader_aggregator_endpoint.clone(),
-            self.helper_hpke_keys.values().cloned().collect::<Vec<_>>(),
-            AggregatorTaskParameters::Helper {
-                aggregator_auth_token: self.aggregator_auth_token.clone(),
-                collector_hpke_config: self.collector_hpke_keypair.config().clone(),
-            },
-        )
-    }
-
-    /// Render a taskprov helper aggregator's view of this task.
-    pub fn taskprov_helper_view(&self) -> Result<AggregatorTask, Error> {
-        AggregatorTask::new_with_common_parameters(
-            self.common_parameters.clone(),
-            self.leader_aggregator_endpoint.clone(),
-            [],
-            AggregatorTaskParameters::TaskProvHelper,
-        )
-    }
-
-    /// Render the view of the specified aggregator of this task.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `role` is not an aggregator role.
-    pub fn view_for_role(&self, role: Role) -> Result<AggregatorTask, Error> {
-        match role {
-            Role::Leader => self.leader_view(),
-            Role::Helper => self.helper_view(),
-            _ => Err(Error::InvalidParameter("role is not an aggregator")),
-        }
     }
 }
 
@@ -1066,9 +799,13 @@ impl<'de> Deserialize<'de> for AggregatorTask {
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use crate::{
-        task::{CommonTaskParameters, QueryType, Task},
+        task::{
+            AggregatorTask, AggregatorTaskParameters, CommonTaskParameters, Error, QueryType,
+            VerifyKey,
+        },
         SecretBytes,
     };
+    use derivative::Derivative;
     use janus_core::{
         auth_tokens::AuthenticationToken,
         hpke::{
@@ -1082,8 +819,11 @@ pub mod test_util {
         url_ensure_trailing_slash,
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
     };
-    use janus_messages::{Duration, TaskId, Time};
+    use janus_messages::{
+        AggregationJobId, CollectionJobId, Duration, HpkeConfigId, Role, TaskId, Time,
+    };
     use rand::{distributions::Standard, random, thread_rng, Rng};
+    use std::collections::HashMap;
     use url::Url;
 
     /// Returns the expected length of a VDAF verification key for a VDAF of this type.
@@ -1096,6 +836,280 @@ pub mod test_util {
             // All "real" VDAFs use a verify key of length 16 currently. (Poplar1 may not, but it's
             // not yet done being specified, so choosing 16 bytes is fine for testing.)
             _ => VERIFY_KEY_LENGTH,
+        }
+    }
+
+    /// The parameters for a DAP task.
+    #[derive(Clone, Derivative, PartialEq, Eq)]
+    #[derivative(Debug)]
+    pub struct Task {
+        /// Common task parameters
+        common_parameters: CommonTaskParameters,
+        /// URL relative to which the leader aggregator's API endpoints are found.
+        #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+        leader_aggregator_endpoint: Url,
+        /// URL relative to which the leader aggregator's API endpoints are found.
+        #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+        helper_aggregator_endpoint: Url,
+        /// HPKE configuration and private key used by the collector to decrypt aggregate shares.
+        collector_hpke_keypair: HpkeKeypair,
+        /// Token used to authenticate messages exchanged between the aggregators in the aggregation
+        /// sub-protocol.
+        aggregator_auth_token: AuthenticationToken,
+        /// Token used to authenticate messages exchanged between the collector and leader in the
+        /// collection sub-protocol.
+        collector_auth_token: AuthenticationToken,
+        /// HPKE configurations & private keys used by the leader to decrypt client reports.
+        leader_hpke_keys: HashMap<HpkeConfigId, HpkeKeypair>,
+        /// HPKE configurations & private keys used by the helper to decrypt client reports.
+        helper_hpke_keys: HashMap<HpkeConfigId, HpkeKeypair>,
+    }
+
+    impl Task {
+        /// Create a new [`Task`] from the provided values.
+        #[allow(clippy::too_many_arguments)]
+        pub(crate) fn new<I: IntoIterator<Item = HpkeKeypair>>(
+            task_id: TaskId,
+            leader_aggregator_endpoint: Url,
+            helper_aggregator_endpoint: Url,
+            query_type: QueryType,
+            vdaf: VdafInstance,
+            vdaf_verify_key: SecretBytes,
+            max_batch_query_count: u64,
+            task_expiration: Option<Time>,
+            report_expiry_age: Option<Duration>,
+            min_batch_size: u64,
+            time_precision: Duration,
+            tolerable_clock_skew: Duration,
+            collector_hpke_keypair: HpkeKeypair,
+            aggregator_auth_token: AuthenticationToken,
+            collector_auth_token: AuthenticationToken,
+            leader_hpke_keys: I,
+            helper_hpke_keys: I,
+        ) -> Self {
+            // Compute hpke_configs mapping cfg.id -> (cfg, key).
+            let leader_hpke_keys: HashMap<HpkeConfigId, HpkeKeypair> = leader_hpke_keys
+                .into_iter()
+                .map(|keypair| (*keypair.config().id(), keypair))
+                .collect();
+
+            let helper_hpke_keys: HashMap<HpkeConfigId, HpkeKeypair> = helper_hpke_keys
+                .into_iter()
+                .map(|keypair| (*keypair.config().id(), keypair))
+                .collect();
+
+            Self {
+                common_parameters: CommonTaskParameters {
+                    task_id,
+                    query_type,
+                    vdaf,
+                    vdaf_verify_key,
+                    max_batch_query_count,
+                    task_expiration,
+                    report_expiry_age,
+                    min_batch_size,
+                    time_precision,
+                    tolerable_clock_skew,
+                },
+                // Ensure provided aggregator endpoints end with a slash, as we will be joining
+                // additional path segments into these endpoints & the Url::join implementation is
+                // persnickety about the slash at the end of the path.
+                leader_aggregator_endpoint: url_ensure_trailing_slash(leader_aggregator_endpoint),
+                helper_aggregator_endpoint: url_ensure_trailing_slash(helper_aggregator_endpoint),
+                aggregator_auth_token,
+                collector_auth_token,
+                collector_hpke_keypair,
+                leader_hpke_keys,
+                helper_hpke_keys,
+            }
+        }
+
+        /// Retrieves the task ID associated with this task.
+        pub fn id(&self) -> &TaskId {
+            self.common_parameters.id()
+        }
+
+        /// Retrieves the Leader's aggregator endpoint associated with this task.
+        pub fn leader_aggregator_endpoint(&self) -> &Url {
+            &self.leader_aggregator_endpoint
+        }
+
+        /// Retrieves the Helper's aggregator endpoint associated with this task.
+        pub fn helper_aggregator_endpoint(&self) -> &Url {
+            &self.helper_aggregator_endpoint
+        }
+
+        /// Retrieves the query type associated with this task.
+        pub fn query_type(&self) -> &QueryType {
+            self.common_parameters.query_type()
+        }
+
+        /// Retrieves the VDAF associated with this task.
+        pub fn vdaf(&self) -> &VdafInstance {
+            self.common_parameters.vdaf()
+        }
+
+        /// Retrieves the VDAF verification key associated with this task, as opaque secret bytes.
+        pub fn opaque_vdaf_verify_key(&self) -> &SecretBytes {
+            self.common_parameters.opaque_vdaf_verify_key()
+        }
+
+        /// Retrieves the max batch query count parameter associated with this task.
+        pub fn max_batch_query_count(&self) -> u64 {
+            self.common_parameters.max_batch_query_count()
+        }
+
+        /// Retrieves the task expiration associated with this task.
+        pub fn task_expiration(&self) -> Option<&Time> {
+            self.common_parameters.task_expiration()
+        }
+
+        /// Retrieves the report expiry age associated with this task.
+        pub fn report_expiry_age(&self) -> Option<&Duration> {
+            self.common_parameters.report_expiry_age()
+        }
+
+        /// Retrieves the min batch size parameter associated with this task.
+        pub fn min_batch_size(&self) -> u64 {
+            self.common_parameters.min_batch_size()
+        }
+
+        /// Retrieves the time precision parameter associated with this task.
+        pub fn time_precision(&self) -> &Duration {
+            self.common_parameters.time_precision()
+        }
+
+        /// Retrieves the tolerable clock skew parameter associated with this task.
+        pub fn tolerable_clock_skew(&self) -> &Duration {
+            self.common_parameters.tolerable_clock_skew()
+        }
+
+        /// Retrieves the collector HPKE keypair associated with this task.
+        pub fn collector_hpke_keypair(&self) -> &HpkeKeypair {
+            &self.collector_hpke_keypair
+        }
+
+        /// Retrieves the aggregator authentication token associated with this task.
+        pub fn aggregator_auth_token(&self) -> &AuthenticationToken {
+            &self.aggregator_auth_token
+        }
+
+        /// Retrieves the collector authentication token associated with this task.
+        pub fn collector_auth_token(&self) -> &AuthenticationToken {
+            &self.collector_auth_token
+        }
+
+        /// Returns true if the `batch_size` is valid given this task's query type and batch size
+        /// parameters, per
+        /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6>
+        pub fn validate_batch_size(&self, batch_size: u64) -> bool {
+            self.common_parameters.validate_batch_size(batch_size)
+        }
+
+        /// Returns the [`VerifyKey`] used by this aggregator to prepare report shares with other
+        /// aggregators.
+        ///
+        /// # Errors
+        ///
+        /// If the verify key is not the correct length as required by the VDAF, an error will be
+        /// returned.
+        pub fn vdaf_verify_key<const SEED_SIZE: usize>(
+            &self,
+        ) -> Result<VerifyKey<SEED_SIZE>, Error> {
+            self.common_parameters.vdaf_verify_key()
+        }
+
+        /// Returns the relative path for tasks, relative to which other API endpoints are defined.
+        fn tasks_path(&self) -> String {
+            format!("tasks/{}", self.id())
+        }
+
+        /// Returns the URI at which reports may be uploaded for this task.
+        pub fn report_upload_uri(&self) -> Result<Url, Error> {
+            Ok(self
+                .leader_aggregator_endpoint()
+                .join(&format!("{}/reports", self.tasks_path()))?)
+        }
+
+        /// Returns the URI at which the helper resource for the specified aggregation job ID can be
+        /// accessed.
+        pub fn aggregation_job_uri(
+            &self,
+            aggregation_job_id: &AggregationJobId,
+        ) -> Result<Url, Error> {
+            Ok(self.helper_aggregator_endpoint().join(&format!(
+                "{}/aggregation_jobs/{aggregation_job_id}",
+                self.tasks_path()
+            ))?)
+        }
+
+        /// Returns the URI at which the helper aggregate shares resource can be accessed.
+        pub fn aggregate_shares_uri(&self) -> Result<Url, Error> {
+            Ok(self
+                .helper_aggregator_endpoint()
+                .join(&format!("{}/aggregate_shares", self.tasks_path()))?)
+        }
+
+        /// Returns the URI at which the leader resource for the specified collection job ID can be
+        /// accessed.
+        pub fn collection_job_uri(
+            &self,
+            collection_job_id: &CollectionJobId,
+        ) -> Result<Url, Error> {
+            Ok(self.leader_aggregator_endpoint().join(&format!(
+                "{}/collection_jobs/{collection_job_id}",
+                self.tasks_path()
+            ))?)
+        }
+
+        /// Render the leader aggregator's view of this task.
+        pub fn leader_view(&self) -> Result<AggregatorTask, Error> {
+            AggregatorTask::new_with_common_parameters(
+                self.common_parameters.clone(),
+                self.helper_aggregator_endpoint.clone(),
+                self.leader_hpke_keys.values().cloned().collect::<Vec<_>>(),
+                AggregatorTaskParameters::Leader {
+                    aggregator_auth_token: self.aggregator_auth_token.clone(),
+                    collector_auth_token: self.collector_auth_token.clone(),
+                    collector_hpke_config: self.collector_hpke_keypair.config().clone(),
+                },
+            )
+        }
+
+        /// Render the helper aggregator's view of this task.
+        pub fn helper_view(&self) -> Result<AggregatorTask, Error> {
+            AggregatorTask::new_with_common_parameters(
+                self.common_parameters.clone(),
+                self.leader_aggregator_endpoint.clone(),
+                self.helper_hpke_keys.values().cloned().collect::<Vec<_>>(),
+                AggregatorTaskParameters::Helper {
+                    aggregator_auth_token: self.aggregator_auth_token.clone(),
+                    collector_hpke_config: self.collector_hpke_keypair.config().clone(),
+                },
+            )
+        }
+
+        /// Render a taskprov helper aggregator's view of this task.
+        pub fn taskprov_helper_view(&self) -> Result<AggregatorTask, Error> {
+            AggregatorTask::new_with_common_parameters(
+                self.common_parameters.clone(),
+                self.leader_aggregator_endpoint.clone(),
+                [],
+                AggregatorTaskParameters::TaskProvHelper,
+            )
+        }
+
+        /// Render the view of the specified aggregator of this task.
+        ///
+        /// # Errors
+        ///
+        /// Returns an error if `role` is not an aggregator role.
+        pub fn view_for_role(&self, role: Role) -> Result<AggregatorTask, Error> {
+            match role {
+                Role::Leader => self.leader_view(),
+                Role::Helper => self.helper_view(),
+                _ => Err(Error::InvalidParameter("role is not an aggregator")),
+            }
         }
     }
 
@@ -1126,27 +1140,25 @@ pub mod test_util {
                     .collect(),
             );
 
-            Self(
-                Task::new(
-                    task_id,
-                    "https://leader.endpoint".parse().unwrap(),
-                    "https://helper.endpoint".parse().unwrap(),
-                    query_type,
-                    vdaf,
-                    vdaf_verify_key,
-                    1,
-                    None,
-                    None,
-                    0,
-                    Duration::from_hours(8).unwrap(),
-                    Duration::from_minutes(10).unwrap(),
-                    /* Collector HPKE keypair */ generate_test_hpke_config_and_private_key(),
-                    /* Aggregator auth token */ random(),
-                    /* Collector auth token */ random(),
-                    leader_hpke_keypairs,
-                    helper_hpke_keypairs,
-                ),
-            )
+            Self(Task::new(
+                task_id,
+                "https://leader.endpoint".parse().unwrap(),
+                "https://helper.endpoint".parse().unwrap(),
+                query_type,
+                vdaf,
+                vdaf_verify_key,
+                1,
+                None,
+                None,
+                0,
+                Duration::from_hours(8).unwrap(),
+                Duration::from_minutes(10).unwrap(),
+                /* Collector HPKE keypair */ generate_test_hpke_config_and_private_key(),
+                /* Aggregator auth token */ random(),
+                /* Collector auth token */ random(),
+                leader_hpke_keypairs,
+                helper_hpke_keypairs,
+            ))
         }
 
         /// Gets the leader aggregator endpoint for the eventual task.
@@ -1395,12 +1407,12 @@ mod tests {
             .build();
 
         assert_eq!(
-            task.leader_aggregator_endpoint,
-            "http://leader_endpoint/foo/bar/".parse().unwrap(),
+            task.leader_aggregator_endpoint(),
+            &"http://leader_endpoint/foo/bar/".parse().unwrap(),
         );
         assert_eq!(
-            task.helper_aggregator_endpoint,
-            "http://helper_endpoint/".parse().unwrap(),
+            task.helper_aggregator_endpoint(),
+            &"http://helper_endpoint/".parse().unwrap(),
         );
     }
 

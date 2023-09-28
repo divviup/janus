@@ -289,7 +289,7 @@ impl VdafOps {
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use crate::aggregator::http_handlers::test_util::{decode_response_body, take_problem_details};
-    use janus_aggregator_core::task::Task;
+    use janus_aggregator_core::task::test_util::Task;
     use janus_messages::{AggregationJobContinueReq, AggregationJobId, AggregationJobResp};
     use prio::codec::Encode;
     use serde_json::json;
@@ -390,7 +390,7 @@ mod tests {
             test_util::{ephemeral_datastore, EphemeralDatastore},
             Datastore,
         },
-        task::{test_util::TaskBuilder, QueryType, Task},
+        task::{test_util::{TaskBuilder, Task}, QueryType},
         test_util::noop_meter,
     };
     use janus_core::{

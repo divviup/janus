@@ -1,7 +1,7 @@
 //! Functionality for tests interacting with Janus (<https://github.com/divviup/janus>).
 
 use crate::interop_api;
-use janus_aggregator_core::task::Task;
+use janus_aggregator_core::task::test_util::Task;
 use janus_interop_binaries::{
     test_util::await_http_server, testcontainer::Aggregator, ContainerLogsDropGuard,
 };

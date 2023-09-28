@@ -1,4 +1,4 @@
-use janus_aggregator_core::task::Task;
+use janus_aggregator_core::task::test_util::Task;
 use janus_interop_binaries::AggregatorAddTaskRequest;
 use janus_messages::Role;
 use std::collections::HashMap;

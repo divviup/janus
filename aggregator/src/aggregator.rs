@@ -3116,7 +3116,7 @@ mod tests {
             test_util::{ephemeral_datastore, EphemeralDatastore},
             Datastore,
         },
-        task::{test_util::TaskBuilder, AggregatorTask, QueryType, Task},
+        task::{test_util::{TaskBuilder, Task}, AggregatorTask, QueryType},
         test_util::noop_meter,
     };
     use janus_core::{

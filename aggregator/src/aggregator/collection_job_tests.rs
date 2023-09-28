@@ -16,7 +16,7 @@ use janus_aggregator_core::{
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
     },
-    task::{test_util::TaskBuilder, QueryType, Task},
+    task::{test_util::{TaskBuilder, Task}, QueryType},
     test_util::noop_meter,
 };
 use janus_core::{
