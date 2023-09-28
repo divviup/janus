@@ -499,15 +499,15 @@ impl Task {
                 aggregator_auth_token: self
                     .aggregator_auth_token
                     .clone()
-                    .ok_or_else(|| Error::InvalidParameter("no aggregator auth token in task"))?,
+                    .ok_or(Error::InvalidParameter("no aggregator auth token in task"))?,
                 collector_auth_token: self
                     .collector_auth_token
                     .clone()
-                    .ok_or_else(|| Error::InvalidParameter("no collector auth token in task"))?,
+                    .ok_or(Error::InvalidParameter("no collector auth token in task"))?,
                 collector_hpke_config: self
                     .collector_hpke_config
                     .clone()
-                    .ok_or_else(|| Error::InvalidParameter("no collector HPKE config in task"))?,
+                    .ok_or(Error::InvalidParameter("no collector HPKE config in task"))?,
             },
         )
     }
@@ -531,11 +531,11 @@ impl Task {
                 aggregator_auth_token: self
                     .aggregator_auth_token
                     .clone()
-                    .ok_or_else(|| Error::InvalidParameter("no aggregator auth token in task"))?,
+                    .ok_or(Error::InvalidParameter("no aggregator auth token in task"))?,
                 collector_hpke_config: self
                     .collector_hpke_config
                     .clone()
-                    .ok_or_else(|| Error::InvalidParameter("no collector HPKE config in task"))?,
+                    .ok_or(Error::InvalidParameter("no collector HPKE config in task"))?,
             },
         )
     }
@@ -612,7 +612,7 @@ impl From<AggregatorTask> for Task {
             task_id: *aggregator_task.id(),
             leader_aggregator_endpoint,
             helper_aggregator_endpoint,
-            query_type: aggregator_task.query_type().clone(),
+            query_type: *aggregator_task.query_type(),
             vdaf: aggregator_task.vdaf().clone(),
             role,
             vdaf_verify_key: aggregator_task.opaque_vdaf_verify_key().clone(),
