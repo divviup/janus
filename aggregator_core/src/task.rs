@@ -525,8 +525,28 @@ impl CommonTaskParameters {
         min_batch_size: u64,
         time_precision: Duration,
         tolerable_clock_skew: Duration,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, Error> {
+        if let QueryType::FixedSize { max_batch_size, .. } = query_type {
+            if max_batch_size < min_batch_size {
+                return Err(Error::InvalidParameter("max_batch_size"));
+            }
+        }
+
+        // These fields are stored as 64-bit signed integers in the database but are held in
+        // memory as unsigned. Reject values that are too large. (perhaps these should be
+        // represented by different types?)
+        if let Some(report_expiry_age) = report_expiry_age {
+            if report_expiry_age > Duration::from_seconds(i64::MAX as u64) {
+                return Err(Error::InvalidParameter("report_expiry_age too large"));
+            }
+        }
+        if let Some(task_expiration) = task_expiration {
+            task_expiration
+                .as_naive_date_time()
+                .map_err(|_| Error::InvalidParameter("task_expiration out of range"))?;
+        }
+
+        Ok(Self {
             task_id,
             query_type,
             vdaf,
@@ -537,32 +557,7 @@ impl CommonTaskParameters {
             min_batch_size,
             time_precision,
             tolerable_clock_skew,
-        }
-    }
-
-    /// Validates using criteria common to all tasks regardless of their provenance.
-    pub(crate) fn validate(&self) -> Result<(), Error> {
-        if let QueryType::FixedSize { max_batch_size, .. } = self.query_type {
-            if max_batch_size < self.min_batch_size {
-                return Err(Error::InvalidParameter("max_batch_size"));
-            }
-        }
-
-        // These fields are stored as 64-bit signed integers in the database but are held in
-        // memory as unsigned. Reject values that are too large. (perhaps these should be
-        // represented by different types?)
-        if let Some(report_expiry_age) = self.report_expiry_age {
-            if report_expiry_age > Duration::from_seconds(i64::MAX as u64) {
-                return Err(Error::InvalidParameter("report_expiry_age too large"));
-            }
-        }
-        if let Some(task_expiration) = self.task_expiration {
-            task_expiration
-                .as_naive_date_time()
-                .map_err(|_| Error::InvalidParameter("task_expiration out of range"))?;
-        }
-
-        Ok(())
+        })
     }
 
     /// Returns the [`VerifyKey`] used by this aggregator to prepare report shares with other
@@ -621,7 +616,7 @@ impl AggregatorTask {
             min_batch_size,
             time_precision,
             tolerable_clock_skew,
-        );
+        )?;
         Self::new_with_common_parameters(
             common_parameters,
             peer_aggregator_endpoint,
@@ -642,22 +637,10 @@ impl AggregatorTask {
             .map(|keypair| (*keypair.config().id(), keypair))
             .collect();
 
-        common_parameters.validate()?;
-
-        Ok(Self {
-            common_parameters,
-            peer_aggregator_endpoint,
-            hpke_keys,
-            aggregator_parameters,
-        })
-    }
-
-    /// Validates the task's parameters.
-    pub fn validate(&self) -> Result<(), Error> {
         if !matches!(
-            self.aggregator_parameters,
+            aggregator_parameters,
             AggregatorTaskParameters::TaskProvHelper
-        ) && self.hpke_keys.is_empty()
+        ) && hpke_keys.is_empty()
         {
             return Err(Error::InvalidParameter("hpke_keys"));
         }
@@ -665,22 +648,29 @@ impl AggregatorTask {
         if let QueryType::FixedSize {
             batch_time_window_size: Some(batch_time_window_size),
             ..
-        } = self.query_type()
+        } = common_parameters.query_type
         {
             if matches!(
-                self.aggregator_parameters,
+                aggregator_parameters,
                 AggregatorTaskParameters::TaskProvHelper
             ) {
                 return Err(Error::InvalidParameter(
                     "batch_time_window_size is not supported for taskprov",
                 ));
-            } else if batch_time_window_size.as_seconds() % self.time_precision().as_seconds() != 0
+            } else if batch_time_window_size.as_seconds()
+                % common_parameters.time_precision.as_seconds()
+                != 0
             {
                 return Err(Error::InvalidParameter("batch_time_window_size"));
             }
         }
 
-        Ok(())
+        Ok(Self {
+            common_parameters,
+            peer_aggregator_endpoint,
+            hpke_keys,
+            aggregator_parameters,
+        })
     }
 
     /// Retrieves the task ID associated with this task.
@@ -831,8 +821,8 @@ impl AggregatorTask {
         self.aggregator_parameters.collector_auth_token()
     }
 
-    /// Return the HPKE keypairs used by this aggregator to decrypt client reports, or `None` for
-    /// taskprov tasks.
+    /// Return the HPKE keypairs used by this aggregator to decrypt client reports, or an empty map
+    /// for taskprov tasks.
     pub fn hpke_keys(&self) -> &HashMap<HpkeConfigId, HpkeKeypair> {
         &self.hpke_keys
     }
