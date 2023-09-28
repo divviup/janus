@@ -251,8 +251,8 @@ mod tests {
                     // Confirm that post_to_helper() correctly parsed the error type from error_handler().
                     assert_matches!(
                         actual_error,
-                        Error::Http { dap_problem_type: problem_type, .. } => {
-                            assert_eq!(problem_type, test_case.expected_problem_type);
+                        Error::Http(error_response) => {
+                            assert_eq!(error_response.dap_problem_type(), test_case.expected_problem_type.as_ref());
                         }
                     );
                 }

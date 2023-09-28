@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 /// Representation of the different problem types defined in Table 1 in §3.2.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DapProblemType {
     InvalidMessage,
     UnrecognizedTask,

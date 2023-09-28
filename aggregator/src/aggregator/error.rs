@@ -1,8 +1,8 @@
-use http_api_problem::HttpApiProblem;
 use janus_aggregator_core::{datastore, task};
+use janus_core::http::HttpErrorResponse;
 use janus_messages::{
-    problem_type::DapProblemType, AggregationJobId, AggregationJobStep, CollectionJobId,
-    HpkeConfigId, Interval, PrepareError, ReportId, ReportIdChecksum, Role, TaskId, Time,
+    AggregationJobId, AggregationJobStep, CollectionJobId, HpkeConfigId, Interval, PrepareError,
+    ReportId, ReportIdChecksum, Role, TaskId, Time,
 };
 use opentelemetry::{metrics::Counter, KeyValue};
 use prio::{topology::ping_pong::PingPongError, vdaf::VdafError};
@@ -103,11 +103,8 @@ pub enum Error {
     #[error("HTTP client error: {0}")]
     HttpClient(#[from] reqwest::Error),
     /// HTTP server returned an error status code.
-    #[error("HTTP response status {problem_details}")]
-    Http {
-        problem_details: Box<HttpApiProblem>,
-        dap_problem_type: Option<DapProblemType>,
-    },
+    #[error("HTTP response status {0}")]
+    Http(Box<HttpErrorResponse>),
     /// An aggregate share request was rejected.
     #[error("task {0}: {1}")]
     AggregateShareRequestRejected(TaskId, String),

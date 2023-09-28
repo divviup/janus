@@ -101,12 +101,19 @@ where
         async move {
             match collector.collect(query, aggregation_parameter).await {
                 Ok(collection) => Ok(collection),
-                Err(
-                    error @ janus_collector::Error::Http {
-                        dap_problem_type: Some(DapProblemType::InvalidBatchSize),
-                        ..
-                    },
-                ) => Err(backoff::Error::transient(error)),
+                Err(janus_collector::Error::Http(error_response)) => {
+                    if let Some(DapProblemType::InvalidBatchSize) =
+                        error_response.dap_problem_type()
+                    {
+                        Err(backoff::Error::transient(janus_collector::Error::Http(
+                            error_response,
+                        )))
+                    } else {
+                        Err(backoff::Error::permanent(janus_collector::Error::Http(
+                            error_response,
+                        )))
+                    }
+                }
                 Err(error) => Err(backoff::Error::permanent(error)),
             }
         }
