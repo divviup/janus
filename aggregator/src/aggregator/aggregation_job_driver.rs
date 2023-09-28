@@ -988,7 +988,8 @@ mod tests {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap();
-        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &time).unwrap();
+        let batch_identifier =
+            TimeInterval::to_batch_identifier(&task.view_for_role().unwrap(), &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
         let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
         let measurement = IdpfInput::from_bools(&[true]);
@@ -1286,7 +1287,8 @@ mod tests {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap();
-        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &time).unwrap();
+        let batch_identifier =
+            TimeInterval::to_batch_identifier(&task.view_for_role().unwrap(), &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
         let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
 
@@ -1646,7 +1648,8 @@ mod tests {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap();
-        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &time).unwrap();
+        let batch_identifier =
+            TimeInterval::to_batch_identifier(&task.view_for_role().unwrap(), &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
         let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
         let measurement = IdpfInput::from_bools(&[true]);
@@ -2404,7 +2407,8 @@ mod tests {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap();
-        let active_batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &time).unwrap();
+        let active_batch_identifier =
+            TimeInterval::to_batch_identifier(&task.view_for_role().unwrap(), &(), &time).unwrap();
         let other_batch_identifier = Interval::new(
             active_batch_identifier
                 .start()
@@ -2727,7 +2731,7 @@ mod tests {
                             _,
                         >(
                             tx,
-                            &task,
+                            &task.view_for_role().unwrap(),
                             &vdaf,
                             &Interval::new(
                                 report_metadata
@@ -3096,7 +3100,7 @@ mod tests {
                             VERIFY_KEY_LENGTH,
                             Poplar1<XofShake128, 16>,
                             _,
-                        >(tx, &task, &vdaf, &batch_id, &aggregation_param)
+                        >(tx, &task.view_for_role().unwrap(), &vdaf, &batch_id, &aggregation_param)
                         .await?;
                     let batch = tx
                         .get_batch(task.id(), &batch_id, &aggregation_param)
@@ -3162,7 +3166,8 @@ mod tests {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap();
-        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &time).unwrap();
+        let batch_identifier =
+            TimeInterval::to_batch_identifier(&task.view_for_role().unwrap(), &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
         let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
 
@@ -3370,7 +3375,8 @@ mod tests {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap();
-        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &time).unwrap();
+        let batch_identifier =
+            TimeInterval::to_batch_identifier(&task.view_for_role().unwrap(), &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
         let transcript = run_vdaf(&vdaf, verify_key.as_bytes(), &(), report_metadata.id(), &0);
         let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(

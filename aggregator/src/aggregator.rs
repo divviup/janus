@@ -33,7 +33,7 @@ use janus_aggregator_core::{
         Datastore, Error as DatastoreError, Transaction,
     },
     query_type::AccumulableQueryType,
-    task::{self, Task, VerifyKey},
+    task::{self, AggregatorTask, Task, VerifyKey},
     taskprov::{self, PeerAggregator},
 };
 #[cfg(feature = "test-util")]
@@ -1612,7 +1612,7 @@ impl VdafOps {
         for (ord, prepare_init) in req.prepare_inits().iter().enumerate() {
             // Compute intervals for each batch identifier included in this aggregation job.
             let batch_identifier = Q::to_batch_identifier(
-                &task,
+                &task.view_for_role()?,
                 req.batch_selector().batch_identifier(),
                 prepare_init.report_share().metadata().time(),
             )?;
@@ -2270,8 +2270,9 @@ impl VdafOps {
                         }
                     }
 
+                    let aggregator_task = task.view_for_role()?;
                     let collection_identifier =
-                        Q::collection_identifier_for_query(tx, &task, req.query())
+                        Q::collection_identifier_for_query(tx, &aggregator_task, req.query())
                             .await?
                             .ok_or_else(|| {
                                 datastore::Error::User(
@@ -2285,7 +2286,8 @@ impl VdafOps {
 
                     // Check that the batch interval is valid for the task
                     // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
-                    if !Q::validate_collection_identifier(&task, &collection_identifier) {
+                    if !Q::validate_collection_identifier(&aggregator_task, &collection_identifier)
+                    {
                         return Err(datastore::Error::User(
                             Error::BatchInvalid(*task.id(), format!("{collection_identifier}"))
                                 .into(),
@@ -2297,14 +2299,14 @@ impl VdafOps {
                         Q::validate_query_count::<SEED_SIZE, C, A>(
                             tx,
                             &vdaf,
-                            &task,
+                            &aggregator_task,
                             &collection_identifier,
                             &aggregation_param,
                         ),
-                        Q::count_client_reports(tx, &task, &collection_identifier),
+                        Q::count_client_reports(tx, &aggregator_task, &collection_identifier),
                         try_join_all(
                             Q::batch_identifiers_for_collection_identifier(
-                                &task,
+                                &aggregator_task,
                                 &collection_identifier
                             )
                             .map(|batch_identifier| {
@@ -2324,7 +2326,7 @@ impl VdafOps {
                         ),
                         try_join_all(
                             Q::batch_identifiers_for_collection_identifier(
-                                &task,
+                                &aggregator_task,
                                 &collection_identifier
                             )
                             .map(|batch_identifier| {
@@ -2544,10 +2546,11 @@ impl VdafOps {
                             )
                         })?;
 
+                    let aggregator_task = task.view_for_role()?;
                     let (batches, _) = try_join!(
                         Q::get_batches_for_collection_identifier(
                             tx,
-                            &task,
+                            &aggregator_task,
                             collection_job.batch_identifier(),
                             collection_job.aggregation_parameter()
                         ),
@@ -2802,7 +2805,7 @@ impl VdafOps {
 
         // §4.4.4.3: check that the batch interval meets the requirements from §4.6
         if !Q::validate_collection_identifier(
-            &task,
+            &task.view_for_role()?,
             aggregate_share_req.batch_selector().batch_identifier(),
         ) {
             return Err(Error::BatchInvalid(
@@ -2838,6 +2841,7 @@ impl VdafOps {
                     Arc::clone(&aggregate_share_req),
                 );
                 Box::pin(async move {
+                    let aggregator_task = task.view_for_role()?;
                     // Check if we have already serviced an aggregate share request with these
                     // parameters and serve the cached results if so.
                     let aggregation_param = A::AggregationParam::get_decoded(
@@ -2870,7 +2874,7 @@ impl VdafOps {
                             let (batch_aggregations, _) = try_join!(
                                 Q::get_batch_aggregations_for_collection_identifier(
                                     tx,
-                                    &task,
+                                    &aggregator_task,
                                     vdaf.as_ref(),
                                     aggregate_share_req.batch_selector().batch_identifier(),
                                     &aggregation_param
@@ -2878,7 +2882,7 @@ impl VdafOps {
                                 Q::validate_query_count::<SEED_SIZE, C, A>(
                                     tx,
                                     vdaf.as_ref(),
-                                    &task,
+                                    &aggregator_task,
                                     aggregate_share_req.batch_selector().batch_identifier(),
                                     &aggregation_param,
                                 )
@@ -2888,7 +2892,7 @@ impl VdafOps {
                             // currently-nonexistent batch aggregation, we write (empty) batch
                             // aggregations for any that have not already been written to storage.
                             let empty_batch_aggregations = empty_batch_aggregations(
-                                &task,
+                                &aggregator_task,
                                 batch_aggregation_shard_count,
                                 aggregate_share_req.batch_selector().batch_identifier(),
                                 &aggregation_param,
@@ -2982,7 +2986,7 @@ fn empty_batch_aggregations<
     Q: CollectableQueryType,
     A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync + 'static,
 >(
-    task: &Task,
+    task: &AggregatorTask,
     batch_aggregation_shard_count: u64,
     batch_identifier: &Q::BatchIdentifier,
     aggregation_param: &A::AggregationParam,
