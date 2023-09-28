@@ -3,11 +3,10 @@
 use backoff::ExponentialBackoff;
 use derivative::Derivative;
 use http::header::CONTENT_TYPE;
-use http_api_problem::HttpApiProblem;
 use itertools::Itertools;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
-    http::response_to_problem_details,
+    http::HttpErrorResponse,
     retries::{http_request_exponential_backoff, retry_http_request},
     time::{Clock, TimeExt},
     url_ensure_trailing_slash,
@@ -33,7 +32,7 @@ pub enum Error {
     #[error("codec error: {0}")]
     Codec(#[from] prio::codec::CodecError),
     #[error("HTTP response status {0}")]
-    Http(Box<HttpApiProblem>),
+    Http(Box<HttpErrorResponse>),
     #[error("URL parse: {0}")]
     Url(#[from] url::ParseError),
     #[error("VDAF error: {0}")]
@@ -149,7 +148,7 @@ pub async fn aggregator_hpke_config(
     let status = hpke_config_response.status();
     if !status.is_success() {
         return Err(Error::Http(Box::new(
-            response_to_problem_details(hpke_config_response).await,
+            HttpErrorResponse::from_response(hpke_config_response).await,
         )));
     }
 
@@ -282,7 +281,7 @@ impl<V: vdaf::Client<16>, C: Clock> Client<V, C> {
         let status = upload_response.status();
         if !status.is_success() {
             return Err(Error::Http(Box::new(
-                response_to_problem_details(upload_response).await,
+                HttpErrorResponse::from_response(upload_response).await,
             )));
         }
 
@@ -399,8 +398,8 @@ mod tests {
 
         assert_matches!(
             client.upload(&1).await,
-            Err(Error::Http(problem)) => {
-                assert_eq!(problem.status.unwrap(), StatusCode::NOT_IMPLEMENTED);
+            Err(Error::Http(error_response)) => {
+                assert_eq!(*error_response.status().unwrap(), StatusCode::NOT_IMPLEMENTED);
             }
         );
 
@@ -432,14 +431,14 @@ mod tests {
 
         assert_matches!(
             client.upload(&1).await,
-            Err(Error::Http(problem)) => {
-                assert_eq!(problem.status.unwrap(), StatusCode::BAD_REQUEST);
+            Err(Error::Http(error_response)) => {
+                assert_eq!(*error_response.status().unwrap(), StatusCode::BAD_REQUEST);
                 assert_eq!(
-                    problem.type_url.unwrap(),
+                    error_response.type_uri().unwrap(),
                     "urn:ietf:params:ppm:dap:error:invalidMessage"
                 );
                 assert_eq!(
-                    problem.detail.unwrap(),
+                    error_response.detail().unwrap(),
                     "The message type for a response was incorrect or the payload was malformed."
                 );
             }

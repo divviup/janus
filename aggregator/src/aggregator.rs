@@ -41,12 +41,11 @@ use janus_core::test_util::dummy_vdaf;
 use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
-    http::response_to_problem_details,
+    http::HttpErrorResponse,
     time::{Clock, DurationExt, IntervalExt, TimeExt},
     vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
 };
 use janus_messages::{
-    problem_type::DapProblemType,
     query_type::{FixedSize, TimeInterval},
     taskprov::TaskConfig,
     AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
@@ -3077,15 +3076,9 @@ async fn send_request_to_helper<T: Encode>(
                 KeyValue::new("endpoint", route_label),
             ],
         );
-        let problem_details = response_to_problem_details(response).await;
-        let dap_problem_type = problem_details
-            .type_url
-            .as_ref()
-            .and_then(|str| str.parse::<DapProblemType>().ok());
-        return Err(Error::Http {
-            problem_details: Box::new(problem_details),
-            dap_problem_type,
-        });
+        return Err(Error::Http(Box::new(
+            HttpErrorResponse::from_response(response).await,
+        )));
     }
 
     match response.bytes().await {

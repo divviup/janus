@@ -907,7 +907,7 @@ struct SteppedAggregation<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE,
 #[cfg(test)]
 mod tests {
     use crate::{
-        aggregator::{aggregation_job_driver::AggregationJobDriver, DapProblemType, Error},
+        aggregator::{aggregation_job_driver::AggregationJobDriver, Error},
         binary_utils::job_driver::JobDriver,
     };
     use assert_matches::assert_matches;
@@ -937,6 +937,7 @@ mod tests {
         Runtime,
     };
     use janus_messages::{
+        problem_type::DapProblemType,
         query_type::{FixedSize, TimeInterval},
         AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
         AggregationJobStep, Duration, Extension, ExtensionType, FixedSizeQuery, HpkeConfig,
@@ -1476,9 +1477,9 @@ mod tests {
             .unwrap_err();
         assert_matches!(
             error.downcast().unwrap(),
-            Error::Http { problem_details, dap_problem_type } => {
-                assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
-                assert_eq!(dap_problem_type, Some(DapProblemType::UnauthorizedRequest));
+            Error::Http(error_response) => {
+                assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+                assert_eq!(*error_response.dap_problem_type().unwrap(), DapProblemType::UnauthorizedRequest);
             }
         );
         aggregation_job_driver
@@ -2049,9 +2050,9 @@ mod tests {
             .unwrap_err();
         assert_matches!(
             error.downcast().unwrap(),
-            Error::Http { problem_details, dap_problem_type } => {
-                assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
-                assert_eq!(dap_problem_type, Some(DapProblemType::UnauthorizedRequest));
+            Error::Http(error_response) => {
+                assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+                assert_eq!(*error_response.dap_problem_type().unwrap(), DapProblemType::UnauthorizedRequest);
             }
         );
         aggregation_job_driver
@@ -2609,9 +2610,9 @@ mod tests {
             .unwrap_err();
         assert_matches!(
             error.downcast().unwrap(),
-            Error::Http { problem_details, dap_problem_type } => {
-                assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
-                assert_eq!(dap_problem_type, Some(DapProblemType::UnrecognizedTask));
+            Error::Http(error_response) => {
+                assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+                assert_eq!(*error_response.dap_problem_type().unwrap(), DapProblemType::UnrecognizedTask);
             }
         );
         aggregation_job_driver
@@ -2996,9 +2997,9 @@ mod tests {
             .unwrap_err();
         assert_matches!(
             error.downcast().unwrap(),
-            Error::Http { problem_details, dap_problem_type } => {
-                assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
-                assert_eq!(dap_problem_type, Some(DapProblemType::UnrecognizedTask));
+            Error::Http(error_response) => {
+                assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+                assert_eq!(*error_response.dap_problem_type().unwrap(), DapProblemType::UnrecognizedTask);
             }
         );
         aggregation_job_driver

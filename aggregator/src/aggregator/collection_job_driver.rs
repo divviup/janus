@@ -525,7 +525,7 @@ impl CollectionJobDriverMetrics {
 #[cfg(test)]
 mod tests {
     use crate::{
-        aggregator::{collection_job_driver::CollectionJobDriver, DapProblemType, Error},
+        aggregator::{collection_job_driver::CollectionJobDriver, Error},
         binary_utils::job_driver::JobDriver,
     };
     use assert_matches::assert_matches;
@@ -555,9 +555,9 @@ mod tests {
         Runtime,
     };
     use janus_messages::{
-        query_type::TimeInterval, AggregateShare, AggregateShareReq, AggregationJobStep,
-        BatchSelector, Duration, HpkeCiphertext, HpkeConfigId, Interval, Query, ReportIdChecksum,
-        Role,
+        problem_type::DapProblemType, query_type::TimeInterval, AggregateShare, AggregateShareReq,
+        AggregationJobStep, BatchSelector, Duration, HpkeCiphertext, HpkeConfigId, Interval, Query,
+        ReportIdChecksum, Role,
     };
     use prio::codec::{Decode, Encode};
     use rand::random;
@@ -898,11 +898,9 @@ mod tests {
             .unwrap_err();
         assert_matches!(
             error,
-            Error::Http {
-                problem_details,
-                dap_problem_type: Some(DapProblemType::BatchQueriedTooManyTimes),
-            } => {
-                assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            Error::Http(error_response) => {
+                assert_matches!(error_response.dap_problem_type(), Some(DapProblemType::BatchQueriedTooManyTimes));
+                assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
             }
         );
 

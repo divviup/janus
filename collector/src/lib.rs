@@ -56,17 +56,15 @@
 use backoff::{backoff::Backoff, ExponentialBackoff};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use derivative::Derivative;
-use http_api_problem::HttpApiProblem;
 pub use janus_core::auth_tokens::AuthenticationToken;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkePrivateKey},
-    http::response_to_problem_details,
+    http::HttpErrorResponse,
     retries::{http_request_exponential_backoff, retry_http_request},
     time::{DurationExt, TimeExt},
     url_ensure_trailing_slash,
 };
 use janus_messages::{
-    problem_type::DapProblemType,
     query_type::{QueryType, TimeInterval},
     AggregateShareAad, BatchSelector, Collection as CollectionMessage, CollectionJobId,
     CollectionReq, HpkeConfig, PartialBatchSelector, Query, Role, TaskId,
@@ -94,11 +92,8 @@ use url::Url;
 pub enum Error {
     #[error("HTTP client error: {0}")]
     HttpClient(#[from] reqwest::Error),
-    #[error("HTTP response status {problem_details}")]
-    Http {
-        problem_details: Box<HttpApiProblem>,
-        dap_problem_type: Option<DapProblemType>,
-    },
+    #[error("HTTP response status {0}")]
+    Http(Box<HttpErrorResponse>),
     #[error("URL parse: {0}")]
     Url(#[from] url::ParseError),
     #[error("missing Location header in See Other response")]
@@ -129,15 +124,7 @@ impl Error {
     /// Construct an error from an HTTP response's status and problem details document, if present
     /// in the body.
     async fn from_http_response(response: Response) -> Error {
-        let problem_details = response_to_problem_details(response).await;
-        let dap_problem_type = problem_details
-            .type_url
-            .as_ref()
-            .and_then(|str| str.parse::<DapProblemType>().ok());
-        Error::Http {
-            problem_details: Box::new(problem_details),
-            dap_problem_type,
-        }
+        Error::Http(Box::new(HttpErrorResponse::from_response(response).await))
     }
 }
 
@@ -415,10 +402,7 @@ impl<V: vdaf::Collector> Collector<V> {
                     return Err(Error::from_http_response(response).await);
                 } else if status != StatusCode::CREATED {
                     // Incorrect success/redirect status code:
-                    return Err(Error::Http {
-                        problem_details: Box::new(HttpApiProblem::new(status)),
-                        dap_problem_type: None,
-                    });
+                    return Err(Error::Http(Box::new(status.into())));
                 }
             }
             // Retryable error status code, but ran out of retries:
@@ -474,10 +458,7 @@ impl<V: vdaf::Collector> Collector<V> {
                         return Err(Error::from_http_response(response).await);
                     }
                     _ => {
-                        return Err(Error::Http {
-                            problem_details: Box::new(HttpApiProblem::new(status)),
-                            dap_problem_type: None,
-                        })
+                        return Err(Error::Http(Box::new(HttpErrorResponse::from(status))));
                     }
                 }
             }
@@ -1292,9 +1273,9 @@ mod tests {
             .start_collection(Query::new_time_interval(batch_interval), &())
             .await
             .unwrap_err();
-        assert_matches!(error, Error::Http { problem_details, dap_problem_type } => {
-            assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
-            assert_eq!(dap_problem_type, None);
+        assert_matches!(error, Error::Http(error_response) => {
+            assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            assert!(error_response.dap_problem_type().is_none());
         });
 
         mock_server_error.assert_async().await;
@@ -1316,10 +1297,10 @@ mod tests {
             .start_collection(Query::new_time_interval(batch_interval), &())
             .await
             .unwrap_err();
-        assert_matches!(error, Error::Http { problem_details, dap_problem_type } => {
-            assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
-            assert_eq!(problem_details.type_url.unwrap(), "http://example.com/test_server_error");
-            assert_eq!(dap_problem_type, None);
+        assert_matches!(error, Error::Http(error_response) => {
+            assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(error_response.type_uri().unwrap(), "http://example.com/test_server_error");
+            assert!(error_response.dap_problem_type().is_none());
         });
 
         mock_server_error_details.assert_async().await;
@@ -1345,11 +1326,11 @@ mod tests {
             .start_collection(Query::new_time_interval(batch_interval), &())
             .await
             .unwrap_err();
-        assert_matches!(error, Error::Http { problem_details, dap_problem_type } => {
-            assert_eq!(problem_details.status.unwrap(), StatusCode::BAD_REQUEST);
-            assert_eq!(problem_details.type_url.unwrap(), "urn:ietf:params:ppm:dap:error:invalidMessage");
-            assert_eq!(problem_details.detail.unwrap(), "The message type for a response was incorrect or the payload was malformed.");
-            assert_eq!(dap_problem_type, Some(DapProblemType::InvalidMessage));
+        assert_matches!(error, Error::Http(error_response) => {
+            assert_eq!(*error_response.status().unwrap(), StatusCode::BAD_REQUEST);
+            assert_eq!(error_response.type_uri().unwrap(), "urn:ietf:params:ppm:dap:error:invalidMessage");
+            assert_eq!(error_response.detail().unwrap(), "The message type for a response was incorrect or the payload was malformed.");
+            assert_eq!(*error_response.dap_problem_type().unwrap(), DapProblemType::InvalidMessage);
         });
 
         mock_bad_request.assert_async().await;
@@ -1390,9 +1371,9 @@ mod tests {
             .await
             .unwrap();
         let error = collector.poll_once(&job).await.unwrap_err();
-        assert_matches!(error, Error::Http { problem_details, dap_problem_type } => {
-            assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
-            assert_eq!(dap_problem_type, None);
+        assert_matches!(error, Error::Http(error_response) => {
+            assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            assert!(error_response.dap_problem_type().is_none());
         });
 
         mock_collect_start.assert_async().await;
@@ -1412,10 +1393,10 @@ mod tests {
             .await;
 
         let error = collector.poll_once(&job).await.unwrap_err();
-        assert_matches!(error, Error::Http { problem_details, dap_problem_type } => {
-            assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
-            assert_eq!(problem_details.type_url.unwrap(), "http://example.com/test_server_error");
-            assert_eq!(dap_problem_type, None);
+        assert_matches!(error, Error::Http(error_response) => {
+            assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(error_response.type_uri().unwrap(), "http://example.com/test_server_error");
+            assert!(error_response.dap_problem_type().is_none());
         });
 
         mock_collection_job_server_error_details
@@ -1436,11 +1417,11 @@ mod tests {
             .await;
 
         let error = collector.poll_once(&job).await.unwrap_err();
-        assert_matches!(error, Error::Http { problem_details, dap_problem_type } => {
-            assert_eq!(problem_details.status.unwrap(), StatusCode::BAD_REQUEST);
-            assert_eq!(problem_details.type_url.unwrap(), "urn:ietf:params:ppm:dap:error:invalidMessage");
-            assert_eq!(problem_details.detail.unwrap(), "The message type for a response was incorrect or the payload was malformed.");
-            assert_eq!(dap_problem_type, Some(DapProblemType::InvalidMessage));
+        assert_matches!(error, Error::Http(error_response) => {
+            assert_eq!(*error_response.status().unwrap(), StatusCode::BAD_REQUEST);
+            assert_eq!(error_response.type_uri().unwrap(), "urn:ietf:params:ppm:dap:error:invalidMessage");
+            assert_eq!(error_response.detail().unwrap(), "The message type for a response was incorrect or the payload was malformed.");
+            assert_eq!(*error_response.dap_problem_type().unwrap(), DapProblemType::InvalidMessage);
         });
 
         mock_collection_job_bad_request.assert_async().await;
@@ -1585,9 +1566,9 @@ mod tests {
             .create_async()
             .await;
         let error = collector.poll_until_complete(&job).await.unwrap_err();
-        assert_matches!(error, Error::Http { problem_details, dap_problem_type } => {
-            assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
-            assert_eq!(dap_problem_type, None);
+        assert_matches!(error, Error::Http(error_response) => {
+            assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            assert!(error_response.dap_problem_type().is_none());
         });
         mock_collection_job_always_fail.assert_async().await;
     }
