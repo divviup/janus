@@ -140,7 +140,7 @@ impl Task {
         collector_auth_token: AuthenticationToken,
         leader_hpke_keys: I,
         helper_hpke_keys: I,
-    ) -> Result<Self, Error> {
+    ) -> Self {
         // Compute hpke_configs mapping cfg.id -> (cfg, key).
         let leader_hpke_keys: HashMap<HpkeConfigId, HpkeKeypair> = leader_hpke_keys
             .into_iter()
@@ -152,7 +152,7 @@ impl Task {
             .map(|keypair| (*keypair.config().id(), keypair))
             .collect();
 
-        let task = Self {
+        Self {
             common_parameters: CommonTaskParameters {
                 task_id,
                 query_type,
@@ -175,15 +175,7 @@ impl Task {
             collector_hpke_keypair,
             leader_hpke_keys,
             helper_hpke_keys,
-        };
-
-        task.validate()?;
-
-        Ok(task)
-    }
-
-    pub(crate) fn validate(&self) -> Result<(), Error> {
-        self.common_parameters.validate()
+        }
     }
 
     /// Retrieves the task ID associated with this task.
@@ -428,20 +420,9 @@ impl CommonTaskParameters {
 
     /// Validates using criteria common to all tasks regardless of their provenance.
     pub(crate) fn validate(&self) -> Result<(), Error> {
-        // TODO(timg): clean up task validation for specific views (taskprov vs not)
         if let QueryType::FixedSize { max_batch_size, .. } = self.query_type() {
             if *max_batch_size < self.min_batch_size() {
                 return Err(Error::InvalidParameter("max_batch_size"));
-            }
-        }
-
-        if let QueryType::FixedSize {
-            batch_time_window_size: Some(batch_time_window_size),
-            ..
-        } = self.query_type()
-        {
-            if batch_time_window_size.as_seconds() % self.time_precision().as_seconds() != 0 {
-                return Err(Error::InvalidParameter("batch_time_window_size"));
             }
         }
 
@@ -461,6 +442,7 @@ impl CommonTaskParameters {
 
         Ok(())
     }
+
     /// Retrieves the task ID associated with this task.
     pub fn id(&self) -> &TaskId {
         &self.task_id
@@ -612,6 +594,37 @@ impl AggregatorTask {
             hpke_keys,
             aggregator_parameters,
         })
+    }
+
+    /// Validates the task's parameters.
+    pub fn validate(&self) -> Result<(), Error> {
+        if !matches!(
+            self.aggregator_parameters,
+            AggregatorTaskParameters::TaskProvHelper
+        ) && self.hpke_keys.is_empty()
+        {
+            return Err(Error::InvalidParameter("hpke_keys"));
+        }
+
+        if let QueryType::FixedSize {
+            batch_time_window_size: Some(batch_time_window_size),
+            ..
+        } = self.query_type()
+        {
+            if matches!(
+                self.aggregator_parameters,
+                AggregatorTaskParameters::TaskProvHelper
+            ) {
+                return Err(Error::InvalidParameter(
+                    "batch_time_window_size is not supported for taskprov",
+                ));
+            } else if batch_time_window_size.as_seconds() % self.time_precision().as_seconds() != 0
+            {
+                return Err(Error::InvalidParameter("batch_time_window_size"));
+            }
+        }
+
+        Ok(())
     }
 
     /// Retrieves the task ID associated with this task.
@@ -1132,8 +1145,7 @@ pub mod test_util {
                     /* Collector auth token */ random(),
                     leader_hpke_keypairs,
                     helper_hpke_keypairs,
-                )
-                .unwrap(),
+                ),
             )
         }
 
@@ -1315,7 +1327,6 @@ pub mod test_util {
 
         /// Consumes this task builder & produces a [`Task`] with the given specifications.
         pub fn build(self) -> Task {
-            self.0.validate().unwrap();
             self.0
         }
     }
