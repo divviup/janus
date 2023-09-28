@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
 use janus_aggregator::{
     aggregator::{self, garbage_collector::GarbageCollector, http_handlers::aggregator_handler},
@@ -7,10 +8,10 @@ use janus_aggregator::{
         CommonBinaryOptions,
     },
     cache::GlobalHpkeKeypairCache,
-    config::{BinaryConfig, CommonConfig},
+    config::{BinaryConfig, CommonConfig, TaskprovConfig},
 };
 use janus_aggregator_api::{self, aggregator_api_handler};
-use janus_aggregator_core::datastore::Datastore;
+use janus_aggregator_core::{datastore::Datastore, taskprov::VerifyKeyInit};
 use janus_core::{task::AuthenticationToken, time::RealClock};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -44,12 +45,14 @@ async fn main() -> Result<()> {
             .response_headers()
             .context("failed to parse response headers")?;
 
+        let auth_tokens = parse_auth_tokens(&options.aggregator_auth_tokens)?;
+
         let mut handlers = (
             aggregator_handler(
                 Arc::clone(&datastore),
                 clock,
                 &meter,
-                config.aggregator_config(),
+                config.aggregator_config(options.verify_key_init, auth_tokens),
             )
             .await?,
             None,
@@ -148,16 +151,7 @@ fn build_aggregator_api_handler<'a>(
     let Some(aggregator_api) = &config.aggregator_api else {
         return Ok(None);
     };
-    let aggregator_api_auth_tokens = options
-        .aggregator_api_auth_tokens
-        .iter()
-        .filter(|token| !token.is_empty())
-        .map(|token| {
-            // Aggregator API auth tokens are always bearer tokens
-            AuthenticationToken::new_bearer_token_from_string(token)
-                .context("invalid aggregator API auth token")
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let aggregator_api_auth_tokens = parse_auth_tokens(&options.aggregator_api_auth_tokens)?;
 
     Ok(Some((
         aggregator_api_handler(
@@ -169,6 +163,18 @@ fn build_aggregator_api_handler<'a>(
         ),
         aggregator_api,
     )))
+}
+
+fn parse_auth_tokens(auth_tokens: &[String]) -> Result<Vec<AuthenticationToken>> {
+    auth_tokens
+        .iter()
+        .filter(|token| !token.is_empty())
+        .map(|token| {
+            // Auth tokens taken at the CLI are always Bearer tokens.
+            AuthenticationToken::new_bearer_token_from_string(token)
+                .context("invalid bearer auth token")
+        })
+        .collect()
 }
 
 #[derive(Debug, Parser)]
@@ -192,6 +198,32 @@ struct Options {
         help = "aggregator API auth tokens, encoded in base64 then comma-separated"
     )]
     aggregator_api_auth_tokens: Vec<String>,
+
+    /// Tokens for authenticating DAP operations.
+    #[clap(
+        long,
+        env = "AGGREGATOR_AUTH_TOKENS",
+        hide_env_values = true,
+        required = true,
+        use_value_delimiter = true,
+        help = "DAP aggregator tokens, encoded in base64 then comma-separated"
+    )]
+    aggregator_auth_tokens: Vec<String>,
+
+    /// Taskprov verify key init, used to derive per-task VDAF verify keys.
+    #[clap(
+        long,
+        value_parser = parse_verify_key_init,
+        env = "VERIFY_KEY_INIT",
+        hide_env_values = true,
+        help = "Taskprov verify key init, encoded in base64"
+    )]
+    verify_key_init: VerifyKeyInit,
+}
+
+fn parse_verify_key_init(arg: &str) -> Result<VerifyKeyInit> {
+    let result = VerifyKeyInit::try_from(URL_SAFE_NO_PAD.decode(arg)?.as_ref())?;
+    Ok(result)
 }
 
 impl BinaryOptions for Options {
@@ -331,6 +363,8 @@ struct Config {
     /// specify this.
     #[serde(default)]
     global_hpke_configs_refresh_interval: Option<u64>,
+
+    taskprov_config: TaskprovConfig,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -364,7 +398,11 @@ impl Config {
             .collect()
     }
 
-    fn aggregator_config(&self) -> aggregator::Config {
+    fn aggregator_config(
+        &self,
+        verify_key_init: VerifyKeyInit,
+        auth_tokens: Vec<AuthenticationToken>,
+    ) -> aggregator::Config {
         aggregator::Config {
             max_upload_batch_size: self.max_upload_batch_size,
             max_upload_batch_write_delay: Duration::from_millis(
@@ -375,6 +413,11 @@ impl Config {
                 Some(duration) => Duration::from_millis(duration),
                 None => GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
             },
+            collector_hpke_config: self.taskprov_config.collector_hpke_config.clone(),
+            report_expiry_age: self.taskprov_config.report_expiry_age,
+            tolerable_clock_skew: self.taskprov_config.tolerable_clock_skew,
+            verify_key_init,
+            auth_tokens,
         }
     }
 }
@@ -392,19 +435,27 @@ impl BinaryConfig for Config {
 #[cfg(test)]
 mod tests {
     use super::{AggregatorApi, Config, GarbageCollectorConfig, HeaderEntry, Options};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use clap::CommandFactory;
     use janus_aggregator::{
         aggregator,
         config::{
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-            BinaryConfig, CommonConfig,
+            BinaryConfig, CommonConfig, TaskprovConfig,
         },
         metrics::{MetricsExporterConfiguration, OtlpExporterConfiguration},
         trace::{
             OpenTelemetryTraceConfiguration, OtlpTraceConfiguration, TokioConsoleConfiguration,
         },
     };
-    use janus_core::test_util::roundtrip_encoding;
+    use janus_aggregator_core::taskprov::VerifyKeyInit;
+    use janus_core::{
+        hpke::test_util::generate_test_hpke_config_and_private_key, test_util::roundtrip_encoding,
+    };
+    use janus_messages::{
+        HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
+    };
+    use rand::random;
     use std::{
         collections::HashMap,
         net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -450,6 +501,11 @@ mod tests {
             max_upload_batch_write_delay_ms: 250,
             batch_aggregation_shard_count: 32,
             global_hpke_configs_refresh_interval: None,
+            taskprov_config: TaskprovConfig {
+                collector_hpke_config: generate_test_hpke_config_and_private_key().config().clone(),
+                report_expiry_age: None,
+                tolerable_clock_skew: janus_messages::Duration::from_seconds(60),
+            },
         })
     }
 
@@ -465,6 +521,14 @@ mod tests {
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
+    taskprov_config:
+        collector_hpke_config:
+            id: 183
+            kem_id: X25519HkdfSha256
+            kdf_id: HkdfSha256
+            aead_id: Aes128Gcm
+            public_key: 4qiv6IY5jrjCV3xbaQXULmPIpvoIml1oJmeXm-yOuAo
+        tolerable_clock_skew: 60
     "#
             )
             .unwrap()
@@ -485,6 +549,14 @@ mod tests {
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
+    taskprov_config:
+        collector_hpke_config:
+            id: 183
+            kem_id: X25519HkdfSha256
+            kdf_id: HkdfSha256
+            aead_id: Aes128Gcm
+            public_key: 4qiv6IY5jrjCV3xbaQXULmPIpvoIml1oJmeXm-yOuAo
+        tolerable_clock_skew: 60
     garbage_collection:
         gc_frequency_s: 60
         report_limit: 25
@@ -515,6 +587,14 @@ mod tests {
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
+    taskprov_config:
+        collector_hpke_config:
+            id: 183
+            kem_id: X25519HkdfSha256
+            kdf_id: HkdfSha256
+            aead_id: Aes128Gcm
+            public_key: 4qiv6IY5jrjCV3xbaQXULmPIpvoIml1oJmeXm-yOuAo
+        tolerable_clock_skew: 60
     aggregator_api:
         listen_address: "0.0.0.0:8081"
         public_dap_url: "https://dap.url"
@@ -541,6 +621,14 @@ mod tests {
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
+    taskprov_config:
+        collector_hpke_config:
+            id: 183
+            kem_id: X25519HkdfSha256
+            kdf_id: HkdfSha256
+            aead_id: Aes128Gcm
+            public_key: 4qiv6IY5jrjCV3xbaQXULmPIpvoIml1oJmeXm-yOuAo
+        tolerable_clock_skew: 60
     aggregator_api:
         path_prefix: "aggregator-api"
         public_dap_url: "https://dap.url"
@@ -574,6 +662,14 @@ mod tests {
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
+    taskprov_config:
+        collector_hpke_config:
+            id: 183
+            kem_id: X25519HkdfSha256
+            kdf_id: HkdfSha256
+            aead_id: Aes128Gcm
+            public_key: 4qiv6IY5jrjCV3xbaQXULmPIpvoIml1oJmeXm-yOuAo
+        tolerable_clock_skew: 60
     "#
             )
             .unwrap()
@@ -589,6 +685,7 @@ mod tests {
             },
         );
 
+        let verify_key_init: VerifyKeyInit = random();
         assert_eq!(
             serde_yaml::from_str::<Config>(
                 r#"---
@@ -604,14 +701,36 @@ mod tests {
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
+    taskprov_config:
+        collector_hpke_config:
+            id: 183
+            kem_id: X25519HkdfSha256
+            kdf_id: HkdfSha256
+            aead_id: Aes128Gcm
+            public_key: 4qiv6IY5jrjCV3xbaQXULmPIpvoIml1oJmeXm-yOuAo
+        tolerable_clock_skew: 60
     "#
             )
             .unwrap()
-            .aggregator_config(),
+            .aggregator_config(verify_key_init, Vec::new()),
             aggregator::Config {
                 max_upload_batch_size: 100,
                 max_upload_batch_write_delay: Duration::from_millis(250),
                 batch_aggregation_shard_count: 32,
+                collector_hpke_config: HpkeConfig::new(
+                    HpkeConfigId::from(183),
+                    HpkeKemId::X25519HkdfSha256,
+                    HpkeKdfId::HkdfSha256,
+                    HpkeAeadId::Aes128Gcm,
+                    HpkePublicKey::from(
+                        URL_SAFE_NO_PAD
+                            .decode("4qiv6IY5jrjCV3xbaQXULmPIpvoIml1oJmeXm-yOuAo")
+                            .unwrap()
+                    ),
+                ),
+                report_expiry_age: None,
+                tolerable_clock_skew: janus_messages::Duration::from_seconds(60),
+                verify_key_init,
                 ..Default::default()
             }
         );
@@ -631,6 +750,14 @@ mod tests {
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
+    taskprov_config:
+        collector_hpke_config:
+            id: 183
+            kem_id: X25519HkdfSha256
+            kdf_id: HkdfSha256
+            aead_id: Aes128Gcm
+            public_key: 4qiv6IY5jrjCV3xbaQXULmPIpvoIml1oJmeXm-yOuAo
+        tolerable_clock_skew: 60
     "#
             )
             .unwrap()
@@ -662,6 +789,14 @@ mod tests {
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
+    taskprov_config:
+        collector_hpke_config:
+            id: 183
+            kem_id: X25519HkdfSha256
+            kdf_id: HkdfSha256
+            aead_id: Aes128Gcm
+            public_key: 4qiv6IY5jrjCV3xbaQXULmPIpvoIml1oJmeXm-yOuAo
+        tolerable_clock_skew: 60
     "#
             )
             .unwrap()
@@ -695,6 +830,14 @@ mod tests {
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
+    taskprov_config:
+        collector_hpke_config:
+            id: 183
+            kem_id: X25519HkdfSha256
+            kdf_id: HkdfSha256
+            aead_id: Aes128Gcm
+            public_key: 4qiv6IY5jrjCV3xbaQXULmPIpvoIml1oJmeXm-yOuAo
+        tolerable_clock_skew: 60
     "#
             )
             .unwrap()
@@ -725,6 +868,14 @@ mod tests {
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
+    taskprov_config:
+        collector_hpke_config:
+            id: 183
+            kem_id: X25519HkdfSha256
+            kdf_id: HkdfSha256
+            aead_id: Aes128Gcm
+            public_key: 4qiv6IY5jrjCV3xbaQXULmPIpvoIml1oJmeXm-yOuAo
+        tolerable_clock_skew: 60
     "#
             )
             .unwrap()

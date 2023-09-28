@@ -18,7 +18,6 @@ use janus_aggregator_core::{
         Datastore,
     },
     task::{QueryType, Task},
-    taskprov::{test_util::PeerAggregatorBuilder, PeerAggregator},
     test_util::noop_meter,
 };
 use janus_core::{
@@ -27,7 +26,7 @@ use janus_core::{
         HpkeApplicationInfo, HpkeKeypair, Label,
     },
     report_id::ReportIdChecksumExt,
-    task::PRIO3_VERIFY_KEY_LENGTH,
+    task::{AuthenticationToken, PRIO3_VERIFY_KEY_LENGTH},
     taskprov::TASKPROV_HEADER,
     test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
     time::{Clock, DurationExt, MockClock, TimeExt},
@@ -66,13 +65,13 @@ pub struct TaskprovTestCase {
     collector_hpke_keypair: HpkeKeypair,
     datastore: Arc<Datastore<MockClock>>,
     handler: Box<dyn Handler>,
-    peer_aggregator: PeerAggregator,
     report_metadata: ReportMetadata,
     transcript: VdafTranscript<16, TestVdaf>,
     report_share: ReportShare,
     task: Task,
     task_config: TaskConfig,
     task_id: TaskId,
+    aggregator_auth_token: AuthenticationToken,
 }
 
 async fn setup_taskprov_test() -> TaskprovTestCase {
@@ -84,32 +83,33 @@ async fn setup_taskprov_test() -> TaskprovTestCase {
 
     let global_hpke_key = generate_test_hpke_config_and_private_key();
     let collector_hpke_keypair = generate_test_hpke_config_and_private_key();
-    let peer_aggregator = PeerAggregatorBuilder::new()
-        .with_endpoint(url::Url::parse("https://leader.example.com/").unwrap())
-        .with_role(Role::Leader)
-        .with_collector_hpke_config(collector_hpke_keypair.config().clone())
-        .build();
+    let aggregator_auth_token: AuthenticationToken = random();
 
     datastore
         .run_tx(|tx| {
             let global_hpke_key = global_hpke_key.clone();
-            let peer_aggregator = peer_aggregator.clone();
             Box::pin(async move {
                 tx.put_global_hpke_keypair(&global_hpke_key).await.unwrap();
-                tx.put_taskprov_peer_aggregator(&peer_aggregator)
-                    .await
-                    .unwrap();
                 Ok(())
             })
         })
         .await
         .unwrap();
 
+    let tolerable_clock_skew = Duration::from_seconds(60);
+    let config = Config {
+        collector_hpke_config: collector_hpke_keypair.config().clone(),
+        verify_key_init: random(),
+        auth_tokens: vec![aggregator_auth_token.clone()],
+        tolerable_clock_skew,
+        ..Default::default()
+    };
+
     let handler = aggregator_handler(
         Arc::clone(&datastore),
         clock.clone(),
         &noop_meter(),
-        Config::default(),
+        config.clone(),
     )
     .await
     .unwrap();
@@ -144,7 +144,9 @@ async fn setup_taskprov_test() -> TaskprovTestCase {
 
     let task_id = TaskId::try_from(digest(&SHA256, &task_config_encoded).as_ref()).unwrap();
     let vdaf_instance = task_config.vdaf_config().vdaf_type().try_into().unwrap();
-    let vdaf_verify_key = peer_aggregator.derive_vdaf_verify_key(&task_id, &vdaf_instance);
+    let vdaf_verify_key = config
+        .verify_key_init
+        .derive_vdaf_verify_key(&task_id, &vdaf_instance);
 
     let task = janus_aggregator_core::taskprov::Task::new(
         task_id,
@@ -161,10 +163,10 @@ async fn setup_taskprov_test() -> TaskprovTestCase {
         Vec::from([vdaf_verify_key.clone()]),
         max_batch_query_count as u64,
         Some(task_expiration),
-        peer_aggregator.report_expiry_age().copied(),
+        config.report_expiry_age,
         min_batch_size as u64,
         Duration::from_seconds(1),
-        Duration::from_seconds(1),
+        tolerable_clock_skew,
     )
     .unwrap();
 
@@ -197,13 +199,13 @@ async fn setup_taskprov_test() -> TaskprovTestCase {
         collector_hpke_keypair,
         datastore,
         handler: Box::new(handler),
-        peer_aggregator,
         task: task.into(),
         task_config,
         task_id,
         report_metadata,
         transcript,
         report_share,
+        aggregator_auth_token,
     }
 }
 
@@ -222,10 +224,7 @@ async fn taskprov_aggregate_init() {
         Vec::from([test.report_share.clone()]),
     );
 
-    let auth = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
+    let auth = test.aggregator_auth_token.request_authentication();
 
     let mut test_conn = post(test.task.aggregation_job_uri().unwrap().path())
         .with_request_header(auth.0, "Bearer invalid_token")
@@ -321,10 +320,7 @@ async fn taskprov_opt_out_task_expired() {
         Vec::from([test.report_share.clone()]),
     );
 
-    let auth = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
+    let auth = test.aggregator_auth_token.request_authentication();
 
     // Advance clock past task expiry.
     test.clock.advance(&Duration::from_hours(48).unwrap());
@@ -394,10 +390,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
     )
     .unwrap();
 
-    let auth = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
+    let auth = test.aggregator_auth_token.request_authentication();
 
     let mut test_conn = post(
         test
@@ -474,10 +467,7 @@ async fn taskprov_opt_out_missing_aggregator() {
         Vec::from([test.report_share.clone()]),
     );
 
-    let auth = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
+    let auth = test.aggregator_auth_token.request_authentication();
 
     let mut test_conn = post(
         test
@@ -508,172 +498,6 @@ async fn taskprov_opt_out_missing_aggregator() {
             "title": "The message type for a response was incorrect or the payload was malformed.",
             "taskid": format!("{}", another_task_id),
         })
-    );
-}
-
-#[tokio::test]
-async fn taskprov_opt_out_peer_aggregator_wrong_role() {
-    let test = setup_taskprov_test().await;
-
-    let batch_id = random();
-    let aggregation_job_id: AggregationJobId = random();
-
-    let task_expiration = test
-        .clock
-        .now()
-        .add(&Duration::from_hours(24).unwrap())
-        .unwrap();
-    let another_task_config = TaskConfig::new(
-        Vec::from("foobar".as_bytes()),
-        // Attempt to configure leader as a helper.
-        Vec::from([
-            "https://helper.example.com/".as_bytes().try_into().unwrap(),
-            "https://leader.example.com/".as_bytes().try_into().unwrap(),
-        ]),
-        QueryConfig::new(
-            Duration::from_seconds(1),
-            100,
-            100,
-            TaskprovQuery::FixedSize {
-                max_batch_size: 100,
-            },
-        ),
-        task_expiration,
-        VdafConfig::new(DpConfig::new(DpMechanism::None), VdafType::Prio3Aes128Count).unwrap(),
-    )
-    .unwrap();
-    let another_task_config_encoded = another_task_config.get_encoded();
-    let another_task_id: TaskId = digest(&SHA256, &another_task_config_encoded)
-        .as_ref()
-        .try_into()
-        .unwrap();
-
-    let request = AggregateInitializeReq::new(
-        another_task_id,
-        aggregation_job_id,
-        ().get_encoded(),
-        PartialBatchSelector::new_fixed_size(batch_id),
-        Vec::from([test.report_share.clone()]),
-    );
-
-    let auth = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
-
-    let mut test_conn = post(
-        test
-            // Use the test case task's ID.
-            .task
-            .aggregation_job_uri()
-            .unwrap()
-            .path(),
-    )
-    .with_request_header(auth.0, auth.1)
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregateInitializeReq::<FixedSize>::MEDIA_TYPE,
-    )
-    .with_request_header(
-        TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(another_task_config_encoded),
-    )
-    .with_request_body(request.get_encoded())
-    .run_async(&test.handler)
-    .await;
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
-    assert_eq!(
-        take_problem_details(&mut test_conn).await,
-        json!({
-                "status": Status::BadRequest as u16,
-                "type": "urn:ietf:params:ppm:dap:error:invalidTask",
-                "title": "Aggregator has opted out of the indicated task.",
-                "taskid": format!("{}", another_task_id
-        ),
-            })
-    );
-}
-
-#[tokio::test]
-async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
-    let test = setup_taskprov_test().await;
-
-    let batch_id = random();
-    let aggregation_job_id: AggregationJobId = random();
-
-    let task_expiration = test
-        .clock
-        .now()
-        .add(&Duration::from_hours(24).unwrap())
-        .unwrap();
-    let another_task_config = TaskConfig::new(
-        Vec::from("foobar".as_bytes()),
-        Vec::from([
-            // Some non-existent aggregator.
-            "https://foobar.example.com/".as_bytes().try_into().unwrap(),
-            "https://leader.example.com/".as_bytes().try_into().unwrap(),
-        ]),
-        QueryConfig::new(
-            Duration::from_seconds(1),
-            100,
-            100,
-            TaskprovQuery::FixedSize {
-                max_batch_size: 100,
-            },
-        ),
-        task_expiration,
-        VdafConfig::new(DpConfig::new(DpMechanism::None), VdafType::Prio3Aes128Count).unwrap(),
-    )
-    .unwrap();
-    let another_task_config_encoded = another_task_config.get_encoded();
-    let another_task_id: TaskId = digest(&SHA256, &another_task_config_encoded)
-        .as_ref()
-        .try_into()
-        .unwrap();
-
-    let request = AggregateInitializeReq::new(
-        another_task_id,
-        aggregation_job_id,
-        ().get_encoded(),
-        PartialBatchSelector::new_fixed_size(batch_id),
-        Vec::from([test.report_share.clone()]),
-    );
-
-    let auth = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
-
-    let mut test_conn = post(
-        test
-            // Use the test case task's ID.
-            .task
-            .aggregation_job_uri()
-            .unwrap()
-            .path(),
-    )
-    .with_request_header(auth.0, auth.1)
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregateInitializeReq::<FixedSize>::MEDIA_TYPE,
-    )
-    .with_request_header(
-        TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(another_task_config_encoded),
-    )
-    .with_request_body(request.get_encoded())
-    .run_async(&test.handler)
-    .await;
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
-    assert_eq!(
-        take_problem_details(&mut test_conn).await,
-        json!({
-                "status": Status::BadRequest as u16,
-                "type": "urn:ietf:params:ppm:dap:error:invalidTask",
-                "title": "Aggregator has opted out of the indicated task.",
-                "taskid": format!("{}", another_task_id
-        ),
-            })
     );
 }
 
@@ -752,10 +576,7 @@ async fn taskprov_aggregate_continue() {
         )]),
     );
 
-    let auth = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
+    let auth = test.aggregator_auth_token.request_authentication();
 
     // Attempt using the wrong credentials, should reject.
     let mut test_conn = post(test.task.aggregation_job_uri().unwrap().path())
@@ -873,10 +694,7 @@ async fn taskprov_aggregate_share() {
         ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
     );
 
-    let auth = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
+    let auth = test.aggregator_auth_token.request_authentication();
 
     // Attempt using the wrong credentials, should reject.
     let mut test_conn = post(test.task.aggregate_shares_uri().unwrap().path())
@@ -942,10 +760,7 @@ async fn taskprov_aggregate_share() {
 #[tokio::test]
 async fn end_to_end() {
     let test = setup_taskprov_test().await;
-    let (auth_header_name, auth_header_value) = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
+    let (auth_header_name, auth_header_value) = test.aggregator_auth_token.request_authentication();
 
     let batch_id = random();
     let aggregation_job_id = random();

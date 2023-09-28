@@ -107,18 +107,6 @@ pub fn aggregator_api_handler<C: Clock>(ds: Arc<Datastore<C>>, cfg: Config) -> i
             .delete(
                 "/hpke_configs/:config_id",
                 instrumented(api(delete_global_hpke_config::<C>)),
-            )
-            .get(
-                "/taskprov/peer_aggregators",
-                instrumented(api(get_taskprov_peer_aggregators::<C>)),
-            )
-            .post(
-                "/taskprov/peer_aggregators",
-                instrumented(api(post_taskprov_peer_aggregator::<C>)),
-            )
-            .delete(
-                "/taskprov/peer_aggregators",
-                instrumented(api(delete_taskprov_peer_aggregator::<C>)),
             ),
     )
 }

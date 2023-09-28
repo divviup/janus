@@ -1,9 +1,8 @@
 use crate::{
     models::{
-        AggregatorApiConfig, AggregatorRole, DeleteTaskprovPeerAggregatorReq, GetTaskIdsResp,
-        GetTaskMetricsResp, GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PostTaskReq,
-        PostTaskprovPeerAggregatorReq, PutGlobalHpkeConfigReq, SupportedVdaf, TaskResp,
-        TaskprovPeerAggregatorResp,
+        AggregatorApiConfig, AggregatorRole, GetTaskIdsResp, GetTaskMetricsResp,
+        GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PostTaskReq, PutGlobalHpkeConfigReq,
+        SupportedVdaf, TaskResp,
     },
     Config, ConnExt, Error,
 };
@@ -11,7 +10,6 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
     datastore::{self, Datastore},
     task::Task,
-    taskprov::PeerAggregator,
     SecretBytes,
 };
 use janus_core::{hpke::generate_hpke_config_and_private_key, time::Clock};
@@ -363,83 +361,6 @@ pub(super) async fn delete_global_hpke_config<C: Clock>(
     match ds
         .run_tx_with_name("delete_global_hpke_config", |tx| {
             Box::pin(async move { tx.delete_global_hpke_keypair(&config_id).await })
-        })
-        .await
-    {
-        Ok(_) | Err(datastore::Error::MutationTargetNotFound) => Ok(Status::NoContent),
-        Err(err) => Err(err.into()),
-    }
-}
-
-pub(super) async fn get_taskprov_peer_aggregators<C: Clock>(
-    _: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
-) -> Result<Json<Vec<TaskprovPeerAggregatorResp>>, Error> {
-    Ok(Json(
-        ds.run_tx_with_name("get_taskprov_peer_aggregators", |tx| {
-            Box::pin(async move { tx.get_taskprov_peer_aggregators().await })
-        })
-        .await?
-        .into_iter()
-        .map(TaskprovPeerAggregatorResp::from)
-        .collect::<Vec<_>>(),
-    ))
-}
-
-/// Inserts a new peer aggregator. Insertion is only supported, attempting to modify an existing
-/// peer aggregator will fail.
-///
-/// TODO(1685): Requiring that we delete an existing peer aggregator before we can change it makes
-/// token rotation cumbersome and fragile. Since token rotation is the main use case for updating
-/// an existing peer aggregator, we will resolve peer aggregator updates in that issue.
-pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
-    _: &mut Conn,
-    (State(ds), Json(req)): (
-        State<Arc<Datastore<C>>>,
-        Json<PostTaskprovPeerAggregatorReq>,
-    ),
-) -> Result<(Status, Json<TaskprovPeerAggregatorResp>), Error> {
-    let to_insert = PeerAggregator::new(
-        req.endpoint,
-        req.role,
-        req.verify_key_init,
-        req.collector_hpke_config,
-        req.report_expiry_age,
-        req.tolerable_clock_skew,
-        req.aggregator_auth_tokens,
-        req.collector_auth_tokens,
-    );
-
-    let inserted = ds
-        .run_tx_with_name("post_taskprov_peer_aggregator", |tx| {
-            let to_insert = to_insert.clone();
-            Box::pin(async move {
-                tx.put_taskprov_peer_aggregator(&to_insert).await?;
-                tx.get_taskprov_peer_aggregator(to_insert.endpoint(), to_insert.role())
-                    .await
-            })
-        })
-        .await?
-        .map(TaskprovPeerAggregatorResp::from)
-        .ok_or_else(|| Error::Internal("Newly inserted peer aggregator disappeared".to_string()))?;
-
-    Ok((Status::Created, Json(inserted)))
-}
-
-pub(super) async fn delete_taskprov_peer_aggregator<C: Clock>(
-    _: &mut Conn,
-    (State(ds), Json(req)): (
-        State<Arc<Datastore<C>>>,
-        Json<DeleteTaskprovPeerAggregatorReq>,
-    ),
-) -> Result<Status, Error> {
-    match ds
-        .run_tx_with_name("delete_taskprov_peer_aggregator", |tx| {
-            let req = req.clone();
-            Box::pin(async move {
-                tx.delete_taskprov_peer_aggregator(&req.endpoint, &req.role)
-                    .await
-            })
         })
         .await
     {
