@@ -607,8 +607,26 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        assert_eq!(want_tasks, got_tasks);
-        assert_eq!(want_tasks, written_tasks);
+        assert_eq!(
+            want_tasks
+                .iter()
+                .map(|(k, v)| { (*k, v.view_for_role().unwrap()) })
+                .collect::<HashMap<_, _>>(),
+            got_tasks
+                .iter()
+                .map(|(k, v)| { (*k, v.view_for_role().unwrap()) })
+                .collect()
+        );
+        assert_eq!(
+            want_tasks
+                .iter()
+                .map(|(k, v)| { (*k, v.view_for_role().unwrap()) })
+                .collect::<HashMap<_, _>>(),
+            written_tasks
+                .iter()
+                .map(|(k, v)| { (*k, v.view_for_role().unwrap()) })
+                .collect()
+        );
     }
 
     #[tokio::test]
@@ -703,11 +721,20 @@ mod tests {
                 .unwrap(),
         );
         let want_tasks = HashMap::from([
-            (*replacement_task.id(), replacement_task),
-            (*tasks[1].id(), tasks[1].clone()),
+            (
+                *replacement_task.id(),
+                replacement_task.view_for_role().unwrap(),
+            ),
+            (*tasks[1].id(), tasks[1].view_for_role().unwrap()),
         ]);
 
-        assert_eq!(want_tasks, got_tasks);
+        assert_eq!(
+            want_tasks,
+            got_tasks
+                .iter()
+                .map(|(k, v)| { (*k, v.view_for_role().unwrap()) })
+                .collect()
+        );
     }
 
     #[tokio::test]
@@ -810,8 +837,14 @@ mod tests {
         }
 
         assert_eq!(
-            task_hashmap_from_slice(written_tasks),
+            task_hashmap_from_slice(written_tasks)
+                .iter()
+                .map(|(k, v)| { (*k, v.view_for_role().unwrap()) })
+                .collect::<HashMap<_, _>>(),
             task_hashmap_from_slice(got_tasks)
+                .iter()
+                .map(|(k, v)| { (*k, v.view_for_role().unwrap()) })
+                .collect()
         );
     }
 

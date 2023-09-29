@@ -516,7 +516,7 @@ impl Task {
     pub fn helper_view(&self) -> Result<AggregatorTask, Error> {
         AggregatorTask::new(
             self.task_id,
-            self.helper_aggregator_endpoint.clone(),
+            self.leader_aggregator_endpoint.clone(),
             self.query_type,
             self.vdaf.clone(),
             self.vdaf_verify_key.clone(),
@@ -544,7 +544,7 @@ impl Task {
     pub fn taskprov_helper_view(&self) -> Result<AggregatorTask, Error> {
         AggregatorTask::new(
             self.task_id,
-            self.helper_aggregator_endpoint.clone(),
+            self.leader_aggregator_endpoint.clone(),
             self.query_type,
             self.vdaf.clone(),
             self.vdaf_verify_key.clone(),
@@ -557,6 +557,19 @@ impl Task {
             self.hpke_keys.values().cloned().collect::<Vec<_>>(),
             AggregatorTaskParameters::TaskProvHelper,
         )
+    }
+
+    /// Render the view of the specified aggregator of this task.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `self.role` is not an aggregator role.
+    pub fn view_for_role(&self) -> Result<AggregatorTask, Error> {
+        match self.role {
+            Role::Leader => self.leader_view(),
+            Role::Helper => self.helper_view().or_else(|_| self.taskprov_helper_view()),
+            _ => Err(Error::InvalidParameter("role is not an aggregator")),
+        }
     }
 }
 

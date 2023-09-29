@@ -317,7 +317,7 @@ async fn taskprov_aggregate_init() {
                     tx.get_aggregation_jobs_for_task::<16, FixedSize, TestVdaf>(&task_id)
                         .await
                         .unwrap(),
-                    tx.get_task(&task_id).await.unwrap(),
+                    tx.get_aggregator_task(&task_id).await.unwrap(),
                 ))
             })
         })
@@ -333,9 +333,7 @@ async fn taskprov_aggregate_init() {
                 .state()
                 .eq(&AggregationJobState::InProgress)
     );
-    // TODO(#1524): This assertion temporarily just checks the task ID because of the lossy
-    // conversion between task::Task and task::AggregatorTask.
-    assert_eq!(test.task.id(), got_task.unwrap().id());
+    assert_eq!(test.task.taskprov_helper_view().unwrap(), got_task.unwrap());
 }
 
 #[tokio::test]
