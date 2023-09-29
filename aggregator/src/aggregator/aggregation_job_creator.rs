@@ -745,8 +745,12 @@ mod tests {
             Role::Leader,
         )
         .build();
-        let batch_identifier =
-            TimeInterval::to_batch_identifier(&leader_task, &(), &report_time).unwrap();
+        let batch_identifier = TimeInterval::to_batch_identifier(
+            &leader_task.view_for_role().unwrap(),
+            &(),
+            &report_time,
+        )
+        .unwrap();
         let leader_report = LeaderStoredReport::new_dummy(*leader_task.id(), report_time);
 
         let helper_task = TaskBuilder::new(
@@ -872,7 +876,9 @@ mod tests {
         // Create 2 max-size batches, a min-size batch, one extra report (which will be added to the
         // min-size batch).
         let report_time = clock.now();
-        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
+        let batch_identifier =
+            TimeInterval::to_batch_identifier(&task.view_for_role().unwrap(), &(), &report_time)
+                .unwrap();
         let reports: Vec<_> =
             iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
                 .take(2 * MAX_AGGREGATION_JOB_SIZE + MIN_AGGREGATION_JOB_SIZE + 1)
@@ -980,7 +986,9 @@ mod tests {
             .build(),
         );
         let report_time = clock.now();
-        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
+        let batch_identifier =
+            TimeInterval::to_batch_identifier(&task.view_for_role().unwrap(), &(), &report_time)
+                .unwrap();
         let first_report = LeaderStoredReport::new_dummy(*task.id(), report_time);
         let second_report = LeaderStoredReport::new_dummy(*task.id(), report_time);
 
@@ -1113,7 +1121,9 @@ mod tests {
 
         // Create a min-size batch.
         let report_time = clock.now();
-        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
+        let batch_identifier =
+            TimeInterval::to_batch_identifier(&task.view_for_role().unwrap(), &(), &report_time)
+                .unwrap();
         let reports: Vec<_> =
             iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
                 .take(2 * MAX_AGGREGATION_JOB_SIZE + MIN_AGGREGATION_JOB_SIZE + 1)

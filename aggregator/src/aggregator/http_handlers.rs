@@ -2817,7 +2817,7 @@ mod tests {
         .unwrap();
         let second_batch_want_batch_aggregations =
             empty_batch_aggregations::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>(
-                &task,
+                &task.view_for_role().unwrap(),
                 BATCH_AGGREGATION_SHARD_COUNT,
                 &second_batch_identifier,
                 &aggregation_param,
@@ -2969,7 +2969,7 @@ mod tests {
                         _,
                     >(
                         tx,
-                        &task,
+                        &task.view_for_role().unwrap(),
                         &vdaf,
                         &Interval::new(
                             report_metadata_0
@@ -3051,7 +3051,7 @@ mod tests {
                         _,
                     >(
                         tx,
-                        &task,
+                        &task.view_for_role().unwrap(),
                         &vdaf,
                         &Interval::new(
                             report_metadata_2
@@ -3272,7 +3272,7 @@ mod tests {
                         _,
                     >(
                         tx,
-                        &task,
+                        &task.view_for_role().unwrap(),
                         &vdaf,
                         &Interval::new(
                             report_metadata_0
@@ -3359,7 +3359,7 @@ mod tests {
                         _,
                     >(
                         tx,
-                        &task,
+                        &task.view_for_role().unwrap(),
                         &vdaf,
                         &Interval::new(
                             report_metadata_2
@@ -4338,7 +4338,7 @@ mod tests {
         let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
 
         let batch_interval = TimeInterval::to_batch_identifier(
-            &test_case.task,
+            &test_case.task.view_for_role().unwrap(),
             &(),
             &Time::from_seconds_since_epoch(0),
         )

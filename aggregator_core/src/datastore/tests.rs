@@ -11,7 +11,7 @@ use crate::{
         Crypter, Datastore, Error, Transaction, SUPPORTED_SCHEMA_VERSIONS,
     },
     query_type::CollectableQueryType,
-    task::{self, test_util::NewTaskBuilder as TaskBuilder, AggregatorTask, Task},
+    task::{self, test_util::NewTaskBuilder as TaskBuilder, AggregatorTask},
     taskprov::test_util::PeerAggregatorBuilder,
     test_util::noop_meter,
 };
@@ -4178,7 +4178,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     _,
                 >(
                     tx,
-                    &Task::from(task.clone()),
+                    &task,
                     &vdaf,
                     &Interval::new(
                         Time::from_seconds_since_epoch(1100),
@@ -4223,7 +4223,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     _,
                 >(
                     tx,
-                    &Task::from(task),
+                    &task,
                     &vdaf,
                     &Interval::new(
                         Time::from_seconds_since_epoch(1100),
@@ -4267,7 +4267,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     _,
                 >(
                     tx,
-                    &Task::from(task),
+                    &task,
                     &vdaf,
                     &Interval::new(
                         Time::from_seconds_since_epoch(1100),

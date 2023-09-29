@@ -80,8 +80,11 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
         client_timestamp: &Time,
         output_share: &A::OutputShare,
     ) -> Result<(), datastore::Error> {
-        let batch_identifier =
-            Q::to_batch_identifier(&self.task, partial_batch_identifier, client_timestamp)?;
+        let batch_identifier = Q::to_batch_identifier(
+            &self.task.view_for_role()?,
+            partial_batch_identifier,
+            client_timestamp,
+        )?;
         let client_timestamp_interval =
             Interval::from_time(client_timestamp).map_err(|e| datastore::Error::User(e.into()))?;
         let batch_aggregation_fn = || {

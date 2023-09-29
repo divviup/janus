@@ -161,7 +161,7 @@ impl CollectionJobDriver {
                     let batch_aggregations: Vec<_> =
                         Q::get_batch_aggregations_for_collection_identifier(
                             tx,
-                            &task,
+                            &task.leader_view()?,
                             vdaf.as_ref(),
                             collection_job.batch_identifier(),
                             collection_job.aggregation_parameter(),
@@ -177,7 +177,7 @@ impl CollectionJobDriver {
                     // transactionally to avoid the possibility of overwriting other transactions'
                     // updates to batch aggregations.
                     let empty_batch_aggregations = empty_batch_aggregations(
-                        &task,
+                        &task.leader_view()?,
                         batch_aggregation_shard_count,
                         collection_job.batch_identifier(),
                         collection_job.aggregation_parameter(),

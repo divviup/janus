@@ -122,7 +122,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
             .iter()
             .map(|ra| {
                 Q::to_batch_identifier(
-                    &self.task,
+                    &self.task.view_for_role()?,
                     info.aggregation_job.partial_batch_identifier(),
                     ra.time(),
                 )
@@ -468,13 +468,14 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
 
         // Find all batches which are relevant to a collection job that just had a batch move into
         // CLOSED state.
+        let aggregator_task = self.task.view_for_role()?;
         let relevant_batches: Arc<HashMap<_, _>> = Arc::new({
             let batches = Arc::new(Mutex::new(batches));
             let relevant_batch_identifiers: HashSet<_> = affected_collection_jobs
                 .values()
                 .flat_map(|collection_job| {
                     Q::batch_identifiers_for_collection_identifier(
-                        &self.task,
+                        &aggregator_task,
                         collection_job.batch_identifier(),
                     )
                 })
@@ -519,7 +520,10 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                     async move {
                         let mut is_collectable = true;
                         for batch_identifier in Q::batch_identifiers_for_collection_identifier(
-                            &self.task,
+                            &self
+                                .task
+                                .view_for_role()
+                                .map_err(|e| Error::User(e.into()))?,
                             collection_job.batch_identifier(),
                         ) {
                             let batch = match relevant_batches.get(&batch_identifier) {
