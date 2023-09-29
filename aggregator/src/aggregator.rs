@@ -357,7 +357,15 @@ impl<C: Clock> Aggregator<C> {
                 if task_aggregator.task.role() != &Role::Helper {
                     return Err(Error::UnrecognizedTask(*task_id));
                 }
-                if !task_aggregator
+                if self.cfg.taskprov_config.enabled && taskprov_task_config.is_some() {
+                    self.taskprov_authorize_request(
+                        &Role::Leader,
+                        task_id,
+                        taskprov_task_config.unwrap(),
+                        auth_token.as_ref(),
+                    )
+                    .await?;
+                } else if !task_aggregator
                     .task
                     .check_aggregator_auth_token(auth_token.as_ref())
                 {

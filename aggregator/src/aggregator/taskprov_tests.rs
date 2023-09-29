@@ -191,7 +191,7 @@ impl TaskprovTestCase {
             datastore,
             handler: Box::new(handler),
             peer_aggregator,
-            task: task.into(),
+            task,
             task_config,
             task_id,
             vdaf,
@@ -256,9 +256,23 @@ async fn taskprov_aggregate_init() {
     );
     let aggregation_job_id_1: AggregationJobId = random();
 
-    for (request, aggregation_job_id, report_share) in
-        [(request_1, aggregation_job_id_1, report_share_1)]
-    {
+    let (_, transcript_2, report_share_2, aggregation_param_2) =
+        test.generate_helper_report_share();
+    let batch_id_2 = random();
+    let request_2 = AggregationJobInitializeReq::new(
+        aggregation_param_2.get_encoded(),
+        PartialBatchSelector::new_fixed_size(batch_id_2),
+        Vec::from([PrepareInit::new(
+            report_share_2.clone(),
+            transcript_2.leader_prepare_transitions[0].message.clone(),
+        )]),
+    );
+    let aggregation_job_id_2: AggregationJobId = random();
+
+    for (name, request, aggregation_job_id, report_share) in [
+        ("request_1", request_1, aggregation_job_id_1, report_share_1),
+        ("request_2", request_2, aggregation_job_id_2, report_share_2),
+    ] {
         let auth = test
             .peer_aggregator
             .primary_aggregator_auth_token()
@@ -281,7 +295,7 @@ async fn taskprov_aggregate_init() {
         .with_request_body(request.get_encoded())
         .run_async(&test.handler)
         .await;
-        assert_eq!(test_conn.status(), Some(Status::BadRequest));
+        assert_eq!(test_conn.status(), Some(Status::BadRequest), "{}", name);
         assert_eq!(
             take_problem_details(&mut test_conn).await,
             json!({
@@ -289,12 +303,14 @@ async fn taskprov_aggregate_init() {
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
                 "taskid": format!("{}", test.task_id),
-            })
+            }),
+            "{}",
+            name
         );
 
         let mut test_conn = put(test
             .task
-            .aggregation_job_uri(&aggregation_job_id_1)
+            .aggregation_job_uri(&aggregation_job_id)
             .unwrap()
             .path())
         .with_request_header(auth.0, auth.1)
@@ -310,17 +326,27 @@ async fn taskprov_aggregate_init() {
         .run_async(&test.handler)
         .await;
 
-        assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert_eq!(test_conn.status(), Some(Status::Ok), "{}", name);
         assert_headers!(
             &test_conn,
             "content-type" => (AggregationJobResp::MEDIA_TYPE)
         );
         let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
 
-        assert_eq!(aggregate_resp.prepare_resps().len(), 1);
+        assert_eq!(aggregate_resp.prepare_resps().len(), 1, "{}", name);
         let prepare_step = aggregate_resp.prepare_resps().get(0).unwrap();
-        assert_eq!(prepare_step.report_id(), report_share.metadata().id());
-        assert_matches!(prepare_step.result(), &PrepareStepResult::Continue { .. });
+        assert_eq!(
+            prepare_step.report_id(),
+            report_share.metadata().id(),
+            "{}",
+            name
+        );
+        assert_matches!(
+            prepare_step.result(),
+            &PrepareStepResult::Continue { .. },
+            "{}",
+            name
+        );
     }
 
     let (aggregation_jobs, got_task) = test
@@ -339,7 +365,7 @@ async fn taskprov_aggregate_init() {
         .await
         .unwrap();
 
-    assert_eq!(aggregation_jobs.len(), 1);
+    assert_eq!(aggregation_jobs.len(), 2);
     assert!(
         aggregation_jobs[0].task_id().eq(&test.task_id)
             && aggregation_jobs[0].id().eq(&aggregation_job_id_1)
@@ -347,6 +373,16 @@ async fn taskprov_aggregate_init() {
                 .partial_batch_identifier()
                 .eq(&batch_id_1)
             && aggregation_jobs[0]
+                .state()
+                .eq(&AggregationJobState::InProgress)
+    );
+    assert!(
+        aggregation_jobs[1].task_id().eq(&test.task_id)
+            && aggregation_jobs[1].id().eq(&aggregation_job_id_2)
+            && aggregation_jobs[1]
+                .partial_batch_identifier()
+                .eq(&batch_id_2)
+            && aggregation_jobs[1]
                 .state()
                 .eq(&AggregationJobState::InProgress)
     );
