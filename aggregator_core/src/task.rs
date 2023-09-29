@@ -2257,7 +2257,8 @@ mod tests {
 
     #[test]
     fn deserialize_docs_sample_tasks() {
-        serde_yaml::from_str::<Vec<Task>>(include_str!("../../docs/samples/tasks.yaml")).unwrap();
+        serde_yaml::from_str::<Vec<AggregatorTask>>(include_str!("../../docs/samples/tasks.yaml"))
+            .unwrap();
     }
 
     #[test]
