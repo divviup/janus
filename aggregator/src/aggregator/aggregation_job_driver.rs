@@ -15,7 +15,7 @@ use janus_aggregator_core::{
         },
         Datastore,
     },
-    task::{self, Task, VerifyKey},
+    task::{self, AggregatorTask, VerifyKey},
 };
 use janus_core::{time::Clock, vdaf_dispatch};
 use janus_messages::{
@@ -147,7 +147,7 @@ impl AggregationJobDriver {
                 let (lease, vdaf) = (Arc::clone(&lease), Arc::clone(&vdaf));
                 Box::pin(async move {
                     let task = tx
-                        .get_task(lease.leased().task_id())
+                        .get_aggregator_task(lease.leased().task_id())
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -297,7 +297,7 @@ impl AggregationJobDriver {
         datastore: &Datastore<C>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
         client_reports: HashMap<ReportId, LeaderStoredReport<SEED_SIZE, A>>,
@@ -413,7 +413,8 @@ impl AggregationJobDriver {
         let resp_bytes = send_request_to_helper(
             &self.http_client,
             Method::PUT,
-            task.aggregation_job_uri(aggregation_job.id())?,
+            task.aggregation_job_uri(aggregation_job.id())?
+                .ok_or_else(|| anyhow!("task is not leader and has no aggregation job URI"))?,
             AGGREGATION_JOB_ROUTE,
             AggregationJobInitializeReq::<Q>::MEDIA_TYPE,
             req,
@@ -449,7 +450,7 @@ impl AggregationJobDriver {
         datastore: &Datastore<C>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
     ) -> Result<()>
@@ -506,7 +507,8 @@ impl AggregationJobDriver {
         let resp_bytes = send_request_to_helper(
             &self.http_client,
             Method::POST,
-            task.aggregation_job_uri(aggregation_job.id())?,
+            task.aggregation_job_uri(aggregation_job.id())?
+                .ok_or_else(|| anyhow!("task is not leader and has no aggregation job URI"))?,
             AGGREGATION_JOB_ROUTE,
             AggregationJobContinueReq::MEDIA_TYPE,
             req,
@@ -543,7 +545,7 @@ impl AggregationJobDriver {
         datastore: &Datastore<C>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
         stepped_aggregations: &[SteppedAggregation<SEED_SIZE, A>],
         mut report_aggregations_to_write: Vec<ReportAggregation<SEED_SIZE, A>>,
@@ -795,7 +797,7 @@ impl AggregationJobDriver {
                     // aggregation states to Failed(BatchCollected) if a collection has begun for
                     // the relevant batch.
                     let task = tx
-                        .get_task(lease.leased().task_id())
+                        .get_aggregator_task(lease.leased().task_id())
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -923,7 +925,7 @@ mod tests {
             test_util::ephemeral_datastore,
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
-        task::{test_util::TaskBuilder, QueryType, VerifyKey},
+        task::{test_util::NewTaskBuilder as TaskBuilder, QueryType, VerifyKey},
         test_util::noop_meter,
     };
     use janus_core::{
@@ -976,20 +978,17 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = Arc::new(Poplar1::new_shake128(1));
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Poplar1 { bits: 1 },
-            Role::Leader,
-        )
-        .with_helper_aggregator_endpoint(server.url().parse().unwrap())
-        .build();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 })
+            .with_helper_aggregator_endpoint(server.url().parse().unwrap())
+            .build();
+
+        let leader_task = task.leader_view().unwrap();
 
         let time = clock
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap();
-        let batch_identifier =
-            TimeInterval::to_batch_identifier(&task.view_for_role().unwrap(), &(), &time).unwrap();
+        let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
         let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
         let measurement = IdpfInput::from_bools(&[true]);
@@ -1005,7 +1004,7 @@ mod tests {
             &measurement,
         );
 
-        let agg_auth_token = task.aggregator_auth_token().unwrap().clone();
+        let agg_auth_token = task.aggregator_auth_token().clone();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
             *task.id(),
@@ -1023,12 +1022,12 @@ mod tests {
             .run_tx(|tx| {
                 let (vdaf, task, report, aggregation_param) = (
                     vdaf.clone(),
-                    task.clone(),
+                    leader_task.clone(),
                     report.clone(),
                     aggregation_param.clone(),
                 );
                 Box::pin(async move {
-                    tx.put_task(&task).await?;
+                    tx.put_aggregator_task(&task).await?;
                     tx.put_client_report(vdaf.borrow(), &report).await?;
                     tx.mark_report_aggregated(task.id(), report.metadata().id())
                         .await?;
@@ -1275,20 +1274,17 @@ mod tests {
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
-            Role::Leader,
-        )
-        .with_helper_aggregator_endpoint(server.url().parse().unwrap())
-        .build();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            .with_helper_aggregator_endpoint(server.url().parse().unwrap())
+            .build();
+
+        let leader_task = task.leader_view().unwrap();
 
         let time = clock
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap();
-        let batch_identifier =
-            TimeInterval::to_batch_identifier(&task.view_for_role().unwrap(), &(), &time).unwrap();
+        let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
         let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
 
@@ -1300,7 +1296,7 @@ mod tests {
             &0,
         );
 
-        let agg_auth_token = task.aggregator_auth_token().unwrap();
+        let agg_auth_token = task.aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
             *task.id(),
@@ -1330,12 +1326,12 @@ mod tests {
             .run_tx(|tx| {
                 let (vdaf, task, report, repeated_extension_report) = (
                     vdaf.clone(),
-                    task.clone(),
+                    leader_task.clone(),
                     report.clone(),
                     repeated_extension_report.clone(),
                 );
                 Box::pin(async move {
-                    tx.put_task(&task).await?;
+                    tx.put_aggregator_task(&task).await?;
                     tx.put_client_report(vdaf.borrow(), &report).await?;
                     tx.put_client_report(vdaf.borrow(), &repeated_extension_report)
                         .await?;
@@ -1636,20 +1632,17 @@ mod tests {
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = Arc::new(Poplar1::new_shake128(1));
 
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Poplar1 { bits: 1 },
-            Role::Leader,
-        )
-        .with_helper_aggregator_endpoint(server.url().parse().unwrap())
-        .build();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 })
+            .with_helper_aggregator_endpoint(server.url().parse().unwrap())
+            .build();
+
+        let leader_task = task.leader_view().unwrap();
 
         let time = clock
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap();
-        let batch_identifier =
-            TimeInterval::to_batch_identifier(&task.view_for_role().unwrap(), &(), &time).unwrap();
+        let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
         let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
         let measurement = IdpfInput::from_bools(&[true]);
@@ -1665,7 +1658,7 @@ mod tests {
             &measurement,
         );
 
-        let agg_auth_token = task.aggregator_auth_token().unwrap();
+        let agg_auth_token = task.aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
             *task.id(),
@@ -1682,12 +1675,12 @@ mod tests {
             .run_tx(|tx| {
                 let (vdaf, task, report, aggregation_param) = (
                     vdaf.clone(),
-                    task.clone(),
+                    leader_task.clone(),
                     report.clone(),
                     aggregation_param.clone(),
                 );
                 Box::pin(async move {
-                    tx.put_task(&task).await?;
+                    tx.put_aggregator_task(&task).await?;
                     tx.put_client_report(vdaf.borrow(), &report).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
@@ -1894,10 +1887,11 @@ mod tests {
                 batch_time_window_size: None,
             },
             VdafInstance::Prio3Count,
-            Role::Leader,
         )
         .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .build();
+
+        let leader_task = task.leader_view().unwrap();
 
         let report_metadata = ReportMetadata::new(
             random(),
@@ -1916,7 +1910,7 @@ mod tests {
             &0,
         );
 
-        let agg_auth_token = task.aggregator_auth_token().unwrap();
+        let agg_auth_token = task.aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
             *task.id(),
@@ -1932,9 +1926,9 @@ mod tests {
 
         let lease = ds
             .run_tx(|tx| {
-                let (vdaf, task, report) = (vdaf.clone(), task.clone(), report.clone());
+                let (vdaf, task, report) = (vdaf.clone(), leader_task.clone(), report.clone());
                 Box::pin(async move {
-                    tx.put_task(&task).await?;
+                    tx.put_aggregator_task(&task).await?;
                     tx.put_client_report(vdaf.borrow(), &report).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
@@ -2145,10 +2139,11 @@ mod tests {
                 batch_time_window_size: None,
             },
             VdafInstance::Poplar1 { bits: 1 },
-            Role::Leader,
         )
         .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .build();
+
+        let leader_task = task.leader_view().unwrap();
 
         let report_metadata = ReportMetadata::new(
             random(),
@@ -2171,7 +2166,7 @@ mod tests {
             &measurement,
         );
 
-        let agg_auth_token = task.aggregator_auth_token().unwrap();
+        let agg_auth_token = task.aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
             *task.id(),
@@ -2189,12 +2184,12 @@ mod tests {
             .run_tx(|tx| {
                 let (vdaf, task, report, aggregation_param) = (
                     vdaf.clone(),
-                    task.clone(),
+                    leader_task.clone(),
                     report.clone(),
                     aggregation_param.clone(),
                 );
                 Box::pin(async move {
-                    tx.put_task(&task).await?;
+                    tx.put_aggregator_task(&task).await?;
                     tx.put_client_report(vdaf.borrow(), &report).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
@@ -2396,19 +2391,16 @@ mod tests {
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = Arc::new(Poplar1::new_shake128(1));
 
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Poplar1 { bits: 1 },
-            Role::Leader,
-        )
-        .with_helper_aggregator_endpoint(server.url().parse().unwrap())
-        .build();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 })
+            .with_helper_aggregator_endpoint(server.url().parse().unwrap())
+            .build();
+        let leader_task = task.leader_view().unwrap();
         let time = clock
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap();
         let active_batch_identifier =
-            TimeInterval::to_batch_identifier(&task.view_for_role().unwrap(), &(), &time).unwrap();
+            TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
         let other_batch_identifier = Interval::new(
             active_batch_identifier
                 .start()
@@ -2437,7 +2429,7 @@ mod tests {
             &IdpfInput::from_bools(&[true]),
         );
 
-        let agg_auth_token = task.aggregator_auth_token().unwrap();
+        let agg_auth_token = task.aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
             *task.id(),
@@ -2458,13 +2450,13 @@ mod tests {
             .run_tx(|tx| {
                 let (vdaf, task, aggregation_param, report, transcript) = (
                     vdaf.clone(),
-                    task.clone(),
+                    leader_task.clone(),
                     aggregation_param.clone(),
                     report.clone(),
                     transcript.clone(),
                 );
                 Box::pin(async move {
-                    tx.put_task(&task).await?;
+                    tx.put_aggregator_task(&task).await?;
                     tx.put_client_report(vdaf.borrow(), &report).await?;
                     tx.mark_report_aggregated(task.id(), report.metadata().id())
                         .await?;
@@ -2700,7 +2692,7 @@ mod tests {
             .run_tx(|tx| {
                 let (vdaf, task, report_metadata, aggregation_param, collection_job_id) = (
                     Arc::clone(&vdaf),
-                    task.clone(),
+                    leader_task.clone(),
                     report.metadata().clone(),
                     aggregation_param.clone(),
                     *want_collection_job.id(),
@@ -2731,7 +2723,7 @@ mod tests {
                             _,
                         >(
                             tx,
-                            &task.view_for_role().unwrap(),
+                            &task,
                             &vdaf,
                             &Interval::new(
                                 report_metadata
@@ -2814,10 +2806,11 @@ mod tests {
                 batch_time_window_size: None,
             },
             VdafInstance::Poplar1 { bits: 1 },
-            Role::Leader,
         )
         .with_helper_aggregator_endpoint(server.url().parse().unwrap())
         .build();
+
+        let leader_task = task.leader_view().unwrap();
         let report_metadata = ReportMetadata::new(
             random(),
             clock
@@ -2839,7 +2832,7 @@ mod tests {
             &IdpfInput::from_bools(&[true]),
         );
 
-        let agg_auth_token = task.aggregator_auth_token().unwrap();
+        let agg_auth_token = task.aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
             *task.id(),
@@ -2860,13 +2853,13 @@ mod tests {
             .run_tx(|tx| {
                 let (vdaf, task, report, aggregation_param, transcript) = (
                     vdaf.clone(),
-                    task.clone(),
+                    leader_task.clone(),
                     report.clone(),
                     aggregation_param.clone(),
                     transcript.clone(),
                 );
                 Box::pin(async move {
-                    tx.put_task(&task).await?;
+                    tx.put_aggregator_task(&task).await?;
                     tx.put_client_report(vdaf.borrow(), &report).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
@@ -3071,7 +3064,7 @@ mod tests {
             .run_tx(|tx| {
                 let (vdaf, task, report_metadata, aggregation_param, collection_job_id) = (
                     Arc::clone(&vdaf),
-                    task.clone(),
+                    leader_task.clone(),
                     report.metadata().clone(),
                     aggregation_param.clone(),
                     *want_collection_job.id(),
@@ -3100,7 +3093,7 @@ mod tests {
                             VERIFY_KEY_LENGTH,
                             Poplar1<XofShake128, 16>,
                             _,
-                        >(tx, &task.view_for_role().unwrap(), &vdaf, &batch_id, &aggregation_param)
+                        >(tx, &task, &vdaf, &batch_id, &aggregation_param)
                         .await?;
                     let batch = tx
                         .get_batch(task.id(), &batch_id, &aggregation_param)
@@ -3156,18 +3149,15 @@ mod tests {
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
 
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
-            Role::Leader,
-        )
-        .build();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            .build()
+            .leader_view()
+            .unwrap();
         let time = clock
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap();
-        let batch_identifier =
-            TimeInterval::to_batch_identifier(&task.view_for_role().unwrap(), &(), &time).unwrap();
+        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
         let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
 
@@ -3220,7 +3210,7 @@ mod tests {
                     report_aggregation.clone(),
                 );
                 Box::pin(async move {
-                    tx.put_task(&task).await?;
+                    tx.put_aggregator_task(&task).await?;
                     tx.put_client_report(vdaf.borrow(), &report).await?;
                     tx.put_aggregation_job(&aggregation_job).await?;
                     tx.put_report_aggregation(&report_aggregation).await?;
@@ -3357,14 +3347,12 @@ mod tests {
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let stopper = Stopper::new();
 
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
-            Role::Leader,
-        )
-        .with_helper_aggregator_endpoint(server.url().parse().unwrap())
-        .build();
-        let agg_auth_token = task.aggregator_auth_token().unwrap();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            .with_helper_aggregator_endpoint(server.url().parse().unwrap())
+            .build();
+
+        let leader_task = task.leader_view().unwrap();
+        let agg_auth_token = task.aggregator_auth_token();
         let aggregation_job_id = random();
         let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
 
@@ -3375,8 +3363,7 @@ mod tests {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap();
-        let batch_identifier =
-            TimeInterval::to_batch_identifier(&task.view_for_role().unwrap(), &(), &time).unwrap();
+        let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
         let transcript = run_vdaf(&vdaf, verify_key.as_bytes(), &(), report_metadata.id(), &0);
         let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
@@ -3392,10 +3379,10 @@ mod tests {
         // Set up fixtures in the database.
         ds.run_tx(|tx| {
             let vdaf = vdaf.clone();
-            let task = task.clone();
+            let task = leader_task.clone();
             let report = report.clone();
             Box::pin(async move {
-                tx.put_task(&task).await?;
+                tx.put_aggregator_task(&task).await?;
 
                 // We need to store a well-formed report, as it will get parsed by the leader and
                 // run through initial VDAF preparation before sending a request to the helper.

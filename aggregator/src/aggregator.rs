@@ -1595,7 +1595,7 @@ impl VdafOps {
         let agg_param = A::AggregationParam::get_decoded(req.aggregation_parameter())?;
 
         let mut accumulator = Accumulator::<SEED_SIZE, Q, A>::new(
-            Arc::clone(&task),
+            Arc::new(task.view_for_role()?),
             batch_aggregation_shard_count,
             agg_param.clone(),
         );
@@ -2064,6 +2064,8 @@ impl VdafOps {
                 "aggregation job cannot be advanced to step 0",
             ));
         }
+
+        let task = Arc::new(task.view_for_role()?);
 
         // TODO(#224): don't hold DB transaction open while computing VDAF updates?
         // TODO(#224): don't do O(n) network round-trips (where n is the number of prepare steps)
