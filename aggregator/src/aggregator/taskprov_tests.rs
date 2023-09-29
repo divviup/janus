@@ -20,7 +20,10 @@ use janus_aggregator_core::{
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
     },
-    task::{QueryType, Task},
+    task::{
+        test_util::{NewTaskBuilder as TaskBuilder, Task},
+        QueryType,
+    },
     taskprov::{test_util::PeerAggregatorBuilder, PeerAggregator},
     test_util::noop_meter,
 };
@@ -64,6 +67,7 @@ use trillium_testing::{
     assert_headers,
     prelude::{post, put},
 };
+use url::Url;
 
 type TestVdaf = Poplar1<XofShake128, 16>;
 
@@ -167,31 +171,30 @@ async fn setup_taskprov_test() -> TaskprovTestCase {
             .unwrap();
     let measurement = IdpfInput::from_bools(&[true]);
 
-    let task = janus_aggregator_core::taskprov::Task::new(
-        task_id,
-        url::Url::parse("https://leader.example.com/").unwrap(),
-        url::Url::parse("https://helper.example.com/").unwrap(),
+    let task = TaskBuilder::new(
         QueryType::FixedSize {
             max_batch_size: max_batch_size as u64,
             batch_time_window_size: None,
         },
         vdaf_instance,
-        Role::Helper,
-        vdaf_verify_key.clone(),
-        max_batch_query_count as u64,
-        Some(task_expiration),
-        peer_aggregator.report_expiry_age().copied(),
-        min_batch_size as u64,
-        Duration::from_seconds(1),
-        Duration::from_seconds(1),
     )
-    .unwrap();
+    .with_id(task_id)
+    .with_leader_aggregator_endpoint(Url::parse("https://leader.example.com/").unwrap())
+    .with_helper_aggregator_endpoint(Url::parse("https://helper.example.com/").unwrap())
+    .with_vdaf_verify_key(vdaf_verify_key.clone())
+    .with_max_batch_query_count(max_batch_query_count as u64)
+    .with_task_expiration(Some(task_expiration))
+    .with_report_expiry_age(peer_aggregator.report_expiry_age().copied())
+    .with_min_batch_size(min_batch_size as u64)
+    .with_time_precision(Duration::from_seconds(1))
+    .with_tolerable_clock_skew(Duration::from_seconds(1))
+    .build();
 
     let report_metadata = ReportMetadata::new(
         random(),
         clock
             .now()
-            .to_batch_interval_start(task.task().time_precision())
+            .to_batch_interval_start(task.time_precision())
             .unwrap(),
     );
     let transcript = run_vdaf(
@@ -217,7 +220,7 @@ async fn setup_taskprov_test() -> TaskprovTestCase {
         datastore,
         handler: Box::new(handler),
         peer_aggregator,
-        task: task.into(),
+        task,
         task_config,
         task_id,
         report_metadata,
@@ -740,7 +743,8 @@ async fn taskprov_aggregate_continue() {
 
             Box::pin(async move {
                 // Aggregate continue is only possible if the task has already been inserted.
-                tx.put_task(&task).await?;
+                tx.put_aggregator_task(&task.taskprov_helper_view().unwrap())
+                    .await?;
 
                 tx.put_report_share(task.id(), &report_share).await?;
 
@@ -883,7 +887,8 @@ async fn taskprov_aggregate_share() {
             let transcript = test.transcript.clone();
 
             Box::pin(async move {
-                tx.put_task(&task).await?;
+                tx.put_aggregator_task(&task.taskprov_helper_view().unwrap())
+                    .await?;
 
                 tx.put_batch(&Batch::<16, FixedSize, TestVdaf>::new(
                     *task.id(),

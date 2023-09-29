@@ -34,7 +34,7 @@ use janus_aggregator_core::{
     },
     query_type::AccumulableQueryType,
     task::{self, AggregatorTask, Task, VerifyKey},
-    taskprov::{self, PeerAggregator},
+    taskprov::PeerAggregator,
 };
 #[cfg(feature = "test-util")]
 use janus_core::test_util::dummy_vdaf;
@@ -645,7 +645,7 @@ impl<C: Clock> Aggregator<C> {
         task_config: &TaskConfig,
         aggregator_auth_token: Option<&AuthenticationToken>,
     ) -> Result<(), Error> {
-        let (peer_aggregator, leader_url, helper_url) = self
+        let (peer_aggregator, leader_url, _) = self
             .taskprov_authorize_request(peer_role, task_id, task_config, aggregator_auth_token)
             .await?;
 
@@ -661,25 +661,13 @@ impl<C: Clock> Aggregator<C> {
                     Error::InvalidTask(*task_id, OptOutReason::InvalidParameter(err.to_string()))
                 })?;
 
-        let our_role = match peer_role {
-            Role::Leader => Role::Helper,
-            Role::Helper => Role::Leader,
-            _ => {
-                return Err(Error::Internal(
-                    "role should have only been Helper or Leader".to_string(),
-                ))
-            }
-        };
-
         let vdaf_verify_key = peer_aggregator.derive_vdaf_verify_key(task_id, &vdaf_instance);
 
-        let task = taskprov::Task::new(
+        let task = AggregatorTask::new(
             *task_id,
             leader_url,
-            helper_url,
             task_config.query_config().query().try_into()?,
             vdaf_instance,
-            our_role,
             vdaf_verify_key,
             task_config.query_config().max_batch_query_count() as u64,
             Some(*task_config.task_expiration()),
@@ -687,12 +675,15 @@ impl<C: Clock> Aggregator<C> {
             task_config.query_config().min_batch_size() as u64,
             *task_config.query_config().time_precision(),
             *peer_aggregator.tolerable_clock_skew(),
+            // Taskprov task has no per-task HPKE keys
+            [],
+            task::AggregatorTaskParameters::TaskProvHelper,
         )
         .map_err(|err| Error::InvalidTask(*task_id, OptOutReason::TaskParameters(err)))?;
         self.datastore
             .run_tx_with_name("taskprov_put_task", |tx| {
                 let task = task.clone();
-                Box::pin(async move { tx.put_task(&task.into()).await })
+                Box::pin(async move { tx.put_aggregator_task(&task).await })
             })
             .await
             .or_else(|error| -> Result<(), Error> {
