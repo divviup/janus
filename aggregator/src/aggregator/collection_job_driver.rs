@@ -132,7 +132,7 @@ impl CollectionJobDriver {
                     // TODO(#224): Consider fleshing out `AcquiredCollectionJob` to include a `Task`,
                     // `A::AggregationParam`, etc. so that we don't have to do more DB queries here.
                     let task = tx
-                        .get_task(lease.leased().task_id())
+                        .get_aggregator_task(lease.leased().task_id())
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -161,7 +161,7 @@ impl CollectionJobDriver {
                     let batch_aggregations: Vec<_> =
                         Q::get_batch_aggregations_for_collection_identifier(
                             tx,
-                            &task.leader_view()?,
+                            &task,
                             vdaf.as_ref(),
                             collection_job.batch_identifier(),
                             collection_job.aggregation_parameter(),
@@ -177,7 +177,7 @@ impl CollectionJobDriver {
                     // transactionally to avoid the possibility of overwriting other transactions'
                     // updates to batch aggregations.
                     let empty_batch_aggregations = empty_batch_aggregations(
-                        &task.leader_view()?,
+                        &task,
                         batch_aggregation_shard_count,
                         collection_job.batch_identifier(),
                         collection_job.aggregation_parameter(),
@@ -224,7 +224,9 @@ impl CollectionJobDriver {
         let resp_bytes = send_request_to_helper(
             &self.http_client,
             Method::POST,
-            task.aggregate_shares_uri()?,
+            task.aggregate_shares_uri()?.ok_or_else(|| {
+                Error::InvalidConfiguration("task is not leader and has no aggregate share URI")
+            })?,
             AGGREGATE_SHARES_ROUTE,
             AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
             req,
@@ -541,7 +543,10 @@ mod tests {
             test_util::ephemeral_datastore,
             Datastore,
         },
-        task::{test_util::TaskBuilder, QueryType, Task},
+        task::{
+            test_util::{NewTaskBuilder as TaskBuilder, Task},
+            QueryType,
+        },
         test_util::noop_meter,
     };
     use janus_core::{
@@ -557,7 +562,7 @@ mod tests {
     use janus_messages::{
         problem_type::DapProblemType, query_type::TimeInterval, AggregateShare, AggregateShareReq,
         AggregationJobStep, BatchSelector, Duration, HpkeCiphertext, HpkeConfigId, Interval, Query,
-        ReportIdChecksum, Role,
+        ReportIdChecksum,
     };
     use prio::codec::{Decode, Encode};
     use rand::random;
@@ -575,11 +580,13 @@ mod tests {
         CollectionJob<0, TimeInterval, dummy_vdaf::Vdaf>,
     ) {
         let time_precision = Duration::from_seconds(500);
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
             .with_helper_aggregator_endpoint(server.url().parse().unwrap())
             .with_time_precision(time_precision)
             .with_min_batch_size(10)
             .build();
+
+        let leader_task = task.leader_view().unwrap();
         let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
         let aggregation_param = AggregationParam(0);
 
@@ -595,9 +602,9 @@ mod tests {
         let lease = datastore
             .run_tx(|tx| {
                 let (clock, task, collection_job) =
-                    (clock.clone(), task.clone(), collection_job.clone());
+                    (clock.clone(), leader_task.clone(), collection_job.clone());
                 Box::pin(async move {
-                    tx.put_task(&task).await?;
+                    tx.put_aggregator_task(&task).await?;
 
                     tx.put_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&collection_job)
                         .await?;
@@ -714,12 +721,14 @@ mod tests {
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         let time_precision = Duration::from_seconds(500);
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
             .with_helper_aggregator_endpoint(server.url().parse().unwrap())
             .with_time_precision(time_precision)
             .with_min_batch_size(10)
             .build();
-        let agg_auth_token = task.aggregator_auth_token().unwrap();
+
+        let leader_task = task.leader_view().unwrap();
+        let agg_auth_token = task.aggregator_auth_token();
         let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
         let aggregation_param = AggregationParam(0);
         let report_timestamp = clock
@@ -729,10 +738,10 @@ mod tests {
 
         let (collection_job_id, lease) = ds
             .run_tx(|tx| {
-                let task = task.clone();
+                let task = leader_task.clone();
                 let clock = clock.clone();
                 Box::pin(async move {
-                    tx.put_task(&task).await?;
+                    tx.put_aggregator_task(&task).await?;
 
                     for offset in [0, 500, 1000, 1500] {
                         tx.put_batch(&Batch::<0, TimeInterval, dummy_vdaf::Vdaf>::new(

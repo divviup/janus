@@ -1,7 +1,7 @@
 //! Implements functionality for computing & validating aggregate shares.
 
 use super::Error;
-use janus_aggregator_core::{datastore::models::BatchAggregation, task::Task};
+use janus_aggregator_core::{datastore::models::BatchAggregation, task::AggregatorTask};
 use janus_core::report_id::ReportIdChecksumExt;
 use janus_messages::{query_type::QueryType, ReportIdChecksum};
 use prio::vdaf::{self, Aggregatable};
@@ -16,7 +16,7 @@ pub(crate) async fn compute_aggregate_share<
     Q: QueryType,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
 >(
-    task: &Task,
+    task: &AggregatorTask,
     batch_aggregations: &[BatchAggregation<SEED_SIZE, Q, A>],
 ) -> Result<(A::AggregateShare, u64, ReportIdChecksum), Error> {
     // At the moment we construct an aggregate share (either handling AggregateShareReq in the

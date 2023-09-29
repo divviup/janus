@@ -2892,7 +2892,7 @@ impl VdafOps {
 
                             let (helper_aggregate_share, report_count, checksum) =
                                 compute_aggregate_share::<SEED_SIZE, Q, A>(
-                                    &task,
+                                    &task.view_for_role()?,
                                     &batch_aggregations,
                                 )
                                 .await
