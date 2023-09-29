@@ -555,7 +555,7 @@ impl Task {
             self.time_precision,
             self.tolerable_clock_skew,
             self.hpke_keys.values().cloned().collect::<Vec<_>>(),
-            AggregatorTaskParameters::TaskProvHelper,
+            AggregatorTaskParameters::TaskprovHelper,
         )
     }
 
@@ -611,7 +611,7 @@ impl From<AggregatorTask> for Task {
                 None,
                 Some(collector_hpke_config.clone()),
             ),
-            AggregatorTaskParameters::TaskProvHelper => (
+            AggregatorTaskParameters::TaskprovHelper => (
                 Role::Helper,
                 aggregator_task.peer_aggregator_endpoint.clone(),
                 fake_aggregator_url,
@@ -801,7 +801,7 @@ impl AggregatorTask {
 
         if !matches!(
             aggregator_parameters,
-            AggregatorTaskParameters::TaskProvHelper
+            AggregatorTaskParameters::TaskprovHelper
         ) && hpke_keys.is_empty()
         {
             return Err(Error::InvalidParameter("hpke_keys"));
@@ -814,7 +814,7 @@ impl AggregatorTask {
         {
             if matches!(
                 aggregator_parameters,
-                AggregatorTaskParameters::TaskProvHelper
+                AggregatorTaskParameters::TaskprovHelper
             ) {
                 return Err(Error::InvalidParameter(
                     "batch_time_window_size is not supported for taskprov",
@@ -1057,7 +1057,7 @@ pub enum AggregatorTaskParameters {
     },
     /// Task parameters held exclusively by a DAP helper provisioned via taskprov. Currently there
     /// are no such parameters.
-    TaskProvHelper,
+    TaskprovHelper,
 }
 
 impl AggregatorTaskParameters {
@@ -1065,7 +1065,7 @@ impl AggregatorTaskParameters {
     pub fn role(&self) -> &Role {
         match self {
             Self::Leader { .. } => &Role::Leader,
-            Self::Helper { .. } | Self::TaskProvHelper => &Role::Helper,
+            Self::Helper { .. } | Self::TaskprovHelper => &Role::Helper,
         }
     }
 
@@ -1723,7 +1723,7 @@ pub mod test_util {
                 self.common_parameters.clone(),
                 self.leader_aggregator_endpoint.clone(),
                 [],
-                AggregatorTaskParameters::TaskProvHelper,
+                AggregatorTaskParameters::TaskprovHelper,
             )
         }
 
