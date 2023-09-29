@@ -82,22 +82,14 @@ async fn handle_upload_generic<V: prio::vdaf::Client<16>>(
     let client_parameters =
         ClientParameters::new(task_id, request.leader, request.helper, time_precision);
 
-    let leader_hpke_config = janus_client::aggregator_hpke_config(
-        &client_parameters,
-        &Role::Leader,
-        &task_id,
-        http_client,
-    )
-    .await
-    .context("failed to fetch leader's HPKE configuration")?;
-    let helper_hpke_config = janus_client::aggregator_hpke_config(
-        &client_parameters,
-        &Role::Helper,
-        &task_id,
-        http_client,
-    )
-    .await
-    .context("failed to fetch helper's HPKE configuration")?;
+    let leader_hpke_config =
+        janus_client::aggregator_hpke_config(&client_parameters, &Role::Leader, http_client)
+            .await
+            .context("failed to fetch leader's HPKE configuration")?;
+    let helper_hpke_config =
+        janus_client::aggregator_hpke_config(&client_parameters, &Role::Helper, http_client)
+            .await
+            .context("failed to fetch helper's HPKE configuration")?;
 
     match request.time {
         Some(timestamp) => {

@@ -233,20 +233,10 @@ where
             task_parameters.time_precision,
         );
         let http_client = default_http_client()?;
-        let leader_config = aggregator_hpke_config(
-            &client_parameters,
-            &Role::Leader,
-            &task_parameters.task_id,
-            &http_client,
-        )
-        .await?;
-        let helper_config = aggregator_hpke_config(
-            &client_parameters,
-            &Role::Helper,
-            &task_parameters.task_id,
-            &http_client,
-        )
-        .await?;
+        let leader_config =
+            aggregator_hpke_config(&client_parameters, &Role::Leader, &http_client).await?;
+        let helper_config =
+            aggregator_hpke_config(&client_parameters, &Role::Helper, &http_client).await?;
         let client = Client::new(
             client_parameters,
             vdaf,

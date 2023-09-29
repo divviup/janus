@@ -5,7 +5,7 @@ use derivative::Derivative;
 use http::header::CONTENT_TYPE;
 use itertools::Itertools;
 use janus_core::{
-    hpke::{self, HpkeApplicationInfo, Label},
+    hpke::{self, is_hpke_config_supported, HpkeApplicationInfo, Label},
     http::HttpErrorResponse,
     retries::{http_request_exponential_backoff, retry_http_request},
     time::{Clock, TimeExt},
@@ -134,11 +134,10 @@ impl ClientParameters {
 pub async fn aggregator_hpke_config(
     client_parameters: &ClientParameters,
     aggregator_role: &Role,
-    task_id: &TaskId,
     http_client: &reqwest::Client,
 ) -> Result<HpkeConfig, Error> {
     let mut request_url = client_parameters.hpke_config_endpoint(aggregator_role)?;
-    request_url.set_query(Some(&format!("task_id={task_id}")));
+    request_url.set_query(Some(&format!("task_id={}", client_parameters.task_id)));
     let hpke_config_response = retry_http_request(
         client_parameters.http_request_retry_parameters.clone(),
         || async { http_client.get(request_url.clone()).send().await },
@@ -156,17 +155,27 @@ pub async fn aggregator_hpke_config(
         hpke_config_response.bytes().await?.as_ref(),
     ))?;
 
-    // TODO(#857): Pick one of the advertised HPKE configs. For now, just take the first one, since
-    // we support any HpkeConfig we can decode, and it should be the server's preferred one.
-    let hpke_config = hpke_configs
-        .hpke_configs()
-        .get(0)
-        .ok_or(Error::UnexpectedServerResponse(
+    if hpke_configs.hpke_configs().is_empty() {
+        return Err(Error::UnexpectedServerResponse(
             "aggregator provided empty HpkeConfigList",
-        ))?
-        .clone();
+        ));
+    }
 
-    Ok(hpke_config)
+    // Take the first supported HpkeConfig from the list. Return the first error otherwise.
+    let mut first_error = None;
+    for config in hpke_configs.hpke_configs() {
+        match is_hpke_config_supported(config) {
+            Ok(()) => return Ok(config.clone()),
+            Err(e) => {
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
+            }
+        }
+    }
+    // Unwrap safety: we checked that the list is nonempty, and if we fell through to here, we must
+    // have seen at least one error.
+    Err(first_error.unwrap().into())
 }
 
 /// Construct a [`reqwest::Client`] suitable for use in a DAP [`Client`].
@@ -291,16 +300,20 @@ impl<V: vdaf::Client<16>, C: Clock> Client<V, C> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{default_http_client, Client, ClientParameters, Error};
+    use crate::{aggregator_hpke_config, default_http_client, Client, ClientParameters, Error};
     use assert_matches::assert_matches;
+    use hex_literal::hex;
     use http::{header::CONTENT_TYPE, StatusCode};
     use janus_core::{
         hpke::test_util::generate_test_hpke_config_and_private_key,
         retries::test_http_request_exponential_backoff, test_util::install_test_trace_subscriber,
         time::MockClock,
     };
-    use janus_messages::{Duration, Report, Time};
-    use prio::vdaf::{self, prio3::Prio3};
+    use janus_messages::{Duration, HpkeConfigList, Report, Role, Time};
+    use prio::{
+        codec::Encode,
+        vdaf::{self, prio3::Prio3},
+    };
     use rand::random;
     use url::Url;
 
@@ -494,5 +507,99 @@ mod tests {
             client.prepare_report(&1).unwrap().metadata().time(),
             &Time::from_seconds_since_epoch(9800),
         );
+    }
+
+    #[tokio::test]
+    async fn aggregator_hpke() {
+        install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
+        let server_url = Url::parse(&server.url()).unwrap();
+        let http_client = &default_http_client().unwrap();
+        let client_parameters = ClientParameters::new_with_backoff(
+            random(),
+            server_url.clone(),
+            server_url,
+            Duration::from_seconds(1),
+            test_http_request_exponential_backoff(),
+        );
+
+        let keypair = generate_test_hpke_config_and_private_key();
+        let hpke_config_list = HpkeConfigList::new(Vec::from([keypair.config().clone()]));
+        let mock = server
+            .mock(
+                "GET",
+                format!("/hpke_config?task_id={}", &client_parameters.task_id).as_str(),
+            )
+            .with_status(200)
+            .with_header(CONTENT_TYPE.as_str(), HpkeConfigList::MEDIA_TYPE)
+            .with_body(hpke_config_list.get_encoded())
+            .expect(1)
+            .create_async()
+            .await;
+
+        let got_hpke_config =
+            aggregator_hpke_config(&client_parameters, &Role::Leader, http_client)
+                .await
+                .unwrap();
+        assert_eq!(&got_hpke_config, keypair.config());
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn unsupported_hpke_algorithms() {
+        install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
+        let server_url = Url::parse(&server.url()).unwrap();
+        let http_client = &default_http_client().unwrap();
+        let client_parameters = ClientParameters::new_with_backoff(
+            random(),
+            server_url.clone(),
+            server_url,
+            Duration::from_seconds(1),
+            test_http_request_exponential_backoff(),
+        );
+
+        let encoded_bad_hpke_config = hex!(
+            "64" // HpkeConfigId
+            "0064" // HpkeKemId
+            "0064" // HpkeKdfId
+            "0064" // HpkeAeadId
+            "0008" // Length prefix from HpkePublicKey
+            "4141414141414141" // Contents of HpkePublicKey
+        );
+
+        let good_hpke_config = generate_test_hpke_config_and_private_key().config().clone();
+        let encoded_good_hpke_config = good_hpke_config.get_encoded();
+
+        let mut encoded_hpke_config_list = Vec::new();
+        // HpkeConfigList length prefix
+        encoded_hpke_config_list.extend_from_slice(
+            &u16::try_from(encoded_bad_hpke_config.len() + encoded_good_hpke_config.len())
+                .unwrap()
+                .to_be_bytes(),
+        );
+        encoded_hpke_config_list.extend_from_slice(&encoded_bad_hpke_config);
+        encoded_hpke_config_list.extend_from_slice(&encoded_good_hpke_config);
+
+        let mock = server
+            .mock(
+                "GET",
+                format!("/hpke_config?task_id={}", &client_parameters.task_id).as_str(),
+            )
+            .with_status(200)
+            .with_header(CONTENT_TYPE.as_str(), HpkeConfigList::MEDIA_TYPE)
+            .with_body(encoded_hpke_config_list)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let got_hpke_config =
+            aggregator_hpke_config(&client_parameters, &Role::Leader, http_client)
+                .await
+                .unwrap();
+        assert_eq!(got_hpke_config, good_hpke_config);
+
+        mock.assert_async().await;
     }
 }
