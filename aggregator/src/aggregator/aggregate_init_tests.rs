@@ -13,7 +13,10 @@ use janus_aggregator_core::{
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
     },
-    task::{test_util::TaskBuilder, QueryType, Task},
+    task::{
+        test_util::{NewTaskBuilder as TaskBuilder, Task},
+        AggregatorTask, QueryType,
+    },
     test_util::noop_meter,
 };
 use janus_core::{
@@ -24,7 +27,7 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::TimeInterval, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
-    PartialBatchSelector, PrepareInit, PrepareStepResult, ReportMetadata, Role,
+    PartialBatchSelector, PrepareInit, PrepareStepResult, ReportMetadata,
 };
 use prio::{
     codec::Encode,
@@ -46,7 +49,7 @@ where
     V: vdaf::Vdaf,
 {
     clock: MockClock,
-    task: Task,
+    task: AggregatorTask,
     vdaf: V,
     aggregation_param: V::AggregationParam,
 }
@@ -57,7 +60,7 @@ where
 {
     pub(super) fn new(
         clock: MockClock,
-        task: Task,
+        task: AggregatorTask,
         vdaf: V,
         aggregation_param: V::AggregationParam,
     ) -> Self {
@@ -209,14 +212,15 @@ async fn setup_aggregate_init_test_without_sending_request<
 ) -> AggregationJobInitTestCase<VERIFY_KEY_SIZE, V> {
     install_test_trace_subscriber();
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, vdaf_instance, Role::Helper)
-        .with_aggregator_auth_token(Some(auth_token))
+    let task = TaskBuilder::new(QueryType::TimeInterval, vdaf_instance)
+        .with_aggregator_auth_token(auth_token)
         .build();
+    let helper_task = task.helper_view().unwrap();
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
-    datastore.put_task(&task).await.unwrap();
+    datastore.put_aggregator_task(&helper_task).await.unwrap();
 
     let handler = aggregator_handler(
         Arc::clone(&datastore),
@@ -227,8 +231,12 @@ async fn setup_aggregate_init_test_without_sending_request<
     .await
     .unwrap();
 
-    let prepare_init_generator =
-        PrepareInitGenerator::new(clock.clone(), task.clone(), vdaf, aggregation_param.clone());
+    let prepare_init_generator = PrepareInitGenerator::new(
+        clock.clone(),
+        helper_task.clone(),
+        vdaf,
+        aggregation_param.clone(),
+    );
 
     let prepare_inits = Vec::from([
         prepare_init_generator.next(&measurement).0,
@@ -263,10 +271,7 @@ pub(crate) async fn put_aggregation_job(
     aggregation_job: &AggregationJobInitializeReq<TimeInterval>,
     handler: &impl Handler,
 ) -> TestConn {
-    let (header, value) = task
-        .aggregator_auth_token()
-        .unwrap()
-        .request_authentication();
+    let (header, value) = task.aggregator_auth_token().request_authentication();
     put(task.aggregation_job_uri(aggregation_job_id).unwrap().path())
         .with_request_header(header, value)
         .with_request_header(
@@ -292,7 +297,6 @@ async fn aggregation_job_init_authorization_dap_auth_token() {
     let (auth_header, auth_value) = test_case
         .task
         .aggregator_auth_token()
-        .unwrap()
         .request_authentication();
 
     let response = put(test_case
@@ -337,12 +341,7 @@ async fn aggregation_job_init_malformed_authorization_header(#[case] header_valu
     .with_request_header(KnownHeaderName::Authorization, header_value.to_string())
     .with_request_header(
         DAP_AUTH_HEADER,
-        test_case
-            .task
-            .aggregator_auth_token()
-            .unwrap()
-            .as_ref()
-            .to_owned(),
+        test_case.task.aggregator_auth_token().as_ref().to_owned(),
     )
     .with_request_header(
         KnownHeaderName::ContentType,
@@ -490,7 +489,6 @@ async fn aggregation_job_init_wrong_query() {
     let (header, value) = test_case
         .task
         .aggregator_auth_token()
-        .unwrap()
         .request_authentication();
 
     let mut response = put(test_case

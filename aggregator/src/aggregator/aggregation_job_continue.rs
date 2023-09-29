@@ -289,7 +289,7 @@ impl VdafOps {
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use crate::aggregator::http_handlers::test_util::{decode_response_body, take_problem_details};
-    use janus_aggregator_core::task::Task;
+    use janus_aggregator_core::task::test_util::Task;
     use janus_messages::{AggregationJobContinueReq, AggregationJobId, AggregationJobResp};
     use prio::codec::Encode;
     use serde_json::json;
@@ -302,10 +302,7 @@ pub mod test_util {
         request: &AggregationJobContinueReq,
         handler: &impl Handler,
     ) -> TestConn {
-        let (header, value) = task
-            .aggregator_auth_token()
-            .unwrap()
-            .request_authentication();
+        let (header, value) = task.aggregator_auth_token().request_authentication();
         post(task.aggregation_job_uri(aggregation_job_id).unwrap().path())
             .with_request_header(header, value)
             .with_request_header(
@@ -393,7 +390,10 @@ mod tests {
             test_util::{ephemeral_datastore, EphemeralDatastore},
             Datastore,
         },
-        task::{test_util::TaskBuilder, QueryType, Task},
+        task::{
+            test_util::{NewTaskBuilder as TaskBuilder, Task},
+            QueryType,
+        },
         test_util::noop_meter,
     };
     use janus_core::{
@@ -439,12 +439,9 @@ mod tests {
         install_test_trace_subscriber();
 
         let aggregation_job_id = random();
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Poplar1 { bits: 1 },
-            Role::Helper,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
+        let helper_task = task.helper_view().unwrap();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let meter = noop_meter();
@@ -456,7 +453,7 @@ mod tests {
         .unwrap();
         let prepare_init_generator = PrepareInitGenerator::new(
             clock.clone(),
-            task.clone(),
+            helper_task.clone(),
             Poplar1::new_shake128(1),
             aggregation_param.clone(),
         );
@@ -467,14 +464,14 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let (task, aggregation_param, prepare_init, transcript) = (
-                    task.clone(),
+                    helper_task.clone(),
                     aggregation_param.clone(),
                     prepare_init.clone(),
                     transcript.clone(),
                 );
 
                 Box::pin(async move {
-                    tx.put_task(&task).await.unwrap();
+                    tx.put_aggregator_task(&task).await.unwrap();
                     tx.put_report_share(task.id(), prepare_init.report_share())
                         .await
                         .unwrap();

@@ -16,15 +16,15 @@ use janus_aggregator_core::{
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
     },
-    task::{test_util::TaskBuilder, QueryType, Task},
+    task::{
+        test_util::{NewTaskBuilder as TaskBuilder, Task},
+        QueryType,
+    },
     test_util::noop_meter,
 };
 use janus_core::{
     auth_tokens::AuthenticationToken,
-    hpke::{
-        self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo,
-        HpkeKeypair, Label,
-    },
+    hpke::{self, HpkeApplicationInfo, Label},
     test_util::{
         dummy_vdaf::{self, AggregationParam},
         install_test_trace_subscriber,
@@ -51,7 +51,6 @@ use trillium_testing::{
 pub(crate) struct CollectionJobTestCase {
     pub(super) task: Task,
     clock: MockClock,
-    pub(super) collector_hpke_keypair: HpkeKeypair,
     pub(super) handler: Box<dyn Handler>,
     pub(super) datastore: Arc<Datastore<MockClock>>,
     _ephemeral_datastore: EphemeralDatastore,
@@ -92,7 +91,7 @@ impl CollectionJobTestCase {
         self.put_collection_job_with_auth_token(
             collection_job_id,
             request,
-            self.task.collector_auth_token(),
+            Some(self.task.collector_auth_token()),
         )
         .await
     }
@@ -121,7 +120,7 @@ impl CollectionJobTestCase {
     ) -> TestConn {
         self.post_collection_job_with_auth_token(
             collection_job_id,
-            self.task.collector_auth_token(),
+            Some(self.task.collector_auth_token()),
         )
         .await
     }
@@ -133,15 +132,13 @@ pub(crate) async fn setup_collection_job_test_case(
 ) -> CollectionJobTestCase {
     install_test_trace_subscriber();
 
-    let collector_hpke_keypair = generate_test_hpke_config_and_private_key();
-    let task = TaskBuilder::new(query_type, VdafInstance::Fake, role)
-        .with_collector_hpke_config(collector_hpke_keypair.config().clone())
-        .build();
+    let task = TaskBuilder::new(query_type, VdafInstance::Fake).build();
+    let role_task = task.view_for_role(role).unwrap();
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;
     let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
-    datastore.put_task(&task).await.unwrap();
+    datastore.put_aggregator_task(&role_task).await.unwrap();
 
     let handler = aggregator_handler(
         Arc::clone(&datastore),
@@ -158,7 +155,6 @@ pub(crate) async fn setup_collection_job_test_case(
     CollectionJobTestCase {
         task,
         clock,
-        collector_hpke_keypair,
         handler: Box::new(handler),
         datastore,
         _ephemeral_datastore: ephemeral_datastore,
@@ -316,7 +312,7 @@ async fn collection_job_success_fixed_size() {
                     let batch_id = *collection_job.batch_identifier();
 
                     let encrypted_helper_aggregate_share = hpke::seal(
-                        task.collector_hpke_config().unwrap(),
+                        task.collector_hpke_keypair().config(),
                         &HpkeApplicationInfo::new(
                             &Label::AggregateShare,
                             &Role::Helper,
@@ -371,8 +367,8 @@ async fn collection_job_success_fixed_size() {
         );
 
         let decrypted_leader_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_config().unwrap(),
-            test_case.collector_hpke_keypair.private_key(),
+            test_case.task.collector_hpke_keypair().config(),
+            test_case.task.collector_hpke_keypair().private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
             collect_resp.leader_encrypted_aggregate_share(),
             &AggregateShareAad::new(
@@ -390,8 +386,8 @@ async fn collection_job_success_fixed_size() {
         );
 
         let decrypted_helper_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_config().unwrap(),
-            test_case.collector_hpke_keypair.private_key(),
+            test_case.task.collector_hpke_keypair().config(),
+            test_case.task.collector_hpke_keypair().private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
             collect_resp.helper_encrypted_aggregate_share(),
             &AggregateShareAad::new(
