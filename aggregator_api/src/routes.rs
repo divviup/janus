@@ -10,7 +10,7 @@ use crate::{
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
     datastore::{self, Datastore},
-    task::Task,
+    task::{AggregatorTask, AggregatorTaskParameters},
     taskprov::PeerAggregator,
     SecretBytes,
 };
@@ -26,7 +26,6 @@ use ring::digest::{digest, SHA256};
 use std::{str::FromStr, sync::Arc, unreachable};
 use trillium::{Conn, Status};
 use trillium_api::{Json, State};
-use url::Url;
 
 pub(super) async fn get_config(
     _: &mut Conn,
@@ -79,26 +78,9 @@ pub(super) async fn post_task<C: Clock>(
     _: &mut Conn,
     (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PostTaskReq>),
 ) -> Result<Json<TaskResp>, Error> {
-    // We have to resolve impedance mismatches between the aggregator API's view of a task and
-    // `aggregator_core::task::Task`. For now, we deal with this in code, but someday the two
-    // representations will be harmonized.
-    // https://github.com/divviup/janus/issues/1524
-
     if !matches!(req.role, Role::Leader | Role::Helper) {
         return Err(Error::BadRequest(format!("invalid role {}", req.role)));
     }
-
-    // struct `aggregator_core::task::Task` expects to get two aggregator endpoint URLs, but only
-    // the one for the peer aggregator is in the incoming request (or for that matter, is ever used
-    // by Janus), so we insert a fake URL for "self".
-    // TODO(#1524): clean this up with `aggregator_core::task::Task` changes
-    // unwrap safety: this fake URL is valid
-    let fake_aggregator_url = Url::parse("http://never-used.example.com").unwrap();
-    let (leader_aggregator_endpoint, helper_aggregator_endpoint) = match req.role {
-        Role::Leader => (fake_aggregator_url, req.peer_aggregator_endpoint),
-        Role::Helper => (req.peer_aggregator_endpoint, fake_aggregator_url),
-        _ => unreachable!(),
-    };
 
     let vdaf_verify_key_bytes = URL_SAFE_NO_PAD
         .decode(&req.vdaf_verify_key)
@@ -121,7 +103,7 @@ pub(super) async fn post_task<C: Clock>(
 
     let vdaf_verify_key = SecretBytes::new(vdaf_verify_key_bytes);
 
-    let (aggregator_auth_token, collector_auth_token) = match req.role {
+    let aggregator_parameters = match req.role {
         Role::Leader => {
             let aggregator_auth_token = req.aggregator_auth_token.ok_or_else(|| {
                 Error::BadRequest(
@@ -129,7 +111,11 @@ pub(super) async fn post_task<C: Clock>(
                         .to_string(),
                 )
             })?;
-            (Some(aggregator_auth_token), Some(random()))
+            AggregatorTaskParameters::Leader {
+                aggregator_auth_token,
+                collector_auth_token: random(),
+                collector_hpke_config: req.collector_hpke_config,
+            }
         }
 
         Role::Helper => {
@@ -140,29 +126,21 @@ pub(super) async fn post_task<C: Clock>(
                 ));
             }
 
-            (Some(random()), None)
+            AggregatorTaskParameters::Helper {
+                aggregator_auth_token: random(),
+                collector_hpke_config: req.collector_hpke_config,
+            }
         }
 
         _ => unreachable!(),
     };
 
-    // Unwrap safety: we always use a supported KEM.
-    let hpke_keys = Vec::from([generate_hpke_config_and_private_key(
-        random(),
-        HpkeKemId::X25519HkdfSha256,
-        HpkeKdfId::HkdfSha256,
-        HpkeAeadId::Aes128Gcm,
-    )
-    .unwrap()]);
-
     let task = Arc::new(
-        Task::new(
+        AggregatorTask::new(
             task_id,
-            leader_aggregator_endpoint,
-            helper_aggregator_endpoint,
+            /* peer_aggregator_endpoint */ req.peer_aggregator_endpoint,
             /* query_type */ req.query_type,
             /* vdaf */ req.vdaf,
-            /* role */ req.role,
             vdaf_verify_key,
             /* max_batch_query_count */ req.max_batch_query_count,
             /* task_expiration */ req.task_expiration,
@@ -172,10 +150,16 @@ pub(super) async fn post_task<C: Clock>(
             /* time_precision */ req.time_precision,
             /* tolerable_clock_skew */
             Duration::from_seconds(60), // 1 minute,
-            /* collector_hpke_config */ req.collector_hpke_config,
-            aggregator_auth_token,
-            collector_auth_token,
-            hpke_keys,
+            // hpke_keys
+            // Unwrap safety: we always use a supported KEM.
+            [generate_hpke_config_and_private_key(
+                random(),
+                HpkeKemId::X25519HkdfSha256,
+                HpkeKdfId::HkdfSha256,
+                HpkeAeadId::Aes128Gcm,
+            )
+            .unwrap()],
+            aggregator_parameters,
         )
         .map_err(|err| Error::BadRequest(format!("Error constructing task: {err}")))?,
     );
@@ -183,11 +167,10 @@ pub(super) async fn post_task<C: Clock>(
     ds.run_tx_with_name("post_task", |tx| {
         let task = Arc::clone(&task);
         Box::pin(async move {
-            if let Some(existing_task) = tx.get_task(task.id()).await? {
+            if let Some(existing_task) = tx.get_aggregator_task(task.id()).await? {
             // Check whether the existing task in the DB corresponds to the incoming task, ignoring
             // those fields that are randomly generated.
-            if existing_task.leader_aggregator_endpoint() == task.leader_aggregator_endpoint()
-                && existing_task.helper_aggregator_endpoint() == task.helper_aggregator_endpoint()
+            if existing_task.peer_aggregator_endpoint() == task.peer_aggregator_endpoint()
                 && existing_task.query_type() == task.query_type()
                 && existing_task.vdaf() == task.vdaf()
                 && existing_task.opaque_vdaf_verify_key() == task.opaque_vdaf_verify_key()
@@ -206,7 +189,7 @@ pub(super) async fn post_task<C: Clock>(
                 return Err(datastore::Error::User(err.into()));
             }
 
-            tx.put_task(&task).await
+            tx.put_aggregator_task(&task).await
         })
     })
     .await?;
@@ -224,7 +207,7 @@ pub(super) async fn get_task<C: Clock>(
 
     let task = ds
         .run_tx_with_name("get_task", |tx| {
-            Box::pin(async move { tx.get_task(&task_id).await })
+            Box::pin(async move { tx.get_aggregator_task(&task_id).await })
         })
         .await?
         .ok_or(Error::NotFound)?;
