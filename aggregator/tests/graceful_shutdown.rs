@@ -6,7 +6,7 @@
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 use janus_aggregator_core::{
     datastore::test_util::ephemeral_datastore,
-    task::{test_util::NewTaskBuilder as TaskBuilder, QueryType},
+    task::{test_util::TaskBuilder, QueryType},
 };
 use janus_core::{test_util::install_test_trace_subscriber, time::RealClock, vdaf::VdafInstance};
 use reqwest::Url;

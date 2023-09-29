@@ -18,10 +18,7 @@ use janus_aggregator_core::{
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
     },
-    task::{
-        test_util::NewTaskBuilder as TaskBuilder, AggregatorTask, AggregatorTaskParameters,
-        QueryType,
-    },
+    task::{test_util::TaskBuilder, AggregatorTask, AggregatorTaskParameters, QueryType},
     taskprov::test_util::PeerAggregatorBuilder,
     SecretBytes,
 };
@@ -454,7 +451,7 @@ async fn post_task_idempotence() {
     );
 
     let got_tasks = ds
-        .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+        .run_tx(|tx| Box::pin(async move { tx.get_aggregator_tasks().await }))
         .await
         .unwrap();
 
@@ -696,7 +693,7 @@ async fn delete_task() {
 
     ds.run_tx(|tx| {
         Box::pin(async move {
-            assert_eq!(tx.get_task(&task_id).await.unwrap(), None);
+            assert_eq!(tx.get_aggregator_task(&task_id).await.unwrap(), None);
             Ok(())
         })
     })

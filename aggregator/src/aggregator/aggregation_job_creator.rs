@@ -702,7 +702,7 @@ mod tests {
             Transaction,
         },
         query_type::AccumulableQueryType,
-        task::{test_util::NewTaskBuilder as TaskBuilder, QueryType as TaskQueryType},
+        task::{test_util::TaskBuilder, QueryType as TaskQueryType},
         test_util::noop_meter,
     };
     use janus_core::{

@@ -9,7 +9,7 @@ use self::models::{
 };
 use crate::{
     query_type::{AccumulableQueryType, CollectableQueryType},
-    task::{self, AggregatorTask, AggregatorTaskParameters, Task},
+    task::{self, AggregatorTask, AggregatorTaskParameters},
     taskprov::PeerAggregator,
     SecretBytes,
 };
@@ -306,18 +306,6 @@ impl<C: Clock> Datastore<C> {
     }
 
     /// Write a task into the datastore.
-    // TODO(#1524): remove this once everything has migrated to put_aggregator_task
-    #[cfg(feature = "test-util")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
-    pub async fn put_task(&self, task: &Task) -> Result<(), Error> {
-        self.run_tx(|tx| {
-            let task = task.clone();
-            Box::pin(async move { tx.put_task(&task).await })
-        })
-        .await
-    }
-
-    /// Write a task into the datastore.
     #[cfg(feature = "test-util")]
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
     pub async fn put_aggregator_task(&self, task: &AggregatorTask) -> Result<(), Error> {
@@ -537,21 +525,6 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Writes a task into the datastore.
-    // TODO(#1524): remove this once everything has migrated to put_aggregator_task
-    #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
-    pub async fn put_task(&self, task: &Task) -> Result<(), Error> {
-        let aggregator_task = match task.role() {
-            Role::Leader => task.leader_view()?,
-            Role::Helper => task
-                .helper_view()
-                .or_else(|_| task.taskprov_helper_view())?,
-            _ => return Err(Error::InvalidParameter("role must be aggregator")),
-        };
-
-        self.put_aggregator_task(&aggregator_task).await
-    }
-
-    /// Writes a task into the datastore.
     #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     pub async fn put_aggregator_task(&self, task: &AggregatorTask) -> Result<(), Error> {
         // Main task insert.
@@ -700,13 +673,6 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Fetch the task parameters corresponing to the provided `task_id`.
-    // TODO(#1524): remove this once everything has migrated to get_aggregator_task
-    #[tracing::instrument(skip(self), err)]
-    pub async fn get_task(&self, task_id: &TaskId) -> Result<Option<Task>, Error> {
-        Ok(self.get_aggregator_task(task_id).await?.map(Task::from))
-    }
-
-    /// Fetch the task parameters corresponing to the provided `task_id`.
     #[tracing::instrument(skip(self), err)]
     pub async fn get_aggregator_task(
         &self,
@@ -737,18 +703,6 @@ impl<C: Clock> Transaction<'_, C> {
         task_row
             .map(|task_row| self.task_from_rows(task_id, &task_row, &hpke_key_rows))
             .transpose()
-    }
-
-    /// Fetch all the tasks in the database.
-    // TODO(#1524): remove this once everything has migrated to get_aggregator_tasks
-    #[tracing::instrument(skip(self), err)]
-    pub async fn get_tasks(&self) -> Result<Vec<Task>, Error> {
-        Ok(self
-            .get_aggregator_tasks()
-            .await?
-            .into_iter()
-            .map(Task::from)
-            .collect())
     }
 
     /// Fetch all the tasks in the database.

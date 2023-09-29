@@ -473,7 +473,7 @@ impl CollectableQueryType for FixedSize {
 mod tests {
     use crate::{
         query_type::CollectableQueryType,
-        task::{test_util::NewTaskBuilder as TaskBuilder, QueryType},
+        task::{test_util::TaskBuilder, QueryType},
     };
     use janus_core::vdaf::VdafInstance;
     use janus_messages::{query_type::TimeInterval, Duration, Interval, Time};

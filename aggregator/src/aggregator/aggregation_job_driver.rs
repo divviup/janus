@@ -925,7 +925,7 @@ mod tests {
             test_util::ephemeral_datastore,
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
-        task::{test_util::NewTaskBuilder as TaskBuilder, QueryType, VerifyKey},
+        task::{test_util::TaskBuilder, QueryType, VerifyKey},
         test_util::noop_meter,
     };
     use janus_core::{

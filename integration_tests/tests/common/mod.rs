@@ -1,6 +1,6 @@
 use backoff::{future::retry, ExponentialBackoffBuilder};
 use itertools::Itertools;
-use janus_aggregator_core::task::{test_util::NewTaskBuilder as TaskBuilder, QueryType};
+use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
 use janus_collector::{Collection, Collector, CollectorParameters};
 use janus_core::{
     retries::test_http_request_exponential_backoff,
