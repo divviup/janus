@@ -674,8 +674,10 @@ mod tests {
             Datastore,
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
-        task::{test_util::TaskBuilder, QueryType, VerifyKey},
-        taskprov,
+        task::{
+            test_util::{NewTaskBuilder, TaskBuilder},
+            QueryType, VerifyKey,
+        },
         test_util::noop_meter,
     };
     use janus_core::{
@@ -968,30 +970,12 @@ mod tests {
             .unwrap();
 
         // Insert a taskprov task. This task won't have its task-specific HPKE key.
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
-            Role::Helper,
-        )
-        .build();
-        let task_id = *task.id();
-        let task = taskprov::Task::new(
-            task_id,
-            task.leader_aggregator_endpoint().clone(),
-            task.helper_aggregator_endpoint().clone(),
-            *task.query_type(),
-            task.vdaf().clone(),
-            *task.role(),
-            task.opaque_vdaf_verify_key().clone(),
-            task.max_batch_query_count(),
-            task.task_expiration().cloned(),
-            task.report_expiry_age().cloned(),
-            task.min_batch_size(),
-            *task.time_precision(),
-            *task.tolerable_clock_skew(),
-        )
-        .unwrap();
-        datastore.put_task(&task.into()).await.unwrap();
+        let task = NewTaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
+        let taskprov_helper_task = task.taskprov_helper_view().unwrap();
+        datastore
+            .put_aggregator_task(&taskprov_helper_task)
+            .await
+            .unwrap();
 
         let cfg = Config {
             taskprov_config: TaskprovConfig { enabled: true },
@@ -1012,7 +996,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut test_conn = get(&format!("/hpke_config?task_id={}", task_id))
+        let mut test_conn = get(&format!("/hpke_config?task_id={}", task.id()))
             .run_async(&handler)
             .await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
