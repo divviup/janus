@@ -317,7 +317,7 @@ async fn taskprov_aggregate_init() {
                     tx.get_aggregation_jobs_for_task::<16, FixedSize, TestVdaf>(&task_id)
                         .await
                         .unwrap(),
-                    tx.get_task(&task_id).await.unwrap(),
+                    tx.get_aggregator_task(&task_id).await.unwrap(),
                 ))
             })
         })
@@ -333,7 +333,7 @@ async fn taskprov_aggregate_init() {
                 .state()
                 .eq(&AggregationJobState::InProgress)
     );
-    assert_eq!(test.task, got_task.unwrap());
+    assert_eq!(test.task.taskprov_helper_view().unwrap(), got_task.unwrap());
 }
 
 #[tokio::test]
