@@ -674,7 +674,7 @@ mod tests {
             Datastore,
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
-        task::{test_util::NewTaskBuilder as TaskBuilder, QueryType, Task, VerifyKey},
+        task::{test_util::NewTaskBuilder as TaskBuilder, QueryType, VerifyKey},
         test_util::noop_meter,
     };
     use janus_core::{
@@ -1098,7 +1098,7 @@ mod tests {
         let leader_task = task.leader_view().unwrap();
         datastore.put_aggregator_task(&leader_task).await.unwrap();
 
-        let report = create_report(&Task::from(leader_task.clone()), clock.now());
+        let report = create_report(&leader_task, clock.now());
 
         // Upload a report. Do this twice to prove that PUT is idempotent.
         for _ in 0..2 {
@@ -1116,7 +1116,7 @@ mod tests {
 
         // Verify that new reports using an existing report ID are rejected with reportRejected
         let duplicate_id_report = create_report_custom(
-            &Task::from(leader_task.clone()),
+            &leader_task,
             clock.now(),
             *accepted_report_id,
             leader_task.current_hpke_key(),
@@ -1233,7 +1233,7 @@ mod tests {
             .await
             .unwrap();
         let report_2 = create_report(
-            &Task::from(leader_task_expire_soon),
+            &leader_task_expire_soon,
             clock.now().add(&Duration::from_seconds(120)).unwrap(),
         );
         let mut test_conn = put(task_expire_soon.report_upload_uri().unwrap().path())
@@ -1306,7 +1306,7 @@ mod tests {
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
         let helper_task = task.helper_view().unwrap();
         datastore.put_aggregator_task(&helper_task).await.unwrap();
-        let report = create_report(&Task::from(helper_task), clock.now());
+        let report = create_report(&helper_task, clock.now());
 
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)

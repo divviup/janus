@@ -6,10 +6,9 @@
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 use janus_aggregator_core::{
     datastore::test_util::ephemeral_datastore,
-    task::{test_util::TaskBuilder, QueryType},
+    task::{test_util::NewTaskBuilder as TaskBuilder, QueryType},
 };
 use janus_core::{test_util::install_test_trace_subscriber, time::RealClock, vdaf::VdafInstance};
-use janus_messages::Role;
 use reqwest::Url;
 use serde_yaml::{Mapping, Value};
 use std::{
@@ -124,13 +123,11 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         format!("{health_check_listen_address}").into(),
     );
 
-    let task = TaskBuilder::new(
-        QueryType::TimeInterval,
-        VdafInstance::Prio3Count,
-        Role::Leader,
-    )
-    .build();
-    datastore.put_task(&task).await.unwrap();
+    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+        .build()
+        .leader_view()
+        .unwrap();
+    datastore.put_aggregator_task(&task).await.unwrap();
 
     // Save the above configuration to a temporary file, so that we can pass
     // the file's path to the binary under test on the command line.
