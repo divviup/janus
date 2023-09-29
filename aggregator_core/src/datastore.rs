@@ -917,7 +917,7 @@ impl<C: Clock> Transaction<'_, C> {
                 aggregator_auth_token,
                 collector_hpke_config,
             },
-            (AggregatorRole::Helper, None, None, None) => AggregatorTaskParameters::TaskProvHelper,
+            (AggregatorRole::Helper, None, None, None) => AggregatorTaskParameters::TaskprovHelper,
             values => {
                 return Err(Error::DbState(format!(
                     "found task row with unexpected combination of values {values:?}",

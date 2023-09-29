@@ -677,7 +677,7 @@ impl<C: Clock> Aggregator<C> {
             *peer_aggregator.tolerable_clock_skew(),
             // Taskprov task has no per-task HPKE keys
             [],
-            task::AggregatorTaskParameters::TaskProvHelper,
+            task::AggregatorTaskParameters::TaskprovHelper,
         )
         .map_err(|err| Error::InvalidTask(*task_id, OptOutReason::TaskParameters(err)))?;
         self.datastore
