@@ -11,7 +11,7 @@ use janus_aggregator_core::{
         },
         Error, Transaction,
     },
-    task::Task,
+    task::AggregatorTask,
 };
 use janus_core::time::{Clock, IntervalExt};
 use janus_messages::{AggregationJobId, Interval, PrepareError, ReportId};
@@ -30,7 +30,7 @@ pub struct AggregationJobWriter<
     Q: CollectableQueryType,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
 > {
-    task: Arc<Task>,
+    task: Arc<AggregatorTask>,
     aggregation_jobs: HashMap<AggregationJobId, AggregationJobInfo<SEED_SIZE, Q, A>>,
 
     // batch identifier -> aggregation job -> ord of report aggregation; populated by all report
@@ -52,7 +52,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
     AggregationJobWriter<SEED_SIZE, Q, A>
 {
     /// Creates a new, empty aggregation job writer.
-    pub fn new(task: Arc<Task>) -> Self {
+    pub fn new(task: Arc<AggregatorTask>) -> Self {
         Self {
             task,
             aggregation_jobs: HashMap::new(),
@@ -122,7 +122,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
             .iter()
             .map(|ra| {
                 Q::to_batch_identifier(
-                    &self.task.view_for_role()?,
+                    &self.task,
                     info.aggregation_job.partial_batch_identifier(),
                     ra.time(),
                 )
@@ -468,14 +468,13 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
 
         // Find all batches which are relevant to a collection job that just had a batch move into
         // CLOSED state.
-        let aggregator_task = self.task.view_for_role()?;
         let relevant_batches: Arc<HashMap<_, _>> = Arc::new({
             let batches = Arc::new(Mutex::new(batches));
             let relevant_batch_identifiers: HashSet<_> = affected_collection_jobs
                 .values()
                 .flat_map(|collection_job| {
                     Q::batch_identifiers_for_collection_identifier(
-                        &aggregator_task,
+                        &self.task,
                         collection_job.batch_identifier(),
                     )
                 })
@@ -520,10 +519,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                     async move {
                         let mut is_collectable = true;
                         for batch_identifier in Q::batch_identifiers_for_collection_identifier(
-                            &self
-                                .task
-                                .view_for_role()
-                                .map_err(|e| Error::User(e.into()))?,
+                            &self.task,
                             collection_job.batch_identifier(),
                         ) {
                             let batch = match relevant_batches.get(&batch_identifier) {

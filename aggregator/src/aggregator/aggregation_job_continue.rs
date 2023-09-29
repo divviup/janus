@@ -10,7 +10,7 @@ use janus_aggregator_core::{
         Transaction,
     },
     query_type::AccumulableQueryType,
-    task::Task,
+    task::AggregatorTask,
 };
 use janus_core::time::Clock;
 use janus_messages::{
@@ -32,7 +32,7 @@ impl VdafOps {
     /// `report_aggregations` with the step `n+1` ping pong messages in `leader_aggregation_job`.
     pub(super) async fn step_aggregation_job<const SEED_SIZE: usize, C, Q, A>(
         tx: &Transaction<'_, C>,
-        task: Arc<Task>,
+        task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         batch_aggregation_shard_count: u64,
         helper_aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
