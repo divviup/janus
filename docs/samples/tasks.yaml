@@ -6,7 +6,7 @@
   # DAP's recommendation.
   task_id: "G9YKXjoEjfoU7M_fi_o2H0wmzavRb2sBFHeykeRhDMk"
 
-  # HTTPS endpoints of the peer aggregator.
+  # HTTPS endpoint of the peer aggregator.
   peer_aggregator_endpoint: "https://example.com/"
 
   # The DAP query type. See below for an example of a fixed-size task
