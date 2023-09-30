@@ -1,5 +1,5 @@
 #![cfg(feature = "in-cluster")]
-use common::{submit_measurements_and_verify_aggregate, test_task_builders};
+use common::{submit_measurements_and_verify_aggregate, test_task_builder};
 use divviup_client::{
     Client, CollectorAuthenticationToken, DivviupClient, Histogram, HpkeConfigContents,
     NewAggregator, NewSharedAggregator, NewTask, Vdaf,
@@ -88,7 +88,7 @@ impl InClusterJanusPair {
 
         let cluster = Cluster::new(&kubeconfig_path, &kubectl_context_name);
 
-        let (mut task_parameters, task_builder, _) = test_task_builders(vdaf, query_type);
+        let (mut task_parameters, task_builder) = test_task_builder(vdaf, query_type);
         let task = task_builder.with_min_batch_size(100).build();
         task_parameters.min_batch_size = 100;
 
@@ -144,7 +144,7 @@ impl InClusterJanusPair {
             .await
             .unwrap();
 
-        let hpke_config = task.collector_hpke_config().unwrap();
+        let hpke_config = task.collector_hpke_keypair().config();
         let collector_hpke_config = divviup_api
             .create_hpke_config(
                 account.id,

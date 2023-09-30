@@ -30,7 +30,7 @@ futures = { version = "0.3.28", optional = true }
 fixed = { version = "1.23", optional = true }
 fixed-macro = { version = "1.1.1", optional = true }
 hex = { version = "0.4", optional = true }
-janus_aggregator_core.workspace = true
+janus_aggregator_core = { workspace = true, features = ["test-util"] }
 janus_aggregator.workspace = true
 janus_client.workspace = true
 janus_collector.workspace = true

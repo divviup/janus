@@ -1,7 +1,7 @@
 //! Functionality for tests interacting with Daphne (<https://github.com/cloudflare/daphne>).
 
 use crate::interop_api;
-use janus_aggregator_core::task::{test_util::TaskBuilder, Task};
+use janus_aggregator_core::task::test_util::{NewTaskBuilder as TaskBuilder, Task};
 use janus_interop_binaries::{
     get_rust_log_level, test_util::await_http_server, ContainerLogsDropGuard, ContainerLogsSource,
 };
@@ -25,8 +25,9 @@ impl<'a> Daphne<'a> {
         container_client: &'a Cli,
         network: &str,
         task: &Task,
+        role: Role,
     ) -> Daphne<'a> {
-        let (endpoint, image_name_and_tag) = match task.role() {
+        let (endpoint, image_name_and_tag) = match role {
             Role::Leader => panic!("A leader container image for Daphne is not yet available"),
             Role::Helper => (
                 task.helper_aggregator_endpoint(),
@@ -63,7 +64,7 @@ impl<'a> Daphne<'a> {
         };
 
         // Write the given task to the Daphne instance we started.
-        interop_api::aggregator_add_task(port, task).await;
+        interop_api::aggregator_add_task(port, task, role).await;
 
         Self { daphne_container }
     }

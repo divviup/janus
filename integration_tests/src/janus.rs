@@ -1,7 +1,7 @@
 //! Functionality for tests interacting with Janus (<https://github.com/divviup/janus>).
 
 use crate::interop_api;
-use janus_aggregator_core::task::Task;
+use janus_aggregator_core::task::test_util::Task;
 use janus_interop_binaries::{
     get_rust_log_level, test_util::await_http_server, testcontainer::Aggregator,
     ContainerLogsDropGuard,
@@ -22,9 +22,10 @@ impl<'a> Janus<'a> {
         container_client: &'a Cli,
         network: &str,
         task: &Task,
+        role: Role,
     ) -> Janus<'a> {
         // Start the Janus interop aggregator container running.
-        let endpoint = match task.role() {
+        let endpoint = match role {
             Role::Leader => task.leader_aggregator_endpoint(),
             Role::Helper => task.helper_aggregator_endpoint(),
             _ => panic!("unexpected task role"),
@@ -44,7 +45,7 @@ impl<'a> Janus<'a> {
         await_http_server(port).await;
 
         // Write the given task to the Janus instance we started.
-        interop_api::aggregator_add_task(port, task.clone()).await;
+        interop_api::aggregator_add_task(port, task.clone(), role).await;
 
         Self { container }
     }
