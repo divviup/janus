@@ -87,7 +87,7 @@ mod tests {
             },
             test_util::ephemeral_datastore,
         },
-        task::{self, test_util::NewTaskBuilder as TaskBuilder},
+        task::{self, test_util::TaskBuilder},
     };
     use janus_core::{
         test_util::{

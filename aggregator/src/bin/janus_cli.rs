@@ -464,7 +464,7 @@ mod tests {
     };
     use janus_aggregator_core::{
         datastore::{test_util::ephemeral_datastore, Datastore},
-        task::{test_util::NewTaskBuilder as TaskBuilder, AggregatorTask, QueryType},
+        task::{test_util::TaskBuilder, AggregatorTask, QueryType},
     };
     use janus_core::{
         test_util::{kubernetes, roundtrip_encoding},

@@ -1,7 +1,7 @@
 //! Functionality for tests interacting with Daphne (<https://github.com/cloudflare/daphne>).
 
 use crate::interop_api;
-use janus_aggregator_core::task::test_util::{NewTaskBuilder as TaskBuilder, Task};
+use janus_aggregator_core::task::test_util::{Task, TaskBuilder};
 use janus_interop_binaries::{
     get_rust_log_level, test_util::await_http_server, ContainerLogsDropGuard, ContainerLogsSource,
 };

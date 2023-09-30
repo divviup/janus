@@ -11,7 +11,7 @@ use crate::{
         Crypter, Datastore, Error, Transaction, SUPPORTED_SCHEMA_VERSIONS,
     },
     query_type::CollectableQueryType,
-    task::{self, test_util::NewTaskBuilder as TaskBuilder, AggregatorTask},
+    task::{self, test_util::TaskBuilder, AggregatorTask},
     taskprov::test_util::PeerAggregatorBuilder,
     test_util::noop_meter,
 };

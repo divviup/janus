@@ -14,7 +14,7 @@ use janus_aggregator_core::{
         Datastore,
     },
     task::{
-        test_util::{NewTaskBuilder as TaskBuilder, Task},
+        test_util::{Task, TaskBuilder},
         AggregatorTask, QueryType,
     },
     test_util::noop_meter,
