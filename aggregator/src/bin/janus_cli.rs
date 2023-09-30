@@ -9,7 +9,7 @@ use janus_aggregator::{
 };
 use janus_aggregator_core::{
     datastore::{self, Datastore},
-    task::{SerializedTask, Task},
+    task::{AggregatorTask, SerializedAggregatorTask},
 };
 use janus_core::time::{Clock, RealClock};
 use k8s_openapi::api::core::v1::Secret;
@@ -155,9 +155,9 @@ async fn provision_tasks<C: Clock>(
     tasks_file: &Path,
     generate_missing_parameters: bool,
     dry_run: bool,
-) -> Result<Vec<Task>> {
+) -> Result<Vec<AggregatorTask>> {
     // Read tasks file.
-    let tasks: Vec<SerializedTask> = {
+    let tasks: Vec<SerializedAggregatorTask> = {
         let task_file_contents = fs::read_to_string(tasks_file)
             .await
             .with_context(|| format!("couldn't read tasks file {tasks_file:?}"))?;
@@ -165,14 +165,14 @@ async fn provision_tasks<C: Clock>(
             .with_context(|| format!("couldn't parse tasks file {tasks_file:?}"))?
     };
 
-    let tasks: Vec<Task> = tasks
+    let tasks: Vec<AggregatorTask> = tasks
         .into_iter()
         .map(|mut task| {
             if generate_missing_parameters {
                 task.generate_missing_fields();
             }
 
-            Task::try_from(task)
+            AggregatorTask::try_from(task)
         })
         .collect::<Result<_, _>>()?;
 
@@ -201,7 +201,7 @@ async fn provision_tasks<C: Clock>(
                         err => err?,
                     }
 
-                    tx.put_task(task).await?;
+                    tx.put_aggregator_task(task).await?;
 
                     written_tasks.push(task.clone());
                 }
@@ -464,7 +464,7 @@ mod tests {
     };
     use janus_aggregator_core::{
         datastore::{test_util::ephemeral_datastore, Datastore},
-        task::{test_util::TaskBuilder, QueryType, Task},
+        task::{test_util::NewTaskBuilder as TaskBuilder, AggregatorTask, QueryType},
     };
     use janus_core::{
         test_util::{kubernetes, roundtrip_encoding},
@@ -555,15 +555,15 @@ mod tests {
             .unwrap_err();
     }
 
-    fn task_hashmap_from_slice(tasks: Vec<Task>) -> HashMap<TaskId, Task> {
+    fn task_hashmap_from_slice(tasks: Vec<AggregatorTask>) -> HashMap<TaskId, AggregatorTask> {
         tasks.into_iter().map(|task| (*task.id(), task)).collect()
     }
 
     async fn run_provision_tasks_testcase(
         ds: &Datastore<RealClock>,
-        tasks: &[Task],
+        tasks: &[AggregatorTask],
         dry_run: bool,
-    ) -> Vec<Task> {
+    ) -> Vec<AggregatorTask> {
         // Write tasks to a temporary file.
         let mut tasks_file = NamedTempFile::new().unwrap();
         tasks_file
@@ -583,18 +583,14 @@ mod tests {
         let ds = ephemeral_datastore.datastore(RealClock::default()).await;
 
         let tasks = Vec::from([
-            TaskBuilder::new(
-                QueryType::TimeInterval,
-                VdafInstance::Prio3Count,
-                Role::Leader,
-            )
-            .build(),
-            TaskBuilder::new(
-                QueryType::TimeInterval,
-                VdafInstance::Prio3Sum { bits: 64 },
-                Role::Helper,
-            )
-            .build(),
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+                .build()
+                .leader_view()
+                .unwrap(),
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Sum { bits: 64 })
+                .build()
+                .helper_view()
+                .unwrap(),
         ]);
 
         let written_tasks = run_provision_tasks_testcase(&ds, &tasks, false).await;
@@ -603,30 +599,12 @@ mod tests {
         let want_tasks = task_hashmap_from_slice(tasks);
         let written_tasks = task_hashmap_from_slice(written_tasks);
         let got_tasks = task_hashmap_from_slice(
-            ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+            ds.run_tx(|tx| Box::pin(async move { tx.get_aggregator_tasks().await }))
                 .await
                 .unwrap(),
         );
-        assert_eq!(
-            want_tasks
-                .iter()
-                .map(|(k, v)| { (*k, v.view_for_role().unwrap()) })
-                .collect::<HashMap<_, _>>(),
-            got_tasks
-                .iter()
-                .map(|(k, v)| { (*k, v.view_for_role().unwrap()) })
-                .collect()
-        );
-        assert_eq!(
-            want_tasks
-                .iter()
-                .map(|(k, v)| { (*k, v.view_for_role().unwrap()) })
-                .collect::<HashMap<_, _>>(),
-            written_tasks
-                .iter()
-                .map(|(k, v)| { (*k, v.view_for_role().unwrap()) })
-                .collect()
-        );
+        assert_eq!(want_tasks, got_tasks);
+        assert_eq!(want_tasks, written_tasks);
     }
 
     #[tokio::test]
@@ -634,12 +612,13 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(RealClock::default()).await;
 
-        let tasks = Vec::from([TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Count,
-            Role::Leader,
-        )
-        .build()]);
+        let tasks =
+            Vec::from([
+                TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+                    .build()
+                    .leader_view()
+                    .unwrap(),
+            ]);
 
         let written_tasks = run_provision_tasks_testcase(&ds, &tasks, true).await;
 
@@ -647,7 +626,7 @@ mod tests {
         let written_tasks = task_hashmap_from_slice(written_tasks);
         assert_eq!(want_tasks, written_tasks);
         let got_tasks = task_hashmap_from_slice(
-            ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+            ds.run_tx(|tx| Box::pin(async move { tx.get_aggregator_tasks().await }))
                 .await
                 .unwrap(),
         );
@@ -657,18 +636,14 @@ mod tests {
     #[tokio::test]
     async fn replace_task() {
         let tasks = Vec::from([
-            TaskBuilder::new(
-                QueryType::TimeInterval,
-                VdafInstance::Prio3Count,
-                Role::Leader,
-            )
-            .build(),
-            TaskBuilder::new(
-                QueryType::TimeInterval,
-                VdafInstance::Prio3Sum { bits: 64 },
-                Role::Helper,
-            )
-            .build(),
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+                .build()
+                .leader_view()
+                .unwrap(),
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Sum { bits: 64 })
+                .build()
+                .leader_view()
+                .unwrap(),
         ]);
 
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -693,10 +668,11 @@ mod tests {
                 length: 4,
                 chunk_length: 2,
             },
-            Role::Leader,
         )
         .with_id(*tasks[0].id())
-        .build();
+        .build()
+        .leader_view()
+        .unwrap();
 
         let mut replacement_tasks_file = NamedTempFile::new().unwrap();
         replacement_tasks_file
@@ -716,25 +692,16 @@ mod tests {
 
         // Verify that the expected tasks were written.
         let got_tasks = task_hashmap_from_slice(
-            ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+            ds.run_tx(|tx| Box::pin(async move { tx.get_aggregator_tasks().await }))
                 .await
                 .unwrap(),
         );
         let want_tasks = HashMap::from([
-            (
-                *replacement_task.id(),
-                replacement_task.view_for_role().unwrap(),
-            ),
-            (*tasks[1].id(), tasks[1].view_for_role().unwrap()),
+            (*replacement_task.id(), replacement_task),
+            (*tasks[1].id(), tasks[1].clone()),
         ]);
 
-        assert_eq!(
-            want_tasks,
-            got_tasks
-                .iter()
-                .map(|(k, v)| { (*k, v.view_for_role().unwrap()) })
-                .collect()
-        );
+        assert_eq!(want_tasks, got_tasks);
     }
 
     #[tokio::test]
@@ -742,8 +709,7 @@ mod tests {
         // YAML contains no task ID, VDAF verify keys, aggregator auth tokens, collector auth tokens
         // or HPKE keys.
         let serialized_task_yaml = r#"
-- leader_aggregator_endpoint: https://leader
-  helper_aggregator_endpoint: https://helper
+- peer_aggregator_endpoint: https://helper
   query_type: TimeInterval
   vdaf: !Prio3Sum
     bits: 2
@@ -764,8 +730,7 @@ mod tests {
   aggregator_auth_token:
   collector_auth_token:
   hpke_keys: []
-- leader_aggregator_endpoint: https://leader
-  helper_aggregator_endpoint: https://helper
+- peer_aggregator_endpoint: https://leader
   query_type: TimeInterval
   vdaf: !Prio3Sum
     bits: 2
@@ -822,7 +787,7 @@ mod tests {
 
         // Verify that the expected tasks were written.
         let got_tasks = ds
-            .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+            .run_tx(|tx| Box::pin(async move { tx.get_aggregator_tasks().await }))
             .await
             .unwrap();
 
@@ -837,14 +802,8 @@ mod tests {
         }
 
         assert_eq!(
-            task_hashmap_from_slice(written_tasks)
-                .iter()
-                .map(|(k, v)| { (*k, v.view_for_role().unwrap()) })
-                .collect::<HashMap<_, _>>(),
+            task_hashmap_from_slice(written_tasks),
             task_hashmap_from_slice(got_tasks)
-                .iter()
-                .map(|(k, v)| { (*k, v.view_for_role().unwrap()) })
-                .collect()
         );
     }
 
