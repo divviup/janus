@@ -26,6 +26,7 @@ use std::{
     num::TryFromIntError,
     str,
     str::FromStr,
+    time::{SystemTime, SystemTimeError},
 };
 
 pub mod problem_type;
@@ -198,6 +199,15 @@ impl Encode for Time {
 impl Decode for Time {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         Ok(Self(u64::decode(bytes)?))
+    }
+}
+
+impl TryFrom<SystemTime> for Time {
+    type Error = SystemTimeError;
+
+    fn try_from(time: SystemTime) -> Result<Self, Self::Error> {
+        let duration = time.duration_since(SystemTime::UNIX_EPOCH)?;
+        Ok(Time::from_seconds_since_epoch(duration.as_secs()))
     }
 }
 

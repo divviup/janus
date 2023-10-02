@@ -8,19 +8,19 @@ use janus_core::{
     hpke::{self, is_hpke_config_supported, HpkeApplicationInfo, Label},
     http::HttpErrorResponse,
     retries::{http_request_exponential_backoff, retry_http_request},
-    time::{Clock, TimeExt},
+    time::{Clock, RealClock, TimeExt},
     url_ensure_trailing_slash,
 };
 use janus_messages::{
     Duration, HpkeConfig, HpkeConfigList, InputShareAad, PlaintextInputShare, Report, ReportId,
-    ReportMetadata, Role, TaskId,
+    ReportMetadata, Role, TaskId, Time,
 };
 use prio::{
     codec::{Decode, Encode},
     vdaf,
 };
 use rand::random;
-use std::io::Cursor;
+use std::{convert::Infallible, fmt::Debug, io::Cursor, time::SystemTimeError};
 use url::Url;
 
 #[derive(Debug, thiserror::Error)]
@@ -41,6 +41,14 @@ pub enum Error {
     Hpke(#[from] janus_core::hpke::Error),
     #[error("unexpected server response {0}")]
     UnexpectedServerResponse(&'static str),
+    #[error("time conversion error: {0}")]
+    TimeConversion(#[from] SystemTimeError),
+}
+
+impl From<Infallible> for Error {
+    fn from(value: Infallible) -> Self {
+        match value {}
+    }
 }
 
 static CLIENT_USER_AGENT: &str = concat!(
@@ -187,20 +195,18 @@ pub fn default_http_client() -> Result<reqwest::Client, Error> {
 
 /// A DAP client.
 #[derive(Debug)]
-pub struct Client<V: vdaf::Client<16>, C> {
+pub struct Client<V: vdaf::Client<16>> {
     parameters: ClientParameters,
     vdaf_client: V,
-    clock: C,
     http_client: reqwest::Client,
     leader_hpke_config: HpkeConfig,
     helper_hpke_config: HpkeConfig,
 }
 
-impl<V: vdaf::Client<16>, C: Clock> Client<V, C> {
+impl<V: vdaf::Client<16>> Client<V> {
     pub fn new(
         parameters: ClientParameters,
         vdaf_client: V,
-        clock: C,
         http_client: &reqwest::Client,
         leader_hpke_config: HpkeConfig,
         helper_hpke_config: HpkeConfig,
@@ -208,7 +214,6 @@ impl<V: vdaf::Client<16>, C: Clock> Client<V, C> {
         Self {
             parameters,
             vdaf_client,
-            clock,
             http_client: http_client.clone(),
             leader_hpke_config,
             helper_hpke_config,
@@ -217,15 +222,13 @@ impl<V: vdaf::Client<16>, C: Clock> Client<V, C> {
 
     /// Shard a measurement, encrypt its shares, and construct a [`janus_core::message::Report`]
     /// to be uploaded.
-    fn prepare_report(&self, measurement: &V::Measurement) -> Result<Report, Error> {
+    fn prepare_report(&self, measurement: &V::Measurement, time: &Time) -> Result<Report, Error> {
         let report_id: ReportId = random();
         let (public_share, input_shares) =
             self.vdaf_client.shard(measurement, report_id.as_ref())?;
         assert_eq!(input_shares.len(), 2); // DAP only supports VDAFs using two aggregators.
 
-        let time = self
-            .clock
-            .now()
+        let time = time
             .to_batch_interval_start(&self.parameters.time_precision)
             .map_err(|_| Error::InvalidParameter("couldn't round time down to time_precision"))?;
         let report_metadata = ReportMetadata::new(report_id, time);
@@ -265,12 +268,73 @@ impl<V: vdaf::Client<16>, C: Clock> Client<V, C> {
         ))
     }
 
-    /// Upload a [`Report`] to the leader, per §4.3.2 of draft-gpew-priv-ppm.
-    /// The provided measurement is sharded into one input share plus one proof share for each
-    /// aggregator and then uploaded to the leader.
+    /// Upload a [`Report`] to the leader, per §4.3.2 of draft-gpew-priv-ppm. The provided
+    /// measurement is sharded into two shares and then uploaded to the leader.
     #[tracing::instrument(skip(measurement), err)]
     pub async fn upload(&self, measurement: &V::Measurement) -> Result<(), Error> {
-        let report = self.prepare_report(measurement)?;
+        self.upload_with_time(measurement, Clock::now(&RealClock::default()))
+            .await
+    }
+
+    /// Upload a [`Report`] to the leader, per §4.3.2 of draft-gpew-priv-ppm, and override the
+    /// report's timestamp. The provided measurement is sharded into two shares and then uploaded to
+    /// the leader.
+    ///
+    /// ```no_run
+    /// # use janus_client::{default_http_client, Client, ClientParameters};
+    /// # use janus_core::hpke::generate_hpke_config_and_private_key;
+    /// # use janus_messages::{Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId};
+    /// # use prio::vdaf::{prio3::Prio3};
+    /// # use rand::random;
+    /// #
+    /// # let client_parameters = ClientParameters::new(
+    /// #     random(),
+    /// #     "https://example.com/".parse().unwrap(),
+    /// #     "https://example.net/".parse().unwrap(),
+    /// #     Duration::from_seconds(3600),
+    /// # );
+    /// # let measurement = 1;
+    /// # let timestamp = 1_700_000_000;
+    /// # let leader_hpke_config = generate_hpke_config_and_private_key(
+    /// #     HpkeConfigId::from(0),
+    /// #     HpkeKemId::X25519HkdfSha256,
+    /// #     HpkeKdfId::HkdfSha256,
+    /// #     HpkeAeadId::Aes128Gcm,
+    /// # )
+    /// # .unwrap()
+    /// # .config()
+    /// # .clone();
+    /// # let helper_hpke_config = generate_hpke_config_and_private_key(
+    /// #     HpkeConfigId::from(0),
+    /// #     HpkeKemId::X25519HkdfSha256,
+    /// #     HpkeKdfId::HkdfSha256,
+    /// #     HpkeAeadId::Aes128Gcm,
+    /// # )
+    /// # .unwrap()
+    /// # .config()
+    /// # .clone();
+    /// # let vdaf = Prio3::new_count(2).unwrap();
+    /// let client = Client::new(
+    ///     client_parameters,
+    ///     vdaf,
+    ///     &default_http_client().unwrap(),
+    ///     leader_hpke_config,
+    ///     helper_hpke_config,
+    /// );
+    /// client.upload_with_time(&measurement, std::time::SystemTime::now());
+    /// client.upload_with_time(&measurement, janus_messages::Time::from_seconds_since_epoch(timestamp));
+    /// ```
+    #[tracing::instrument(skip(measurement), err)]
+    pub async fn upload_with_time<T>(
+        &self,
+        measurement: &V::Measurement,
+        time: T,
+    ) -> Result<(), Error>
+    where
+        T: TryInto<Time> + Debug,
+        Error: From<<T as TryInto<Time>>::Error>,
+    {
+        let report = self.prepare_report(measurement, &time.try_into()?)?;
         let upload_endpoint = self
             .parameters
             .reports_resource_uri(&self.parameters.task_id)?;
@@ -307,7 +371,6 @@ mod tests {
     use janus_core::{
         hpke::test_util::generate_test_hpke_config_and_private_key,
         retries::test_http_request_exponential_backoff, test_util::install_test_trace_subscriber,
-        time::MockClock,
     };
     use janus_messages::{Duration, HpkeConfigList, Report, Role, Time};
     use prio::{
@@ -317,10 +380,7 @@ mod tests {
     use rand::random;
     use url::Url;
 
-    fn setup_client<V: vdaf::Client<16>>(
-        server: &mockito::Server,
-        vdaf_client: V,
-    ) -> Client<V, MockClock> {
+    fn setup_client<V: vdaf::Client<16>>(server: &mockito::Server, vdaf_client: V) -> Client<V> {
         let server_url = Url::parse(&server.url()).unwrap();
         Client::new(
             ClientParameters::new_with_backoff(
@@ -331,7 +391,6 @@ mod tests {
                 test_http_request_exponential_backoff(),
             ),
             vdaf_client,
-            MockClock::default(),
             &default_http_client().unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
             generate_test_hpke_config_and_private_key().config().clone(),
@@ -473,7 +532,6 @@ mod tests {
         let client = Client::new(
             client_parameters,
             Prio3::new_count(2).unwrap(),
-            MockClock::default(),
             &default_http_client().unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
             generate_test_hpke_config_and_private_key().config().clone(),
@@ -490,21 +548,30 @@ mod tests {
         let mut client = setup_client(&server, vdaf);
 
         client.parameters.time_precision = Duration::from_seconds(100);
-        client.clock = MockClock::new(Time::from_seconds_since_epoch(101));
         assert_eq!(
-            client.prepare_report(&1).unwrap().metadata().time(),
+            client
+                .prepare_report(&1, &Time::from_seconds_since_epoch(101))
+                .unwrap()
+                .metadata()
+                .time(),
             &Time::from_seconds_since_epoch(100),
         );
 
-        client.clock = MockClock::new(Time::from_seconds_since_epoch(5200));
         assert_eq!(
-            client.prepare_report(&1).unwrap().metadata().time(),
+            client
+                .prepare_report(&1, &Time::from_seconds_since_epoch(5200))
+                .unwrap()
+                .metadata()
+                .time(),
             &Time::from_seconds_since_epoch(5200),
         );
 
-        client.clock = MockClock::new(Time::from_seconds_since_epoch(9814));
         assert_eq!(
-            client.prepare_report(&1).unwrap().metadata().time(),
+            client
+                .prepare_report(&1, &Time::from_seconds_since_epoch(9814))
+                .unwrap()
+                .metadata()
+                .time(),
             &Time::from_seconds_since_epoch(9800),
         );
     }
