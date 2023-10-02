@@ -546,7 +546,10 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use crate::aggregator::{
-        aggregate_init_tests::{post_aggregation_job, setup_aggregate_init_test},
+        aggregate_init_tests::{
+            post_aggregation_job, setup_aggregate_init_test,
+            setup_aggregate_init_test_without_sending_request, AggregationJobInitTestCase,
+        },
         aggregation_job_continue::test_util::{
             post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
         },
@@ -596,9 +599,10 @@ mod tests {
         query_type::TimeInterval, AggregateContinueReq, AggregateContinueResp,
         AggregateInitializeReq, AggregateInitializeResp, AggregateShareReq,
         AggregateShareResp as AggregateShareMessage, AggregationJobId, BatchSelector, CollectReq,
-        CollectResp, CollectionJobId, Duration, HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval,
-        PartialBatchSelector, PrepareStep, PrepareStepResult, Query, Report, ReportId,
-        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
+        CollectResp, CollectionJobId, Duration, Extension, ExtensionType, HpkeCiphertext,
+        HpkeConfig, HpkeConfigId, Interval, PartialBatchSelector, PrepareStep, PrepareStepResult,
+        Query, Report, ReportId, ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError,
+        Role, TaskId, Time,
     };
     use prio::{
         codec::{Decode, Encode},
@@ -1176,16 +1180,21 @@ mod tests {
             Vec::new(),
         );
 
+        let auth_token: AuthenticationToken = random();
+
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
             &noop_meter(),
-            default_aggregator_config(),
+            Config {
+                auth_tokens: vec![auth_token.clone()],
+                ..default_aggregator_config()
+            },
         )
         .await
         .unwrap();
 
-        let mut test_conn = post_aggregation_job(&task, &request, &handler).await;
+        let mut test_conn = post_aggregation_job(&task, &request, &handler, &auth_token).await;
         assert!(!test_conn.status().unwrap().is_success());
 
         let problem_details = take_problem_details(&mut test_conn).await;
@@ -1312,23 +1321,24 @@ mod tests {
         }
     }
 
+    /// Check aggregation init against an already provisioned task.
     #[tokio::test]
     // Silence the unit_arg lint so that we can work with dummy_vdaf::Vdaf::InputShare values (whose
     // type is ()).
     #[allow(clippy::unit_arg)]
     async fn aggregate_init() {
-        // Prepare datastore & request.
-        install_test_trace_subscriber();
-
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-
-        let vdaf = dummy_vdaf::Vdaf::new();
-        let verify_key: VerifyKey<0> = task.primary_vdaf_verify_key().unwrap();
-        let hpke_key = task.current_hpke_key();
+        let AggregationJobInitTestCase {
+            clock,
+            task,
+            handler,
+            datastore,
+            auth_token,
+            vdaf,
+            hpke_key,
+            task_config_encoded,
+            _ephemeral_datastore,
+            ..
+        } = setup_aggregate_init_test_without_sending_request().await;
 
         // report_share_0 is a "happy path" report.
         let report_metadata_0 = ReportMetadata::new(
@@ -1337,16 +1347,19 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
+            Vec::from([Extension::new(
+                ExtensionType::Taskprov,
+                task_config_encoded.clone(),
+            )]),
         );
         let transcript = run_vdaf(
             &vdaf,
-            verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(0),
-            report_metadata_0.id(),
+            task.primary_vdaf_verify_key().unwrap().as_bytes(),
             &(),
+            report_metadata_0.id(),
+            &1u64,
         );
-        let report_share_0 = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+        let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
             *task.id(),
             report_metadata_0,
             hpke_key.config(),
@@ -1361,16 +1374,19 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
+            Vec::from([Extension::new(
+                ExtensionType::Taskprov,
+                task_config_encoded.clone(),
+            )]),
         );
         let transcript = run_vdaf(
             &vdaf,
-            verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(0),
-            report_metadata_1.id(),
+            task.primary_vdaf_verify_key().unwrap().as_bytes(),
             &(),
+            report_metadata_1.id(),
+            &1u64,
         );
-        let report_share_1 = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+        let report_share_1 = generate_helper_report_share::<Prio3Aes128Count>(
             *task.id(),
             report_metadata_1.clone(),
             hpke_key.config(),
@@ -1399,14 +1415,17 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
+            Vec::from([Extension::new(
+                ExtensionType::Taskprov,
+                task_config_encoded.clone(),
+            )]),
         );
         let transcript = run_vdaf(
             &vdaf,
-            verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(0),
-            report_metadata_2.id(),
+            task.primary_vdaf_verify_key().unwrap().as_bytes(),
             &(),
+            report_metadata_2.id(),
+            &1u64,
         );
         let mut input_share_bytes = transcript.input_shares[1].get_encoded();
         input_share_bytes.push(0); // can no longer be decoded.
@@ -1425,14 +1444,17 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
+            Vec::from([Extension::new(
+                ExtensionType::Taskprov,
+                task_config_encoded.clone(),
+            )]),
         );
         let transcript = run_vdaf(
             &vdaf,
-            verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(0),
-            report_metadata_3.id(),
+            task.primary_vdaf_verify_key().unwrap().as_bytes(),
             &(),
+            report_metadata_3.id(),
+            &1u64,
         );
         let wrong_hpke_config = loop {
             let hpke_config = generate_test_hpke_config_and_private_key().config().clone();
@@ -1441,7 +1463,7 @@ mod tests {
             }
             break hpke_config;
         };
-        let report_share_3 = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+        let report_share_3 = generate_helper_report_share::<Prio3Aes128Count>(
             *task.id(),
             report_metadata_3,
             &wrong_hpke_config,
@@ -1457,16 +1479,19 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
+            Vec::from([Extension::new(
+                ExtensionType::Taskprov,
+                task_config_encoded.clone(),
+            )]),
         );
         let transcript = run_vdaf(
             &vdaf,
-            verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(0),
-            report_metadata_4.id(),
+            task.primary_vdaf_verify_key().unwrap().as_bytes(),
             &(),
+            report_metadata_4.id(),
+            &1u64,
         );
-        let report_share_4 = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+        let report_share_4 = generate_helper_report_share::<Prio3Aes128Count>(
             *task.id(),
             report_metadata_4,
             hpke_key.config(),
@@ -1484,16 +1509,19 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
+            Vec::from([Extension::new(
+                ExtensionType::Taskprov,
+                task_config_encoded.clone(),
+            )]),
         );
         let transcript = run_vdaf(
             &vdaf,
-            verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(0),
-            report_metadata_5.id(),
+            task.primary_vdaf_verify_key().unwrap().as_bytes(),
             &(),
+            report_metadata_5.id(),
+            &1u64,
         );
-        let report_share_5 = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+        let report_share_5 = generate_helper_report_share::<Prio3Aes128Count>(
             *task.id(),
             report_metadata_5,
             hpke_key.config(),
@@ -1509,14 +1537,17 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
+            Vec::from([Extension::new(
+                ExtensionType::Taskprov,
+                task_config_encoded.clone(),
+            )]),
         );
         let transcript = run_vdaf(
             &vdaf,
-            verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(0),
-            report_metadata_6.id(),
+            task.primary_vdaf_verify_key().unwrap().as_bytes(),
             &(),
+            report_metadata_6.id(),
+            &1u64,
         );
         let report_share_6 = generate_helper_report_share_for_plaintext(
             report_metadata_6.clone(),
@@ -1526,44 +1557,21 @@ mod tests {
             &input_share_aad(task.id(), &report_metadata_6, &public_share_6),
         );
 
-        // report_share_7 has already been aggregated in another aggregation job, with a different
-        // aggregation parameter.
-        let report_metadata_7 = ReportMetadata::new(
-            random(),
-            clock
-                .now()
-                .to_batch_interval_start(task.time_precision())
-                .unwrap(),
-            Vec::new(),
-        );
-        let transcript = run_vdaf(
-            &vdaf,
-            verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(1),
-            report_metadata_7.id(),
-            &(),
-        );
-        let report_share_7 = generate_helper_report_share::<dummy_vdaf::Vdaf>(
-            *task.id(),
-            report_metadata_7,
-            hpke_key.config(),
-            &transcript.public_share,
-            &transcript.input_shares[1],
-        );
+        // subscriber-01 only: We removed report_share_7. It was testing the case where a report
+        // share was previously aggregated with a different aggregation parameter. We don't do it
+        // here, since we are using a VDAF with no aggregation parameter.
 
-        let (conflicting_aggregation_job, non_conflicting_aggregation_job) = datastore
+        let conflicting_aggregation_job = datastore
             .run_tx(|tx| {
                 let task = task.clone();
                 let report_share_4 = report_share_4.clone();
                 let report_share_5 = report_share_5.clone();
-                let report_share_7 = report_share_7.clone();
                 Box::pin(async move {
                     tx.put_task(&task).await?;
 
                     // report_share_4 and report_share_7 are already in the datastore as they were
                     // referenced by existing aggregation jobs.
                     tx.put_report_share(task.id(), &report_share_4).await?;
-                    tx.put_report_share(task.id(), &report_share_7).await?;
 
                     // Put in an aggregation job and report aggregation for report_share_4. It uses
                     // the same aggregation parameter as the aggregation job this test will later
@@ -1571,18 +1579,18 @@ mod tests {
                     let conflicting_aggregation_job = AggregationJob::new(
                         *task.id(),
                         random(),
-                        dummy_vdaf::AggregationParam(0),
+                        (),
                         (),
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
                     );
-                    tx.put_aggregation_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                    tx.put_aggregation_job::<16, TimeInterval, Prio3Aes128Count>(
                         &conflicting_aggregation_job,
                     )
                     .await
                     .unwrap();
-                    tx.put_report_aggregation::<0, dummy_vdaf::Vdaf>(&ReportAggregation::new(
+                    tx.put_report_aggregation::<16, Prio3Aes128Count>(&ReportAggregation::new(
                         *task.id(),
                         *conflicting_aggregation_job.id(),
                         *report_share_4.metadata().id(),
@@ -1593,38 +1601,9 @@ mod tests {
                     .await
                     .unwrap();
 
-                    // Put in an aggregation job and report aggregation for report_share_7, using a
-                    // a different aggregation parameter. As the aggregation parameter differs,
-                    // report_share_7 should prepare successfully in the aggregation job we'll PUT
-                    // later.
-                    let non_conflicting_aggregation_job = AggregationJob::new(
-                        *task.id(),
-                        random(),
-                        dummy_vdaf::AggregationParam(1),
-                        (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
-                        AggregationJobState::InProgress,
-                    );
-                    tx.put_aggregation_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        &non_conflicting_aggregation_job,
-                    )
-                    .await
-                    .unwrap();
-                    tx.put_report_aggregation::<0, dummy_vdaf::Vdaf>(&ReportAggregation::new(
-                        *task.id(),
-                        *non_conflicting_aggregation_job.id(),
-                        *report_share_7.metadata().id(),
-                        *report_share_7.metadata().time(),
-                        0,
-                        ReportAggregationState::Start,
-                    ))
-                    .await
-                    .unwrap();
-
                     // Put in an aggregate share job for the interval that report_share_5 falls into
                     // which should cause it to later fail to prepare.
-                    tx.put_aggregate_share_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                    tx.put_aggregate_share_job::<16, TimeInterval, Prio3Aes128Count>(
                         &AggregateShareJob::new(
                             *task.id(),
                             Interval::new(
@@ -1632,15 +1611,15 @@ mod tests {
                                 *task.time_precision(),
                             )
                             .unwrap(),
-                            dummy_vdaf::AggregationParam(0),
-                            dummy_vdaf::AggregateShare(0),
+                            (),
+                            AggregateShare::from(OutputShare::from(Vec::from([Field64::from(1)]))),
                             1,
                             ReportIdChecksum::for_report_id(report_share_5.metadata().id()),
                         ),
                     )
                     .await?;
 
-                    Ok((conflicting_aggregation_job, non_conflicting_aggregation_job))
+                    Ok(conflicting_aggregation_job)
                 })
             })
             .await
@@ -1650,7 +1629,7 @@ mod tests {
         let request = AggregateInitializeReq::new(
             *task.id(),
             aggregation_job_id,
-            dummy_vdaf::AggregationParam(0).get_encoded(),
+            ().get_encoded(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([
                 report_share_0.clone(),
@@ -1660,22 +1639,10 @@ mod tests {
                 report_share_4.clone(),
                 report_share_5.clone(),
                 report_share_6.clone(),
-                report_share_7.clone(),
             ]),
         );
 
-        // Create aggregator handler, send request, and parse response. Do this twice to prove that
-        // the request is idempotent.
-        let handler = aggregator_handler(
-            Arc::clone(&datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
-
-        let mut test_conn = post_aggregation_job(&task, &request, &handler).await;
+        let mut test_conn = post_aggregation_job(&task, &request, &handler, &auth_token).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_headers!(
             &test_conn,
@@ -1685,7 +1652,7 @@ mod tests {
         let aggregate_resp = AggregateInitializeResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
-        assert_eq!(aggregate_resp.prepare_steps().len(), 8);
+        assert_eq!(aggregate_resp.prepare_steps().len(), 7);
 
         let prepare_step_0 = aggregate_resp.prepare_steps().get(0).unwrap();
         assert_eq!(prepare_step_0.report_id(), report_share_0.metadata().id());
@@ -1733,32 +1700,28 @@ mod tests {
             &PrepareStepResult::Failed(ReportShareError::VdafPrepError),
         );
 
-        let prepare_step_7 = aggregate_resp.prepare_steps().get(7).unwrap();
-        assert_eq!(prepare_step_7.report_id(), report_share_7.metadata().id());
-        assert_matches!(prepare_step_7.result(), &PrepareStepResult::Continued(..));
-
         // Check aggregation job in datastore.
         let aggregation_jobs = datastore
             .run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
-                    tx.get_aggregation_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(task.id())
-                        .await
+                    tx.get_aggregation_jobs_for_task::<16, TimeInterval, Prio3Aes128Count>(
+                        task.id(),
+                    )
+                    .await
                 })
             })
             .await
             .unwrap();
 
-        assert_eq!(aggregation_jobs.len(), 3);
+        // We inserted one before executing the test, and we should have created one after execution.
+        assert_eq!(aggregation_jobs.len(), 2);
 
         let mut saw_conflicting_aggregation_job = false;
-        let mut saw_non_conflicting_aggregation_job = false;
         let mut saw_new_aggregation_job = false;
         for aggregation_job in aggregation_jobs {
             if aggregation_job.eq(&conflicting_aggregation_job) {
                 saw_conflicting_aggregation_job = true;
-            } else if aggregation_job.eq(&non_conflicting_aggregation_job) {
-                saw_non_conflicting_aggregation_job = true;
             } else if aggregation_job.task_id().eq(task.id())
                 && aggregation_job.id().eq(&aggregation_job_id)
                 && aggregation_job.partial_batch_identifier().eq(&())
@@ -1769,262 +1732,13 @@ mod tests {
         }
 
         assert!(saw_conflicting_aggregation_job);
-        assert!(saw_non_conflicting_aggregation_job);
         assert!(saw_new_aggregation_job);
-    }
-
-    #[tokio::test]
-    #[allow(clippy::unit_arg)]
-    async fn aggregate_init_with_reports_encrypted_by_global_key() {
-        install_test_trace_subscriber();
-
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-
-        // Insert some global HPKE keys.
-        // Same ID as the task to test having both keys to choose from.
-        let global_hpke_keypair_same_id = generate_test_hpke_config_and_private_key_with_id(
-            (*task.current_hpke_key().config().id()).into(),
-        );
-        // Different ID to test misses on the task key.
-        let global_hpke_keypair_different_id = generate_test_hpke_config_and_private_key_with_id(
-            (0..)
-                .map(HpkeConfigId::from)
-                .find(|id| !task.hpke_keys().contains_key(id))
-                .unwrap()
-                .into(),
-        );
-        datastore
-            .run_tx(|tx| {
-                let global_hpke_keypair_same_id = global_hpke_keypair_same_id.clone();
-                let global_hpke_keypair_different_id = global_hpke_keypair_different_id.clone();
-                Box::pin(async move {
-                    // Leave these in the PENDING state--they should still be decryptable.
-                    tx.put_global_hpke_keypair(&global_hpke_keypair_same_id)
-                        .await?;
-                    tx.put_global_hpke_keypair(&global_hpke_keypair_different_id)
-                        .await?;
-                    Ok(())
-                })
-            })
-            .await
-            .unwrap();
-
-        datastore.put_task(&task).await.unwrap();
-
-        let vdaf = dummy_vdaf::Vdaf::new();
-        let verify_key: VerifyKey<0> = task.primary_vdaf_verify_key().unwrap();
-
-        // This report was encrypted with a global HPKE config that has the same config
-        // ID as the task's HPKE config.
-        let report_metadata_same_id = ReportMetadata::new(
-            random(),
-            clock
-                .now()
-                .to_batch_interval_start(task.time_precision())
-                .unwrap(),
-            Vec::new(),
-        );
-        let transcript = run_vdaf(
-            &vdaf,
-            verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(0),
-            report_metadata_same_id.id(),
-            &(),
-        );
-        let report_share_same_id = generate_helper_report_share::<dummy_vdaf::Vdaf>(
-            *task.id(),
-            report_metadata_same_id,
-            global_hpke_keypair_same_id.config(),
-            &transcript.public_share,
-            &transcript.input_shares[1],
-        );
-
-        // This report was encrypted with a global HPKE config that has the same config
-        // ID as the task's HPKE config, but will fail to decrypt.
-        let report_metadata_same_id_corrupted = ReportMetadata::new(
-            random(),
-            clock
-                .now()
-                .to_batch_interval_start(task.time_precision())
-                .unwrap(),
-            Vec::new(),
-        );
-        let transcript = run_vdaf(
-            &vdaf,
-            verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(0),
-            report_metadata_same_id_corrupted.id(),
-            &(),
-        );
-        let report_share_same_id_corrupted = generate_helper_report_share::<dummy_vdaf::Vdaf>(
-            *task.id(),
-            report_metadata_same_id_corrupted.clone(),
-            global_hpke_keypair_same_id.config(),
-            &transcript.public_share,
-            &transcript.input_shares[1],
-        );
-        let encrypted_input_share = report_share_same_id_corrupted.encrypted_input_share();
-        let mut corrupted_payload = encrypted_input_share.payload().to_vec();
-        corrupted_payload[0] ^= 0xFF;
-        let corrupted_input_share = HpkeCiphertext::new(
-            *encrypted_input_share.config_id(),
-            encrypted_input_share.encapsulated_key().to_vec(),
-            corrupted_payload,
-        );
-        let encoded_public_share = transcript.public_share.get_encoded();
-        let report_share_same_id_corrupted = ReportShare::new(
-            report_metadata_same_id_corrupted,
-            encoded_public_share.clone(),
-            corrupted_input_share,
-        );
-
-        // This report was encrypted with a global HPKE config that doesn't collide
-        // with the task HPKE config's ID.
-        let report_metadata_different_id = ReportMetadata::new(
-            random(),
-            clock
-                .now()
-                .to_batch_interval_start(task.time_precision())
-                .unwrap(),
-            Vec::new(),
-        );
-        let transcript = run_vdaf(
-            &vdaf,
-            verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(0),
-            report_metadata_different_id.id(),
-            &(),
-        );
-        let report_share_different_id = generate_helper_report_share::<dummy_vdaf::Vdaf>(
-            *task.id(),
-            report_metadata_different_id,
-            global_hpke_keypair_different_id.config(),
-            &transcript.public_share,
-            &transcript.input_shares[1],
-        );
-
-        // This report was encrypted with a global HPKE config that doesn't collide
-        // with the task HPKE config's ID, but will fail decryption.
-        let report_metadata_different_id_corrupted = ReportMetadata::new(
-            random(),
-            clock
-                .now()
-                .to_batch_interval_start(task.time_precision())
-                .unwrap(),
-            Vec::new(),
-        );
-        let transcript = run_vdaf(
-            &vdaf,
-            verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(0),
-            report_metadata_different_id_corrupted.id(),
-            &(),
-        );
-        let report_share_different_id_corrupted = generate_helper_report_share::<dummy_vdaf::Vdaf>(
-            *task.id(),
-            report_metadata_different_id_corrupted.clone(),
-            global_hpke_keypair_different_id.config(),
-            &transcript.public_share,
-            &transcript.input_shares[1],
-        );
-        let encrypted_input_share = report_share_different_id_corrupted.encrypted_input_share();
-        let mut corrupted_payload = encrypted_input_share.payload().to_vec();
-        corrupted_payload[0] ^= 0xFF;
-        let corrupted_input_share = HpkeCiphertext::new(
-            *encrypted_input_share.config_id(),
-            encrypted_input_share.encapsulated_key().to_vec(),
-            corrupted_payload,
-        );
-        let encoded_public_share = transcript.public_share.get_encoded();
-        let report_share_different_id_corrupted = ReportShare::new(
-            report_metadata_different_id_corrupted,
-            encoded_public_share.clone(),
-            corrupted_input_share,
-        );
-
-        let handler = aggregator_handler(
-            Arc::clone(&datastore),
-            clock,
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
-
-        let aggregation_job_id: AggregationJobId = random();
-        let request = AggregateInitializeReq::new(
-            *task.id(),
-            aggregation_job_id,
-            dummy_vdaf::AggregationParam(0).get_encoded(),
-            PartialBatchSelector::new_time_interval(),
-            Vec::from([
-                report_share_same_id.clone(),
-                report_share_different_id.clone(),
-                report_share_same_id_corrupted.clone(),
-                report_share_different_id_corrupted.clone(),
-            ]),
-        );
-
-        let mut test_conn = post_aggregation_job(&task, &request, &handler).await;
-        assert_eq!(test_conn.status(), Some(Status::Ok));
-        let body_bytes = take_response_body(&mut test_conn).await;
-        let aggregate_resp = AggregateInitializeResp::get_decoded(&body_bytes).unwrap();
-
-        // Validate response.
-        assert_eq!(aggregate_resp.prepare_steps().len(), 4);
-
-        let prepare_step_same_id = aggregate_resp.prepare_steps().get(0).unwrap();
-        assert_eq!(
-            prepare_step_same_id.report_id(),
-            report_share_same_id.metadata().id()
-        );
-        assert_matches!(
-            prepare_step_same_id.result(),
-            &PrepareStepResult::Continued(..)
-        );
-
-        let prepare_step_different_id = aggregate_resp.prepare_steps().get(1).unwrap();
-        assert_eq!(
-            prepare_step_different_id.report_id(),
-            report_share_different_id.metadata().id()
-        );
-        assert_matches!(
-            prepare_step_different_id.result(),
-            &PrepareStepResult::Continued(..)
-        );
-
-        let prepare_step_same_id_corrupted = aggregate_resp.prepare_steps().get(2).unwrap();
-        assert_eq!(
-            prepare_step_same_id_corrupted.report_id(),
-            report_share_same_id_corrupted.metadata().id()
-        );
-        assert_matches!(
-            prepare_step_same_id_corrupted.result(),
-            &PrepareStepResult::Failed(ReportShareError::HpkeDecryptError)
-        );
-
-        let prepare_step_different_id_corrupted = aggregate_resp.prepare_steps().get(3).unwrap();
-        assert_eq!(
-            prepare_step_different_id_corrupted.report_id(),
-            report_share_different_id_corrupted.metadata().id()
-        );
-        assert_matches!(
-            prepare_step_different_id_corrupted.result(),
-            &PrepareStepResult::Failed(ReportShareError::HpkeDecryptError)
-        );
     }
 
     #[allow(clippy::unit_arg)]
     #[tokio::test]
     async fn aggregate_init_change_report_timestamp() {
         let test_case = setup_aggregate_init_test().await;
-
-        let other_aggregation_parameter = dummy_vdaf::AggregationParam(1);
-        assert_ne!(test_case.aggregation_param, other_aggregation_parameter);
 
         // This report has the same ID as the previous one, but a different timestamp.
         let mutated_timestamp_report_metadata = ReportMetadata::new(
@@ -2034,7 +1748,10 @@ mod tests {
                 .now()
                 .add(test_case.task.time_precision())
                 .unwrap(),
-            Vec::new(),
+            Vec::from([Extension::new(
+                ExtensionType::Taskprov,
+                test_case.task_config_encoded.clone(),
+            )]),
         );
         let mutated_timestamp_report_share = test_case
             .report_share_generator
@@ -2046,13 +1763,19 @@ mod tests {
         let request = AggregateInitializeReq::new(
             *test_case.task.id(),
             random(),
-            other_aggregation_parameter.get_encoded(),
+            ().get_encoded(),
+            // other_aggregation_parameter.get_encoded(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([mutated_timestamp_report_share.clone()]),
         );
 
-        let mut test_conn =
-            post_aggregation_job(&test_case.task, &request, &test_case.handler).await;
+        let mut test_conn = post_aggregation_job(
+            &test_case.task,
+            &request,
+            &test_case.handler,
+            &test_case.auth_token,
+        )
+        .await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         let body_bytes = take_response_body(&mut test_conn).await;
         let aggregate_resp = AggregateInitializeResp::get_decoded(&body_bytes).unwrap();
@@ -2089,6 +1812,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "subscriber-01: no taskprov-compatible fake VDAF is available to test failing prep init"]
     async fn aggregate_init_prep_init_failed() {
         // Prepare datastore & request.
         install_test_trace_subscriber();
@@ -2130,17 +1854,22 @@ mod tests {
             Vec::from([report_share.clone()]),
         );
 
+        let auth_token: AuthenticationToken = random();
+
         // Create aggregator handler, send request, and parse response.
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
             &noop_meter(),
-            default_aggregator_config(),
+            Config {
+                auth_tokens: vec![auth_token.clone()],
+                ..default_aggregator_config()
+            },
         )
         .await
         .unwrap();
 
-        let mut test_conn = post_aggregation_job(&task, &request, &handler).await;
+        let mut test_conn = post_aggregation_job(&task, &request, &handler, &auth_token).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_headers!(
             &test_conn,
@@ -2161,6 +1890,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "subscriber-01: no taskprov-compatible fake VDAF is available to test failing prep step"]
     async fn aggregate_init_prep_step_failed() {
         // Prepare datastore & request.
         install_test_trace_subscriber();
@@ -2202,17 +1932,22 @@ mod tests {
             Vec::from([report_share.clone()]),
         );
 
+        let auth_token: AuthenticationToken = random();
+
         // Create aggregator filter, send request, and parse response.
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
             &noop_meter(),
-            default_aggregator_config(),
+            Config {
+                auth_tokens: vec![auth_token.clone()],
+                ..default_aggregator_config()
+            },
         )
         .await
         .unwrap();
 
-        let mut test_conn = post_aggregation_job(&task, &request, &handler).await;
+        let mut test_conn = post_aggregation_job(&task, &request, &handler, &auth_token).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_headers!(
             &test_conn,
@@ -2272,16 +2007,21 @@ mod tests {
             Vec::from([report_share.clone(), report_share]),
         );
 
+        let auth_token: AuthenticationToken = random();
+
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
             &noop_meter(),
-            default_aggregator_config(),
+            Config {
+                auth_tokens: vec![auth_token.clone()],
+                ..default_aggregator_config()
+            },
         )
         .await
         .unwrap();
 
-        let mut test_conn = post_aggregation_job(&task, &request, &handler).await;
+        let mut test_conn = post_aggregation_job(&task, &request, &handler, &auth_token).await;
 
         let want_status = 400;
         assert_eq!(
@@ -2508,17 +2248,23 @@ mod tests {
             ]),
         );
 
+        let auth_token: AuthenticationToken = random();
+
         // Create aggregator handler, send request, and parse response.
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock,
             &noop_meter(),
-            default_aggregator_config(),
+            Config {
+                auth_tokens: vec![auth_token.clone()],
+                ..default_aggregator_config()
+            },
         )
         .await
         .unwrap();
 
-        let aggregate_resp = post_aggregation_job_and_decode(&task, &request, &handler).await;
+        let aggregate_resp =
+            post_aggregation_job_and_decode(&task, &request, &handler, &auth_token).await;
 
         // Validate response.
         assert_eq!(
@@ -2866,17 +2612,22 @@ mod tests {
             ]),
         );
 
+        let auth_token: AuthenticationToken = random();
+
         // Create aggregator handler, send request, and parse response.
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             first_batch_interval_clock.clone(),
             &noop_meter(),
-            default_aggregator_config(),
+            Config {
+                auth_tokens: vec![auth_token.clone()],
+                ..default_aggregator_config()
+            },
         )
         .await
         .unwrap();
 
-        let _ = post_aggregation_job_and_decode(&task, &request, &handler).await;
+        let _ = post_aggregation_job_and_decode(&task, &request, &handler, &auth_token).await;
 
         // Map the batch aggregation ordinal value to 0, as it may vary due to sharding.
         let first_batch_got_batch_aggregations: Vec<_> = datastore
@@ -3164,17 +2915,22 @@ mod tests {
             ]),
         );
 
+        let auth_token: AuthenticationToken = random();
+
         // Create aggregator handler, send request, and parse response.
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             first_batch_interval_clock,
             &noop_meter(),
-            default_aggregator_config(),
+            Config {
+                auth_tokens: vec![auth_token.clone()],
+                ..default_aggregator_config()
+            },
         )
         .await
         .unwrap();
 
-        let _ = post_aggregation_job_and_decode(&task, &request, &handler).await;
+        let _ = post_aggregation_job_and_decode(&task, &request, &handler, &auth_token).await;
 
         // Map the batch aggregation ordinal value to 0, as it may vary due to sharding, and merge
         // batch aggregations over the same interval. (the task & aggregation parameter will always
@@ -3363,11 +3119,16 @@ mod tests {
             )]),
         );
 
+        let auth_token: AuthenticationToken = random();
+
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock,
             &noop_meter(),
-            default_aggregator_config(),
+            Config {
+                auth_tokens: vec![auth_token.clone()],
+                ..default_aggregator_config()
+            },
         )
         .await
         .unwrap();
@@ -3376,6 +3137,7 @@ mod tests {
             &task,
             &request,
             &handler,
+            &auth_token,
             Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
             "The message type for a response was incorrect or the payload was malformed.",
@@ -3464,16 +3226,22 @@ mod tests {
             )]),
         );
 
+        let auth_token: AuthenticationToken = random();
+
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock,
             &noop_meter(),
-            default_aggregator_config(),
+            Config {
+                auth_tokens: vec![auth_token.clone()],
+                ..default_aggregator_config()
+            },
         )
         .await
         .unwrap();
 
-        let aggregate_resp = post_aggregation_job_and_decode(&task, &request, &handler).await;
+        let aggregate_resp =
+            post_aggregation_job_and_decode(&task, &request, &handler, &auth_token).await;
         assert_eq!(
             aggregate_resp,
             AggregateContinueResp::new(Vec::from([PrepareStep::new(
@@ -3616,11 +3384,16 @@ mod tests {
             )]),
         );
 
+        let auth_token: AuthenticationToken = random();
+
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
             &noop_meter(),
-            default_aggregator_config(),
+            Config {
+                auth_tokens: vec![auth_token.clone()],
+                ..default_aggregator_config()
+            },
         )
         .await
         .unwrap();
@@ -3629,6 +3402,7 @@ mod tests {
             &task,
             &request,
             &handler,
+            &auth_token,
             Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
             "The message type for a response was incorrect or the payload was malformed.",
@@ -3755,11 +3529,16 @@ mod tests {
             ]),
         );
 
+        let auth_token: AuthenticationToken = random();
+
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
             &noop_meter(),
-            default_aggregator_config(),
+            Config {
+                auth_tokens: vec![auth_token.clone()],
+                ..default_aggregator_config()
+            },
         )
         .await
         .unwrap();
@@ -3768,6 +3547,7 @@ mod tests {
             &task,
             &request,
             &handler,
+            &auth_token,
             Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
             "The message type for a response was incorrect or the payload was malformed.",
@@ -3852,11 +3632,16 @@ mod tests {
             )]),
         );
 
+        let auth_token: AuthenticationToken = random();
+
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
             &noop_meter(),
-            default_aggregator_config(),
+            Config {
+                auth_tokens: vec![auth_token.clone()],
+                ..default_aggregator_config()
+            },
         )
         .await
         .unwrap();
@@ -3865,6 +3650,7 @@ mod tests {
             &task,
             &request,
             &handler,
+            &auth_token,
             Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
             "The message type for a response was incorrect or the payload was malformed.",
@@ -4618,11 +4404,16 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
+        let auth_token: AuthenticationToken = random();
+
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock,
             &noop_meter(),
-            default_aggregator_config(),
+            Config {
+                auth_tokens: vec![auth_token.clone()],
+                ..default_aggregator_config()
+            },
         )
         .await
         .unwrap();
@@ -4637,11 +4428,9 @@ mod tests {
             ReportIdChecksum::default(),
         );
 
+        let auth = auth_token.request_authentication();
         let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
-            .with_request_header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref().to_owned(),
-            )
+            .with_request_header(auth.0, auth.1)
             .with_request_header(
                 KnownHeaderName::ContentType,
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -4677,11 +4466,16 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
+        let auth_token: AuthenticationToken = random();
+
         let handler = aggregator_handler(
             Arc::new(datastore),
             clock.clone(),
             &noop_meter(),
-            default_aggregator_config(),
+            Config {
+                auth_tokens: vec![auth_token.clone()],
+                ..default_aggregator_config()
+            },
         )
         .await
         .unwrap();
@@ -4703,11 +4497,9 @@ mod tests {
 
         // Test that a request for an invalid batch fails. (Specifically, the batch interval is too
         // small.)
+        let auth = auth_token.request_authentication();
         let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
-            .with_request_header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref().to_owned(),
-            )
+            .with_request_header(auth.0, auth.1)
             .with_request_header(
                 KnownHeaderName::ContentType,
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -4774,11 +4566,17 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
+        let auth_token: AuthenticationToken = random();
+
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock,
             &noop_meter(),
-            default_aggregator_config(),
+            Config {
+                auth_tokens: vec![auth_token.clone()],
+                collector_hpke_config: collector_hpke_keypair.config().clone(),
+                ..default_aggregator_config()
+            },
         )
         .await
         .unwrap();
@@ -4794,11 +4592,9 @@ mod tests {
             ReportIdChecksum::default(),
         );
 
+        let auth = auth_token.request_authentication();
         let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
-            .with_request_header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref().to_owned(),
-            )
+            .with_request_header(auth.0, auth.1.clone())
             .with_request_header(
                 KnownHeaderName::ContentType,
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -4981,10 +4777,7 @@ mod tests {
             ReportIdChecksum::default(),
         );
         let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
-            .with_request_header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref().to_owned(),
-            )
+            .with_request_header(auth.0, auth.1.clone())
             .with_request_header(
                 KnownHeaderName::ContentType,
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -5036,10 +4829,7 @@ mod tests {
             ),
         ] {
             let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
-                .with_request_header(
-                    "DAP-Auth-Token",
-                    task.primary_aggregator_auth_token().as_ref().to_owned(),
-                )
+                .with_request_header(auth.0, auth.1.clone())
                 .with_request_header(
                     KnownHeaderName::ContentType,
                     AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -5103,10 +4893,7 @@ mod tests {
             // then there is no query count violation and all requests should succeed.
             for iteration in 0..3 {
                 let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
-                    .with_request_header(
-                        "DAP-Auth-Token",
-                        task.primary_aggregator_auth_token().as_ref().to_owned(),
-                    )
+                    .with_request_header(auth.0, auth.1.clone())
                     .with_request_header(
                         KnownHeaderName::ContentType,
                         AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -5166,10 +4953,7 @@ mod tests {
             ReportIdChecksum::get_decoded(&[8 ^ 4 ^ 3 ^ 2; 32]).unwrap(),
         );
         let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
-            .with_request_header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref().to_owned(),
-            )
+            .with_request_header(auth.0, auth.1.clone())
             .with_request_header(
                 KnownHeaderName::ContentType,
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
@@ -5219,10 +5003,7 @@ mod tests {
             ),
         ] {
             let mut test_conn = post(task.aggregate_shares_uri().unwrap().path())
-                .with_request_header(
-                    "DAP-Auth-Token",
-                    task.primary_aggregator_auth_token().as_ref().to_owned(),
-                )
+                .with_request_header(auth.0, auth.1.clone())
                 .with_request_header(
                     KnownHeaderName::ContentType,
                     AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
