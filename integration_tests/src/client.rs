@@ -2,7 +2,7 @@ use crate::TaskParameters;
 use anyhow::anyhow;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_client::{aggregator_hpke_config, default_http_client, Client, ClientParameters};
-use janus_core::{time::RealClock, vdaf::VdafInstance};
+use janus_core::vdaf::VdafInstance;
 use janus_interop_binaries::{get_rust_log_level, ContainerLogsDropGuard};
 use janus_messages::{Duration, Role, TaskId};
 use prio::{
@@ -210,7 +210,7 @@ pub enum ClientImplementation<'d, V>
 where
     V: vdaf::Client<16>,
 {
-    InProcess { client: Client<V, RealClock> },
+    InProcess { client: Client<V> },
     Container(Box<ContainerClientImplementation<'d, V>>),
 }
 
@@ -240,7 +240,6 @@ where
         let client = Client::new(
             client_parameters,
             vdaf,
-            RealClock::default(),
             &http_client,
             leader_config,
             helper_config,

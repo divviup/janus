@@ -6,10 +6,7 @@ use fixed::types::extra::{U15, U31, U63};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32, FixedI64};
 use janus_client::ClientParameters;
-use janus_core::{
-    time::{MockClock, RealClock},
-    vdaf::VdafInstance,
-};
+use janus_core::vdaf::VdafInstance;
 use janus_interop_binaries::{
     install_tracing_subscriber,
     status::{ERROR, SUCCESS},
@@ -91,37 +88,23 @@ async fn handle_upload_generic<V: prio::vdaf::Client<16>>(
             .await
             .context("failed to fetch helper's HPKE configuration")?;
 
+    let client = janus_client::Client::new(
+        client_parameters,
+        vdaf_client,
+        http_client,
+        leader_hpke_config,
+        helper_hpke_config,
+    );
+
     match request.time {
         Some(timestamp) => {
-            let clock = MockClock::new(Time::from_seconds_since_epoch(timestamp));
-            let client = janus_client::Client::new(
-                client_parameters,
-                vdaf_client,
-                clock,
-                http_client,
-                leader_hpke_config,
-                helper_hpke_config,
-            );
             client
-                .upload(&measurement)
+                .upload_with_time(&measurement, &Time::from_seconds_since_epoch(timestamp))
                 .await
-                .context("report generation and upload failed")
         }
-        None => {
-            let client = janus_client::Client::new(
-                client_parameters,
-                vdaf_client,
-                RealClock::default(),
-                http_client,
-                leader_hpke_config,
-                helper_hpke_config,
-            );
-            client
-                .upload(&measurement)
-                .await
-                .context("report generation and upload failed")
-        }
+        None => client.upload(&measurement).await,
     }
+    .context("report generation and upload failed")
 }
 
 async fn handle_upload(
