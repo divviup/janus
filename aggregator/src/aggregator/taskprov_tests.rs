@@ -175,7 +175,7 @@ impl TaskprovTestCase {
         .with_id(task_id)
         .with_leader_aggregator_endpoint(Url::parse("https://leader.example.com/").unwrap())
         .with_helper_aggregator_endpoint(Url::parse("https://helper.example.com/").unwrap())
-        .with_vdaf_verify_key(vdaf_verify_key.clone())
+        .with_vdaf_verify_key(vdaf_verify_key)
         .with_max_batch_query_count(max_batch_query_count as u64)
         .with_task_expiration(Some(task_expiration))
         .with_report_expiry_age(peer_aggregator.report_expiry_age().copied())
