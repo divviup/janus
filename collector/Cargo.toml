@@ -28,7 +28,7 @@ fixed = { version = "1.23", optional = true }
 fixed-macro = { version = "1.1.1", optional = true }
 prio.workspace = true
 rand = { version = "0.8", features = ["min_const_gen"] }
-reqwest = { version = "0.11.20", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.11.21", default-features = false, features = ["rustls-tls", "json"] }
 retry-after = "0.3.1"
 thiserror.workspace = true
 tokio.workspace = true
