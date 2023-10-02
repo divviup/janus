@@ -25,7 +25,7 @@ tracing = "0.1.37"
 url = "2.4.1"
 
 [dev-dependencies]
-assert_matches = "1"
+assert_matches.workspace = true
 hex-literal = "0.4.1"
 janus_core = { workspace = true, features = ["test-util"]}
 mockito = "1.2.0"

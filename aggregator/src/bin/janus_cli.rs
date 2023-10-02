@@ -728,7 +728,11 @@ mod tests {
     aead_id: Aes128Gcm
     public_key: 8lAqZ7OfNV2Gi_9cNE6J9WRmPbO-k1UPtu2Bztd0-yc
   aggregator_auth_token:
+    type: Bearer
+    token: Y29sbGVjdG9yLWFiZjU0MDhlMmIxNjAxODMxNjI1YWYzOTU5MTA2NDU4
   collector_auth_token:
+    type: Bearer
+    token: Y29sbGVjdG9yLWFiZjU0MDhlMmIxNjAxODMxNjI1YWYzOTU5MTA2NDU4
   hpke_keys: []
 - peer_aggregator_endpoint: https://leader
   query_type: TimeInterval
@@ -748,7 +752,9 @@ mod tests {
     kdf_id: HkdfSha256
     aead_id: Aes128Gcm
     public_key: 8lAqZ7OfNV2Gi_9cNE6J9WRmPbO-k1UPtu2Bztd0-yc
-  aggregator_auth_token:
+  aggregator_auth_token_hash:
+    type: Bearer
+    hash: MJOoBO_ysLEuG_lv2C37eEOf1Ngetsr-Ers0ZYj4vdQ
   collector_auth_token:
   hpke_keys: []
 "#;

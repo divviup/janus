@@ -11,7 +11,10 @@ use janus_aggregator_core::{
     task::{self, AggregatorTask, AggregatorTaskParameters},
     SecretBytes,
 };
-use janus_core::{auth_tokens::AuthenticationToken, time::RealClock};
+use janus_core::{
+    auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
+    time::RealClock,
+};
 use janus_interop_binaries::{
     status::{ERROR, SUCCESS},
     AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole, HpkeConfigRegistry, Keyring,
@@ -73,7 +76,7 @@ async fn handle_add_task(
             }
         }
         (AggregatorRole::Helper, _) => AggregatorTaskParameters::Helper {
-            aggregator_auth_token: leader_authentication_token,
+            aggregator_auth_token_hash: AuthenticationTokenHash::from(&leader_authentication_token),
             collector_hpke_config,
         },
     };
