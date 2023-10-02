@@ -99,7 +99,7 @@ async fn handle_upload_generic<V: prio::vdaf::Client<16>>(
     match request.time {
         Some(timestamp) => {
             client
-                .upload_with_time(&measurement, &Time::from_seconds_since_epoch(timestamp))
+                .upload_with_time(&measurement, Time::from_seconds_since_epoch(timestamp))
                 .await
         }
         None => client.upload(&measurement).await,

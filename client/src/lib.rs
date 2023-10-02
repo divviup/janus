@@ -20,7 +20,7 @@ use prio::{
     vdaf,
 };
 use rand::random;
-use std::io::Cursor;
+use std::{convert::Infallible, fmt::Debug, io::Cursor, time::SystemTimeError};
 use url::Url;
 
 #[derive(Debug, thiserror::Error)]
@@ -41,6 +41,14 @@ pub enum Error {
     Hpke(#[from] janus_core::hpke::Error),
     #[error("unexpected server response {0}")]
     UnexpectedServerResponse(&'static str),
+    #[error("time conversion error: {0}")]
+    TimeConversion(#[from] SystemTimeError),
+}
+
+impl From<Infallible> for Error {
+    fn from(value: Infallible) -> Self {
+        match value {}
+    }
 }
 
 static CLIENT_USER_AGENT: &str = concat!(
@@ -264,20 +272,69 @@ impl<V: vdaf::Client<16>> Client<V> {
     /// measurement is sharded into two shares and then uploaded to the leader.
     #[tracing::instrument(skip(measurement), err)]
     pub async fn upload(&self, measurement: &V::Measurement) -> Result<(), Error> {
-        self.upload_with_time(measurement, &Clock::now(&RealClock::default()))
+        self.upload_with_time(measurement, Clock::now(&RealClock::default()))
             .await
     }
 
     /// Upload a [`Report`] to the leader, per §4.3.2 of draft-gpew-priv-ppm, and override the
     /// report's timestamp. The provided measurement is sharded into two shares and then uploaded to
     /// the leader.
+    ///
+    /// ```no_run
+    /// # use janus_client::{default_http_client, Client, ClientParameters};
+    /// # use janus_core::hpke::generate_hpke_config_and_private_key;
+    /// # use janus_messages::{Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId};
+    /// # use prio::vdaf::{prio3::Prio3};
+    /// # use rand::random;
+    /// #
+    /// # let client_parameters = ClientParameters::new(
+    /// #     random(),
+    /// #     "https://example.com/".parse().unwrap(),
+    /// #     "https://example.net/".parse().unwrap(),
+    /// #     Duration::from_seconds(3600),
+    /// # );
+    /// # let measurement = 1;
+    /// # let timestamp = 1_700_000_000;
+    /// # let leader_hpke_config = generate_hpke_config_and_private_key(
+    /// #     HpkeConfigId::from(0),
+    /// #     HpkeKemId::X25519HkdfSha256,
+    /// #     HpkeKdfId::HkdfSha256,
+    /// #     HpkeAeadId::Aes128Gcm,
+    /// # )
+    /// # .unwrap()
+    /// # .config()
+    /// # .clone();
+    /// # let helper_hpke_config = generate_hpke_config_and_private_key(
+    /// #     HpkeConfigId::from(0),
+    /// #     HpkeKemId::X25519HkdfSha256,
+    /// #     HpkeKdfId::HkdfSha256,
+    /// #     HpkeAeadId::Aes128Gcm,
+    /// # )
+    /// # .unwrap()
+    /// # .config()
+    /// # .clone();
+    /// # let vdaf = Prio3::new_count(2).unwrap();
+    /// let client = Client::new(
+    ///     client_parameters,
+    ///     vdaf,
+    ///     &default_http_client().unwrap(),
+    ///     leader_hpke_config,
+    ///     helper_hpke_config,
+    /// );
+    /// client.upload_with_time(&measurement, std::time::SystemTime::now());
+    /// client.upload_with_time(&measurement, janus_messages::Time::from_seconds_since_epoch(timestamp));
+    /// ```
     #[tracing::instrument(skip(measurement), err)]
-    pub async fn upload_with_time(
+    pub async fn upload_with_time<T>(
         &self,
         measurement: &V::Measurement,
-        time: &Time,
-    ) -> Result<(), Error> {
-        let report = self.prepare_report(measurement, time)?;
+        time: T,
+    ) -> Result<(), Error>
+    where
+        T: TryInto<Time> + Debug,
+        Error: From<<T as TryInto<Time>>::Error>,
+    {
+        let report = self.prepare_report(measurement, &time.try_into()?)?;
         let upload_endpoint = self
             .parameters
             .reports_resource_uri(&self.parameters.task_id)?;
