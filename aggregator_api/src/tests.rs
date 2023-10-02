@@ -24,7 +24,7 @@ use janus_aggregator_core::{
     SecretBytes,
 };
 use janus_core::{
-    auth_tokens::AuthenticationToken,
+    auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     hpke::{
         generate_hpke_config_and_private_key,
         test_util::{
@@ -86,7 +86,8 @@ async fn get_config() {
         concat!(
             r#"{"protocol":"DAP-07","dap_url":"https://dap.url/","role":"Either","vdafs":"#,
             r#"["Prio3Count","Prio3Sum","Prio3Histogram","Prio3CountVec","Prio3SumVec"],"#,
-            r#""query_types":["TimeInterval","FixedSize"]}"#
+            r#""query_types":["TimeInterval","FixedSize"],"#,
+            r#""features":["token-hash"]}"#,
         )
     );
 }
@@ -214,6 +215,7 @@ async fn post_task_bad_role() {
         .config()
         .clone(),
         aggregator_auth_token: Some(aggregator_auth_token),
+        collector_auth_token_hash: Some(AuthenticationTokenHash::from(&random())),
     };
     assert_response!(
         post("/tasks")
@@ -255,6 +257,7 @@ async fn post_task_unauthorized() {
         .config()
         .clone(),
         aggregator_auth_token: Some(aggregator_auth_token),
+        collector_auth_token_hash: Some(AuthenticationTokenHash::from(&random())),
     };
     assert_response!(
         post("/tasks")
@@ -297,6 +300,7 @@ async fn post_task_helper_no_optional_fields() {
         .config()
         .clone(),
         aggregator_auth_token: None,
+        collector_auth_token_hash: None,
     };
     let mut conn = post("/tasks")
         .with_request_body(serde_json::to_vec(&req).unwrap())
@@ -345,7 +349,7 @@ async fn post_task_helper_no_optional_fields() {
     assert_eq!(req.min_batch_size, got_task.min_batch_size());
     assert_eq!(&req.time_precision, got_task.time_precision());
     assert!(got_task.aggregator_auth_token().is_none());
-    assert!(got_task.collector_auth_token().is_none());
+    assert!(got_task.collector_auth_token_hash().is_none());
     assert_eq!(
         &req.collector_hpke_config,
         got_task.collector_hpke_config().unwrap()
@@ -386,6 +390,7 @@ async fn post_task_helper_with_aggregator_auth_token() {
         .config()
         .clone(),
         aggregator_auth_token: Some(aggregator_auth_token),
+        collector_auth_token_hash: None,
     };
     assert_response!(
         post("/tasks")
@@ -429,6 +434,8 @@ async fn post_task_idempotence() {
         .config()
         .clone(),
         aggregator_auth_token: Some(aggregator_auth_token.clone()),
+
+        collector_auth_token_hash: Some(AuthenticationTokenHash::from(&random())),
     };
 
     let post_task = || async {
@@ -488,7 +495,7 @@ async fn post_task_leader_all_optional_fields() {
 
     let vdaf_verify_key = SecretBytes::new(thread_rng().sample_iter(Standard).take(16).collect());
     let aggregator_auth_token = AuthenticationToken::DapAuth(random());
-
+    let collector_auth_token_hash = AuthenticationTokenHash::from(&random());
     // Verify: posting a task creates a new task which matches the request.
     let req = PostTaskReq {
         peer_aggregator_endpoint: "http://aggregator.endpoint".try_into().unwrap(),
@@ -510,6 +517,7 @@ async fn post_task_leader_all_optional_fields() {
         .config()
         .clone(),
         aggregator_auth_token: Some(aggregator_auth_token.clone()),
+        collector_auth_token_hash: Some(collector_auth_token_hash.clone()),
     };
     let mut conn = post("/tasks")
         .with_request_body(serde_json::to_vec(&req).unwrap())
@@ -559,7 +567,10 @@ async fn post_task_leader_all_optional_fields() {
         aggregator_auth_token.as_ref(),
         got_task.aggregator_auth_token().unwrap().as_ref()
     );
-    assert!(got_task.collector_auth_token().is_some());
+    assert_eq!(
+        got_task.collector_auth_token_hash().unwrap(),
+        &collector_auth_token_hash
+    );
 
     // ...and the response.
     assert_eq!(got_task_resp, TaskResp::try_from(&got_task).unwrap());
@@ -594,6 +605,7 @@ async fn post_task_leader_no_aggregator_auth_token() {
         .config()
         .clone(),
         aggregator_auth_token: None,
+        collector_auth_token_hash: Some(AuthenticationTokenHash::from(&random())),
     };
 
     assert_response!(
@@ -1555,11 +1567,12 @@ fn post_task_req_serialization() {
                 HpkePublicKey::from([0u8; 32].to_vec()),
             ),
             aggregator_auth_token: None,
+            collector_auth_token_hash: None,
         },
         &[
             Token::Struct {
                 name: "PostTaskReq",
-                len: 11,
+                len: 12,
             },
             Token::Str("peer_aggregator_endpoint"),
             Token::Str("https://example.com/"),
@@ -1631,6 +1644,8 @@ fn post_task_req_serialization() {
             Token::StructEnd,
             Token::Str("aggregator_auth_token"),
             Token::None,
+            Token::Str("collector_auth_token_hash"),
+            Token::None,
             Token::StructEnd,
         ],
     );
@@ -1663,11 +1678,14 @@ fn post_task_req_serialization() {
             aggregator_auth_token: Some(
                 AuthenticationToken::new_dap_auth_token_from_string("ZW5jb2RlZA").unwrap(),
             ),
+            collector_auth_token_hash: Some(AuthenticationTokenHash::from(
+                &AuthenticationToken::new_dap_auth_token_from_string("ZW5jb2RlZA").unwrap(),
+            )),
         },
         &[
             Token::Struct {
                 name: "PostTaskReq",
-                len: 11,
+                len: 12,
             },
             Token::Str("peer_aggregator_endpoint"),
             Token::Str("https://example.com/"),
@@ -1753,6 +1771,20 @@ fn post_task_req_serialization() {
             Token::Str("token"),
             Token::Str("ZW5jb2RlZA"),
             Token::StructEnd,
+            Token::Str("collector_auth_token_hash"),
+            Token::Some,
+            Token::Struct {
+                name: "AuthenticationTokenHash",
+                len: 2,
+            },
+            Token::Str("type"),
+            Token::UnitVariant {
+                name: "AuthenticationTokenHash",
+                variant: "DapAuth",
+            },
+            Token::Str("hash"),
+            Token::Str("hT_ixzv_X1CmJmHGT7jYSEBbdB-CN9H8WxAvjgv4rms"),
+            Token::StructEnd,
             Token::StructEnd,
         ],
     );
@@ -1793,10 +1825,10 @@ fn task_resp_serialization() {
                 "Y29sbGVjdG9yLWFiY2RlZjAw",
             )
             .unwrap(),
-            collector_auth_token: AuthenticationToken::new_dap_auth_token_from_string(
-                "Y29sbGVjdG9yLWFiY2RlZjAw",
-            )
-            .unwrap(),
+            collector_auth_token_hash: AuthenticationTokenHash::from(
+                &AuthenticationToken::new_dap_auth_token_from_string("Y29sbGVjdG9yLWFiY2RlZjAw")
+                    .unwrap(),
+            ),
             collector_hpke_config: HpkeConfig::new(
                 HpkeConfigId::from(7),
                 HpkeKemId::X25519HkdfSha256,
@@ -1812,7 +1844,7 @@ fn task_resp_serialization() {
         &[
             Token::Struct {
                 name: "TaskResp",
-                len: 16,
+                len: 15,
             },
             Token::Str("task_id"),
             Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
@@ -1863,20 +1895,6 @@ fn task_resp_serialization() {
             Token::U64(60),
             Token::Str("aggregator_auth_token"),
             Token::None,
-            Token::Str("collector_auth_token"),
-            Token::Some,
-            Token::Struct {
-                name: "AuthenticationToken",
-                len: 2,
-            },
-            Token::Str("type"),
-            Token::UnitVariant {
-                name: "AuthenticationToken",
-                variant: "DapAuth",
-            },
-            Token::Str("token"),
-            Token::Str("Y29sbGVjdG9yLWFiY2RlZjAw"),
-            Token::StructEnd,
             Token::Str("collector_hpke_config"),
             Token::Struct {
                 name: "HpkeConfig",

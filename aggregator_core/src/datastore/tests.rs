@@ -287,7 +287,7 @@ async fn put_task_invalid_collector_auth_tokens(ephemeral_datastore: EphemeralDa
                 let err = tx
                     .query_one(
                         &format!(
-                            "UPDATE tasks SET collector_auth_token = {auth_token},
+                            "UPDATE tasks SET collector_auth_token_hash = {auth_token},
                             collector_auth_token_type = {auth_token_type}"
                         ),
                         &[],

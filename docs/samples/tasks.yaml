@@ -70,15 +70,18 @@
     type: "DapAuth"
     token: "YWdncmVnYXRvci0yMzUyNDJmOTk0MDZjNGZkMjhiODIwYzMyZWFiMGY2OA"
 
-  # Authentication token shared between the leader and the collector, and used
-  # to authenticate collector-to-leader requests. For leader tasks, this has the
-  # same format as `aggregator_auth_tokens` above. For helper tasks, this will
-  # be an empty list instead.
-  # Bearer token values are encoded in unpadded base64url.
-  # This example decodes to "collector-abf5408e2b1601831625af3959106458".
-  collector_auth_token:
+  # Authentication token hash used by the leader to authenticate requests
+  # received from the collector. This value should only be included in
+  # leader-role tasks.
+  #
+  # The `type` corresponds to the `type` of an `aggregator_auth_token` stanza,
+  # and the leader will only accept the auth token if it is presented in a
+  # request in the indicated manner.
+  #
+  # `hash` is the SHA-256 hash of the token value, encoded in unpadded base64url.
+  collector_auth_token_hash:
     type: "Bearer"
-    token: "Y29sbGVjdG9yLWFiZjU0MDhlMmIxNjAxODMxNjI1YWYzOTU5MTA2NDU4"
+    hash: "MJOoBO_ysLEuG_lv2C37eEOf1Ngetsr-Ers0ZYj4vdQ"
 
   # This aggregator's HPKE keypairs. The first keypair's HPKE configuration will
   # be served via the `hpke_config` DAP endpoint. All keypairs will be tried
