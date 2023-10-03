@@ -338,7 +338,7 @@ where
 #[derivative(Debug)]
 pub struct Collector<V: vdaf::Collector> {
     parameters: CollectorParameters,
-    vdaf_collector: V,
+    vdaf: V,
     #[derivative(Debug = "ignore")]
     http_client: reqwest::Client,
 }
@@ -349,12 +349,12 @@ impl<V: vdaf::Collector> Collector<V> {
     /// aggregator.
     pub fn new(
         parameters: CollectorParameters,
-        vdaf_collector: V,
+        vdaf: V,
         http_client: reqwest::Client,
     ) -> Collector<V> {
         Collector {
             parameters,
-            vdaf_collector,
+            vdaf,
             http_client,
         }
     }
@@ -498,7 +498,7 @@ impl<V: vdaf::Collector> Collector<V> {
                 .get_encoded(),
             )?;
             V::AggregateShare::get_decoded_with_param(
-                &(&self.vdaf_collector, &job.aggregation_parameter),
+                &(&self.vdaf, &job.aggregation_parameter),
                 &bytes,
             )
             .map_err(|_err| Error::AggregateShareDecode)
@@ -509,11 +509,9 @@ impl<V: vdaf::Collector> Collector<V> {
             .report_count()
             .try_into()
             .map_err(|_| Error::ReportCountOverflow)?;
-        let aggregate_result = self.vdaf_collector.unshard(
-            &job.aggregation_parameter,
-            aggregate_shares,
-            report_count,
-        )?;
+        let aggregate_result =
+            self.vdaf
+                .unshard(&job.aggregation_parameter, aggregate_shares, report_count)?;
 
         Ok(PollResult::CollectionResult(Collection {
             partial_batch_selector: collect_response.partial_batch_selector().clone(),
@@ -637,10 +635,7 @@ mod tests {
     };
     use retry_after::RetryAfter;
 
-    fn setup_collector<V: vdaf::Collector>(
-        server: &mut mockito::Server,
-        vdaf_collector: V,
-    ) -> Collector<V> {
+    fn setup_collector<V: vdaf::Collector>(server: &mut mockito::Server, vdaf: V) -> Collector<V> {
         let server_url = Url::parse(&server.url()).unwrap();
         let hpke_keypair = generate_test_hpke_config_and_private_key();
         let parameters = CollectorParameters::new(
@@ -651,7 +646,7 @@ mod tests {
         )
         .with_http_request_backoff(test_http_request_exponential_backoff())
         .with_collect_poll_backoff(test_http_request_exponential_backoff());
-        Collector::new(parameters, vdaf_collector, default_http_client().unwrap())
+        Collector::new(parameters, vdaf, default_http_client().unwrap())
     }
 
     fn collection_uri_regex_matcher(task_id: &TaskId) -> Matcher {
