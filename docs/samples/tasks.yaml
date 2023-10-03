@@ -74,9 +74,8 @@
   # received from the collector. This value should only be included in
   # leader-role tasks.
   #
-  # The `type` corresponds to the `type` of an `aggregator_auth_token` stanza,
-  # and the leader will only accept the auth token if it is presented in a
-  # request in the indicated manner.
+  # The `type` determines how tokens are parsed from HTTP requests, and it has
+  # the same set of allowable values as the `type` of an `aggregator_auth_token` stanza.
   #
   # `hash` is the SHA-256 hash of the token value, encoded in unpadded base64url.
   collector_auth_token_hash:
