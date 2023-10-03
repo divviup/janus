@@ -145,11 +145,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
             .with_max_elapsed_time(Some(time::Duration::from_secs(60)))
             .build(),
     );
-    let collector = Collector::new(
-        collector_params,
-        vdaf,
-        janus_collector::default_http_client().unwrap(),
-    );
+    let collector = Collector::new(collector_params, vdaf).unwrap();
 
     // Send a collect request and verify that we got the correct result.
     match &task_parameters.query_type {

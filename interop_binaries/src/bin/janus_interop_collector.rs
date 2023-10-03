@@ -191,7 +191,9 @@ where
     V::AggregationParam: Send + Sync + 'static,
     Q: QueryType,
 {
-    let collector = Collector::new(collector_params, vdaf, http_client.clone());
+    let collector = Collector::builder(collector_params, vdaf)
+        .with_http_client(http_client.clone())
+        .build()?;
     let agg_param = V::AggregationParam::get_decoded(agg_param_encoded)?;
     let handle = tokio::spawn(async move {
         let collect_result = collector.collect(query, &agg_param).await?;

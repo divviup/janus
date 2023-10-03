@@ -333,6 +333,45 @@ where
 {
 }
 
+/// Builder for configuring a [`Collector`].
+pub struct CollectorBuilder<V: vdaf::Collector> {
+    parameters: CollectorParameters,
+    vdaf: V,
+    http_client: Option<reqwest::Client>,
+}
+
+impl<V: vdaf::Collector> CollectorBuilder<V> {
+    /// Construct a [`CollectorBuilder`] from required DAP task parameters and an implementation of
+    /// the task's VDAF.
+    pub fn new(parameters: CollectorParameters, vdaf: V) -> Self {
+        Self {
+            parameters,
+            vdaf,
+            http_client: None,
+        }
+    }
+
+    /// Finalize construction of a [`Collector`].
+    pub fn build(self) -> Result<Collector<V>, Error> {
+        let http_client = if let Some(http_client) = self.http_client {
+            http_client
+        } else {
+            default_http_client()?
+        };
+        Ok(Collector {
+            parameters: self.parameters,
+            vdaf: self.vdaf,
+            http_client,
+        })
+    }
+
+    /// Provide an HTTPS client for the collector.
+    pub fn with_http_client(mut self, http_client: reqwest::Client) -> Self {
+        self.http_client = Some(http_client);
+        self
+    }
+}
+
 /// A DAP collector.
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -344,19 +383,16 @@ pub struct Collector<V: vdaf::Collector> {
 }
 
 impl<V: vdaf::Collector> Collector<V> {
-    /// Construct a new collector. This requires certain DAP task parameters, an implementation of
-    /// the task's VDAF, and a [`reqwest::Client`] that will be used to communicate with the leader
-    /// aggregator.
-    pub fn new(
-        parameters: CollectorParameters,
-        vdaf: V,
-        http_client: reqwest::Client,
-    ) -> Collector<V> {
-        Collector {
-            parameters,
-            vdaf,
-            http_client,
-        }
+    /// Construct a new collector. This requires certain DAP task parameters and an implementation of
+    /// the task's VDAF.
+    pub fn new(parameters: CollectorParameters, vdaf: V) -> Result<Collector<V>, Error> {
+        Self::builder(parameters, vdaf).build()
+    }
+
+    /// Construct a [`CollectorBuilder`] from required DAP task parameters and an implementation of
+    /// the task's VDAF.
+    pub fn builder(parameters: CollectorParameters, vdaf: V) -> CollectorBuilder<V> {
+        CollectorBuilder::new(parameters, vdaf)
     }
 
     /// Send a collect request to the leader aggregator.
@@ -599,10 +635,7 @@ impl<V: vdaf::Collector> Collector<V> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        default_http_client, Collection, CollectionJob, Collector, CollectorParameters, Error,
-        PollResult,
-    };
+    use crate::{Collection, CollectionJob, Collector, CollectorParameters, Error, PollResult};
     use assert_matches::assert_matches;
     use chrono::{NaiveDateTime, TimeZone, Utc};
     #[cfg(feature = "fpvec_bounded_l2")]
@@ -646,7 +679,7 @@ mod tests {
         )
         .with_http_request_backoff(test_http_request_exponential_backoff())
         .with_collect_poll_backoff(test_http_request_exponential_backoff());
-        Collector::new(parameters, vdaf, default_http_client().unwrap())
+        Collector::new(parameters, vdaf).unwrap()
     }
 
     fn collection_uri_regex_matcher(task_id: &TaskId) -> Matcher {
@@ -1161,7 +1194,7 @@ mod tests {
         )
         .with_http_request_backoff(test_http_request_exponential_backoff())
         .with_collect_poll_backoff(test_http_request_exponential_backoff());
-        let collector = Collector::new(parameters, vdaf, default_http_client().unwrap());
+        let collector = Collector::new(parameters, vdaf).unwrap();
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000),

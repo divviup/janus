@@ -535,7 +535,9 @@ async fn run_collection_generic<V: vdaf::Collector, Q: QueryTypeExt>(
 where
     V::AggregateResult: Debug,
 {
-    let collector = Collector::new(parameters, vdaf, http_client);
+    let collector = Collector::builder(parameters, vdaf)
+        .with_http_client(http_client)
+        .build()?;
     let collection = collector.collect(query, agg_param).await?;
     if !Q::IS_PARTIAL_BATCH_SELECTOR_TRIVIAL {
         println!(
