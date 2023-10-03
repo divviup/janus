@@ -205,7 +205,6 @@ impl CollectorParameters {
 /// Construct a [`reqwest::Client`] suitable for use in a DAP [`Collector`].
 pub fn default_http_client() -> Result<reqwest::Client, Error> {
     Ok(reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
         .user_agent(COLLECTOR_USER_AGENT)
         .build()?)
 }
@@ -346,8 +345,8 @@ pub struct Collector<V: vdaf::Collector> {
 
 impl<V: vdaf::Collector> Collector<V> {
     /// Construct a new collector. This requires certain DAP task parameters, an implementation of
-    /// the task's VDAF, and a [`reqwest::Client`], configured to never follow redirects, that will
-    /// be used to communicate with the leader aggregator.
+    /// the task's VDAF, and a [`reqwest::Client`] that will be used to communicate with the leader
+    /// aggregator.
     pub fn new(
         parameters: CollectorParameters,
         vdaf_collector: V,
@@ -395,7 +394,7 @@ impl<V: vdaf::Collector> Collector<V> {
                 if status.is_client_error() || status.is_server_error() {
                     return Err(Error::from_http_response(response).await);
                 } else if status != StatusCode::CREATED {
-                    // Incorrect success/redirect status code:
+                    // Incorrect success status code:
                     return Err(Error::Http(Box::new(status.into())));
                 }
             }
