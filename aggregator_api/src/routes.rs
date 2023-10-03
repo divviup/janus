@@ -49,7 +49,7 @@ pub(super) async fn get_config(
             SupportedQueryType::FixedSize,
         ],
         // Unconditionally indicate to divviup-api that we support collector auth token hashes
-        features: &["token-hash"],
+        features: &["TokenHash"],
     })
 }
 
