@@ -600,6 +600,7 @@ async fn run(
 }
 
 #[tokio::test]
+#[ignore = "subscriber-01 cannot operate as a leader"]
 async fn e2e_prio3_count() {
     let result = run(
         QueryKind::TimeInterval,
@@ -631,6 +632,7 @@ async fn e2e_prio3_count() {
 }
 
 #[tokio::test]
+#[ignore = "subscriber-01 cannot operate as a leader"]
 async fn e2e_prio3_sum() {
     let result = run(
         QueryKind::TimeInterval,
@@ -651,6 +653,7 @@ async fn e2e_prio3_sum() {
 }
 
 #[tokio::test]
+#[ignore = "subscriber-01 cannot operate as a leader"]
 async fn e2e_prio3_histogram() {
     let result = run(
         QueryKind::TimeInterval,
@@ -682,6 +685,7 @@ async fn e2e_prio3_histogram() {
 }
 
 #[tokio::test]
+#[ignore = "subscriber-01 cannot operate as a leader"]
 async fn e2e_prio3_count_vec() {
     let result = run(
         QueryKind::TimeInterval,
@@ -704,6 +708,7 @@ async fn e2e_prio3_count_vec() {
 }
 
 #[tokio::test]
+#[ignore = "subscriber-01 cannot operate as a leader"]
 async fn e2e_prio3_count_fixed_size() {
     let result = run(
         QueryKind::FixedSize,
