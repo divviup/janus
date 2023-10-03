@@ -932,7 +932,7 @@ impl<C: Clock> Transaction<'_, C> {
                        AND client_reports.client_timestamp >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)) AS report_count,
                     (SELECT COUNT(*) FROM aggregation_jobs
                      JOIN tasks ON tasks.id = aggregation_jobs.task_id
-                     RIGHT JOIN report_aggregations ON report_aggregations.aggregation_job_id = aggregation_jobs.id
+                     RIGHT JOIN report_aggregations ON report_aggregations.aggregation_job_id = aggregation_jobs.id AND report_aggregations.task_id = tasks.id
                      WHERE tasks.task_id = $1
                        AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)) AS report_aggregation_count",
             )
@@ -1342,7 +1342,7 @@ impl<C: Clock> Transaction<'_, C> {
                 "SELECT COUNT(DISTINCT report_aggregations.client_report_id) AS count
                 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
-                JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                JOIN tasks ON tasks.id = aggregation_jobs.task_id AND tasks.id = report_aggregations.task_id
                 WHERE tasks.task_id = $1
                   AND aggregation_jobs.batch_id = $2
                   AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
@@ -1888,6 +1888,7 @@ impl<C: Clock> Transaction<'_, C> {
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id
                 WHERE tasks.task_id = $1
+                  AND report_aggregations.task_id = tasks.id
                   AND report_aggregations.client_report_id = $2
                   AND aggregation_jobs.aggregation_param = $3
                   AND aggregation_jobs.aggregation_job_id != $4
@@ -1935,7 +1936,7 @@ impl<C: Clock> Transaction<'_, C> {
                     report_aggregations.last_prep_resp
                 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
-                JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                JOIN tasks ON tasks.id = aggregation_jobs.task_id AND tasks.id = report_aggregations.task_id
                 WHERE tasks.task_id = $1
                   AND aggregation_jobs.aggregation_job_id = $2
                   AND report_aggregations.client_report_id = $3
@@ -1990,7 +1991,7 @@ impl<C: Clock> Transaction<'_, C> {
                     report_aggregations.error_code, report_aggregations.last_prep_resp
                 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
-                JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                JOIN tasks ON tasks.id = aggregation_jobs.task_id AND tasks.id = report_aggregations.task_id
                 WHERE tasks.task_id = $1
                   AND aggregation_jobs.aggregation_job_id = $2
                   AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
@@ -2045,7 +2046,7 @@ impl<C: Clock> Transaction<'_, C> {
                     report_aggregations.last_prep_resp
                 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
-                JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                JOIN tasks ON tasks.id = aggregation_jobs.task_id AND tasks.id = report_aggregations.task_id
                 WHERE tasks.task_id = $1
                   AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
@@ -2188,9 +2189,9 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "INSERT INTO report_aggregations
-                    (aggregation_job_id, client_report_id, client_timestamp, ord, state,
+                    (task_id, aggregation_job_id, client_report_id, client_timestamp, ord, state,
                     helper_prep_state, leader_prep_transition, error_code, last_prep_resp)
-                SELECT aggregation_jobs.id, $3, $4, $5, $6, $7, $8, $9, $10
+                SELECT tasks.id, aggregation_jobs.id, $3, $4, $5, $6, $7, $8, $9, $10
                 FROM aggregation_jobs
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id
                 WHERE tasks.task_id = $1
@@ -2241,6 +2242,7 @@ impl<C: Clock> Transaction<'_, C> {
                 SET state = $1, helper_prep_state = $2, leader_prep_transition = $3, error_code = $4, last_prep_resp = $5
                 FROM aggregation_jobs, tasks
                 WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
+                  AND report_aggregations.task_id = tasks.id
                   AND aggregation_jobs.task_id = tasks.id
                   AND aggregation_jobs.aggregation_job_id = $6
                   AND tasks.task_id = $7
@@ -3662,6 +3664,7 @@ impl<C: Clock> Transaction<'_, C> {
                      JOIN aggregation_jobs
                         ON report_aggregations.aggregation_job_id = aggregation_jobs.id
                      WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                     AND report_aggregations.task_id = aggregation_jobs.task_id
                      AND aggregation_jobs.batch_id = $2
                      GROUP BY report_aggregations.state)
                 SELECT
@@ -4025,7 +4028,8 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<(), Error> {
         let stmt = self
             .prepare_cached(
-                "WITH aggregation_jobs_to_delete AS (
+                "WITH task_id AS (SELECT id FROM tasks WHERE task_id = $1),
+                aggregation_jobs_to_delete AS (
                     SELECT aggregation_jobs.id FROM aggregation_jobs
                     JOIN tasks ON tasks.id = aggregation_jobs.task_id
                     WHERE tasks.task_id = $1
@@ -4035,6 +4039,7 @@ impl<C: Clock> Transaction<'_, C> {
                 deleted_report_aggregations AS (
                     DELETE FROM report_aggregations
                     WHERE aggregation_job_id IN (SELECT id FROM aggregation_jobs_to_delete)
+                    AND task_id IN (SELECT id FROM task_id)
                 )
                 DELETE FROM aggregation_jobs
                 WHERE id IN (SELECT id FROM aggregation_jobs_to_delete)",

@@ -187,6 +187,7 @@ CREATE TYPE REPORT_AGGREGATION_STATE AS ENUM(
 -- therefore have multiple associated report aggregations.
 CREATE TABLE report_aggregations(
     id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
+    task_id             BIGINT NOT NULL,                    -- ID of related task
     aggregation_job_id  BIGINT NOT NULL,                    -- the aggregation job ID this report aggregation is associated with
     client_report_id    BYTEA NOT NULL,                     -- the client report ID this report aggregation is associated with
     client_timestamp    TIMESTAMP NOT NULL,                 -- the client timestamp this report aggregation is associated with
@@ -197,7 +198,8 @@ CREATE TABLE report_aggregations(
     error_code          SMALLINT,                           -- error code corresponding to a DAP ReportShareError value; null if in a state other than FAILED
     last_prep_resp      BYTEA,                              -- the last PrepareResp message sent to the Leader, to assist in replay (opaque DAP message, populated for Helper only)
 
-    CONSTRAINT report_aggregations_unique_ord UNIQUE(aggregation_job_id, ord),
+    CONSTRAINT report_aggregations_unique_ord UNIQUE(task_id, aggregation_job_id, ord),
+    CONSTRAINT fk_task_id FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE,
     CONSTRAINT fk_aggregation_job_id FOREIGN KEY(aggregation_job_id) REFERENCES aggregation_jobs(id) ON DELETE CASCADE
 );
 CREATE INDEX report_aggregations_aggregation_job_id_index ON report_aggregations(aggregation_job_id);
