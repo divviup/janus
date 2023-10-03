@@ -236,7 +236,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
         )?;
         Ok(Client {
             parameters: self.parameters,
-            vdaf_client: self.vdaf,
+            vdaf: self.vdaf,
             http_client,
             leader_hpke_config,
             helper_hpke_config,
@@ -257,7 +257,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
         };
         Ok(Client {
             parameters: self.parameters,
-            vdaf_client: self.vdaf,
+            vdaf: self.vdaf,
             http_client,
             leader_hpke_config,
             helper_hpke_config,
@@ -281,7 +281,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
 #[derive(Debug)]
 pub struct Client<V: vdaf::Client<16>> {
     parameters: ClientParameters,
-    vdaf_client: V,
+    vdaf: V,
     http_client: reqwest::Client,
     leader_hpke_config: HpkeConfig,
     helper_hpke_config: HpkeConfig,
@@ -294,14 +294,14 @@ impl<V: vdaf::Client<16>> Client<V> {
         leader_aggregator_endpoint: Url,
         helper_aggregator_endpoint: Url,
         time_precision: Duration,
-        vdaf_client: V,
+        vdaf: V,
     ) -> Result<Self, Error> {
         ClientBuilder::new(
             task_id,
             leader_aggregator_endpoint,
             helper_aggregator_endpoint,
             time_precision,
-            vdaf_client,
+            vdaf,
         )
         .build()
         .await
@@ -314,7 +314,7 @@ impl<V: vdaf::Client<16>> Client<V> {
         leader_aggregator_endpoint: Url,
         helper_aggregator_endpoint: Url,
         time_precision: Duration,
-        vdaf_client: V,
+        vdaf: V,
         leader_hpke_config: HpkeConfig,
         helper_hpke_config: HpkeConfig,
     ) -> Result<Self, Error> {
@@ -323,7 +323,7 @@ impl<V: vdaf::Client<16>> Client<V> {
             leader_aggregator_endpoint,
             helper_aggregator_endpoint,
             time_precision,
-            vdaf_client,
+            vdaf,
         )
         .build_with_hpke_configs(leader_hpke_config, helper_hpke_config)
     }
@@ -335,14 +335,14 @@ impl<V: vdaf::Client<16>> Client<V> {
         leader_aggregator_endpoint: Url,
         helper_aggregator_endpoint: Url,
         time_precision: Duration,
-        vdaf_client: V,
+        vdaf: V,
     ) -> ClientBuilder<V> {
         ClientBuilder::new(
             task_id,
             leader_aggregator_endpoint,
             helper_aggregator_endpoint,
             time_precision,
-            vdaf_client,
+            vdaf,
         )
     }
 
@@ -350,8 +350,7 @@ impl<V: vdaf::Client<16>> Client<V> {
     /// to be uploaded.
     fn prepare_report(&self, measurement: &V::Measurement, time: &Time) -> Result<Report, Error> {
         let report_id: ReportId = random();
-        let (public_share, input_shares) =
-            self.vdaf_client.shard(measurement, report_id.as_ref())?;
+        let (public_share, input_shares) = self.vdaf.shard(measurement, report_id.as_ref())?;
         assert_eq!(input_shares.len(), 2); // DAP only supports VDAFs using two aggregators.
 
         let time = time
@@ -484,14 +483,14 @@ mod tests {
     use rand::random;
     use url::Url;
 
-    fn setup_client<V: vdaf::Client<16>>(server: &mockito::Server, vdaf_client: V) -> Client<V> {
+    fn setup_client<V: vdaf::Client<16>>(server: &mockito::Server, vdaf: V) -> Client<V> {
         let server_url = Url::parse(&server.url()).unwrap();
         Client::builder(
             random(),
             server_url.clone(),
             server_url,
             Duration::from_seconds(1),
-            vdaf_client,
+            vdaf,
         )
         .with_backoff(test_http_request_exponential_backoff())
         .build_with_hpke_configs(
