@@ -5,14 +5,13 @@ use clap::{value_parser, Arg, Command};
 use fixed::types::extra::{U15, U31, U63};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32, FixedI64};
-use janus_client::ClientParameters;
 use janus_core::vdaf::VdafInstance;
 use janus_interop_binaries::{
     install_tracing_subscriber,
     status::{ERROR, SUCCESS},
     ErrorHandler, NumberAsString, VdafObject,
 };
-use janus_messages::{Duration, Role, TaskId, Time};
+use janus_messages::{Duration, TaskId, Time};
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded;
 use prio::{codec::Decode, vdaf::prio3::Prio3};
@@ -76,25 +75,18 @@ async fn handle_upload_generic<V: prio::vdaf::Client<16>>(
         .context("invalid base64url content in \"task_id\"")?;
     let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
     let time_precision = Duration::from_seconds(request.time_precision);
-    let client_parameters =
-        ClientParameters::new(task_id, request.leader, request.helper, time_precision);
 
-    let leader_hpke_config =
-        janus_client::aggregator_hpke_config(&client_parameters, &Role::Leader, http_client)
-            .await
-            .context("failed to fetch leader's HPKE configuration")?;
-    let helper_hpke_config =
-        janus_client::aggregator_hpke_config(&client_parameters, &Role::Helper, http_client)
-            .await
-            .context("failed to fetch helper's HPKE configuration")?;
-
-    let client = janus_client::Client::new(
-        client_parameters,
+    let client = janus_client::Client::builder(
+        task_id,
+        request.leader,
+        request.helper,
+        time_precision,
         vdaf_client,
-        http_client,
-        leader_hpke_config,
-        helper_hpke_config,
-    );
+    )
+    .with_http_client(http_client.clone())
+    .build()
+    .await
+    .context("failed to construct client")?;
 
     match request.time {
         Some(timestamp) => {
