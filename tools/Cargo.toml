@@ -30,4 +30,4 @@ assert_matches = "1"
 cfg-if = "1.0.0"
 janus_core = { workspace = true, features = ["test-util"] }
 rand = "0.8"
-trycmd = "0.14.17"
+trycmd = "0.14.18"
