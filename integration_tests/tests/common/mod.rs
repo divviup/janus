@@ -135,8 +135,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
         task_parameters.task_id,
         leader_endpoint,
         task_parameters.collector_auth_token.clone(),
-        task_parameters.collector_hpke_keypair.config().clone(),
-        task_parameters.collector_hpke_keypair.private_key().clone(),
+        task_parameters.collector_hpke_keypair.clone(),
     )
     .with_http_request_backoff(test_http_request_exponential_backoff())
     .with_collect_poll_backoff(

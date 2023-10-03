@@ -979,8 +979,7 @@ async fn taskprov_aggregate_share() {
     let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut test_conn).await;
 
     hpke::open(
-        test.collector_hpke_keypair.config(),
-        test.collector_hpke_keypair.private_key(),
+        &test.collector_hpke_keypair,
         &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
         aggregate_share_resp.encrypted_aggregate_share(),
         &AggregateShareAad::new(
@@ -1116,8 +1115,7 @@ async fn end_to_end() {
     let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut test_conn).await;
 
     let plaintext = hpke::open(
-        test.collector_hpke_keypair.config(),
-        test.collector_hpke_keypair.private_key(),
+        &test.collector_hpke_keypair,
         &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
         aggregate_share_resp.encrypted_aggregate_share(),
         &AggregateShareAad::new(

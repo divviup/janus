@@ -439,8 +439,7 @@ where
         options.task_id,
         options.leader,
         authentication.clone(),
-        hpke_keypair.config().clone(),
-        hpke_keypair.private_key().clone(),
+        hpke_keypair,
     );
     let http_client = default_http_client().map_err(|err| Error::Anyhow(err.into()))?;
     match (options.vdaf, options.length, options.bits) {

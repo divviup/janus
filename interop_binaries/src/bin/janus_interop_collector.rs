@@ -235,8 +235,7 @@ async fn handle_collection_start(
         task_id,
         task_state.leader_url.clone(),
         task_state.auth_token.clone(),
-        task_state.keypair.config().clone(),
-        task_state.keypair.private_key().clone(),
+        task_state.keypair.clone(),
     )
     .with_http_request_backoff(
         ExponentialBackoffBuilder::new()
