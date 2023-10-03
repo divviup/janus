@@ -367,8 +367,7 @@ async fn collection_job_success_fixed_size() {
         );
 
         let decrypted_leader_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_keypair().config(),
-            test_case.task.collector_hpke_keypair().private_key(),
+            test_case.task.collector_hpke_keypair(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
             collect_resp.leader_encrypted_aggregate_share(),
             &AggregateShareAad::new(
@@ -386,8 +385,7 @@ async fn collection_job_success_fixed_size() {
         );
 
         let decrypted_helper_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_keypair().config(),
-            test_case.task.collector_hpke_keypair().private_key(),
+            test_case.task.collector_hpke_keypair(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
             collect_resp.helper_encrypted_aggregate_share(),
             &AggregateShareAad::new(

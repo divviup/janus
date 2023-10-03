@@ -186,19 +186,17 @@ pub fn seal(
     ))
 }
 
-/// Decrypt `ciphertext` using the provided `recipient_config` & `recipient_private_key`, and return
-/// the plaintext. The `application_info` and `associated_data` must match what was provided to
-/// [`seal()`] exactly.
+/// Decrypt `ciphertext` using the provided `recipient_keypair`, and return the plaintext. The
+/// `application_info` and `associated_data` must match what was provided to [`seal()`] exactly.
 pub fn open(
-    recipient_config: &HpkeConfig,
-    recipient_private_key: &HpkePrivateKey,
+    recipient_keypair: &HpkeKeypair,
     application_info: &HpkeApplicationInfo,
     ciphertext: &HpkeCiphertext,
     associated_data: &[u8],
 ) -> Result<Vec<u8>, Error> {
-    hpke_dispatch_config_from_hpke_config(recipient_config)?
+    hpke_dispatch_config_from_hpke_config(recipient_keypair.config())?
         .base_mode_open(
-            &recipient_private_key.0,
+            &recipient_keypair.private_key().0,
             ciphertext.encapsulated_key(),
             &application_info.0,
             ciphertext.payload(),
@@ -370,8 +368,7 @@ mod tests {
         .unwrap();
 
         let plaintext = open(
-            hpke_keypair.config(),
-            hpke_keypair.private_key(),
+            &hpke_keypair,
             &application_info,
             &ciphertext,
             associated_data,
@@ -400,8 +397,7 @@ mod tests {
         // Attempt to decrypt with different private key, and verify this fails.
         let wrong_hpke_keypair = generate_test_hpke_config_and_private_key();
         open(
-            wrong_hpke_keypair.config(),
-            wrong_hpke_keypair.private_key(),
+            &wrong_hpke_keypair,
             &application_info,
             &ciphertext,
             associated_data,
@@ -428,8 +424,7 @@ mod tests {
         let wrong_application_info =
             HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Client, &Role::Leader);
         open(
-            hpke_keypair.config(),
-            hpke_keypair.private_key(),
+            &hpke_keypair,
             &wrong_application_info,
             &ciphertext,
             associated_data,
@@ -456,8 +451,7 @@ mod tests {
         // Sender and receiver must agree on AAD for each message.
         let wrong_associated_data = b"wrong associated data";
         open(
-            hpke_keypair.config(),
-            hpke_keypair.private_key(),
+            &hpke_keypair,
             &application_info,
             &ciphertext,
             wrong_associated_data,
@@ -483,13 +477,19 @@ mod tests {
             HpkePublicKey::from(public_key),
         );
         let hpke_private_key = HpkePrivateKey::new(private_key);
+        let hpke_keypair = HpkeKeypair::new(hpke_config, hpke_private_key);
         let application_info =
             HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
 
-        let ciphertext = seal(&hpke_config, &application_info, MESSAGE, ASSOCIATED_DATA).unwrap();
+        let ciphertext = seal(
+            hpke_keypair.config(),
+            &application_info,
+            MESSAGE,
+            ASSOCIATED_DATA,
+        )
+        .unwrap();
         let plaintext = open(
-            &hpke_config,
-            &hpke_private_key,
+            &hpke_keypair,
             &application_info,
             &ciphertext,
             ASSOCIATED_DATA,
@@ -594,6 +594,7 @@ mod tests {
                     HpkePublicKey::from(test_vector.serialized_public_key.clone()),
                 );
                 let hpke_private_key = HpkePrivateKey(test_vector.serialized_private_key.clone());
+                let hpke_keypair = HpkeKeypair::new(hpke_config, hpke_private_key);
                 let application_info = HpkeApplicationInfo(test_vector.info.clone());
                 let ciphertext = HpkeCiphertext::new(
                     HpkeConfigId::from(0),
@@ -602,8 +603,7 @@ mod tests {
                 );
 
                 let plaintext = open(
-                    &hpke_config,
-                    &hpke_private_key,
+                    &hpke_keypair,
                     &application_info,
                     &ciphertext,
                     &encryption.aad,

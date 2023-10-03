@@ -30,8 +30,7 @@
 //!     task_id,
 //!     "https://example.com/dap/".parse().unwrap(),
 //!     AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
-//!     hpke_keypair.config().clone(),
-//!     hpke_keypair.private_key().clone(),
+//!     hpke_keypair,
 //! );
 //!
 //! // Supply a VDAF implementation, corresponding to this task.
@@ -58,7 +57,7 @@ use chrono::{DateTime, Duration, TimeZone, Utc};
 use derivative::Derivative;
 pub use janus_core::auth_tokens::AuthenticationToken;
 use janus_core::{
-    hpke::{self, HpkeApplicationInfo, HpkePrivateKey},
+    hpke::{self, HpkeApplicationInfo, HpkeKeypair},
     http::HttpErrorResponse,
     retries::{http_request_exponential_backoff, retry_http_request},
     time::{DurationExt, TimeExt},
@@ -67,7 +66,7 @@ use janus_core::{
 use janus_messages::{
     query_type::{QueryType, TimeInterval},
     AggregateShareAad, BatchSelector, Collection as CollectionMessage, CollectionJobId,
-    CollectionReq, HpkeConfig, PartialBatchSelector, Query, Role, TaskId,
+    CollectionReq, PartialBatchSelector, Query, Role, TaskId,
 };
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
@@ -147,12 +146,9 @@ pub struct CollectorParameters {
     leader_endpoint: Url,
     /// The authentication information needed to communicate with the leader aggregator.
     authentication: AuthenticationToken,
-    /// HPKE configuration and public key used for encryption of aggregate shares.
+    /// HPKE keypair used for decryption of aggregate shares.
     #[derivative(Debug = "ignore")]
-    hpke_config: HpkeConfig,
-    /// HPKE private key used to decrypt aggregate shares.
-    #[derivative(Debug = "ignore")]
-    hpke_private_key: HpkePrivateKey,
+    hpke_keypair: HpkeKeypair,
     /// Parameters to use when retrying HTTP requests.
     #[derivative(Debug = "ignore")]
     http_request_retry_parameters: ExponentialBackoff,
@@ -167,15 +163,13 @@ impl CollectorParameters {
         task_id: TaskId,
         leader_endpoint: Url,
         authentication: AuthenticationToken,
-        hpke_config: HpkeConfig,
-        hpke_private_key: HpkePrivateKey,
+        hpke_keypair: HpkeKeypair,
     ) -> CollectorParameters {
         CollectorParameters {
             task_id,
             leader_endpoint: url_ensure_trailing_slash(leader_endpoint),
             authentication,
-            hpke_config,
-            hpke_private_key,
+            hpke_keypair,
             http_request_retry_parameters: http_request_exponential_backoff(),
             collect_poll_wait_parameters: ExponentialBackoff {
                 initial_interval: StdDuration::from_secs(15),
@@ -491,8 +485,7 @@ impl<V: vdaf::Collector> Collector<V> {
         .into_iter()
         .map(|(role, encrypted_aggregate_share)| {
             let bytes = hpke::open(
-                &self.parameters.hpke_config,
-                &self.parameters.hpke_private_key,
+                &self.parameters.hpke_keypair,
                 &HpkeApplicationInfo::new(&hpke::Label::AggregateShare, &role, &Role::Collector),
                 encrypted_aggregate_share,
                 &AggregateShareAad::new(
@@ -655,8 +648,7 @@ mod tests {
             random(),
             server_url,
             AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
-            hpke_keypair.config().clone(),
-            hpke_keypair.private_key().clone(),
+            hpke_keypair,
         )
         .with_http_request_backoff(test_http_request_exponential_backoff())
         .with_collect_poll_backoff(test_http_request_exponential_backoff());
@@ -687,14 +679,14 @@ mod tests {
             1,
             batch_interval,
             hpke::seal(
-                &parameters.hpke_config,
+                parameters.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
                 &transcript.leader_aggregate_share.get_encoded(),
                 &associated_data.get_encoded(),
             )
             .unwrap(),
             hpke::seal(
-                &parameters.hpke_config,
+                parameters.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
                 &transcript.helper_aggregate_share.get_encoded(),
                 &associated_data.get_encoded(),
@@ -719,14 +711,14 @@ mod tests {
             1,
             Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
             hpke::seal(
-                &parameters.hpke_config,
+                parameters.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
                 &transcript.leader_aggregate_share.get_encoded(),
                 &associated_data.get_encoded(),
             )
             .unwrap(),
             hpke::seal(
-                &parameters.hpke_config,
+                parameters.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
                 &transcript.helper_aggregate_share.get_encoded(),
                 &associated_data.get_encoded(),
@@ -742,8 +734,7 @@ mod tests {
             random(),
             "http://example.com/dap".parse().unwrap(),
             AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
-            hpke_keypair.config().clone(),
-            hpke_keypair.private_key().clone(),
+            hpke_keypair.clone(),
         );
 
         assert_eq!(
@@ -755,8 +746,7 @@ mod tests {
             random(),
             "http://example.com".parse().unwrap(),
             AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
-            hpke_keypair.config().clone(),
-            hpke_keypair.private_key().clone(),
+            hpke_keypair,
         );
 
         assert_eq!(
@@ -1173,8 +1163,7 @@ mod tests {
             random(),
             server_url,
             AuthenticationToken::new_bearer_token_from_bytes(Vec::from([0x41u8; 16])).unwrap(),
-            hpke_keypair.config().clone(),
-            hpke_keypair.private_key().clone(),
+            hpke_keypair,
         )
         .with_http_request_backoff(test_http_request_exponential_backoff())
         .with_collect_poll_backoff(test_http_request_exponential_backoff());
@@ -1456,12 +1445,12 @@ mod tests {
                     1,
                     batch_interval,
                     HpkeCiphertext::new(
-                        *collector.parameters.hpke_config.id(),
+                        *collector.parameters.hpke_keypair.config().id(),
                         Vec::new(),
                         Vec::new(),
                     ),
                     HpkeCiphertext::new(
-                        *collector.parameters.hpke_config.id(),
+                        *collector.parameters.hpke_keypair.config().id(),
                         Vec::new(),
                         Vec::new(),
                     ),
@@ -1487,14 +1476,14 @@ mod tests {
             1,
             batch_interval,
             hpke::seal(
-                &collector.parameters.hpke_config,
+                collector.parameters.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
                 b"bad",
                 &associated_data.get_encoded(),
             )
             .unwrap(),
             hpke::seal(
-                &collector.parameters.hpke_config,
+                collector.parameters.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
                 b"bad",
                 &associated_data.get_encoded(),
@@ -1523,7 +1512,7 @@ mod tests {
             1,
             batch_interval,
             hpke::seal(
-                &collector.parameters.hpke_config,
+                collector.parameters.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
                 &AggregateShare::from(OutputShare::from(Vec::from([Field64::from(0)])))
                     .get_encoded(),
@@ -1531,7 +1520,7 @@ mod tests {
             )
             .unwrap(),
             hpke::seal(
-                &collector.parameters.hpke_config,
+                collector.parameters.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
                 &AggregateShare::from(OutputShare::from(Vec::from([
                     Field64::from(0),
