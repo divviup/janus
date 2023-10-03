@@ -354,14 +354,14 @@ impl<C: Clock> Aggregator<C> {
     ) -> Result<AggregationJobResp, Error> {
         let task_aggregator = match self.task_aggregator_for(task_id).await? {
             Some(task_aggregator) => {
+                if task_aggregator.task.role() != &Role::Helper {
+                    return Err(Error::UnrecognizedTask(*task_id));
+                }
                 if !task_aggregator
                     .task
                     .check_aggregator_auth_token(auth_token.as_ref())
                 {
                     return Err(Error::UnauthorizedRequest(*task_id));
-                }
-                if task_aggregator.task.role() != &Role::Helper {
-                    return Err(Error::UnrecognizedTask(*task_id));
                 }
                 task_aggregator
             }

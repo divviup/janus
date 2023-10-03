@@ -14,7 +14,9 @@ use janus_aggregator_core::{
     taskprov::PeerAggregator,
     SecretBytes,
 };
-use janus_core::{hpke::generate_hpke_config_and_private_key, time::Clock};
+use janus_core::{
+    auth_tokens::AuthenticationTokenHash, hpke::generate_hpke_config_and_private_key, time::Clock,
+};
 use janus_messages::HpkeConfigId;
 use janus_messages::{
     query_type::Code as SupportedQueryType, Duration, HpkeAeadId, HpkeKdfId, HpkeKemId, Role,
@@ -103,7 +105,7 @@ pub(super) async fn post_task<C: Clock>(
 
     let vdaf_verify_key = SecretBytes::new(vdaf_verify_key_bytes);
 
-    let aggregator_parameters = match req.role {
+    let (aggregator_auth_token, aggregator_parameters) = match req.role {
         Role::Leader => {
             let aggregator_auth_token = req.aggregator_auth_token.ok_or_else(|| {
                 Error::BadRequest(
@@ -111,11 +113,14 @@ pub(super) async fn post_task<C: Clock>(
                         .to_string(),
                 )
             })?;
-            AggregatorTaskParameters::Leader {
-                aggregator_auth_token,
-                collector_auth_token: random(),
-                collector_hpke_config: req.collector_hpke_config,
-            }
+            (
+                None,
+                AggregatorTaskParameters::Leader {
+                    aggregator_auth_token,
+                    collector_auth_token: random(),
+                    collector_hpke_config: req.collector_hpke_config,
+                },
+            )
         }
 
         Role::Helper => {
@@ -126,10 +131,15 @@ pub(super) async fn post_task<C: Clock>(
                 ));
             }
 
-            AggregatorTaskParameters::Helper {
-                aggregator_auth_token: random(),
-                collector_hpke_config: req.collector_hpke_config,
-            }
+            let aggregator_auth_token = random();
+            let aggregator_auth_token_hash = AuthenticationTokenHash::from(&aggregator_auth_token);
+            (
+                Some(aggregator_auth_token),
+                AggregatorTaskParameters::Helper {
+                    aggregator_auth_token_hash,
+                    collector_hpke_config: req.collector_hpke_config,
+                },
+            )
         }
 
         _ => unreachable!(),
@@ -194,9 +204,15 @@ pub(super) async fn post_task<C: Clock>(
     })
     .await?;
 
-    Ok(Json(
-        TaskResp::try_from(task.as_ref()).map_err(|err| Error::Internal(err.to_string()))?,
-    ))
+    let mut task_resp =
+        TaskResp::try_from(task.as_ref()).map_err(|err| Error::Internal(err.to_string()))?;
+
+    // When creating a new task in the helper, we must put the unhashed aggregator auth token in the
+    // response so that divviup-api can later provide it to the leader, but the helper doesn't store
+    // the unhashed token and can't later provide it.
+    task_resp.aggregator_auth_token = aggregator_auth_token;
+
+    Ok(Json(task_resp))
 }
 
 pub(super) async fn get_task<C: Clock>(

@@ -7,6 +7,7 @@ use crate::{
     },
     Config, CONTENT_TYPE,
 };
+use assert_matches::assert_matches;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use futures::future::try_join_all;
 use janus_aggregator_core::{
@@ -305,7 +306,7 @@ async fn post_task_helper_no_optional_fields() {
         .run_async(&handler)
         .await;
     assert_status!(conn, Status::Ok);
-    let got_task_resp: TaskResp = serde_json::from_slice(
+    let mut got_task_resp: TaskResp = serde_json::from_slice(
         &conn
             .take_response_body()
             .unwrap()
@@ -314,6 +315,13 @@ async fn post_task_helper_no_optional_fields() {
             .unwrap(),
     )
     .unwrap();
+
+    // Task creation response will include the aggregator auth token, but it won't be in the
+    // datastore or subsequent TaskResps. The token should be a Bearer token.
+    assert_matches!(
+        got_task_resp.aggregator_auth_token,
+        Some(AuthenticationToken::Bearer(_))
+    );
 
     let got_task = ds
         .run_tx(|tx| {
@@ -336,14 +344,16 @@ async fn post_task_helper_no_optional_fields() {
     assert_eq!(req.task_expiration.as_ref(), got_task.task_expiration());
     assert_eq!(req.min_batch_size, got_task.min_batch_size());
     assert_eq!(&req.time_precision, got_task.time_precision());
-    assert!(got_task.aggregator_auth_token().is_some());
+    assert!(got_task.aggregator_auth_token().is_none());
     assert!(got_task.collector_auth_token().is_none());
     assert_eq!(
         &req.collector_hpke_config,
         got_task.collector_hpke_config().unwrap()
     );
 
-    // ...and the response.
+    // ...and the response. Clear the aggregator auth token from got_task_resp or it won't match
+    // what's in the datastore, as the helper only stores the auth token _hash_.
+    got_task_resp.aggregator_auth_token = None;
     assert_eq!(got_task_resp, TaskResp::try_from(&got_task).unwrap());
 }
 
@@ -598,14 +608,17 @@ async fn post_task_leader_no_aggregator_auth_token() {
     );
 }
 
+#[rstest::rstest]
+#[case::leader(Role::Leader)]
+#[case::helper(Role::Helper)]
 #[tokio::test]
-async fn get_task() {
+async fn get_task(#[case] role: Role) {
     // Setup: write a task to the datastore.
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
         .build()
-        .leader_view()
+        .view_for_role(role)
         .unwrap();
 
     ds.run_tx(|tx| {
@@ -1849,19 +1862,7 @@ fn task_resp_serialization() {
             Token::NewtypeStruct { name: "Duration" },
             Token::U64(60),
             Token::Str("aggregator_auth_token"),
-            Token::Some,
-            Token::Struct {
-                name: "AuthenticationToken",
-                len: 2,
-            },
-            Token::Str("type"),
-            Token::UnitVariant {
-                name: "AuthenticationToken",
-                variant: "DapAuth",
-            },
-            Token::Str("token"),
-            Token::Str("Y29sbGVjdG9yLWFiY2RlZjAw"),
-            Token::StructEnd,
+            Token::None,
             Token::Str("collector_auth_token"),
             Token::Some,
             Token::Struct {

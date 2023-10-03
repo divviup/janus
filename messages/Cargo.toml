@@ -27,5 +27,5 @@ thiserror.workspace = true
 url = "2.4.1"
 
 [dev-dependencies]
-assert_matches = "1"
+assert_matches.workspace = true
 serde_test.workspace = true

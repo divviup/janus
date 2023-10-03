@@ -534,10 +534,10 @@ impl<C: Clock> Transaction<'_, C> {
                     task_id, aggregator_role, peer_aggregator_endpoint, query_type, vdaf,
                     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
                     time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
-                    aggregator_auth_token_type, aggregator_auth_token, collector_auth_token_type,
-                    collector_auth_token)
+                    aggregator_auth_token_type, aggregator_auth_token, aggregator_auth_token_hash,
+                    collector_auth_token_type, collector_auth_token)
                 VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
                 )
                 ON CONFLICT DO NOTHING",
             )
@@ -582,7 +582,11 @@ impl<C: Clock> Transaction<'_, C> {
                     /* aggregator_auth_token_type */
                     &task
                         .aggregator_auth_token()
-                        .map(AuthenticationTokenType::from),
+                        .map(AuthenticationTokenType::from)
+                        .or_else(|| {
+                            task.aggregator_auth_token_hash()
+                                .map(AuthenticationTokenType::from)
+                        }),
                     /* aggregator_auth_token */
                     &task
                         .aggregator_auth_token()
@@ -595,6 +599,10 @@ impl<C: Clock> Transaction<'_, C> {
                             )
                         })
                         .transpose()?,
+                    /* aggregator_auth_token_hash */
+                    &task
+                        .aggregator_auth_token_hash()
+                        .map(|token_hash| token_hash.as_ref()),
                     /* collector_auth_token_type */
                     &task
                         .collector_auth_token()
@@ -684,8 +692,8 @@ impl<C: Clock> Transaction<'_, C> {
                 "SELECT aggregator_role, peer_aggregator_endpoint, query_type, vdaf,
                     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
                     time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
-                    aggregator_auth_token_type, aggregator_auth_token, collector_auth_token_type,
-                    collector_auth_token
+                    aggregator_auth_token_type, aggregator_auth_token, aggregator_auth_token_hash,
+                    collector_auth_token_type, collector_auth_token
                 FROM tasks WHERE task_id = $1",
             )
             .await?;
@@ -713,8 +721,8 @@ impl<C: Clock> Transaction<'_, C> {
                 "SELECT task_id, aggregator_role, peer_aggregator_endpoint, query_type, vdaf,
                     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
                     time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
-                    aggregator_auth_token_type, aggregator_auth_token, collector_auth_token_type,
-                    collector_auth_token
+                    aggregator_auth_token_type, aggregator_auth_token, aggregator_auth_token_hash,
+                    collector_auth_token_type, collector_auth_token
                 FROM tasks",
             )
             .await?;
@@ -799,9 +807,12 @@ impl<C: Clock> Transaction<'_, C> {
             )
             .map(SecretBytes::new)?;
 
+        let aggregator_auth_token_type: Option<AuthenticationTokenType> =
+            row.try_get("aggregator_auth_token_type")?;
+
         let aggregator_auth_token = row
             .try_get::<_, Option<Vec<u8>>>("aggregator_auth_token")?
-            .zip(row.try_get::<_, Option<AuthenticationTokenType>>("aggregator_auth_token_type")?)
+            .zip(aggregator_auth_token_type)
             .map(|(encrypted_token, token_type)| {
                 token_type.as_authentication(&self.crypter.decrypt(
                     "tasks",
@@ -810,6 +821,12 @@ impl<C: Clock> Transaction<'_, C> {
                     &encrypted_token,
                 )?)
             })
+            .transpose()?;
+
+        let aggregator_auth_token_hash = row
+            .try_get::<_, Option<Vec<u8>>>("aggregator_auth_token_hash")?
+            .zip(aggregator_auth_token_type)
+            .map(|(token_hash, token_type)| token_type.as_authentication_token_hash(&token_hash))
             .transpose()?;
 
         let collector_auth_token = row
@@ -849,12 +866,14 @@ impl<C: Clock> Transaction<'_, C> {
         let aggregator_parameters = match (
             aggregator_role,
             aggregator_auth_token,
+            aggregator_auth_token_hash,
             collector_auth_token,
             collector_hpke_config,
         ) {
             (
                 AggregatorRole::Leader,
                 Some(aggregator_auth_token),
+                None,
                 Some(collector_auth_token),
                 Some(collector_hpke_config),
             ) => AggregatorTaskParameters::Leader {
@@ -864,14 +883,17 @@ impl<C: Clock> Transaction<'_, C> {
             },
             (
                 AggregatorRole::Helper,
-                Some(aggregator_auth_token),
+                None,
+                Some(aggregator_auth_token_hash),
                 None,
                 Some(collector_hpke_config),
             ) => AggregatorTaskParameters::Helper {
-                aggregator_auth_token,
+                aggregator_auth_token_hash,
                 collector_hpke_config,
             },
-            (AggregatorRole::Helper, None, None, None) => AggregatorTaskParameters::TaskprovHelper,
+            (AggregatorRole::Helper, None, None, None, None) => {
+                AggregatorTaskParameters::TaskprovHelper
+            }
             values => {
                 return Err(Error::DbState(format!(
                     "found task row with unexpected combination of values {values:?}",
