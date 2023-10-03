@@ -1,10 +1,10 @@
 use crate::TaskParameters;
 use anyhow::anyhow;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use janus_client::{aggregator_hpke_config, default_http_client, Client, ClientParameters};
+use janus_client::Client;
 use janus_core::vdaf::VdafInstance;
 use janus_interop_binaries::{get_rust_log_level, ContainerLogsDropGuard};
-use janus_messages::{Duration, Role, TaskId};
+use janus_messages::{Duration, TaskId};
 use prio::{
     codec::Encode,
     vdaf::{
@@ -226,24 +226,14 @@ where
         let (leader_aggregator_endpoint, helper_aggregator_endpoint) = task_parameters
             .endpoint_fragments
             .port_forwarded_endpoints(leader_port, helper_port);
-        let client_parameters = ClientParameters::new(
+        let client = Client::new(
             task_parameters.task_id,
             leader_aggregator_endpoint,
             helper_aggregator_endpoint,
             task_parameters.time_precision,
-        );
-        let http_client = default_http_client()?;
-        let leader_config =
-            aggregator_hpke_config(&client_parameters, &Role::Leader, &http_client).await?;
-        let helper_config =
-            aggregator_hpke_config(&client_parameters, &Role::Helper, &http_client).await?;
-        let client = Client::new(
-            client_parameters,
             vdaf,
-            &http_client,
-            leader_config,
-            helper_config,
-        );
+        )
+        .await?;
         Ok(ClientImplementation::InProcess { client })
     }
 
