@@ -76,8 +76,8 @@ use reqwest::{
     header::{HeaderValue, ToStrError, CONTENT_TYPE, RETRY_AFTER},
     Response, StatusCode,
 };
-use retry_after::FromHeaderValueError;
-use retry_after::RetryAfter;
+pub use retry_after;
+use retry_after::{FromHeaderValueError, RetryAfter};
 use std::{
     convert::TryFrom,
     time::{Duration as StdDuration, SystemTime},
@@ -144,21 +144,22 @@ pub fn default_http_client() -> Result<reqwest::Client, Error> {
 /// Collector state related to a collection job that is in progress.
 #[derive(Derivative)]
 #[derivative(Debug)]
-struct CollectionJob<P, Q>
+pub struct CollectionJob<P, Q>
 where
     Q: QueryType,
 {
     /// The collection job ID.
     collection_job_id: CollectionJobId,
-    /// The collect request's query.
+    /// The collection request's query.
     query: Query<Q>,
-    /// The aggregation parameter used in this collect request.
+    /// The aggregation parameter used in this collection request.
     #[derivative(Debug = "ignore")]
     aggregation_parameter: P,
 }
 
 impl<P, Q: QueryType> CollectionJob<P, Q> {
-    fn new(
+    /// Construct an in-progress collection job from its components.
+    pub fn new(
         collection_job_id: CollectionJobId,
         query: Query<Q>,
         aggregation_parameter: P,
@@ -169,21 +170,30 @@ impl<P, Q: QueryType> CollectionJob<P, Q> {
             aggregation_parameter,
         }
     }
+
+    /// Destructure a collection job into its fields.
+    pub fn into_fields(self) -> (CollectionJobId, Query<Q>, P) {
+        (
+            self.collection_job_id,
+            self.query,
+            self.aggregation_parameter,
+        )
+    }
 }
 
 #[derive(Derivative)]
 #[derivative(Debug)]
-/// The result of a collect request poll operation. This will either provide the collection result
-/// or indicate that the collection is still being processed.
-enum PollResult<T, Q>
+/// The result of a collection request poll operation. This will either provide the collection
+/// result or indicate that the collection is still being processed.
+pub enum PollResult<T, Q>
 where
     Q: QueryType,
 {
-    /// The collection result from a completed collect request.
+    /// The collection result from a completed collection request.
     CollectionResult(#[derivative(Debug = "ignore")] Collection<T, Q>),
-    /// The collect request is not yet ready. If present, the [`RetryAfter`] object is the time at
-    /// which the leader recommends retrying the request.
-    NextAttempt(Option<RetryAfter>),
+    /// The collection request is not yet ready. If present, the [`RetryAfter`] object is the time
+    /// at which the leader recommends retrying the request.
+    NotReady(Option<RetryAfter>),
 }
 
 /// The result of a collection operation.
@@ -411,9 +421,12 @@ impl<V: vdaf::Collector> Collector<V> {
         ))?)
     }
 
-    /// Send a collect request to the leader aggregator.
+    /// Send a collection request to the leader aggregator.
+    ///
+    /// This returns a [`CollectionJob`] that must be polled separately using [`Self::poll_once`] or
+    /// [`Self::poll_until_complete`].
     #[tracing::instrument(skip(aggregation_parameter), err)]
-    async fn start_collection<Q: QueryType>(
+    pub async fn start_collection<Q: QueryType>(
         &self,
         query: Query<Q>,
         aggregation_parameter: &V::AggregationParam,
@@ -460,10 +473,9 @@ impl<V: vdaf::Collector> Collector<V> {
         ))
     }
 
-    /// Request the results of an in-progress collection from the leader aggregator. This may
-    /// return `Ok(None)` if the aggregation is not done yet.
+    /// Request the results of an in-progress collection from the leader aggregator.
     #[tracing::instrument(err)]
-    async fn poll_once<Q: QueryType>(
+    pub async fn poll_once<Q: QueryType>(
         &self,
         job: &CollectionJob<V::AggregationParam, Q>,
     ) -> Result<PollResult<V::AggregateResult, Q>, Error> {
@@ -491,7 +503,7 @@ impl<V: vdaf::Collector> Collector<V> {
                             .get(RETRY_AFTER)
                             .map(RetryAfter::try_from)
                             .transpose()?;
-                        return Ok(PollResult::NextAttempt(retry_after_opt));
+                        return Ok(PollResult::NotReady(retry_after_opt));
                     }
                     _ if status.is_client_error() || status.is_server_error() => {
                         return Err(Error::from_http_response(response).await);
@@ -573,9 +585,12 @@ impl<V: vdaf::Collector> Collector<V> {
         }))
     }
 
-    /// A convenience method to repeatedly request the result of an in-progress collection until it
-    /// completes.
-    async fn poll_until_complete<Q: QueryType>(
+    /// A convenience method to repeatedly request the result of an in-progress collection job until
+    /// it completes.
+    ///
+    /// This uses the parameters provided via [`CollectorBuilder.with_collect_poll_wait_parameters`]
+    /// to control how frequently to poll for completion.
+    pub async fn poll_until_complete<Q: QueryType>(
         &self,
         job: &CollectionJob<V::AggregationParam, Q>,
     ) -> Result<Collection<V::AggregateResult, Q>, Error> {
@@ -589,7 +604,7 @@ impl<V: vdaf::Collector> Collector<V> {
             // received from it and return immediately.
             let retry_after = match self.poll_once(job).await? {
                 PollResult::CollectionResult(aggregate_result) => return Ok(aggregate_result),
-                PollResult::NextAttempt(retry_after) => retry_after,
+                PollResult::NotReady(retry_after) => retry_after,
             };
 
             // Compute a sleep duration based on the Retry-After header, if available.
@@ -631,7 +646,7 @@ impl<V: vdaf::Collector> Collector<V> {
         }
     }
 
-    /// Send a collect request to the leader aggregator, wait for it to complete, and return the
+    /// Send a collection request to the leader aggregator, wait for it to complete, and return the
     /// result of the aggregation.
     pub async fn collect<Q: QueryType>(
         &self,
@@ -881,7 +896,7 @@ mod tests {
             .await;
 
         let poll_result = collector.poll_once(&job).await.unwrap();
-        assert_matches!(poll_result, PollResult::NextAttempt(None));
+        assert_matches!(poll_result, PollResult::NotReady(None));
 
         let collection = collector.poll_until_complete(&job).await.unwrap();
         assert_eq!(
@@ -1649,7 +1664,7 @@ mod tests {
             .await;
         assert_matches!(
             collector.poll_once(&job).await.unwrap(),
-            PollResult::NextAttempt(None)
+            PollResult::NotReady(None)
         );
         mock_collect_poll_no_retry_after.assert_async().await;
 
@@ -1662,7 +1677,7 @@ mod tests {
             .await;
         assert_matches!(
             collector.poll_once(&job).await.unwrap(),
-            PollResult::NextAttempt(Some(RetryAfter::Delay(duration))) => assert_eq!(duration, std::time::Duration::from_secs(60))
+            PollResult::NotReady(Some(RetryAfter::Delay(duration))) => assert_eq!(duration, std::time::Duration::from_secs(60))
         );
         mock_collect_poll_retry_after_60s.assert_async().await;
 
@@ -1676,7 +1691,7 @@ mod tests {
         let ref_date_time = Utc.with_ymd_and_hms(2015, 10, 21, 7, 28, 0).unwrap();
         assert_matches!(
             collector.poll_once(&job).await.unwrap(),
-            PollResult::NextAttempt(Some(RetryAfter::DateTime(system_time))) => assert_eq!(system_time, ref_date_time.into())
+            PollResult::NotReady(Some(RetryAfter::DateTime(system_time))) => assert_eq!(system_time, ref_date_time.into())
         );
         mock_collect_poll_retry_after_date_time.assert_async().await;
     }
