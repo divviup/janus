@@ -656,6 +656,46 @@ impl<V: vdaf::Collector> Collector<V> {
             sleep(sleep_duration).await;
         }
     }
+
+    /// Tell the leader aggregator to abandon an in-progress collection job, and delete all related
+    /// state.
+    pub async fn delete_collection_job<Q: QueryType>(
+        &self,
+        collection_job: &CollectionJob<V::AggregationParam, Q>,
+    ) -> Result<(), Error> {
+        let collection_job_url = self.collection_job_uri(collection_job.collection_job_id)?;
+        let response_res =
+            retry_http_request(self.http_request_retry_parameters.clone(), || async {
+                let (auth_header, auth_value) = self.authentication.request_authentication();
+                self.http_client
+                    .delete(collection_job_url.clone())
+                    .header(auth_header, auth_value)
+                    .send()
+                    .await
+            })
+            .await;
+
+        match response_res {
+            // Successful response or unretryable error status code:
+            Ok(response) => {
+                let status = response.status();
+                if status.is_client_error() || status.is_server_error() {
+                    Err(Error::from_http_response(response).await)
+                } else if status.is_success() {
+                    // Accept any success status code -- DAP is not prescriptive about status codes
+                    // for this response.
+                    Ok(())
+                } else {
+                    // Redirect status codes and invalid status codes are not expected.
+                    Err(Error::Http(Box::new(status.into())))
+                }
+            }
+            // Retryable error status code, but ran out of retries:
+            Err(Ok(response)) => Err(Error::from_http_response(response).await),
+            // Lower level errors, either unretryable or ran out of retries:
+            Err(Err(error)) => Err(Error::HttpClient(error)),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1798,5 +1838,75 @@ mod tests {
             Error::CollectPollTimeout
         );
         mock_collect_poll_no_retry_after.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn successful_delete() {
+        install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
+        let vdaf = dummy_vdaf::Vdaf::new();
+        let collector = setup_collector(&mut server, vdaf);
+
+        let collection_job_id = random();
+        let collection_job = CollectionJob::new(
+            collection_job_id,
+            Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id: random() }),
+            dummy_vdaf::AggregationParam(1),
+        );
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
+
+        let mock_error = server
+            .mock("DELETE", matcher.clone())
+            .with_status(500)
+            .expect(1)
+            .create_async()
+            .await;
+        let mock_success = server
+            .mock("DELETE", matcher)
+            .with_status(204)
+            .expect(1)
+            .create_async()
+            .await;
+
+        collector
+            .delete_collection_job(&collection_job)
+            .await
+            .unwrap();
+
+        mock_error.assert_async().await;
+        mock_success.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn failed_delete() {
+        install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
+        let vdaf = dummy_vdaf::Vdaf::new();
+        let collector = setup_collector(&mut server, vdaf);
+
+        let collection_job_id = random();
+        let collection_job = CollectionJob::new(
+            collection_job_id,
+            Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id: random() }),
+            dummy_vdaf::AggregationParam(1),
+        );
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
+
+        let mock_error = server
+            .mock("DELETE", matcher.clone())
+            .with_status(500)
+            .expect_at_least(1)
+            .create_async()
+            .await;
+
+        let error = collector
+            .delete_collection_job(&collection_job)
+            .await
+            .unwrap_err();
+        assert_matches!(error, Error::Http(error_response) => {
+            assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+        });
+
+        mock_error.assert_async().await;
     }
 }
