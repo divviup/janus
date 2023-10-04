@@ -421,6 +421,17 @@ impl<V: vdaf::Collector> Collector<V> {
         ))?)
     }
 
+    /// Send a collection request to the leader aggregator, wait for it to complete, and return the
+    /// result of the aggregation.
+    pub async fn collect<Q: QueryType>(
+        &self,
+        query: Query<Q>,
+        aggregation_parameter: &V::AggregationParam,
+    ) -> Result<Collection<V::AggregateResult, Q>, Error> {
+        let job = self.start_collection(query, aggregation_parameter).await?;
+        self.poll_until_complete(&job).await
+    }
+
     /// Send a collection request to the leader aggregator.
     ///
     /// This returns a [`CollectionJob`] that must be polled separately using [`Self::poll_once`] or
@@ -644,17 +655,6 @@ impl<V: vdaf::Collector> Collector<V> {
             };
             sleep(sleep_duration).await;
         }
-    }
-
-    /// Send a collection request to the leader aggregator, wait for it to complete, and return the
-    /// result of the aggregation.
-    pub async fn collect<Q: QueryType>(
-        &self,
-        query: Query<Q>,
-        aggregation_parameter: &V::AggregationParam,
-    ) -> Result<Collection<V::AggregateResult, Q>, Error> {
-        let job = self.start_collection(query, aggregation_parameter).await?;
-        self.poll_until_complete(&job).await
     }
 }
 
