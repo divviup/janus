@@ -107,9 +107,9 @@ CREATE TABLE tasks(
     -- Authentication token used to authenticate messages to the leader from the collector. These
     -- columns are NULL if the task was provisioned by taskprov or if the task's role is helper.
     collector_auth_token_type   AUTH_TOKEN_TYPE,    -- the type of the authentication token
-    collector_auth_token        BYTEA,              -- encrypted bearer token
+    collector_auth_token_hash        BYTEA,         -- hash of the token
     -- The collector_auth_token columns must either both be NULL or both be non-NULL
-    CONSTRAINT collector_auth_token_null CHECK ((collector_auth_token_type IS NULL) = (collector_auth_token IS NULL))
+    CONSTRAINT collector_auth_token_null CHECK ((collector_auth_token_type IS NULL) = (collector_auth_token_hash IS NULL))
 );
 CREATE INDEX task_id_index ON tasks(task_id);
 

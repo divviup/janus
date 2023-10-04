@@ -535,7 +535,7 @@ impl<C: Clock> Transaction<'_, C> {
                     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
                     time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
                     aggregator_auth_token_type, aggregator_auth_token, aggregator_auth_token_hash,
-                    collector_auth_token_type, collector_auth_token)
+                    collector_auth_token_type, collector_auth_token_hash)
                 VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
                 )
@@ -605,20 +605,12 @@ impl<C: Clock> Transaction<'_, C> {
                         .map(|token_hash| token_hash.as_ref()),
                     /* collector_auth_token_type */
                     &task
-                        .collector_auth_token()
+                        .collector_auth_token_hash()
                         .map(AuthenticationTokenType::from),
                     /* collector_auth_token */
                     &task
-                        .collector_auth_token()
-                        .map(|token| {
-                            self.crypter.encrypt(
-                                "tasks",
-                                task.id().as_ref(),
-                                "collector_auth_token",
-                                token.as_ref(),
-                            )
-                        })
-                        .transpose()?,
+                        .collector_auth_token_hash()
+                        .map(|token_hash| token_hash.as_ref()),
                 ],
             )
             .await?,
@@ -693,7 +685,7 @@ impl<C: Clock> Transaction<'_, C> {
                     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
                     time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
                     aggregator_auth_token_type, aggregator_auth_token, aggregator_auth_token_hash,
-                    collector_auth_token_type, collector_auth_token
+                    collector_auth_token_type, collector_auth_token_hash
                 FROM tasks WHERE task_id = $1",
             )
             .await?;
@@ -722,7 +714,7 @@ impl<C: Clock> Transaction<'_, C> {
                     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
                     time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
                     aggregator_auth_token_type, aggregator_auth_token, aggregator_auth_token_hash,
-                    collector_auth_token_type, collector_auth_token
+                    collector_auth_token_type, collector_auth_token_hash
                 FROM tasks",
             )
             .await?;
@@ -829,17 +821,10 @@ impl<C: Clock> Transaction<'_, C> {
             .map(|(token_hash, token_type)| token_type.as_authentication_token_hash(&token_hash))
             .transpose()?;
 
-        let collector_auth_token = row
-            .try_get::<_, Option<Vec<u8>>>("collector_auth_token")?
+        let collector_auth_token_hash = row
+            .try_get::<_, Option<Vec<u8>>>("collector_auth_token_hash")?
             .zip(row.try_get::<_, Option<AuthenticationTokenType>>("collector_auth_token_type")?)
-            .map(|(encrypted_token, token_type)| {
-                token_type.as_authentication(&self.crypter.decrypt(
-                    "tasks",
-                    task_id.as_ref(),
-                    "collector_auth_token",
-                    &encrypted_token,
-                )?)
-            })
+            .map(|(token_hash, token_type)| token_type.as_authentication_token_hash(&token_hash))
             .transpose()?;
 
         // HPKE keys.
@@ -867,18 +852,18 @@ impl<C: Clock> Transaction<'_, C> {
             aggregator_role,
             aggregator_auth_token,
             aggregator_auth_token_hash,
-            collector_auth_token,
+            collector_auth_token_hash,
             collector_hpke_config,
         ) {
             (
                 AggregatorRole::Leader,
                 Some(aggregator_auth_token),
                 None,
-                Some(collector_auth_token),
+                Some(collector_auth_token_hash),
                 Some(collector_hpke_config),
             ) => AggregatorTaskParameters::Leader {
                 aggregator_auth_token,
-                collector_auth_token,
+                collector_auth_token_hash,
                 collector_hpke_config,
             },
             (

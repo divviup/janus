@@ -730,9 +730,9 @@ mod tests {
   aggregator_auth_token:
     type: Bearer
     token: Y29sbGVjdG9yLWFiZjU0MDhlMmIxNjAxODMxNjI1YWYzOTU5MTA2NDU4
-  collector_auth_token:
+  collector_auth_token_hash:
     type: Bearer
-    token: Y29sbGVjdG9yLWFiZjU0MDhlMmIxNjAxODMxNjI1YWYzOTU5MTA2NDU4
+    hash: MJOoBO_ysLEuG_lv2C37eEOf1Ngetsr-Ers0ZYj4vdQ
   hpke_keys: []
 - peer_aggregator_endpoint: https://leader
   query_type: TimeInterval
@@ -801,8 +801,8 @@ mod tests {
 
         for task in &got_tasks {
             match task.role() {
-                Role::Leader => assert!(task.collector_auth_token().is_some()),
-                Role::Helper => assert!(task.collector_auth_token().is_none()),
+                Role::Leader => assert!(task.collector_auth_token_hash().is_some()),
+                Role::Helper => assert!(task.collector_auth_token_hash().is_none()),
                 role => panic!("unexpected role {role}"),
             }
         }

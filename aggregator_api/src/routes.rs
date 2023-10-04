@@ -48,6 +48,8 @@ pub(super) async fn get_config(
             SupportedQueryType::TimeInterval,
             SupportedQueryType::FixedSize,
         ],
+        // Unconditionally indicate to divviup-api that we support collector auth token hashes
+        features: &["TokenHash"],
     })
 }
 
@@ -113,11 +115,17 @@ pub(super) async fn post_task<C: Clock>(
                         .to_string(),
                 )
             })?;
+            let collector_auth_token_hash = req.collector_auth_token_hash.ok_or_else(|| {
+                Error::BadRequest(
+                    "aggregator acting in leader role must be provided a collector auth token"
+                        .to_string(),
+                )
+            })?;
             (
                 None,
                 AggregatorTaskParameters::Leader {
                     aggregator_auth_token,
-                    collector_auth_token: random(),
+                    collector_auth_token_hash,
                     collector_hpke_config: req.collector_hpke_config,
                 },
             )
