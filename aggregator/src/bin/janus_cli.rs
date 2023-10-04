@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
 use janus_aggregator::{
     binary_utils::{database_pool, datastore, read_config, CommonBinaryOptions},
@@ -265,7 +265,7 @@ async fn create_datastore_key(
         .sample_iter(Standard)
         .take(AES_128_GCM.key_len())
         .collect();
-    let secret_content = STANDARD_NO_PAD.encode(key_bytes);
+    let secret_content = URL_SAFE_NO_PAD.encode(key_bytes);
 
     // Write the secret.
     secrets_api
@@ -454,7 +454,7 @@ impl From<kube::Client> for LazyKubeClient {
 #[cfg(test)]
 mod tests {
     use super::{fetch_datastore_keys, CommandLineOptions, ConfigFile, KubernetesSecretOptions};
-    use crate::{LazyKubeClient, STANDARD_NO_PAD};
+    use crate::{LazyKubeClient, URL_SAFE_NO_PAD};
     use base64::Engine;
     use clap::CommandFactory;
     use janus_aggregator::{
@@ -840,7 +840,7 @@ mod tests {
 
         // Verify that the written secret data can be parsed as a comma-separated list of datastore
         // keys.
-        let datastore_key_bytes = STANDARD_NO_PAD.decode(&secret_data[0]).unwrap();
+        let datastore_key_bytes = URL_SAFE_NO_PAD.decode(&secret_data[0]).unwrap();
         UnboundKey::new(&AES_128_GCM, &datastore_key_bytes).unwrap();
     }
 

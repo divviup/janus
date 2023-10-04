@@ -3,7 +3,7 @@
 //! process. The process should promptly shut down, and this test will fail if
 //! it times out waiting for the process to do so.
 
-use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
     datastore::test_util::ephemeral_datastore,
     task::{test_util::TaskBuilder, QueryType},
@@ -157,7 +157,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         .env("RUSTLOG", "trace")
         .env(
             "DATASTORE_KEYS",
-            STANDARD_NO_PAD.encode(ephemeral_datastore.datastore_key_bytes()),
+            URL_SAFE_NO_PAD.encode(ephemeral_datastore.datastore_key_bytes()),
         )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
