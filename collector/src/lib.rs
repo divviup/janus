@@ -7,7 +7,7 @@
 //! # Examples
 //!
 //! ```no_run
-//! use janus_collector::{AuthenticationToken, Collector, CollectorParameters, default_http_client};
+//! use janus_collector::{AuthenticationToken, Collector};
 //! use janus_core::{hpke::generate_hpke_config_and_private_key};
 //! use janus_messages::{
 //!     Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Interval, TaskId,
@@ -26,18 +26,17 @@
 //!     HpkeKdfId::HkdfSha256,
 //!     HpkeAeadId::Aes128Gcm,
 //! ).unwrap();
-//! let parameters = CollectorParameters::new(
+//!
+//! // Supply a VDAF implementation, corresponding to this task.
+//! let vdaf = Prio3::new_count(2).unwrap();
+//! let collector = Collector::new(
 //!     task_id,
 //!     "https://example.com/dap/".parse().unwrap(),
 //!     AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
 //!     hpke_keypair,
-//! );
-//!
-//! // Supply a VDAF implementation, corresponding to this task.
-//! let vdaf = Prio3::new_count(2).unwrap();
-//! // Use the default HTTP client as-is.
-//! let http_client = default_http_client().unwrap();
-//! let collector = Collector::new(parameters, vdaf, http_client);
+//!     vdaf,
+//! )
+//! .unwrap();
 //!
 //! // Specify the time interval over which the aggregation should be calculated.
 //! let interval = Interval::new(
@@ -134,73 +133,6 @@ static COLLECTOR_USER_AGENT: &str = concat!(
     "/",
     "collector"
 );
-
-/// The DAP collector's view of task parameters.
-#[derive(Derivative)]
-#[derivative(Debug)]
-pub struct CollectorParameters {
-    /// Unique identifier for the task.
-    task_id: TaskId,
-    /// The base URL of the leader's aggregator API endpoints.
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
-    leader_endpoint: Url,
-    /// The authentication information needed to communicate with the leader aggregator.
-    authentication: AuthenticationToken,
-    /// HPKE keypair used for decryption of aggregate shares.
-    #[derivative(Debug = "ignore")]
-    hpke_keypair: HpkeKeypair,
-    /// Parameters to use when retrying HTTP requests.
-    #[derivative(Debug = "ignore")]
-    http_request_retry_parameters: ExponentialBackoff,
-    /// Parameters to use when waiting for a collection job to be processed.
-    #[derivative(Debug = "ignore")]
-    collect_poll_wait_parameters: ExponentialBackoff,
-}
-
-impl CollectorParameters {
-    /// Creates a new set of collector task parameters.
-    pub fn new(
-        task_id: TaskId,
-        leader_endpoint: Url,
-        authentication: AuthenticationToken,
-        hpke_keypair: HpkeKeypair,
-    ) -> CollectorParameters {
-        CollectorParameters {
-            task_id,
-            leader_endpoint: url_ensure_trailing_slash(leader_endpoint),
-            authentication,
-            hpke_keypair,
-            http_request_retry_parameters: http_request_exponential_backoff(),
-            collect_poll_wait_parameters: ExponentialBackoff {
-                initial_interval: StdDuration::from_secs(15),
-                max_interval: StdDuration::from_secs(300),
-                multiplier: 1.2,
-                max_elapsed_time: None,
-                ..Default::default()
-            },
-        }
-    }
-
-    /// Replace the exponential backoff settings used for HTTP requests.
-    pub fn with_http_request_backoff(mut self, backoff: ExponentialBackoff) -> CollectorParameters {
-        self.http_request_retry_parameters = backoff;
-        self
-    }
-
-    /// Replace the exponential backoff settings used while polling for aggregate shares.
-    pub fn with_collect_poll_backoff(mut self, backoff: ExponentialBackoff) -> CollectorParameters {
-        self.collect_poll_wait_parameters = backoff;
-        self
-    }
-
-    /// Construct a URI for a collection.
-    fn collection_job_uri(&self, collection_job_id: CollectionJobId) -> Result<Url, Error> {
-        Ok(self.leader_endpoint.join(&format!(
-            "tasks/{}/collection_jobs/{collection_job_id}",
-            self.task_id
-        ))?)
-    }
-}
 
 /// Construct a [`reqwest::Client`] suitable for use in a DAP [`Collector`].
 pub fn default_http_client() -> Result<reqwest::Client, Error> {
@@ -335,19 +267,50 @@ where
 
 /// Builder for configuring a [`Collector`].
 pub struct CollectorBuilder<V: vdaf::Collector> {
-    parameters: CollectorParameters,
+    /// Unique identifier for the task.
+    task_id: TaskId,
+    /// The base URL of the leader's aggregator API endpoints.
+    leader_endpoint: Url,
+    /// The authentication information needed to communicate with the leader aggregator.
+    authentication: AuthenticationToken,
+    /// HPKE keypair used for decryption of aggregate shares.
+    hpke_keypair: HpkeKeypair,
+    /// An implementation of the task's VDAF.
     vdaf: V,
+
+    /// HTTPS client.
     http_client: Option<reqwest::Client>,
+    /// Parameters to use when retrying HTTP requests.
+    http_request_retry_parameters: ExponentialBackoff,
+    /// Parameters to use when waiting for a collection job to be processed.
+    collect_poll_wait_parameters: ExponentialBackoff,
 }
 
 impl<V: vdaf::Collector> CollectorBuilder<V> {
     /// Construct a [`CollectorBuilder`] from required DAP task parameters and an implementation of
     /// the task's VDAF.
-    pub fn new(parameters: CollectorParameters, vdaf: V) -> Self {
+    pub fn new(
+        task_id: TaskId,
+        leader_endpoint: Url,
+        authentication: AuthenticationToken,
+        hpke_keypair: HpkeKeypair,
+        vdaf: V,
+    ) -> Self {
         Self {
-            parameters,
+            task_id,
+            leader_endpoint,
+            authentication,
+            hpke_keypair,
             vdaf,
             http_client: None,
+            http_request_retry_parameters: http_request_exponential_backoff(),
+            collect_poll_wait_parameters: ExponentialBackoff {
+                initial_interval: StdDuration::from_secs(15),
+                max_interval: StdDuration::from_secs(300),
+                multiplier: 1.2,
+                max_elapsed_time: None,
+                ..Default::default()
+            },
         }
     }
 
@@ -359,9 +322,14 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
             default_http_client()?
         };
         Ok(Collector {
-            parameters: self.parameters,
+            task_id: self.task_id,
+            leader_endpoint: url_ensure_trailing_slash(self.leader_endpoint),
+            authentication: self.authentication,
+            hpke_keypair: self.hpke_keypair,
             vdaf: self.vdaf,
             http_client,
+            http_request_retry_parameters: self.http_request_retry_parameters,
+            collect_poll_wait_parameters: self.collect_poll_wait_parameters,
         })
     }
 
@@ -370,29 +338,77 @@ impl<V: vdaf::Collector> CollectorBuilder<V> {
         self.http_client = Some(http_client);
         self
     }
+
+    /// Replace the exponential backoff settings used for HTTP requests.
+    pub fn with_http_request_backoff(mut self, backoff: ExponentialBackoff) -> Self {
+        self.http_request_retry_parameters = backoff;
+        self
+    }
+
+    /// Replace the exponential backoff settings used while polling for aggregate shares.
+    pub fn with_collect_poll_backoff(mut self, backoff: ExponentialBackoff) -> Self {
+        self.collect_poll_wait_parameters = backoff;
+        self
+    }
 }
 
 /// A DAP collector.
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct Collector<V: vdaf::Collector> {
-    parameters: CollectorParameters,
+    /// Unique identifier for the task.
+    task_id: TaskId,
+    /// The base URL of the leader's aggregator API endpoints.
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    leader_endpoint: Url,
+    /// The authentication information needed to communicate with the leader aggregator.
+    authentication: AuthenticationToken,
+    /// HPKE keypair used for decryption of aggregate shares.
+    #[derivative(Debug = "ignore")]
+    hpke_keypair: HpkeKeypair,
+    /// An implementation of the task's VDAF.
     vdaf: V,
     #[derivative(Debug = "ignore")]
+
+    /// HTTPS client.
     http_client: reqwest::Client,
+    /// Parameters to use when retrying HTTP requests.
+    http_request_retry_parameters: ExponentialBackoff,
+    /// Parameters to use when waiting for a collection job to be processed.
+    collect_poll_wait_parameters: ExponentialBackoff,
 }
 
 impl<V: vdaf::Collector> Collector<V> {
     /// Construct a new collector. This requires certain DAP task parameters and an implementation of
     /// the task's VDAF.
-    pub fn new(parameters: CollectorParameters, vdaf: V) -> Result<Collector<V>, Error> {
-        Self::builder(parameters, vdaf).build()
+    pub fn new(
+        task_id: TaskId,
+        leader_endpoint: Url,
+        authentication: AuthenticationToken,
+        hpke_keypair: HpkeKeypair,
+        vdaf: V,
+    ) -> Result<Collector<V>, Error> {
+        Self::builder(task_id, leader_endpoint, authentication, hpke_keypair, vdaf).build()
     }
 
     /// Construct a [`CollectorBuilder`] from required DAP task parameters and an implementation of
     /// the task's VDAF.
-    pub fn builder(parameters: CollectorParameters, vdaf: V) -> CollectorBuilder<V> {
-        CollectorBuilder::new(parameters, vdaf)
+    pub fn builder(
+        task_id: TaskId,
+        leader_endpoint: Url,
+        authentication: AuthenticationToken,
+        hpke_keypair: HpkeKeypair,
+        vdaf: V,
+    ) -> CollectorBuilder<V> {
+        CollectorBuilder::new(task_id, leader_endpoint, authentication, hpke_keypair, vdaf)
+    }
+
+    /// Construct a URI for a collection.
+    fn collection_job_uri(&self, collection_job_id: CollectionJobId) -> Result<Url, Error> {
+        Ok(self.leader_endpoint.join(&format!(
+            "tasks/{}/collection_jobs/{collection_job_id}",
+            self.task_id
+        ))?)
     }
 
     /// Send a collect request to the leader aggregator.
@@ -405,13 +421,11 @@ impl<V: vdaf::Collector> Collector<V> {
         let collect_request =
             CollectionReq::new(query.clone(), aggregation_parameter.get_encoded());
         let collection_job_id = random();
-        let collection_job_url = self.parameters.collection_job_uri(collection_job_id)?;
+        let collection_job_url = self.collection_job_uri(collection_job_id)?;
 
-        let response_res = retry_http_request(
-            self.parameters.http_request_retry_parameters.clone(),
-            || async {
-                let (auth_header, auth_value) =
-                    self.parameters.authentication.request_authentication();
+        let response_res =
+            retry_http_request(self.http_request_retry_parameters.clone(), || async {
+                let (auth_header, auth_value) = self.authentication.request_authentication();
                 self.http_client
                     .put(collection_job_url.clone())
                     .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
@@ -419,9 +433,8 @@ impl<V: vdaf::Collector> Collector<V> {
                     .header(auth_header, auth_value)
                     .send()
                     .await
-            },
-        )
-        .await;
+            })
+            .await;
 
         match response_res {
             // Successful response or unretryable error status code:
@@ -454,20 +467,17 @@ impl<V: vdaf::Collector> Collector<V> {
         &self,
         job: &CollectionJob<V::AggregationParam, Q>,
     ) -> Result<PollResult<V::AggregateResult, Q>, Error> {
-        let collection_job_url = self.parameters.collection_job_uri(job.collection_job_id)?;
-        let response_res = retry_http_request(
-            self.parameters.http_request_retry_parameters.clone(),
-            || async {
-                let (auth_header, auth_value) =
-                    self.parameters.authentication.request_authentication();
+        let collection_job_url = self.collection_job_uri(job.collection_job_id)?;
+        let response_res =
+            retry_http_request(self.http_request_retry_parameters.clone(), || async {
+                let (auth_header, auth_value) = self.authentication.request_authentication();
                 self.http_client
                     .post(collection_job_url.clone())
                     .header(auth_header, auth_value)
                     .send()
                     .await
-            },
-        )
-        .await;
+            })
+            .await;
 
         let response = match response_res {
             // Successful response or unretryable error status code:
@@ -520,11 +530,11 @@ impl<V: vdaf::Collector> Collector<V> {
         .into_iter()
         .map(|(role, encrypted_aggregate_share)| {
             let bytes = hpke::open(
-                &self.parameters.hpke_keypair,
+                &self.hpke_keypair,
                 &HpkeApplicationInfo::new(&hpke::Label::AggregateShare, &role, &Role::Collector),
                 encrypted_aggregate_share,
                 &AggregateShareAad::new(
-                    self.parameters.task_id,
+                    self.task_id,
                     job.aggregation_parameter.get_encoded(),
                     BatchSelector::<Q>::new(Q::batch_identifier_for_collection(
                         &job.query,
@@ -569,7 +579,7 @@ impl<V: vdaf::Collector> Collector<V> {
         &self,
         job: &CollectionJob<V::AggregationParam, Q>,
     ) -> Result<Collection<V::AggregateResult, Q>, Error> {
-        let mut backoff = self.parameters.collect_poll_wait_parameters.clone();
+        let mut backoff = self.collect_poll_wait_parameters.clone();
         backoff.reset();
         let deadline = backoff
             .max_elapsed_time
@@ -635,7 +645,7 @@ impl<V: vdaf::Collector> Collector<V> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Collection, CollectionJob, Collector, CollectorParameters, Error, PollResult};
+    use crate::{Collection, CollectionJob, Collector, Error, PollResult};
     use assert_matches::assert_matches;
     use chrono::{NaiveDateTime, TimeZone, Utc};
     #[cfg(feature = "fpvec_bounded_l2")]
@@ -646,7 +656,7 @@ mod tests {
             self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
         retries::test_http_request_exponential_backoff,
-        test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
+        test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf, VdafTranscript},
     };
     use janus_messages::{
         problem_type::DapProblemType,
@@ -671,15 +681,17 @@ mod tests {
     fn setup_collector<V: vdaf::Collector>(server: &mut mockito::Server, vdaf: V) -> Collector<V> {
         let server_url = Url::parse(&server.url()).unwrap();
         let hpke_keypair = generate_test_hpke_config_and_private_key();
-        let parameters = CollectorParameters::new(
+        Collector::builder(
             random(),
             server_url,
             AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
             hpke_keypair,
+            vdaf,
         )
         .with_http_request_backoff(test_http_request_exponential_backoff())
-        .with_collect_poll_backoff(test_http_request_exponential_backoff());
-        Collector::new(parameters, vdaf).unwrap()
+        .with_collect_poll_backoff(test_http_request_exponential_backoff())
+        .build()
+        .unwrap()
     }
 
     fn collection_uri_regex_matcher(task_id: &TaskId) -> Matcher {
@@ -690,14 +702,17 @@ mod tests {
         ))
     }
 
-    fn build_collect_response_time<const SEED_SIZE: usize, V: vdaf::Aggregator<SEED_SIZE, 16>>(
+    fn build_collect_response_time<
+        const SEED_SIZE: usize,
+        V: vdaf::Aggregator<SEED_SIZE, 16> + vdaf::Collector,
+    >(
         transcript: &VdafTranscript<SEED_SIZE, V>,
-        parameters: &CollectorParameters,
+        collector: &Collector<V>,
         aggregation_parameter: &V::AggregationParam,
         batch_interval: Interval,
     ) -> CollectionMessage<TimeInterval> {
         let associated_data = AggregateShareAad::new(
-            parameters.task_id,
+            collector.task_id,
             aggregation_parameter.get_encoded(),
             BatchSelector::new_time_interval(batch_interval),
         );
@@ -706,14 +721,14 @@ mod tests {
             1,
             batch_interval,
             hpke::seal(
-                parameters.hpke_keypair.config(),
+                collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
                 &transcript.leader_aggregate_share.get_encoded(),
                 &associated_data.get_encoded(),
             )
             .unwrap(),
             hpke::seal(
-                parameters.hpke_keypair.config(),
+                collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
                 &transcript.helper_aggregate_share.get_encoded(),
                 &associated_data.get_encoded(),
@@ -722,14 +737,17 @@ mod tests {
         )
     }
 
-    fn build_collect_response_fixed<const SEED_SIZE: usize, V: vdaf::Aggregator<SEED_SIZE, 16>>(
+    fn build_collect_response_fixed<
+        const SEED_SIZE: usize,
+        V: vdaf::Aggregator<SEED_SIZE, 16> + vdaf::Collector,
+    >(
         transcript: &VdafTranscript<SEED_SIZE, V>,
-        parameters: &CollectorParameters,
+        collector: &Collector<V>,
         aggregation_parameter: &V::AggregationParam,
         batch_id: BatchId,
     ) -> CollectionMessage<FixedSize> {
         let associated_data = AggregateShareAad::new(
-            parameters.task_id,
+            collector.task_id,
             aggregation_parameter.get_encoded(),
             BatchSelector::new_fixed_size(batch_id),
         );
@@ -738,14 +756,14 @@ mod tests {
             1,
             Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
             hpke::seal(
-                parameters.hpke_keypair.config(),
+                collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
                 &transcript.leader_aggregate_share.get_encoded(),
                 &associated_data.get_encoded(),
             )
             .unwrap(),
             hpke::seal(
-                parameters.hpke_keypair.config(),
+                collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
                 &transcript.helper_aggregate_share.get_encoded(),
                 &associated_data.get_encoded(),
@@ -757,29 +775,30 @@ mod tests {
     #[test]
     fn leader_endpoint_end_in_slash() {
         let hpke_keypair = generate_test_hpke_config_and_private_key();
-        let collector_parameters = CollectorParameters::new(
+        let collector = Collector::new(
             random(),
             "http://example.com/dap".parse().unwrap(),
             AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
             hpke_keypair.clone(),
-        );
+            dummy_vdaf::Vdaf::new(),
+        )
+        .unwrap();
 
         assert_eq!(
-            collector_parameters.leader_endpoint.as_str(),
+            collector.leader_endpoint.as_str(),
             "http://example.com/dap/",
         );
 
-        let collector_parameters = CollectorParameters::new(
+        let collector = Collector::new(
             random(),
             "http://example.com".parse().unwrap(),
             AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
             hpke_keypair,
-        );
+            dummy_vdaf::Vdaf::new(),
+        )
+        .unwrap();
 
-        assert_eq!(
-            collector_parameters.leader_endpoint.as_str(),
-            "http://example.com/",
-        );
+        assert_eq!(collector.leader_endpoint.as_str(), "http://example.com/");
     }
 
     #[tokio::test]
@@ -789,8 +808,7 @@ mod tests {
         let vdaf = Prio3::new_count(2).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &1);
         let collector = setup_collector(&mut server, vdaf);
-        let (auth_header, auth_value) =
-            collector.parameters.authentication.request_authentication();
+        let (auth_header, auth_value) = collector.authentication.request_authentication();
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000),
@@ -798,8 +816,8 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector.parameters, &(), batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
+            build_collect_response_time(&transcript, &collector, &(), batch_interval);
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mocked_collect_start_error = server
             .mock("PUT", matcher.clone())
@@ -835,7 +853,7 @@ mod tests {
 
         let collection_job_path = format!(
             "/tasks/{}/collection_jobs/{}",
-            collector.parameters.task_id, job.collection_job_id
+            collector.task_id, job.collection_job_id
         );
         let mocked_collect_error = server
             .mock("POST", collection_job_path.as_str())
@@ -900,8 +918,8 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector.parameters, &(), batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
+            build_collect_response_time(&transcript, &collector, &(), batch_interval);
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mocked_collect_start_success = server
             .mock("PUT", matcher)
@@ -923,7 +941,7 @@ mod tests {
 
         let collection_job_path = format!(
             "/tasks/{}/collection_jobs/{}",
-            collector.parameters.task_id, job.collection_job_id
+            collector.task_id, job.collection_job_id
         );
         let mocked_collect_complete = server
             .mock("POST", collection_job_path.as_str())
@@ -970,8 +988,8 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector.parameters, &(), batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
+            build_collect_response_time(&transcript, &collector, &(), batch_interval);
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mocked_collect_start_success = server
             .mock("PUT", matcher)
@@ -994,7 +1012,7 @@ mod tests {
 
         let collection_job_path = format!(
             "/tasks/{}/collection_jobs/{}",
-            collector.parameters.task_id, job.collection_job_id
+            collector.task_id, job.collection_job_id
         );
         let mocked_collect_complete = server
             .mock("POST", collection_job_path.as_str())
@@ -1050,8 +1068,8 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector.parameters, &(), batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
+            build_collect_response_time(&transcript, &collector, &(), batch_interval);
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mocked_collect_start_success = server
             .mock("PUT", matcher)
@@ -1074,7 +1092,7 @@ mod tests {
 
         let collection_job_path = format!(
             "/tasks/{}/collection_jobs/{}",
-            collector.parameters.task_id, job.collection_job_id
+            collector.task_id, job.collection_job_id
         );
         let mocked_collect_complete = server
             .mock("POST", collection_job_path.as_str())
@@ -1116,9 +1134,8 @@ mod tests {
         let collector = setup_collector(&mut server, vdaf);
 
         let batch_id = random();
-        let collect_resp =
-            build_collect_response_fixed(&transcript, &collector.parameters, &(), batch_id);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
+        let collect_resp = build_collect_response_fixed(&transcript, &collector, &(), batch_id);
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mocked_collect_start_success = server
             .mock("PUT", matcher)
@@ -1147,7 +1164,7 @@ mod tests {
 
         let collection_job_path = format!(
             "/tasks/{}/collection_jobs/{}",
-            collector.parameters.task_id, job.collection_job_id
+            collector.task_id, job.collection_job_id
         );
         let mocked_collect_complete = server
             .mock("POST", collection_job_path.as_str())
@@ -1186,15 +1203,17 @@ mod tests {
         let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &1);
         let server_url = Url::parse(&server.url()).unwrap();
         let hpke_keypair = generate_test_hpke_config_and_private_key();
-        let parameters = CollectorParameters::new(
+        let collector = Collector::builder(
             random(),
             server_url,
             AuthenticationToken::new_bearer_token_from_bytes(Vec::from([0x41u8; 16])).unwrap(),
             hpke_keypair,
+            vdaf,
         )
         .with_http_request_backoff(test_http_request_exponential_backoff())
-        .with_collect_poll_backoff(test_http_request_exponential_backoff());
-        let collector = Collector::new(parameters, vdaf).unwrap();
+        .with_collect_poll_backoff(test_http_request_exponential_backoff())
+        .build()
+        .unwrap();
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000),
@@ -1202,8 +1221,8 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector.parameters, &(), batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
+            build_collect_response_time(&transcript, &collector, &(), batch_interval);
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mocked_collect_start_success = server
             .mock("PUT", matcher)
@@ -1227,7 +1246,7 @@ mod tests {
 
         let collection_job_path = format!(
             "/tasks/{}/collection_jobs/{}",
-            collector.parameters.task_id, job.collection_job_id
+            collector.task_id, job.collection_job_id
         );
         let mocked_collect_complete = server
             .mock("POST", collection_job_path.as_str())
@@ -1267,7 +1286,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
         let collector = setup_collector(&mut server, vdaf);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mock_server_error = server
             .mock("PUT", matcher.clone())
@@ -1358,7 +1377,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
         let collector = setup_collector(&mut server, vdaf);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mock_collect_start = server
             .mock("PUT", matcher.clone())
@@ -1397,7 +1416,7 @@ mod tests {
 
         let collection_job_path = format!(
             "/tasks/{}/collection_jobs/{}",
-            collector.parameters.task_id, job.collection_job_id
+            collector.task_id, job.collection_job_id
         );
         let mock_collection_job_server_error_details = server
             .mock("POST", collection_job_path.as_str())
@@ -1472,12 +1491,12 @@ mod tests {
                     1,
                     batch_interval,
                     HpkeCiphertext::new(
-                        *collector.parameters.hpke_keypair.config().id(),
+                        *collector.hpke_keypair.config().id(),
                         Vec::new(),
                         Vec::new(),
                     ),
                     HpkeCiphertext::new(
-                        *collector.parameters.hpke_keypair.config().id(),
+                        *collector.hpke_keypair.config().id(),
                         Vec::new(),
                         Vec::new(),
                     ),
@@ -1494,7 +1513,7 @@ mod tests {
         mock_collection_job_bad_ciphertext.assert_async().await;
 
         let associated_data = AggregateShareAad::new(
-            collector.parameters.task_id,
+            collector.task_id,
             ().get_encoded(),
             BatchSelector::new_time_interval(batch_interval),
         );
@@ -1503,14 +1522,14 @@ mod tests {
             1,
             batch_interval,
             hpke::seal(
-                collector.parameters.hpke_keypair.config(),
+                collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
                 b"bad",
                 &associated_data.get_encoded(),
             )
             .unwrap(),
             hpke::seal(
-                collector.parameters.hpke_keypair.config(),
+                collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
                 b"bad",
                 &associated_data.get_encoded(),
@@ -1539,7 +1558,7 @@ mod tests {
             1,
             batch_interval,
             hpke::seal(
-                collector.parameters.hpke_keypair.config(),
+                collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
                 &AggregateShare::from(OutputShare::from(Vec::from([Field64::from(0)])))
                     .get_encoded(),
@@ -1547,7 +1566,7 @@ mod tests {
             )
             .unwrap(),
             hpke::seal(
-                collector.parameters.hpke_keypair.config(),
+                collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
                 &AggregateShare::from(OutputShare::from(Vec::from([
                     Field64::from(0),
@@ -1595,7 +1614,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
         let collector = setup_collector(&mut server, vdaf);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mock_collect_start = server
             .mock("PUT", matcher.clone())
@@ -1620,7 +1639,7 @@ mod tests {
 
         let collection_job_path = format!(
             "/tasks/{}/collection_jobs/{}",
-            collector.parameters.task_id, job.collection_job_id
+            collector.task_id, job.collection_job_id
         );
         let mock_collect_poll_no_retry_after = server
             .mock("POST", collection_job_path.as_str())
@@ -1671,15 +1690,13 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
         let mut collector = setup_collector(&mut server, vdaf);
-        collector
-            .parameters
-            .collect_poll_wait_parameters
-            .max_elapsed_time = Some(std::time::Duration::from_secs(3));
+        collector.collect_poll_wait_parameters.max_elapsed_time =
+            Some(std::time::Duration::from_secs(3));
 
         let collection_job_id: CollectionJobId = random();
         let collection_job_path = format!(
             "/tasks/{}/collection_jobs/{collection_job_id}",
-            collector.parameters.task_id
+            collector.task_id
         );
 
         let batch_interval = Interval::new(
@@ -1751,14 +1768,10 @@ mod tests {
             .await;
 
         // Manipulate backoff settings so that we make one or two requests and time out.
-        collector
-            .parameters
-            .collect_poll_wait_parameters
-            .max_elapsed_time = Some(std::time::Duration::from_millis(15));
-        collector
-            .parameters
-            .collect_poll_wait_parameters
-            .initial_interval = std::time::Duration::from_millis(10);
+        collector.collect_poll_wait_parameters.max_elapsed_time =
+            Some(std::time::Duration::from_millis(15));
+        collector.collect_poll_wait_parameters.initial_interval =
+            std::time::Duration::from_millis(10);
         let mock_collect_poll_no_retry_after = server
             .mock("POST", collection_job_path.as_str())
             .with_status(202)
