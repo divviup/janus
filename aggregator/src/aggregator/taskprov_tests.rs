@@ -286,8 +286,7 @@ async fn taskprov_aggregate_init() {
                 "title": "The request's authorization is not valid.",
                 "taskid": format!("{}", test.task_id),
             }),
-            "{}",
-            name
+            "{name}",
         );
 
         let mut test_conn = put(test
@@ -308,7 +307,7 @@ async fn taskprov_aggregate_init() {
         .run_async(&test.handler)
         .await;
 
-        assert_eq!(test_conn.status(), Some(Status::Ok), "{}", name);
+        assert_eq!(test_conn.status(), Some(Status::Ok), "{name}");
         assert_headers!(
             &test_conn,
             "content-type" => (AggregationJobResp::MEDIA_TYPE)
@@ -320,14 +319,12 @@ async fn taskprov_aggregate_init() {
         assert_eq!(
             prepare_step.report_id(),
             report_share.metadata().id(),
-            "{}",
-            name
+            "{name}",
         );
         assert_matches!(
             prepare_step.result(),
             &PrepareStepResult::Continue { .. },
-            "{}",
-            name
+            "{name}",
         );
     }
 
