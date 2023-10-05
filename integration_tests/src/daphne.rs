@@ -10,7 +10,7 @@ use std::{
     process::{Command, Stdio},
     thread::panicking,
 };
-use testcontainers::{clients::Cli, images::generic::GenericImage, Container, RunnableImage};
+use testcontainers::{clients::Cli, Container, GenericImage, RunnableImage};
 
 const DAPHNE_HELPER_IMAGE_NAME_AND_TAG: &str = "cloudflare/daphne-worker-helper:sha-f6b3ef1";
 
