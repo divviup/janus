@@ -344,7 +344,6 @@ pub(super) async fn patch_global_hpke_config<C: Clock>(
     let config_id = conn.hpke_config_id_param()?;
 
     ds.run_tx_with_name("patch_hpke_global_keypair", |tx| {
-        let config_id = config_id;
         Box::pin(async move {
             tx.set_global_hpke_keypair_state(&config_id, &req.state)
                 .await
