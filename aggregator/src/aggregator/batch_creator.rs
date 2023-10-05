@@ -435,7 +435,7 @@ impl Eq for UpdatedOutstandingBatch {}
 
 impl PartialOrd for UpdatedOutstandingBatch {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.new_max_size.partial_cmp(&other.new_max_size)
+        Some(self.new_max_size.cmp(&other.new_max_size))
     }
 }
 
