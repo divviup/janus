@@ -27,7 +27,7 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::TimeInterval, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
-    PartialBatchSelector, PrepareInit, PrepareStepResult, ReportMetadata,
+    HpkeConfig, PartialBatchSelector, PrepareInit, PrepareStepResult, ReportMetadata, ReportShare,
 };
 use prio::{
     codec::Encode,
@@ -52,6 +52,7 @@ where
     task: AggregatorTask,
     vdaf: V,
     aggregation_param: V::AggregationParam,
+    hpke_config: HpkeConfig,
 }
 
 impl<const VERIFY_KEY_SIZE: usize, V> PrepareInitGenerator<VERIFY_KEY_SIZE, V>
@@ -64,12 +65,19 @@ where
         vdaf: V,
         aggregation_param: V::AggregationParam,
     ) -> Self {
+        let hpke_config = task.current_hpke_key().config().clone();
         Self {
             clock,
             task,
             vdaf,
             aggregation_param,
+            hpke_config,
         }
+    }
+
+    pub(super) fn with_hpke_config(mut self, config: HpkeConfig) -> Self {
+        self.hpke_config = config;
+        self
     }
 
     pub(super) fn next(
@@ -93,6 +101,38 @@ where
         report_metadata: ReportMetadata,
         measurement: &V::Measurement,
     ) -> (PrepareInit, VdafTranscript<VERIFY_KEY_SIZE, V>) {
+        let (report_share, transcript) =
+            self.next_report_share_with_metadata(report_metadata, measurement);
+        (
+            PrepareInit::new(
+                report_share,
+                transcript.leader_prepare_transitions[0].message.clone(),
+            ),
+            transcript,
+        )
+    }
+
+    pub(super) fn next_report_share(
+        &self,
+        measurement: &V::Measurement,
+    ) -> (ReportShare, VdafTranscript<VERIFY_KEY_SIZE, V>) {
+        self.next_report_share_with_metadata(
+            ReportMetadata::new(
+                random(),
+                self.clock
+                    .now()
+                    .to_batch_interval_start(self.task.time_precision())
+                    .unwrap(),
+            ),
+            measurement,
+        )
+    }
+
+    pub(super) fn next_report_share_with_metadata(
+        &self,
+        report_metadata: ReportMetadata,
+        measurement: &V::Measurement,
+    ) -> (ReportShare, VdafTranscript<VERIFY_KEY_SIZE, V>) {
         let transcript = run_vdaf(
             &self.vdaf,
             self.task.vdaf_verify_key().unwrap().as_bytes(),
@@ -103,18 +143,12 @@ where
         let report_share = generate_helper_report_share::<V>(
             *self.task.id(),
             report_metadata,
-            self.task.current_hpke_key().config(),
+            &self.hpke_config,
             &transcript.public_share,
             Vec::new(),
             &transcript.helper_input_share,
         );
-        (
-            PrepareInit::new(
-                report_share,
-                transcript.leader_prepare_transitions[0].message.clone(),
-            ),
-            transcript,
-        )
+        (report_share, transcript)
     }
 }
 

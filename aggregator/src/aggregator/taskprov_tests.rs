@@ -1,10 +1,10 @@
 use crate::{
     aggregator::{
+        aggregate_init_tests::PrepareInitGenerator,
         http_handlers::{
             aggregator_handler,
             test_util::{decode_response_body, take_problem_details},
         },
-        tests::generate_helper_report_share,
         Config,
     },
     config::TaskprovConfig,
@@ -34,7 +34,7 @@ use janus_core::{
     },
     report_id::ReportIdChecksumExt,
     taskprov::TASKPROV_HEADER,
-    test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
+    test_util::{install_test_trace_subscriber, VdafTranscript},
     time::{Clock, DurationExt, MockClock, TimeExt},
     vdaf::VERIFY_KEY_LENGTH,
 };
@@ -48,8 +48,7 @@ use janus_messages::{
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq,
     AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
     AggregationJobStep, BatchSelector, Duration, Interval, PartialBatchSelector, PrepareContinue,
-    PrepareInit, PrepareResp, PrepareStepResult, ReportIdChecksum, ReportMetadata, ReportShare,
-    Role, TaskId, Time,
+    PrepareInit, PrepareResp, PrepareStepResult, ReportIdChecksum, ReportShare, Role, TaskId, Time,
 };
 use prio::{
     idpf::IdpfInput,
@@ -199,10 +198,9 @@ impl TaskprovTestCase {
         }
     }
 
-    fn generate_helper_report_share(
+    fn next_report_share(
         &self,
     ) -> (
-        ReportMetadata,
         VdafTranscript<16, TestVdaf>,
         ReportShare,
         Poplar1AggregationParam,
@@ -211,29 +209,15 @@ impl TaskprovTestCase {
             Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[true])]))
                 .unwrap();
         let measurement = IdpfInput::from_bools(&[true]);
-        let report_metadata = ReportMetadata::new(
-            random(),
-            self.clock
-                .now()
-                .to_batch_interval_start(self.task.time_precision())
-                .unwrap(),
-        );
-        let transcript = run_vdaf(
-            &self.vdaf,
-            self.task.vdaf_verify_key().unwrap().as_bytes(),
-            &aggregation_param,
-            report_metadata.id(),
-            &measurement,
-        );
-        let report_share = generate_helper_report_share::<TestVdaf>(
-            *self.task.id(),
-            report_metadata.clone(),
-            self.global_hpke_key.config(),
-            &transcript.public_share,
-            Vec::new(),
-            &transcript.helper_input_share,
-        );
-        (report_metadata, transcript, report_share, aggregation_param)
+        let (report_share, transcript) = PrepareInitGenerator::new(
+            self.clock.clone(),
+            self.task.helper_view().unwrap(),
+            self.vdaf.clone(),
+            aggregation_param.clone(),
+        )
+        .with_hpke_config(self.global_hpke_key.config().clone())
+        .next_report_share(&measurement);
+        (transcript, report_share, aggregation_param)
     }
 }
 
@@ -243,8 +227,7 @@ async fn taskprov_aggregate_init() {
 
     // Use two requests with the same task config. The second request will ensure that a previously
     // provisioned task is usable.
-    let (_, transcript_1, report_share_1, aggregation_param_1) =
-        test.generate_helper_report_share();
+    let (transcript_1, report_share_1, aggregation_param_1) = test.next_report_share();
     let batch_id_1 = random();
     let request_1 = AggregationJobInitializeReq::new(
         aggregation_param_1.get_encoded(),
@@ -256,8 +239,7 @@ async fn taskprov_aggregate_init() {
     );
     let aggregation_job_id_1: AggregationJobId = random();
 
-    let (_, transcript_2, report_share_2, aggregation_param_2) =
-        test.generate_helper_report_share();
+    let (transcript_2, report_share_2, aggregation_param_2) = test.next_report_share();
     let batch_id_2 = random();
     let request_2 = AggregationJobInitializeReq::new(
         aggregation_param_2.get_encoded(),
@@ -393,7 +375,8 @@ async fn taskprov_aggregate_init() {
 async fn taskprov_opt_out_task_expired() {
     let test = TaskprovTestCase::new().await;
 
-    let (_, transcript, report_share, _) = test.generate_helper_report_share();
+    let (transcript, report_share, _) = test.next_report_share();
+
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
         ().get_encoded(),
@@ -447,7 +430,7 @@ async fn taskprov_opt_out_task_expired() {
 async fn taskprov_opt_out_mismatched_task_id() {
     let test = TaskprovTestCase::new().await;
 
-    let (_, transcript, report_share, _) = test.generate_helper_report_share();
+    let (transcript, report_share, _) = test.next_report_share();
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
         ().get_encoded(),
@@ -529,7 +512,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
 async fn taskprov_opt_out_missing_aggregator() {
     let test = TaskprovTestCase::new().await;
 
-    let (_, transcript, report_share, _) = test.generate_helper_report_share();
+    let (transcript, report_share, _) = test.next_report_share();
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
         ().get_encoded(),
@@ -609,7 +592,7 @@ async fn taskprov_opt_out_missing_aggregator() {
 async fn taskprov_opt_out_peer_aggregator_wrong_role() {
     let test = TaskprovTestCase::new().await;
 
-    let (_, transcript, report_share, _) = test.generate_helper_report_share();
+    let (transcript, report_share, _) = test.next_report_share();
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
         ().get_encoded(),
@@ -692,7 +675,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
 async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
     let test = TaskprovTestCase::new().await;
 
-    let (_, transcript, report_share, _) = test.generate_helper_report_share();
+    let (transcript, report_share, _) = test.next_report_share();
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
         ().get_encoded(),
@@ -778,13 +761,11 @@ async fn taskprov_aggregate_continue() {
     let aggregation_job_id = random();
     let batch_id = random();
 
-    let (report_metadata, transcript, report_share, aggregation_param) =
-        test.generate_helper_report_share();
+    let (transcript, report_share, aggregation_param) = test.next_report_share();
     test.datastore
         .run_tx(|tx| {
             let task = test.task.clone();
             let report_share = report_share.clone();
-            let report_metadata = report_metadata.clone();
             let transcript = transcript.clone();
             let aggregation_param = aggregation_param.clone();
 
@@ -812,8 +793,8 @@ async fn taskprov_aggregate_continue() {
                 tx.put_report_aggregation::<VERIFY_KEY_LENGTH, TestVdaf>(&ReportAggregation::new(
                     *task.id(),
                     aggregation_job_id,
-                    *report_metadata.id(),
-                    *report_metadata.time(),
+                    *report_share.metadata().id(),
+                    *report_share.metadata().time(),
                     0,
                     None,
                     ReportAggregationState::WaitingHelper(
@@ -843,7 +824,7 @@ async fn taskprov_aggregate_continue() {
     let request = AggregationJobContinueReq::new(
         AggregationJobStep::from(1),
         Vec::from([PrepareContinue::new(
-            *report_metadata.id(),
+            *report_share.metadata().id(),
             transcript.leader_prepare_transitions[1].message.clone(),
         )]),
     );
@@ -911,7 +892,7 @@ async fn taskprov_aggregate_continue() {
     assert_eq!(
         aggregate_resp,
         AggregationJobResp::new(Vec::from([PrepareResp::new(
-            *report_metadata.id(),
+            *report_share.metadata().id(),
             PrepareStepResult::Finished
         )]))
     );
@@ -921,7 +902,7 @@ async fn taskprov_aggregate_continue() {
 async fn taskprov_aggregate_share() {
     let test = TaskprovTestCase::new().await;
 
-    let (_, transcript, _, aggregation_param) = test.generate_helper_report_share();
+    let (transcript, _, aggregation_param) = test.next_report_share();
     let batch_id = random();
     test.datastore
         .run_tx(|tx| {
@@ -1051,8 +1032,7 @@ async fn end_to_end() {
     let batch_id = random();
     let aggregation_job_id = random();
 
-    let (report_metadata, transcript, report_share, aggregation_param) =
-        test.generate_helper_report_share();
+    let (transcript, report_share, aggregation_param) = test.next_report_share();
     let aggregation_job_init_request = AggregationJobInitializeReq::new(
         aggregation_param.get_encoded(),
         PartialBatchSelector::new_fixed_size(batch_id),
@@ -1086,7 +1066,7 @@ async fn end_to_end() {
 
     assert_eq!(aggregation_job_resp.prepare_resps().len(), 1);
     let prepare_resp = &aggregation_job_resp.prepare_resps()[0];
-    assert_eq!(prepare_resp.report_id(), report_metadata.id());
+    assert_eq!(prepare_resp.report_id(), report_share.metadata().id());
     let message = assert_matches!(
         prepare_resp.result(),
         PrepareStepResult::Continue { message } => message.clone()
@@ -1096,7 +1076,7 @@ async fn end_to_end() {
     let aggregation_job_continue_request = AggregationJobContinueReq::new(
         AggregationJobStep::from(1),
         Vec::from([PrepareContinue::new(
-            *report_metadata.id(),
+            *report_share.metadata().id(),
             transcript.leader_prepare_transitions[1].message.clone(),
         )]),
     );
@@ -1126,10 +1106,10 @@ async fn end_to_end() {
 
     assert_eq!(aggregation_job_resp.prepare_resps().len(), 1);
     let prepare_resp = &aggregation_job_resp.prepare_resps()[0];
-    assert_eq!(prepare_resp.report_id(), report_metadata.id());
+    assert_eq!(prepare_resp.report_id(), report_share.metadata().id());
     assert_matches!(prepare_resp.result(), PrepareStepResult::Finished);
 
-    let checksum = ReportIdChecksum::for_report_id(report_metadata.id());
+    let checksum = ReportIdChecksum::for_report_id(report_share.metadata().id());
     let aggregate_share_request = AggregateShareReq::new(
         BatchSelector::new_fixed_size(batch_id),
         aggregation_param.get_encoded(),
