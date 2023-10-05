@@ -171,13 +171,19 @@ impl<P, Q: QueryType> CollectionJob<P, Q> {
         }
     }
 
-    /// Destructure a collection job into its fields.
-    pub fn into_fields(self) -> (CollectionJobId, Query<Q>, P) {
-        (
-            self.collection_job_id,
-            self.query,
-            self.aggregation_parameter,
-        )
+    /// Gets this collection job's identifier.
+    pub fn collection_job_id(&self) -> &CollectionJobId {
+        &self.collection_job_id
+    }
+
+    /// Gets the query used to create this collection job.
+    pub fn query(&self) -> &Query<Q> {
+        &self.query
+    }
+
+    /// Gets the aggregation parameter used to create this collection job.
+    pub fn aggregation_parameter(&self) -> &P {
+        &self.aggregation_parameter
     }
 }
 
