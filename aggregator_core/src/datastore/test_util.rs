@@ -3,7 +3,7 @@ use crate::{
     test_util::noop_meter,
 };
 use deadpool_postgres::{Manager, Pool};
-use janus_core::time::Clock;
+use janus_core::{test_util::testcontainers::Postgres, time::Clock};
 use lazy_static::lazy_static;
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
@@ -17,7 +17,7 @@ use std::{
     sync::{Arc, Barrier, Weak},
     thread::{self, JoinHandle},
 };
-use testcontainers::{images::postgres::Postgres, RunnableImage};
+use testcontainers::RunnableImage;
 use tokio::sync::{oneshot, Mutex};
 use tokio_postgres::{connect, Config, NoTls};
 use tracing::trace;
@@ -56,8 +56,7 @@ impl EphemeralDatabase {
             move || {
                 // Start an instance of Postgres running in a container.
                 let container_client = testcontainers::clients::Cli::default();
-                let db_container = container_client
-                    .run(RunnableImage::from(Postgres::default()).with_tag("14-alpine"));
+                let db_container = container_client.run(RunnableImage::from(Postgres::default()));
                 const POSTGRES_DEFAULT_PORT: u16 = 5432;
                 let port_number = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT);
                 trace!("Postgres container is up with port {port_number}");
