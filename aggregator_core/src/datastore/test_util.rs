@@ -1,9 +1,14 @@
 use crate::{
-    datastore::{Crypter, Datastore},
+    datastore::{Crypter, Datastore, Transaction},
     test_util::noop_meter,
 };
+use chrono::NaiveDateTime;
 use deadpool_postgres::{Manager, Pool};
-use janus_core::{test_util::testcontainers::Postgres, time::Clock};
+use janus_core::{
+    test_util::testcontainers::Postgres,
+    time::{Clock, MockClock, TimeExt},
+};
+use janus_messages::Time;
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use sqlx::{
@@ -251,4 +256,66 @@ pub fn generate_aead_key_bytes() -> Vec<u8> {
 pub fn generate_aead_key() -> LessSafeKey {
     let unbound_key = UnboundKey::new(&AES_128_GCM, &generate_aead_key_bytes()).unwrap();
     LessSafeKey::new(unbound_key)
+}
+
+impl Transaction<'_, MockClock> {
+    /// Verify that every row in `table` has the expected `created_at` and `updated_by` columns. The
+    /// `created_at` time is checked against the transaction's clock's current time.
+    /// If `updated_at` is true, then also check that column. Panics if any column is missing or
+    /// otherwise invalid.
+    pub async fn check_timestamp_columns(
+        &self,
+        table: &str,
+        expected_updated_by: &str,
+        updated_at: bool,
+    ) {
+        self.check_timestamp_columns_at_create_time(
+            table,
+            expected_updated_by,
+            self.clock.now(),
+            updated_at,
+        )
+        .await
+    }
+
+    /// Verify that every row in `table` has the expected `created_at` and `updated_by` columns. The
+    /// `created_at` time is checked against `expected_created_at`.
+    ///
+    /// If `updated_at` is true, then also check that column. Panics if any column is missing or
+    /// otherwise invalid.
+    pub async fn check_timestamp_columns_at_create_time(
+        &self,
+        table: &str,
+        expected_updated_by: &str,
+        expected_created_at: Time,
+        updated_at: bool,
+    ) {
+        for row in self
+            .query(
+                &format!(
+                    "SELECT created_at, updated_by{} FROM {table}",
+                    if updated_at { ", updated_at" } else { "" }
+                ),
+                &[],
+            )
+            .await
+            .unwrap()
+        {
+            assert_eq!(
+                expected_created_at.as_naive_date_time().unwrap(),
+                row.get::<_, NaiveDateTime>("created_at")
+            );
+            // We check the updated_at value against the transaction clock's current time. This only
+            // works if the clock is a MockClock, and even then doesn't work in those tests that
+            // advance time, but it's a good enough check in most cases that the clock has advanced
+            // as expected.
+            if updated_at {
+                assert_eq!(
+                    self.clock.now().as_naive_date_time().unwrap(),
+                    row.get::<_, NaiveDateTime>("updated_at"),
+                );
+            }
+            assert_eq!(expected_updated_by, row.get::<_, &str>("updated_by"));
+        }
+    }
 }
