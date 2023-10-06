@@ -85,10 +85,12 @@ impl Distribution<VerifyKeyInit> for Standard {
 
 /// Represents another aggregator that is peered with our aggregator for taskprov purposes. Contains
 /// data that needs to be identical between both aggregators for the taskprov flow to work.
-#[derive(Debug, Clone, Derivative, PartialEq, Eq)]
+#[derive(Clone, Derivative, PartialEq, Eq)]
+#[derivative(Debug)]
 pub struct PeerAggregator {
     /// The URL at which the peer aggregator can be reached. This, along with `role`, is used to
     /// uniquely represent the peer aggregator.
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
     endpoint: Url,
 
     /// The role that the peer aggregator takes in DAP. Must be [`Role::Leader`] or [`Role::Helper`].

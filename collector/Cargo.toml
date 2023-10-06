@@ -20,7 +20,7 @@ test-util = []
 [dependencies]
 backoff = { version = "0.4.0", features = ["tokio"] }
 chrono.workspace = true
-derivative = "2.2.0"
+derivative.workspace = true
 janus_core.workspace = true
 janus_messages.workspace = true
 fixed = { version = "1.24", optional = true }
