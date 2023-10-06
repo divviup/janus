@@ -150,6 +150,17 @@ impl vdaf::Client<16> for Vdaf {
     }
 }
 
+impl vdaf::Collector for Vdaf {
+    fn unshard<M: IntoIterator<Item = Self::AggregateShare>>(
+        &self,
+        _agg_param: &Self::AggregationParam,
+        _agg_shares: M,
+        _num_measurements: usize,
+    ) -> Result<Self::AggregateResult, VdafError> {
+        Ok(())
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct InputShare(pub u8);
 

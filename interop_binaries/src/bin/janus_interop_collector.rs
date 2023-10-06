@@ -6,7 +6,7 @@ use clap::{value_parser, Arg, Command};
 use fixed::types::extra::{U15, U31, U63};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32, FixedI64};
-use janus_collector::{Collector, CollectorParameters};
+use janus_collector::Collector;
 use janus_core::{auth_tokens::AuthenticationToken, hpke::HpkeKeypair, vdaf::VdafInstance};
 use janus_interop_binaries::Keyring;
 use janus_interop_binaries::{
@@ -122,6 +122,7 @@ struct CollectPollResponse {
 }
 
 struct TaskState {
+    task_id: TaskId,
     keypair: HpkeKeypair,
     leader_url: Url,
     vdaf: VdafObject,
@@ -168,6 +169,7 @@ async fn handle_add_task(
             .context("invalid header value in \"collector_authentication_token\"")?;
 
     entry.or_insert(TaskState {
+        task_id,
         keypair,
         leader_url: request.leader,
         vdaf: request.vdaf,
@@ -179,7 +181,7 @@ async fn handle_add_task(
 
 async fn handle_collect_generic<V, Q>(
     http_client: &reqwest::Client,
-    collector_params: CollectorParameters,
+    task_state: &TaskState,
     query: Query<Q>,
     vdaf: V,
     agg_param_encoded: &[u8],
@@ -191,7 +193,30 @@ where
     V::AggregationParam: Send + Sync + 'static,
     Q: QueryType,
 {
-    let collector = Collector::new(collector_params, vdaf, http_client.clone());
+    let collector = Collector::builder(
+        task_state.task_id,
+        task_state.leader_url.clone(),
+        task_state.auth_token.clone(),
+        task_state.keypair.clone(),
+        vdaf,
+    )
+    .with_http_client(http_client.clone())
+    .with_http_request_backoff(
+        ExponentialBackoffBuilder::new()
+            .with_initial_interval(StdDuration::from_secs(1))
+            .with_max_interval(StdDuration::from_secs(1))
+            .with_max_elapsed_time(Some(StdDuration::from_secs(60)))
+            .build(),
+    )
+    .with_collect_poll_backoff(
+        ExponentialBackoffBuilder::new()
+            .with_initial_interval(StdDuration::from_millis(200))
+            .with_max_interval(StdDuration::from_secs(1))
+            .with_multiplier(1.2)
+            .with_max_elapsed_time(Some(StdDuration::from_secs(60)))
+            .build(),
+    )
+    .build()?;
     let agg_param = V::AggregationParam::get_decoded(agg_param_encoded)?;
     let handle = tokio::spawn(async move {
         let collect_result = collector.collect(query, &agg_param).await?;
@@ -230,28 +255,6 @@ async fn handle_collection_start(
     let task_state = tasks_guard
         .get(&task_id)
         .context("task was not added before being used in a collect request")?;
-
-    let collector_params = CollectorParameters::new(
-        task_id,
-        task_state.leader_url.clone(),
-        task_state.auth_token.clone(),
-        task_state.keypair.clone(),
-    )
-    .with_http_request_backoff(
-        ExponentialBackoffBuilder::new()
-            .with_initial_interval(StdDuration::from_secs(1))
-            .with_max_interval(StdDuration::from_secs(1))
-            .with_max_elapsed_time(Some(StdDuration::from_secs(60)))
-            .build(),
-    )
-    .with_collect_poll_backoff(
-        ExponentialBackoffBuilder::new()
-            .with_initial_interval(StdDuration::from_millis(200))
-            .with_max_interval(StdDuration::from_secs(1))
-            .with_multiplier(1.2)
-            .with_max_elapsed_time(Some(StdDuration::from_secs(60)))
-            .build(),
-    );
 
     let query = match request.query.query_type {
         1 => {
@@ -297,7 +300,7 @@ async fn handle_collection_start(
             let vdaf = Prio3::new_count(2).context("failed to construct Prio3Count VDAF")?;
             handle_collect_generic(
                 http_client,
-                collector_params,
+                task_state,
                 Query::new_time_interval(batch_interval),
                 vdaf,
                 &agg_param,
@@ -311,7 +314,7 @@ async fn handle_collection_start(
             let vdaf = Prio3::new_sum(2, bits).context("failed to construct Prio3Sum VDAF")?;
             handle_collect_generic(
                 http_client,
-                collector_params,
+                task_state,
                 Query::new_time_interval(batch_interval),
                 vdaf,
                 &agg_param,
@@ -333,7 +336,7 @@ async fn handle_collection_start(
                 .context("failed to construct Prio3SumVec VDAF")?;
             handle_collect_generic(
                 http_client,
-                collector_params,
+                task_state,
                 Query::new_time_interval(batch_interval),
                 vdaf,
                 &agg_param,
@@ -357,7 +360,7 @@ async fn handle_collection_start(
                 .context("failed to construct Prio3Histogram VDAF")?;
             handle_collect_generic(
                 http_client,
-                collector_params,
+                task_state,
                 Query::new_time_interval(batch_interval),
                 vdaf,
                 &agg_param,
@@ -380,7 +383,7 @@ async fn handle_collection_start(
                     .context("failed to construct Prio3FixedPoint16BitBoundedL2VecSum VDAF")?;
             handle_collect_generic(
                 http_client,
-                collector_params,
+                task_state,
                 Query::new_time_interval(batch_interval),
                 vdaf,
                 &agg_param,
@@ -403,7 +406,7 @@ async fn handle_collection_start(
                     .context("failed to construct Prio3FixedPoint32BitBoundedL2VecSum VDAF")?;
             handle_collect_generic(
                 http_client,
-                collector_params,
+                task_state,
                 Query::new_time_interval(batch_interval),
                 vdaf,
                 &agg_param,
@@ -426,7 +429,7 @@ async fn handle_collection_start(
                     .context("failed to construct Prio3FixedPoint64BitBoundedL2VecSum VDAF")?;
             handle_collect_generic(
                 http_client,
-                collector_params,
+                task_state,
                 Query::new_time_interval(batch_interval),
                 vdaf,
                 &agg_param,
@@ -443,7 +446,7 @@ async fn handle_collection_start(
             let vdaf = Prio3::new_count(2).context("failed to construct Prio3Count VDAF")?;
             handle_collect_generic(
                 http_client,
-                collector_params,
+                task_state,
                 Query::new_fixed_size(fixed_size_query),
                 vdaf,
                 &agg_param,
@@ -464,7 +467,7 @@ async fn handle_collection_start(
                 .context("failed to construct Prio3CountVec VDAF")?;
             handle_collect_generic(
                 http_client,
-                collector_params,
+                task_state,
                 Query::new_fixed_size(fixed_size_query),
                 vdaf,
                 &agg_param,
@@ -487,7 +490,7 @@ async fn handle_collection_start(
                     .context("failed to construct Prio3FixedPoint16BitBoundedL2VecSum VDAF")?;
             handle_collect_generic(
                 http_client,
-                collector_params,
+                task_state,
                 Query::new_fixed_size(fixed_size_query),
                 vdaf,
                 &agg_param,
@@ -510,7 +513,7 @@ async fn handle_collection_start(
                     .context("failed to construct Prio3FixedPoint32BitBoundedL2VecSum VDAF")?;
             handle_collect_generic(
                 http_client,
-                collector_params,
+                task_state,
                 Query::new_fixed_size(fixed_size_query),
                 vdaf,
                 &agg_param,
@@ -533,7 +536,7 @@ async fn handle_collection_start(
                     .context("failed to construct Prio3FixedPoint64BitBoundedL2VecSum VDAF")?;
             handle_collect_generic(
                 http_client,
-                collector_params,
+                task_state,
                 Query::new_fixed_size(fixed_size_query),
                 vdaf,
                 &agg_param,
@@ -550,7 +553,7 @@ async fn handle_collection_start(
             let vdaf = Prio3::new_sum(2, bits).context("failed to construct Prio3Sum VDAF")?;
             handle_collect_generic(
                 http_client,
-                collector_params,
+                task_state,
                 Query::new_fixed_size(fixed_size_query),
                 vdaf,
                 &agg_param,
@@ -572,7 +575,7 @@ async fn handle_collection_start(
                 .context("failed to construct Prio3SumVec VDAF")?;
             handle_collect_generic(
                 http_client,
-                collector_params,
+                task_state,
                 Query::new_fixed_size(fixed_size_query),
                 vdaf,
                 &agg_param,
@@ -596,7 +599,7 @@ async fn handle_collection_start(
                 .context("failed to construct Prio3Histogram VDAF")?;
             handle_collect_generic(
                 http_client,
-                collector_params,
+                task_state,
                 Query::new_fixed_size(fixed_size_query),
                 vdaf,
                 &agg_param,

@@ -7,7 +7,7 @@
 //! # Examples
 //!
 //! ```no_run
-//! use janus_collector::{AuthenticationToken, Collector, CollectorParameters, default_http_client};
+//! use janus_collector::{AuthenticationToken, Collector};
 //! use janus_core::{hpke::generate_hpke_config_and_private_key};
 //! use janus_messages::{
 //!     Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Interval, TaskId,
@@ -26,18 +26,17 @@
 //!     HpkeKdfId::HkdfSha256,
 //!     HpkeAeadId::Aes128Gcm,
 //! ).unwrap();
-//! let parameters = CollectorParameters::new(
+//!
+//! // Supply a VDAF implementation, corresponding to this task.
+//! let vdaf = Prio3::new_count(2).unwrap();
+//! let collector = Collector::new(
 //!     task_id,
 //!     "https://example.com/dap/".parse().unwrap(),
 //!     AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
 //!     hpke_keypair,
-//! );
-//!
-//! // Supply a VDAF implementation, corresponding to this task.
-//! let vdaf = Prio3::new_count(2).unwrap();
-//! // Use the default HTTP client as-is.
-//! let http_client = default_http_client().unwrap();
-//! let collector = Collector::new(parameters, vdaf, http_client);
+//!     vdaf,
+//! )
+//! .unwrap();
 //!
 //! // Specify the time interval over which the aggregation should be calculated.
 //! let interval = Interval::new(
@@ -77,8 +76,8 @@ use reqwest::{
     header::{HeaderValue, ToStrError, CONTENT_TYPE, RETRY_AFTER},
     Response, StatusCode,
 };
-use retry_after::FromHeaderValueError;
-use retry_after::RetryAfter;
+pub use retry_after;
+use retry_after::{FromHeaderValueError, RetryAfter};
 use std::{
     convert::TryFrom,
     time::{Duration as StdDuration, SystemTime},
@@ -135,77 +134,9 @@ static COLLECTOR_USER_AGENT: &str = concat!(
     "collector"
 );
 
-/// The DAP collector's view of task parameters.
-#[derive(Derivative)]
-#[derivative(Debug)]
-pub struct CollectorParameters {
-    /// Unique identifier for the task.
-    task_id: TaskId,
-    /// The base URL of the leader's aggregator API endpoints.
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
-    leader_endpoint: Url,
-    /// The authentication information needed to communicate with the leader aggregator.
-    authentication: AuthenticationToken,
-    /// HPKE keypair used for decryption of aggregate shares.
-    #[derivative(Debug = "ignore")]
-    hpke_keypair: HpkeKeypair,
-    /// Parameters to use when retrying HTTP requests.
-    #[derivative(Debug = "ignore")]
-    http_request_retry_parameters: ExponentialBackoff,
-    /// Parameters to use when waiting for a collection job to be processed.
-    #[derivative(Debug = "ignore")]
-    collect_poll_wait_parameters: ExponentialBackoff,
-}
-
-impl CollectorParameters {
-    /// Creates a new set of collector task parameters.
-    pub fn new(
-        task_id: TaskId,
-        leader_endpoint: Url,
-        authentication: AuthenticationToken,
-        hpke_keypair: HpkeKeypair,
-    ) -> CollectorParameters {
-        CollectorParameters {
-            task_id,
-            leader_endpoint: url_ensure_trailing_slash(leader_endpoint),
-            authentication,
-            hpke_keypair,
-            http_request_retry_parameters: http_request_exponential_backoff(),
-            collect_poll_wait_parameters: ExponentialBackoff {
-                initial_interval: StdDuration::from_secs(15),
-                max_interval: StdDuration::from_secs(300),
-                multiplier: 1.2,
-                max_elapsed_time: None,
-                ..Default::default()
-            },
-        }
-    }
-
-    /// Replace the exponential backoff settings used for HTTP requests.
-    pub fn with_http_request_backoff(mut self, backoff: ExponentialBackoff) -> CollectorParameters {
-        self.http_request_retry_parameters = backoff;
-        self
-    }
-
-    /// Replace the exponential backoff settings used while polling for aggregate shares.
-    pub fn with_collect_poll_backoff(mut self, backoff: ExponentialBackoff) -> CollectorParameters {
-        self.collect_poll_wait_parameters = backoff;
-        self
-    }
-
-    /// Construct a URI for a collection.
-    fn collection_job_uri(&self, collection_job_id: CollectionJobId) -> Result<Url, Error> {
-        Ok(self.leader_endpoint.join(&format!(
-            "tasks/{}/collection_jobs/{collection_job_id}",
-            self.task_id
-        ))?)
-    }
-}
-
 /// Construct a [`reqwest::Client`] suitable for use in a DAP [`Collector`].
 pub fn default_http_client() -> Result<reqwest::Client, Error> {
     Ok(reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
         .user_agent(COLLECTOR_USER_AGENT)
         .build()?)
 }
@@ -213,21 +144,22 @@ pub fn default_http_client() -> Result<reqwest::Client, Error> {
 /// Collector state related to a collection job that is in progress.
 #[derive(Derivative)]
 #[derivative(Debug)]
-struct CollectionJob<P, Q>
+pub struct CollectionJob<P, Q>
 where
     Q: QueryType,
 {
     /// The collection job ID.
     collection_job_id: CollectionJobId,
-    /// The collect request's query.
+    /// The collection request's query.
     query: Query<Q>,
-    /// The aggregation parameter used in this collect request.
+    /// The aggregation parameter used in this collection request.
     #[derivative(Debug = "ignore")]
     aggregation_parameter: P,
 }
 
 impl<P, Q: QueryType> CollectionJob<P, Q> {
-    fn new(
+    /// Construct an in-progress collection job from its components.
+    pub fn new(
         collection_job_id: CollectionJobId,
         query: Query<Q>,
         aggregation_parameter: P,
@@ -238,21 +170,36 @@ impl<P, Q: QueryType> CollectionJob<P, Q> {
             aggregation_parameter,
         }
     }
+
+    /// Gets this collection job's identifier.
+    pub fn collection_job_id(&self) -> &CollectionJobId {
+        &self.collection_job_id
+    }
+
+    /// Gets the query used to create this collection job.
+    pub fn query(&self) -> &Query<Q> {
+        &self.query
+    }
+
+    /// Gets the aggregation parameter used to create this collection job.
+    pub fn aggregation_parameter(&self) -> &P {
+        &self.aggregation_parameter
+    }
 }
 
 #[derive(Derivative)]
 #[derivative(Debug)]
-/// The result of a collect request poll operation. This will either provide the collection result
-/// or indicate that the collection is still being processed.
-enum PollResult<T, Q>
+/// The result of a collection request poll operation. This will either provide the collection
+/// result or indicate that the collection is still being processed.
+pub enum PollResult<T, Q>
 where
     Q: QueryType,
 {
-    /// The collection result from a completed collect request.
+    /// The collection result from a completed collection request.
     CollectionResult(#[derivative(Debug = "ignore")] Collection<T, Q>),
-    /// The collect request is not yet ready. If present, the [`RetryAfter`] object is the time at
-    /// which the leader recommends retrying the request.
-    NextAttempt(Option<RetryAfter>),
+    /// The collection request is not yet ready. If present, the [`RetryAfter`] object is the time
+    /// at which the leader recommends retrying the request.
+    NotReady(Option<RetryAfter>),
 }
 
 /// The result of a collection operation.
@@ -334,35 +281,169 @@ where
 {
 }
 
+/// Builder for configuring a [`Collector`].
+pub struct CollectorBuilder<V: vdaf::Collector> {
+    /// Unique identifier for the task.
+    task_id: TaskId,
+    /// The base URL of the leader's aggregator API endpoints.
+    leader_endpoint: Url,
+    /// The authentication information needed to communicate with the leader aggregator.
+    authentication: AuthenticationToken,
+    /// HPKE keypair used for decryption of aggregate shares.
+    hpke_keypair: HpkeKeypair,
+    /// An implementation of the task's VDAF.
+    vdaf: V,
+
+    /// HTTPS client.
+    http_client: Option<reqwest::Client>,
+    /// Parameters to use when retrying HTTP requests.
+    http_request_retry_parameters: ExponentialBackoff,
+    /// Parameters to use when waiting for a collection job to be processed.
+    collect_poll_wait_parameters: ExponentialBackoff,
+}
+
+impl<V: vdaf::Collector> CollectorBuilder<V> {
+    /// Construct a [`CollectorBuilder`] from required DAP task parameters and an implementation of
+    /// the task's VDAF.
+    pub fn new(
+        task_id: TaskId,
+        leader_endpoint: Url,
+        authentication: AuthenticationToken,
+        hpke_keypair: HpkeKeypair,
+        vdaf: V,
+    ) -> Self {
+        Self {
+            task_id,
+            leader_endpoint,
+            authentication,
+            hpke_keypair,
+            vdaf,
+            http_client: None,
+            http_request_retry_parameters: http_request_exponential_backoff(),
+            collect_poll_wait_parameters: ExponentialBackoff {
+                initial_interval: StdDuration::from_secs(15),
+                max_interval: StdDuration::from_secs(300),
+                multiplier: 1.2,
+                max_elapsed_time: None,
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Finalize construction of a [`Collector`].
+    pub fn build(self) -> Result<Collector<V>, Error> {
+        let http_client = if let Some(http_client) = self.http_client {
+            http_client
+        } else {
+            default_http_client()?
+        };
+        Ok(Collector {
+            task_id: self.task_id,
+            leader_endpoint: url_ensure_trailing_slash(self.leader_endpoint),
+            authentication: self.authentication,
+            hpke_keypair: self.hpke_keypair,
+            vdaf: self.vdaf,
+            http_client,
+            http_request_retry_parameters: self.http_request_retry_parameters,
+            collect_poll_wait_parameters: self.collect_poll_wait_parameters,
+        })
+    }
+
+    /// Provide an HTTPS client for the collector.
+    pub fn with_http_client(mut self, http_client: reqwest::Client) -> Self {
+        self.http_client = Some(http_client);
+        self
+    }
+
+    /// Replace the exponential backoff settings used for HTTP requests.
+    pub fn with_http_request_backoff(mut self, backoff: ExponentialBackoff) -> Self {
+        self.http_request_retry_parameters = backoff;
+        self
+    }
+
+    /// Replace the exponential backoff settings used while polling for aggregate shares.
+    pub fn with_collect_poll_backoff(mut self, backoff: ExponentialBackoff) -> Self {
+        self.collect_poll_wait_parameters = backoff;
+        self
+    }
+}
+
 /// A DAP collector.
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct Collector<V: vdaf::Collector> {
-    parameters: CollectorParameters,
-    vdaf_collector: V,
+    /// Unique identifier for the task.
+    task_id: TaskId,
+    /// The base URL of the leader's aggregator API endpoints.
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    leader_endpoint: Url,
+    /// The authentication information needed to communicate with the leader aggregator.
+    authentication: AuthenticationToken,
+    /// HPKE keypair used for decryption of aggregate shares.
     #[derivative(Debug = "ignore")]
+    hpke_keypair: HpkeKeypair,
+    /// An implementation of the task's VDAF.
+    vdaf: V,
+    #[derivative(Debug = "ignore")]
+
+    /// HTTPS client.
     http_client: reqwest::Client,
+    /// Parameters to use when retrying HTTP requests.
+    http_request_retry_parameters: ExponentialBackoff,
+    /// Parameters to use when waiting for a collection job to be processed.
+    collect_poll_wait_parameters: ExponentialBackoff,
 }
 
 impl<V: vdaf::Collector> Collector<V> {
-    /// Construct a new collector. This requires certain DAP task parameters, an implementation of
-    /// the task's VDAF, and a [`reqwest::Client`], configured to never follow redirects, that will
-    /// be used to communicate with the leader aggregator.
+    /// Construct a new collector. This requires certain DAP task parameters and an implementation of
+    /// the task's VDAF.
     pub fn new(
-        parameters: CollectorParameters,
-        vdaf_collector: V,
-        http_client: reqwest::Client,
-    ) -> Collector<V> {
-        Collector {
-            parameters,
-            vdaf_collector,
-            http_client,
-        }
+        task_id: TaskId,
+        leader_endpoint: Url,
+        authentication: AuthenticationToken,
+        hpke_keypair: HpkeKeypair,
+        vdaf: V,
+    ) -> Result<Collector<V>, Error> {
+        Self::builder(task_id, leader_endpoint, authentication, hpke_keypair, vdaf).build()
     }
 
-    /// Send a collect request to the leader aggregator.
+    /// Construct a [`CollectorBuilder`] from required DAP task parameters and an implementation of
+    /// the task's VDAF.
+    pub fn builder(
+        task_id: TaskId,
+        leader_endpoint: Url,
+        authentication: AuthenticationToken,
+        hpke_keypair: HpkeKeypair,
+        vdaf: V,
+    ) -> CollectorBuilder<V> {
+        CollectorBuilder::new(task_id, leader_endpoint, authentication, hpke_keypair, vdaf)
+    }
+
+    /// Construct a URI for a collection.
+    fn collection_job_uri(&self, collection_job_id: CollectionJobId) -> Result<Url, Error> {
+        Ok(self.leader_endpoint.join(&format!(
+            "tasks/{}/collection_jobs/{collection_job_id}",
+            self.task_id
+        ))?)
+    }
+
+    /// Send a collection request to the leader aggregator, wait for it to complete, and return the
+    /// result of the aggregation.
+    pub async fn collect<Q: QueryType>(
+        &self,
+        query: Query<Q>,
+        aggregation_parameter: &V::AggregationParam,
+    ) -> Result<Collection<V::AggregateResult, Q>, Error> {
+        let job = self.start_collection(query, aggregation_parameter).await?;
+        self.poll_until_complete(&job).await
+    }
+
+    /// Send a collection request to the leader aggregator.
+    ///
+    /// This returns a [`CollectionJob`] that must be polled separately using [`Self::poll_once`] or
+    /// [`Self::poll_until_complete`].
     #[tracing::instrument(skip(aggregation_parameter), err)]
-    async fn start_collection<Q: QueryType>(
+    pub async fn start_collection<Q: QueryType>(
         &self,
         query: Query<Q>,
         aggregation_parameter: &V::AggregationParam,
@@ -370,13 +451,11 @@ impl<V: vdaf::Collector> Collector<V> {
         let collect_request =
             CollectionReq::new(query.clone(), aggregation_parameter.get_encoded());
         let collection_job_id = random();
-        let collection_job_url = self.parameters.collection_job_uri(collection_job_id)?;
+        let collection_job_url = self.collection_job_uri(collection_job_id)?;
 
-        let response_res = retry_http_request(
-            self.parameters.http_request_retry_parameters.clone(),
-            || async {
-                let (auth_header, auth_value) =
-                    self.parameters.authentication.request_authentication();
+        let response_res =
+            retry_http_request(self.http_request_retry_parameters.clone(), || async {
+                let (auth_header, auth_value) = self.authentication.request_authentication();
                 self.http_client
                     .put(collection_job_url.clone())
                     .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
@@ -384,9 +463,8 @@ impl<V: vdaf::Collector> Collector<V> {
                     .header(auth_header, auth_value)
                     .send()
                     .await
-            },
-        )
-        .await;
+            })
+            .await;
 
         match response_res {
             // Successful response or unretryable error status code:
@@ -395,7 +473,7 @@ impl<V: vdaf::Collector> Collector<V> {
                 if status.is_client_error() || status.is_server_error() {
                     return Err(Error::from_http_response(response).await);
                 } else if status != StatusCode::CREATED {
-                    // Incorrect success/redirect status code:
+                    // Incorrect success status code:
                     return Err(Error::Http(Box::new(status.into())));
                 }
             }
@@ -412,27 +490,23 @@ impl<V: vdaf::Collector> Collector<V> {
         ))
     }
 
-    /// Request the results of an in-progress collection from the leader aggregator. This may
-    /// return `Ok(None)` if the aggregation is not done yet.
+    /// Request the results of an in-progress collection from the leader aggregator.
     #[tracing::instrument(err)]
-    async fn poll_once<Q: QueryType>(
+    pub async fn poll_once<Q: QueryType>(
         &self,
         job: &CollectionJob<V::AggregationParam, Q>,
     ) -> Result<PollResult<V::AggregateResult, Q>, Error> {
-        let collection_job_url = self.parameters.collection_job_uri(job.collection_job_id)?;
-        let response_res = retry_http_request(
-            self.parameters.http_request_retry_parameters.clone(),
-            || async {
-                let (auth_header, auth_value) =
-                    self.parameters.authentication.request_authentication();
+        let collection_job_url = self.collection_job_uri(job.collection_job_id)?;
+        let response_res =
+            retry_http_request(self.http_request_retry_parameters.clone(), || async {
+                let (auth_header, auth_value) = self.authentication.request_authentication();
                 self.http_client
                     .post(collection_job_url.clone())
                     .header(auth_header, auth_value)
                     .send()
                     .await
-            },
-        )
-        .await;
+            })
+            .await;
 
         let response = match response_res {
             // Successful response or unretryable error status code:
@@ -446,7 +520,7 @@ impl<V: vdaf::Collector> Collector<V> {
                             .get(RETRY_AFTER)
                             .map(RetryAfter::try_from)
                             .transpose()?;
-                        return Ok(PollResult::NextAttempt(retry_after_opt));
+                        return Ok(PollResult::NotReady(retry_after_opt));
                     }
                     _ if status.is_client_error() || status.is_server_error() => {
                         return Err(Error::from_http_response(response).await);
@@ -485,11 +559,11 @@ impl<V: vdaf::Collector> Collector<V> {
         .into_iter()
         .map(|(role, encrypted_aggregate_share)| {
             let bytes = hpke::open(
-                &self.parameters.hpke_keypair,
+                &self.hpke_keypair,
                 &HpkeApplicationInfo::new(&hpke::Label::AggregateShare, &role, &Role::Collector),
                 encrypted_aggregate_share,
                 &AggregateShareAad::new(
-                    self.parameters.task_id,
+                    self.task_id,
                     job.aggregation_parameter.get_encoded(),
                     BatchSelector::<Q>::new(Q::batch_identifier_for_collection(
                         &job.query,
@@ -499,7 +573,7 @@ impl<V: vdaf::Collector> Collector<V> {
                 .get_encoded(),
             )?;
             V::AggregateShare::get_decoded_with_param(
-                &(&self.vdaf_collector, &job.aggregation_parameter),
+                &(&self.vdaf, &job.aggregation_parameter),
                 &bytes,
             )
             .map_err(|_err| Error::AggregateShareDecode)
@@ -510,11 +584,9 @@ impl<V: vdaf::Collector> Collector<V> {
             .report_count()
             .try_into()
             .map_err(|_| Error::ReportCountOverflow)?;
-        let aggregate_result = self.vdaf_collector.unshard(
-            &job.aggregation_parameter,
-            aggregate_shares,
-            report_count,
-        )?;
+        let aggregate_result =
+            self.vdaf
+                .unshard(&job.aggregation_parameter, aggregate_shares, report_count)?;
 
         Ok(PollResult::CollectionResult(Collection {
             partial_batch_selector: collect_response.partial_batch_selector().clone(),
@@ -530,13 +602,16 @@ impl<V: vdaf::Collector> Collector<V> {
         }))
     }
 
-    /// A convenience method to repeatedly request the result of an in-progress collection until it
-    /// completes.
-    async fn poll_until_complete<Q: QueryType>(
+    /// A convenience method to repeatedly request the result of an in-progress collection job until
+    /// it completes.
+    ///
+    /// This uses the parameters provided via [`CollectorBuilder.with_collect_poll_wait_parameters`]
+    /// to control how frequently to poll for completion.
+    pub async fn poll_until_complete<Q: QueryType>(
         &self,
         job: &CollectionJob<V::AggregationParam, Q>,
     ) -> Result<Collection<V::AggregateResult, Q>, Error> {
-        let mut backoff = self.parameters.collect_poll_wait_parameters.clone();
+        let mut backoff = self.collect_poll_wait_parameters.clone();
         backoff.reset();
         let deadline = backoff
             .max_elapsed_time
@@ -546,7 +621,7 @@ impl<V: vdaf::Collector> Collector<V> {
             // received from it and return immediately.
             let retry_after = match self.poll_once(job).await? {
                 PollResult::CollectionResult(aggregate_result) => return Ok(aggregate_result),
-                PollResult::NextAttempt(retry_after) => retry_after,
+                PollResult::NotReady(retry_after) => retry_after,
             };
 
             // Compute a sleep duration based on the Retry-After header, if available.
@@ -588,24 +663,50 @@ impl<V: vdaf::Collector> Collector<V> {
         }
     }
 
-    /// Send a collect request to the leader aggregator, wait for it to complete, and return the
-    /// result of the aggregation.
-    pub async fn collect<Q: QueryType>(
+    /// Tell the leader aggregator to abandon an in-progress collection job, and delete all related
+    /// state.
+    pub async fn delete_collection_job<Q: QueryType>(
         &self,
-        query: Query<Q>,
-        aggregation_parameter: &V::AggregationParam,
-    ) -> Result<Collection<V::AggregateResult, Q>, Error> {
-        let job = self.start_collection(query, aggregation_parameter).await?;
-        self.poll_until_complete(&job).await
+        collection_job: &CollectionJob<V::AggregationParam, Q>,
+    ) -> Result<(), Error> {
+        let collection_job_url = self.collection_job_uri(collection_job.collection_job_id)?;
+        let response_res =
+            retry_http_request(self.http_request_retry_parameters.clone(), || async {
+                let (auth_header, auth_value) = self.authentication.request_authentication();
+                self.http_client
+                    .delete(collection_job_url.clone())
+                    .header(auth_header, auth_value)
+                    .send()
+                    .await
+            })
+            .await;
+
+        match response_res {
+            // Successful response or unretryable error status code:
+            Ok(response) => {
+                let status = response.status();
+                if status.is_client_error() || status.is_server_error() {
+                    Err(Error::from_http_response(response).await)
+                } else if status.is_success() {
+                    // Accept any success status code -- DAP is not prescriptive about status codes
+                    // for this response.
+                    Ok(())
+                } else {
+                    // Redirect status codes and invalid status codes are not expected.
+                    Err(Error::Http(Box::new(status.into())))
+                }
+            }
+            // Retryable error status code, but ran out of retries:
+            Err(Ok(response)) => Err(Error::from_http_response(response).await),
+            // Lower level errors, either unretryable or ran out of retries:
+            Err(Err(error)) => Err(Error::HttpClient(error)),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        default_http_client, Collection, CollectionJob, Collector, CollectorParameters, Error,
-        PollResult,
-    };
+    use crate::{Collection, CollectionJob, Collector, Error, PollResult};
     use assert_matches::assert_matches;
     use chrono::{NaiveDateTime, TimeZone, Utc};
     #[cfg(feature = "fpvec_bounded_l2")]
@@ -616,7 +717,7 @@ mod tests {
             self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
         retries::test_http_request_exponential_backoff,
-        test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
+        test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf, VdafTranscript},
     };
     use janus_messages::{
         problem_type::DapProblemType,
@@ -638,21 +739,20 @@ mod tests {
     };
     use retry_after::RetryAfter;
 
-    fn setup_collector<V: vdaf::Collector>(
-        server: &mut mockito::Server,
-        vdaf_collector: V,
-    ) -> Collector<V> {
+    fn setup_collector<V: vdaf::Collector>(server: &mut mockito::Server, vdaf: V) -> Collector<V> {
         let server_url = Url::parse(&server.url()).unwrap();
         let hpke_keypair = generate_test_hpke_config_and_private_key();
-        let parameters = CollectorParameters::new(
+        Collector::builder(
             random(),
             server_url,
             AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
             hpke_keypair,
+            vdaf,
         )
         .with_http_request_backoff(test_http_request_exponential_backoff())
-        .with_collect_poll_backoff(test_http_request_exponential_backoff());
-        Collector::new(parameters, vdaf_collector, default_http_client().unwrap())
+        .with_collect_poll_backoff(test_http_request_exponential_backoff())
+        .build()
+        .unwrap()
     }
 
     fn collection_uri_regex_matcher(task_id: &TaskId) -> Matcher {
@@ -663,14 +763,17 @@ mod tests {
         ))
     }
 
-    fn build_collect_response_time<const SEED_SIZE: usize, V: vdaf::Aggregator<SEED_SIZE, 16>>(
+    fn build_collect_response_time<
+        const SEED_SIZE: usize,
+        V: vdaf::Aggregator<SEED_SIZE, 16> + vdaf::Collector,
+    >(
         transcript: &VdafTranscript<SEED_SIZE, V>,
-        parameters: &CollectorParameters,
+        collector: &Collector<V>,
         aggregation_parameter: &V::AggregationParam,
         batch_interval: Interval,
     ) -> CollectionMessage<TimeInterval> {
         let associated_data = AggregateShareAad::new(
-            parameters.task_id,
+            collector.task_id,
             aggregation_parameter.get_encoded(),
             BatchSelector::new_time_interval(batch_interval),
         );
@@ -679,14 +782,14 @@ mod tests {
             1,
             batch_interval,
             hpke::seal(
-                parameters.hpke_keypair.config(),
+                collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
                 &transcript.leader_aggregate_share.get_encoded(),
                 &associated_data.get_encoded(),
             )
             .unwrap(),
             hpke::seal(
-                parameters.hpke_keypair.config(),
+                collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
                 &transcript.helper_aggregate_share.get_encoded(),
                 &associated_data.get_encoded(),
@@ -695,14 +798,17 @@ mod tests {
         )
     }
 
-    fn build_collect_response_fixed<const SEED_SIZE: usize, V: vdaf::Aggregator<SEED_SIZE, 16>>(
+    fn build_collect_response_fixed<
+        const SEED_SIZE: usize,
+        V: vdaf::Aggregator<SEED_SIZE, 16> + vdaf::Collector,
+    >(
         transcript: &VdafTranscript<SEED_SIZE, V>,
-        parameters: &CollectorParameters,
+        collector: &Collector<V>,
         aggregation_parameter: &V::AggregationParam,
         batch_id: BatchId,
     ) -> CollectionMessage<FixedSize> {
         let associated_data = AggregateShareAad::new(
-            parameters.task_id,
+            collector.task_id,
             aggregation_parameter.get_encoded(),
             BatchSelector::new_fixed_size(batch_id),
         );
@@ -711,14 +817,14 @@ mod tests {
             1,
             Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
             hpke::seal(
-                parameters.hpke_keypair.config(),
+                collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
                 &transcript.leader_aggregate_share.get_encoded(),
                 &associated_data.get_encoded(),
             )
             .unwrap(),
             hpke::seal(
-                parameters.hpke_keypair.config(),
+                collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
                 &transcript.helper_aggregate_share.get_encoded(),
                 &associated_data.get_encoded(),
@@ -730,29 +836,30 @@ mod tests {
     #[test]
     fn leader_endpoint_end_in_slash() {
         let hpke_keypair = generate_test_hpke_config_and_private_key();
-        let collector_parameters = CollectorParameters::new(
+        let collector = Collector::new(
             random(),
             "http://example.com/dap".parse().unwrap(),
             AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
             hpke_keypair.clone(),
-        );
+            dummy_vdaf::Vdaf::new(),
+        )
+        .unwrap();
 
         assert_eq!(
-            collector_parameters.leader_endpoint.as_str(),
+            collector.leader_endpoint.as_str(),
             "http://example.com/dap/",
         );
 
-        let collector_parameters = CollectorParameters::new(
+        let collector = Collector::new(
             random(),
             "http://example.com".parse().unwrap(),
             AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
             hpke_keypair,
-        );
+            dummy_vdaf::Vdaf::new(),
+        )
+        .unwrap();
 
-        assert_eq!(
-            collector_parameters.leader_endpoint.as_str(),
-            "http://example.com/",
-        );
+        assert_eq!(collector.leader_endpoint.as_str(), "http://example.com/");
     }
 
     #[tokio::test]
@@ -762,8 +869,7 @@ mod tests {
         let vdaf = Prio3::new_count(2).unwrap();
         let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &1);
         let collector = setup_collector(&mut server, vdaf);
-        let (auth_header, auth_value) =
-            collector.parameters.authentication.request_authentication();
+        let (auth_header, auth_value) = collector.authentication.request_authentication();
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000),
@@ -771,8 +877,8 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector.parameters, &(), batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
+            build_collect_response_time(&transcript, &collector, &(), batch_interval);
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mocked_collect_start_error = server
             .mock("PUT", matcher.clone())
@@ -808,7 +914,7 @@ mod tests {
 
         let collection_job_path = format!(
             "/tasks/{}/collection_jobs/{}",
-            collector.parameters.task_id, job.collection_job_id
+            collector.task_id, job.collection_job_id
         );
         let mocked_collect_error = server
             .mock("POST", collection_job_path.as_str())
@@ -836,7 +942,7 @@ mod tests {
             .await;
 
         let poll_result = collector.poll_once(&job).await.unwrap();
-        assert_matches!(poll_result, PollResult::NextAttempt(None));
+        assert_matches!(poll_result, PollResult::NotReady(None));
 
         let collection = collector.poll_until_complete(&job).await.unwrap();
         assert_eq!(
@@ -873,8 +979,8 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector.parameters, &(), batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
+            build_collect_response_time(&transcript, &collector, &(), batch_interval);
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mocked_collect_start_success = server
             .mock("PUT", matcher)
@@ -896,7 +1002,7 @@ mod tests {
 
         let collection_job_path = format!(
             "/tasks/{}/collection_jobs/{}",
-            collector.parameters.task_id, job.collection_job_id
+            collector.task_id, job.collection_job_id
         );
         let mocked_collect_complete = server
             .mock("POST", collection_job_path.as_str())
@@ -943,8 +1049,8 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector.parameters, &(), batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
+            build_collect_response_time(&transcript, &collector, &(), batch_interval);
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mocked_collect_start_success = server
             .mock("PUT", matcher)
@@ -967,7 +1073,7 @@ mod tests {
 
         let collection_job_path = format!(
             "/tasks/{}/collection_jobs/{}",
-            collector.parameters.task_id, job.collection_job_id
+            collector.task_id, job.collection_job_id
         );
         let mocked_collect_complete = server
             .mock("POST", collection_job_path.as_str())
@@ -1023,8 +1129,8 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector.parameters, &(), batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
+            build_collect_response_time(&transcript, &collector, &(), batch_interval);
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mocked_collect_start_success = server
             .mock("PUT", matcher)
@@ -1047,7 +1153,7 @@ mod tests {
 
         let collection_job_path = format!(
             "/tasks/{}/collection_jobs/{}",
-            collector.parameters.task_id, job.collection_job_id
+            collector.task_id, job.collection_job_id
         );
         let mocked_collect_complete = server
             .mock("POST", collection_job_path.as_str())
@@ -1089,9 +1195,8 @@ mod tests {
         let collector = setup_collector(&mut server, vdaf);
 
         let batch_id = random();
-        let collect_resp =
-            build_collect_response_fixed(&transcript, &collector.parameters, &(), batch_id);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
+        let collect_resp = build_collect_response_fixed(&transcript, &collector, &(), batch_id);
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mocked_collect_start_success = server
             .mock("PUT", matcher)
@@ -1120,7 +1225,7 @@ mod tests {
 
         let collection_job_path = format!(
             "/tasks/{}/collection_jobs/{}",
-            collector.parameters.task_id, job.collection_job_id
+            collector.task_id, job.collection_job_id
         );
         let mocked_collect_complete = server
             .mock("POST", collection_job_path.as_str())
@@ -1159,15 +1264,17 @@ mod tests {
         let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &1);
         let server_url = Url::parse(&server.url()).unwrap();
         let hpke_keypair = generate_test_hpke_config_and_private_key();
-        let parameters = CollectorParameters::new(
+        let collector = Collector::builder(
             random(),
             server_url,
             AuthenticationToken::new_bearer_token_from_bytes(Vec::from([0x41u8; 16])).unwrap(),
             hpke_keypair,
+            vdaf,
         )
         .with_http_request_backoff(test_http_request_exponential_backoff())
-        .with_collect_poll_backoff(test_http_request_exponential_backoff());
-        let collector = Collector::new(parameters, vdaf, default_http_client().unwrap());
+        .with_collect_poll_backoff(test_http_request_exponential_backoff())
+        .build()
+        .unwrap();
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000),
@@ -1175,8 +1282,8 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response_time(&transcript, &collector.parameters, &(), batch_interval);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
+            build_collect_response_time(&transcript, &collector, &(), batch_interval);
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mocked_collect_start_success = server
             .mock("PUT", matcher)
@@ -1200,7 +1307,7 @@ mod tests {
 
         let collection_job_path = format!(
             "/tasks/{}/collection_jobs/{}",
-            collector.parameters.task_id, job.collection_job_id
+            collector.task_id, job.collection_job_id
         );
         let mocked_collect_complete = server
             .mock("POST", collection_job_path.as_str())
@@ -1240,7 +1347,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
         let collector = setup_collector(&mut server, vdaf);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mock_server_error = server
             .mock("PUT", matcher.clone())
@@ -1331,7 +1438,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
         let collector = setup_collector(&mut server, vdaf);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mock_collect_start = server
             .mock("PUT", matcher.clone())
@@ -1370,7 +1477,7 @@ mod tests {
 
         let collection_job_path = format!(
             "/tasks/{}/collection_jobs/{}",
-            collector.parameters.task_id, job.collection_job_id
+            collector.task_id, job.collection_job_id
         );
         let mock_collection_job_server_error_details = server
             .mock("POST", collection_job_path.as_str())
@@ -1445,12 +1552,12 @@ mod tests {
                     1,
                     batch_interval,
                     HpkeCiphertext::new(
-                        *collector.parameters.hpke_keypair.config().id(),
+                        *collector.hpke_keypair.config().id(),
                         Vec::new(),
                         Vec::new(),
                     ),
                     HpkeCiphertext::new(
-                        *collector.parameters.hpke_keypair.config().id(),
+                        *collector.hpke_keypair.config().id(),
                         Vec::new(),
                         Vec::new(),
                     ),
@@ -1467,7 +1574,7 @@ mod tests {
         mock_collection_job_bad_ciphertext.assert_async().await;
 
         let associated_data = AggregateShareAad::new(
-            collector.parameters.task_id,
+            collector.task_id,
             ().get_encoded(),
             BatchSelector::new_time_interval(batch_interval),
         );
@@ -1476,14 +1583,14 @@ mod tests {
             1,
             batch_interval,
             hpke::seal(
-                collector.parameters.hpke_keypair.config(),
+                collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
                 b"bad",
                 &associated_data.get_encoded(),
             )
             .unwrap(),
             hpke::seal(
-                collector.parameters.hpke_keypair.config(),
+                collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
                 b"bad",
                 &associated_data.get_encoded(),
@@ -1512,7 +1619,7 @@ mod tests {
             1,
             batch_interval,
             hpke::seal(
-                collector.parameters.hpke_keypair.config(),
+                collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
                 &AggregateShare::from(OutputShare::from(Vec::from([Field64::from(0)])))
                     .get_encoded(),
@@ -1520,7 +1627,7 @@ mod tests {
             )
             .unwrap(),
             hpke::seal(
-                collector.parameters.hpke_keypair.config(),
+                collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
                 &AggregateShare::from(OutputShare::from(Vec::from([
                     Field64::from(0),
@@ -1568,7 +1675,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
         let collector = setup_collector(&mut server, vdaf);
-        let matcher = collection_uri_regex_matcher(&collector.parameters.task_id);
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
 
         let mock_collect_start = server
             .mock("PUT", matcher.clone())
@@ -1593,7 +1700,7 @@ mod tests {
 
         let collection_job_path = format!(
             "/tasks/{}/collection_jobs/{}",
-            collector.parameters.task_id, job.collection_job_id
+            collector.task_id, job.collection_job_id
         );
         let mock_collect_poll_no_retry_after = server
             .mock("POST", collection_job_path.as_str())
@@ -1603,7 +1710,7 @@ mod tests {
             .await;
         assert_matches!(
             collector.poll_once(&job).await.unwrap(),
-            PollResult::NextAttempt(None)
+            PollResult::NotReady(None)
         );
         mock_collect_poll_no_retry_after.assert_async().await;
 
@@ -1616,7 +1723,7 @@ mod tests {
             .await;
         assert_matches!(
             collector.poll_once(&job).await.unwrap(),
-            PollResult::NextAttempt(Some(RetryAfter::Delay(duration))) => assert_eq!(duration, std::time::Duration::from_secs(60))
+            PollResult::NotReady(Some(RetryAfter::Delay(duration))) => assert_eq!(duration, std::time::Duration::from_secs(60))
         );
         mock_collect_poll_retry_after_60s.assert_async().await;
 
@@ -1630,7 +1737,7 @@ mod tests {
         let ref_date_time = Utc.with_ymd_and_hms(2015, 10, 21, 7, 28, 0).unwrap();
         assert_matches!(
             collector.poll_once(&job).await.unwrap(),
-            PollResult::NextAttempt(Some(RetryAfter::DateTime(system_time))) => assert_eq!(system_time, ref_date_time.into())
+            PollResult::NotReady(Some(RetryAfter::DateTime(system_time))) => assert_eq!(system_time, ref_date_time.into())
         );
         mock_collect_poll_retry_after_date_time.assert_async().await;
     }
@@ -1644,15 +1751,13 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
         let mut collector = setup_collector(&mut server, vdaf);
-        collector
-            .parameters
-            .collect_poll_wait_parameters
-            .max_elapsed_time = Some(std::time::Duration::from_secs(3));
+        collector.collect_poll_wait_parameters.max_elapsed_time =
+            Some(std::time::Duration::from_secs(3));
 
         let collection_job_id: CollectionJobId = random();
         let collection_job_path = format!(
             "/tasks/{}/collection_jobs/{collection_job_id}",
-            collector.parameters.task_id
+            collector.task_id
         );
 
         let batch_interval = Interval::new(
@@ -1724,14 +1829,10 @@ mod tests {
             .await;
 
         // Manipulate backoff settings so that we make one or two requests and time out.
-        collector
-            .parameters
-            .collect_poll_wait_parameters
-            .max_elapsed_time = Some(std::time::Duration::from_millis(15));
-        collector
-            .parameters
-            .collect_poll_wait_parameters
-            .initial_interval = std::time::Duration::from_millis(10);
+        collector.collect_poll_wait_parameters.max_elapsed_time =
+            Some(std::time::Duration::from_millis(15));
+        collector.collect_poll_wait_parameters.initial_interval =
+            std::time::Duration::from_millis(10);
         let mock_collect_poll_no_retry_after = server
             .mock("POST", collection_job_path.as_str())
             .with_status(202)
@@ -1743,5 +1844,75 @@ mod tests {
             Error::CollectPollTimeout
         );
         mock_collect_poll_no_retry_after.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn successful_delete() {
+        install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
+        let vdaf = dummy_vdaf::Vdaf::new();
+        let collector = setup_collector(&mut server, vdaf);
+
+        let collection_job_id = random();
+        let collection_job = CollectionJob::new(
+            collection_job_id,
+            Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id: random() }),
+            dummy_vdaf::AggregationParam(1),
+        );
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
+
+        let mock_error = server
+            .mock("DELETE", matcher.clone())
+            .with_status(500)
+            .expect(1)
+            .create_async()
+            .await;
+        let mock_success = server
+            .mock("DELETE", matcher)
+            .with_status(204)
+            .expect(1)
+            .create_async()
+            .await;
+
+        collector
+            .delete_collection_job(&collection_job)
+            .await
+            .unwrap();
+
+        mock_error.assert_async().await;
+        mock_success.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn failed_delete() {
+        install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
+        let vdaf = dummy_vdaf::Vdaf::new();
+        let collector = setup_collector(&mut server, vdaf);
+
+        let collection_job_id = random();
+        let collection_job = CollectionJob::new(
+            collection_job_id,
+            Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id: random() }),
+            dummy_vdaf::AggregationParam(1),
+        );
+        let matcher = collection_uri_regex_matcher(&collector.task_id);
+
+        let mock_error = server
+            .mock("DELETE", matcher.clone())
+            .with_status(500)
+            .expect_at_least(1)
+            .create_async()
+            .await;
+
+        let error = collector
+            .delete_collection_job(&collection_job)
+            .await
+            .unwrap_err();
+        assert_matches!(error, Error::Http(error_response) => {
+            assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+        });
+
+        mock_error.assert_async().await;
     }
 }

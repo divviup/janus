@@ -10,7 +10,7 @@ use derivative::Derivative;
 use fixed::types::extra::{U15, U31, U63};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32, FixedI64};
-use janus_collector::{default_http_client, AuthenticationToken, Collector, CollectorParameters};
+use janus_collector::{default_http_client, AuthenticationToken, Collector};
 use janus_core::hpke::{DivviUpHpkeConfig, HpkeKeypair, HpkePrivateKey};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
@@ -424,90 +424,57 @@ async fn run_with_query<Q: QueryType>(options: Options, query: Query<Q>) -> Resu
 where
     Q: QueryTypeExt,
 {
-    let authentication = match (
-        &options.authentication.dap_auth_token,
-        &options.authentication.authorization_bearer_token,
-    ) {
-        (None, Some(token)) => token,
-        (Some(token), None) => token,
-        (None, None) | (Some(_), Some(_)) => unreachable!(),
-    };
-
-    let hpke_keypair = options.hpke_keypair()?;
-
-    let parameters = CollectorParameters::new(
-        options.task_id,
-        options.leader,
-        authentication.clone(),
-        hpke_keypair,
-    );
     let http_client = default_http_client().map_err(|err| Error::Anyhow(err.into()))?;
     match (options.vdaf, options.length, options.bits) {
         (VdafType::Count, None, None) => {
             let vdaf = Prio3::new_count(2).map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, http_client, query, &())
-                .await
-                .map_err(|err| Error::Anyhow(err.into()))
+            run_collection_generic(options, vdaf, http_client, query, &()).await
         }
         (VdafType::CountVec, Some(length), None) => {
             // We can take advantage of the fact that Prio3SumVec unsharding does not use the
             // chunk_length parameter and avoid asking the user for it.
             let vdaf =
                 Prio3::new_sum_vec(2, 1, length, 1).map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, http_client, query, &())
-                .await
-                .map_err(|err| Error::Anyhow(err.into()))
+            run_collection_generic(options, vdaf, http_client, query, &()).await
         }
         (VdafType::Sum, None, Some(bits)) => {
             let vdaf = Prio3::new_sum(2, bits).map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, http_client, query, &())
-                .await
-                .map_err(|err| Error::Anyhow(err.into()))
+            run_collection_generic(options, vdaf, http_client, query, &()).await
         }
         (VdafType::SumVec, Some(length), Some(bits)) => {
             // We can take advantage of the fact that Prio3SumVec unsharding does not use the
             // chunk_length parameter and avoid asking the user for it.
             let vdaf =
                 Prio3::new_sum_vec(2, bits, length, 1).map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, http_client, query, &())
-                .await
-                .map_err(|err| Error::Anyhow(err.into()))
+            run_collection_generic(options, vdaf, http_client, query, &()).await
         }
         (VdafType::Histogram, Some(length), None) => {
             // We can take advantage of the fact that Prio3Histogram unsharding does not use the
             // chunk_length parameter and avoid asking the user for it.
             let vdaf =
                 Prio3::new_histogram(2, length, 1).map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, http_client, query, &())
-                .await
-                .map_err(|err| Error::Anyhow(err.into()))
+            run_collection_generic(options, vdaf, http_client, query, &()).await
         }
         #[cfg(feature = "fpvec_bounded_l2")]
         (VdafType::FixedPoint16BitBoundedL2VecSum, Some(length), None) => {
             let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>> =
                 Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
                     .map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, http_client, query, &())
-                .await
-                .map_err(|err| Error::Anyhow(err.into()))
+            run_collection_generic(options, vdaf, http_client, query, &()).await
         }
         #[cfg(feature = "fpvec_bounded_l2")]
         (VdafType::FixedPoint32BitBoundedL2VecSum, Some(length), None) => {
             let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>> =
                 Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
                     .map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, http_client, query, &())
-                .await
-                .map_err(|err| Error::Anyhow(err.into()))
+            run_collection_generic(options, vdaf, http_client, query, &()).await
         }
         #[cfg(feature = "fpvec_bounded_l2")]
         (VdafType::FixedPoint64BitBoundedL2VecSum, Some(length), None) => {
             let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>> =
                 Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
                     .map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, http_client, query, &())
-                .await
-                .map_err(|err| Error::Anyhow(err.into()))
+            run_collection_generic(options, vdaf, http_client, query, &()).await
         }
         _ => Err(clap::Error::raw(
             ErrorKind::ArgumentConflict,
@@ -526,17 +493,36 @@ where
 }
 
 async fn run_collection_generic<V: vdaf::Collector, Q: QueryTypeExt>(
-    parameters: CollectorParameters,
+    options: Options,
     vdaf: V,
     http_client: reqwest::Client,
     query: Query<Q>,
     agg_param: &V::AggregationParam,
-) -> Result<(), janus_collector::Error>
+) -> Result<(), Error>
 where
     V::AggregateResult: Debug,
 {
-    let collector = Collector::new(parameters, vdaf, http_client);
-    let collection = collector.collect(query, agg_param).await?;
+    let hpke_keypair = options.hpke_keypair().map_err(Error::Anyhow)?;
+    let task_id = options.task_id;
+    let leader_endpoint = options.leader;
+    let authentication = match (
+        options.authentication.dap_auth_token,
+        options.authentication.authorization_bearer_token,
+    ) {
+        (None, Some(token)) => token,
+        (Some(token), None) => token,
+        (None, None) | (Some(_), Some(_)) => unreachable!(),
+    };
+
+    let collector =
+        Collector::builder(task_id, leader_endpoint, authentication, hpke_keypair, vdaf)
+            .with_http_client(http_client)
+            .build()
+            .map_err(|err| Error::Anyhow(err.into()))?;
+    let collection = collector
+        .collect(query, agg_param)
+        .await
+        .map_err(|err| Error::Anyhow(err.into()))?;
     if !Q::IS_PARTIAL_BATCH_SELECTOR_TRIVIAL {
         println!(
             "Batch: {}",
