@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use derivative::Derivative;
 use janus_aggregator_core::task::{QueryType, Task};
 use janus_core::{
     hpke::{generate_hpke_config_and_private_key, HpkeKeypair},
@@ -183,10 +184,13 @@ impl From<AggregatorRole> for Role {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Derivative, Serialize, Deserialize)]
+#[derivative(Debug)]
 pub struct AggregatorAddTaskRequest {
     pub task_id: TaskId, // uses unpadded base64url
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
     pub leader: Url,
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
     pub helper: Url,
     pub vdaf: VdafObject,
     pub leader_authentication_token: String,

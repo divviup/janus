@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::{value_parser, Arg, Command};
+use derivative::Derivative;
 use janus_client::ClientParameters;
 use janus_core::{
     task::VdafInstance,
@@ -43,10 +44,13 @@ where
     )
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Derivative, Deserialize)]
+#[derivative(Debug)]
 struct UploadRequest {
     task_id: String,
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
     leader: Url,
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
     helper: Url,
     vdaf: VdafObject,
     measurement: serde_json::Value,
