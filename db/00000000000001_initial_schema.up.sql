@@ -31,7 +31,11 @@ CREATE TABLE global_hpke_keys(
 
     -- These columns are mutable.
     state HPKE_KEY_STATE NOT NULL DEFAULT 'PENDING',  -- state of the key
-    updated_at TIMESTAMP NOT NULL                     -- when the key state was last changed
+    updated_at TIMESTAMP NOT NULL,                    -- when the key state was last changed
+
+    -- creation/update records
+    created_at TIMESTAMP NOT NULL,  -- when the row was created
+    updated_by TEXT NOT NULL        -- the name of the transaction that last updated the row
 );
 
 -- Another DAP aggregator who we've partnered with to use the taskprov extension.
@@ -46,6 +50,10 @@ CREATE TABLE taskprov_peer_aggregators(
     report_expiry_age      BIGINT,          -- the maximum age of a report before it is considered expired (and acceptable for garbage collection), in seconds. NULL means that GC is disabled.
     collector_hpke_config BYTEA NOT NULL,   -- the HPKE config of the collector (encoded HpkeConfig message)
 
+    -- creation/update records
+    created_at TIMESTAMP NOT NULL,  -- when the row was created
+    updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
+
     CONSTRAINT taskprov_peer_aggregator_endpoint_and_role_unique UNIQUE(endpoint, role)
 );
 
@@ -56,6 +64,10 @@ CREATE TABLE taskprov_aggregator_auth_tokens(
     ord BIGINT NOT NULL,                 -- a value used to specify the ordering of the authentication tokens
     token BYTEA NOT NULL,                -- bearer token used to authenticate messages to/from the other aggregator (encrypted)
     type AUTH_TOKEN_TYPE NOT NULL DEFAULT 'BEARER',
+
+    -- creation/update records
+    created_at TIMESTAMP NOT NULL,  -- when the row was created
+    updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
     CONSTRAINT task_aggregator_auth_tokens_unique_peer_aggregator_id_and_ord UNIQUE(peer_aggregator_id, ord),
     CONSTRAINT fk_peer_aggregator_id FOREIGN KEY(peer_aggregator_id) REFERENCES taskprov_peer_aggregators(id) ON DELETE CASCADE
@@ -68,6 +80,10 @@ CREATE TABLE taskprov_collector_auth_tokens(
     ord BIGINT NOT NULL,                 -- a value used to specify the ordering of the authentication tokens
     token BYTEA NOT NULL,                -- bearer token used to authenticate messages to/from the other aggregator (encrypted)
     type AUTH_TOKEN_TYPE NOT NULL DEFAULT 'BEARER',
+
+    -- creation/update records
+    created_at TIMESTAMP NOT NULL,  -- when the row was created
+    updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
     CONSTRAINT task_collector_auth_tokens_unique_peer_aggregator_id_and_ord UNIQUE(peer_aggregator_id, ord),
     CONSTRAINT fk_peer_aggregator_id FOREIGN KEY(peer_aggregator_id) REFERENCES taskprov_peer_aggregators(id) ON DELETE CASCADE
@@ -107,9 +123,13 @@ CREATE TABLE tasks(
     -- Authentication token used to authenticate messages to the leader from the collector. These
     -- columns are NULL if the task was provisioned by taskprov or if the task's role is helper.
     collector_auth_token_type   AUTH_TOKEN_TYPE,    -- the type of the authentication token
-    collector_auth_token        BYTEA,              -- encrypted bearer token
+    collector_auth_token_hash        BYTEA,         -- hash of the token
     -- The collector_auth_token columns must either both be NULL or both be non-NULL
-    CONSTRAINT collector_auth_token_null CHECK ((collector_auth_token_type IS NULL) = (collector_auth_token IS NULL))
+    CONSTRAINT collector_auth_token_null CHECK ((collector_auth_token_type IS NULL) = (collector_auth_token_hash IS NULL)),
+
+    -- creation/update records
+    created_at TIMESTAMP NOT NULL,  -- when the row was created
+    updated_by TEXT NOT NULL        -- the name of the transaction that last updated the row
 );
 CREATE INDEX task_id_index ON tasks(task_id);
 
@@ -120,6 +140,10 @@ CREATE TABLE task_hpke_keys(
     config_id SMALLINT NOT NULL,  -- HPKE config ID
     config BYTEA NOT NULL,        -- HPKE config, including public key (encoded HpkeConfig message)
     private_key BYTEA NOT NULL,   -- private key (encrypted)
+
+    -- creation/update records
+    created_at TIMESTAMP NOT NULL,  -- when the row was created
+    updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
     CONSTRAINT task_hpke_keys_unique_task_id_and_config_id UNIQUE(task_id, config_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
@@ -136,6 +160,11 @@ CREATE TABLE client_reports(
     leader_input_share              BYTEA,                           -- encoded, decrypted leader input share (populated for leader only)
     helper_encrypted_input_share    BYTEA,                           -- encoded HpkeCiphertext message containing the helper's input share (populated for leader only)
     aggregation_started             BOOLEAN NOT NULL DEFAULT FALSE,  -- has this client report been associated with an aggregation job?
+
+    -- creation/update records
+    created_at TIMESTAMP NOT NULL,  -- when the row was created
+    updated_at TIMESTAMP NOT NULL,  -- when the row was last changed
+    updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
     CONSTRAINT client_reports_unique_task_id_and_report_id UNIQUE(task_id, report_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
@@ -167,6 +196,11 @@ CREATE TABLE aggregation_jobs(
     lease_token              BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
     lease_attempts           BIGINT NOT NULL DEFAULT 0,                         -- the number of lease acquiries since the last successful lease release
 
+    -- creation/update records
+    created_at TIMESTAMP NOT NULL,  -- when the row was created
+    updated_at TIMESTAMP NOT NULL,  -- when the row was last changed
+    updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
+
     CONSTRAINT aggregation_jobs_unique_id UNIQUE(task_id, aggregation_job_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
@@ -187,6 +221,7 @@ CREATE TYPE REPORT_AGGREGATION_STATE AS ENUM(
 -- therefore have multiple associated report aggregations.
 CREATE TABLE report_aggregations(
     id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
+    task_id             BIGINT NOT NULL,                    -- ID of related task
     aggregation_job_id  BIGINT NOT NULL,                    -- the aggregation job ID this report aggregation is associated with
     client_report_id    BYTEA NOT NULL,                     -- the client report ID this report aggregation is associated with
     client_timestamp    TIMESTAMP NOT NULL,                 -- the client timestamp this report aggregation is associated with
@@ -197,7 +232,13 @@ CREATE TABLE report_aggregations(
     error_code          SMALLINT,                           -- error code corresponding to a DAP ReportShareError value; null if in a state other than FAILED
     last_prep_resp      BYTEA,                              -- the last PrepareResp message sent to the Leader, to assist in replay (opaque DAP message, populated for Helper only)
 
-    CONSTRAINT report_aggregations_unique_ord UNIQUE(aggregation_job_id, ord),
+    -- creation/update records
+    created_at TIMESTAMP NOT NULL,  -- when the row was created
+    updated_at TIMESTAMP NOT NULL,  -- when the row was last changed
+    updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
+
+    CONSTRAINT report_aggregations_unique_ord UNIQUE(task_id, aggregation_job_id, ord),
+    CONSTRAINT fk_task_id FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE,
     CONSTRAINT fk_aggregation_job_id FOREIGN KEY(aggregation_job_id) REFERENCES aggregation_jobs(id) ON DELETE CASCADE
 );
 CREATE INDEX report_aggregations_aggregation_job_id_index ON report_aggregations(aggregation_job_id);
@@ -220,6 +261,11 @@ CREATE TABLE batches(
     state                         BATCH_STATE NOT NULL,  -- the state of aggregations for this batch
     outstanding_aggregation_jobs  BIGINT NOT NULL,       -- the number of outstanding aggregation jobs
     client_timestamp_interval     TSRANGE NOT NULL,
+
+    -- creation/update records
+    created_at TIMESTAMP NOT NULL,  -- when the row was created
+    updated_at TIMESTAMP NOT NULL,  -- when the row was last changed
+    updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
     CONSTRAINT batches_unique_id UNIQUE(task_id, batch_identifier, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
@@ -245,6 +291,11 @@ CREATE TABLE batch_aggregations(
     report_count               BIGINT NOT NULL,                   -- the (possibly-incremental) client report count
     client_timestamp_interval  TSRANGE NOT NULL,                  -- the minimal interval containing all of client timestamps included in this batch aggregation
     checksum                   BYTEA NOT NULL,                    -- the (possibly-incremental) checksum
+
+    -- creation/update records
+    created_at TIMESTAMP NOT NULL,  -- when the row was created
+    updated_at TIMESTAMP NOT NULL,  -- when the row was last changed
+    updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
     CONSTRAINT batch_aggregations_unique_task_id_batch_id_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param, ord),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
@@ -278,6 +329,11 @@ CREATE TABLE collection_jobs(
     lease_token             BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
     lease_attempts          BIGINT NOT NULL DEFAULT 0,                         -- the number of lease acquiries since the last successful lease release
 
+    -- creation/update records
+    created_at TIMESTAMP NOT NULL,  -- when the row was created
+    updated_at TIMESTAMP NOT NULL,  -- when the row was last changed
+    updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
+
     CONSTRAINT collection_jobs_unique_id UNIQUE(task_id, collection_job_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
@@ -297,6 +353,10 @@ CREATE TABLE aggregate_share_jobs(
     report_count            BIGINT NOT NULL,    -- the count of reports included helper_aggregate_share
     checksum                BYTEA NOT NULL,     -- the checksum over the reports included in helper_aggregate_share
 
+    -- creation/update records
+    created_at TIMESTAMP NOT NULL,  -- when the row was created
+    updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
+
     CONSTRAINT aggregate_share_jobs_unique_task_id_batch_id_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
@@ -309,6 +369,10 @@ CREATE TABLE outstanding_batches(
     task_id BIGINT NOT NULL, -- the task ID containing the batch
     batch_id BYTEA NOT NULL, -- 32-byte BatchID as defined by the DAP specification.
     time_bucket_start TIMESTAMP,
+
+    -- creation/update records
+    created_at TIMESTAMP NOT NULL,  -- when the row was created
+    updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
     CONSTRAINT outstanding_batches_unique_task_id_batch_id UNIQUE(task_id, batch_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE

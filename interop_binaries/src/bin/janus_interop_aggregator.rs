@@ -68,10 +68,12 @@ async fn handle_add_task(
         (AggregatorRole::Leader, Some(collector_authentication_token)) => {
             AggregatorTaskParameters::Leader {
                 aggregator_auth_token: leader_authentication_token,
-                collector_auth_token: AuthenticationToken::new_dap_auth_token_from_string(
-                    collector_authentication_token,
-                )
-                .context("invalid header value in \"collector_authentication_token\"")?,
+                collector_auth_token_hash: AuthenticationTokenHash::from(
+                    &AuthenticationToken::new_dap_auth_token_from_string(
+                        collector_authentication_token,
+                    )
+                    .context("invalid header value in \"collector_authentication_token\"")?,
+                ),
                 collector_hpke_config,
             }
         }

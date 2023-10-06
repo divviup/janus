@@ -357,7 +357,15 @@ impl<C: Clock> Aggregator<C> {
                 if task_aggregator.task.role() != &Role::Helper {
                     return Err(Error::UnrecognizedTask(*task_id));
                 }
-                if !task_aggregator
+                if self.cfg.taskprov_config.enabled && taskprov_task_config.is_some() {
+                    self.taskprov_authorize_request(
+                        &Role::Leader,
+                        task_id,
+                        taskprov_task_config.unwrap(),
+                        auth_token.as_ref(),
+                    )
+                    .await?;
+                } else if !task_aggregator
                     .task
                     .check_aggregator_auth_token(auth_token.as_ref())
                 {
@@ -1396,8 +1404,7 @@ impl VdafOps {
 
         let try_hpke_open = |hpke_keypair: &HpkeKeypair| {
             hpke::open(
-                hpke_keypair.config(),
-                hpke_keypair.private_key(),
+                hpke_keypair,
                 &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, task.role()),
                 report.leader_encrypted_input_share(),
                 &InputShareAad::new(
@@ -1623,8 +1630,7 @@ impl VdafOps {
             // If decryption fails, then the aggregator MUST fail with error `hpke-decrypt-error`. (§4.4.2.2)
             let try_hpke_open = |hpke_keypair: &HpkeKeypair| {
                 hpke::open(
-                    hpke_keypair.config(),
-                    hpke_keypair.private_key(),
+                    hpke_keypair,
                     &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
                     prepare_init.report_share().encrypted_input_share(),
                     &InputShareAad::new(

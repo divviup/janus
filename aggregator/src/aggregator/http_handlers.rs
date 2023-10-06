@@ -1017,8 +1017,7 @@ mod tests {
         )
         .unwrap();
         let plaintext = hpke::open(
-            hpke_keypair.config(),
-            hpke_keypair.private_key(),
+            hpke_keypair,
             &application_info,
             &ciphertext,
             associated_data,
@@ -4433,8 +4432,7 @@ mod tests {
         assert_eq!(collect_resp.interval(), &batch_interval);
 
         let decrypted_leader_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_keypair().config(),
-            test_case.task.collector_hpke_keypair().private_key(),
+            test_case.task.collector_hpke_keypair(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
             collect_resp.leader_encrypted_aggregate_share(),
             &AggregateShareAad::new(
@@ -4452,8 +4450,7 @@ mod tests {
         );
 
         let decrypted_helper_aggregate_share = hpke::open(
-            test_case.task.collector_hpke_keypair().config(),
-            test_case.task.collector_hpke_keypair().private_key(),
+            test_case.task.collector_hpke_keypair(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
             collect_resp.helper_encrypted_aggregate_share(),
             &AggregateShareAad::new(
@@ -5152,8 +5149,7 @@ mod tests {
                     decode_response_body(&mut test_conn).await;
 
                 let aggregate_share = hpke::open(
-                    task.collector_hpke_keypair().config(),
-                    task.collector_hpke_keypair().private_key(),
+                    task.collector_hpke_keypair(),
                     &HpkeApplicationInfo::new(
                         &Label::AggregateShare,
                         &Role::Helper,

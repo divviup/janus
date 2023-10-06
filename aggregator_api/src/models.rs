@@ -4,7 +4,10 @@ use janus_aggregator_core::{
     task::{AggregatorTask, QueryType},
     taskprov::{PeerAggregator, VerifyKeyInit},
 };
-use janus_core::{auth_tokens::AuthenticationToken, vdaf::VdafInstance};
+use janus_core::{
+    auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
+    vdaf::VdafInstance,
+};
 use janus_messages::{
     query_type::Code as SupportedQueryType, Duration, HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId,
     Role, TaskId, Time,
@@ -28,6 +31,7 @@ pub(crate) struct AggregatorApiConfig {
     pub role: AggregatorRole,
     pub vdafs: Vec<SupportedVdaf>,
     pub query_types: Vec<SupportedQueryType>,
+    pub features: &'static [&'static str],
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -76,6 +80,10 @@ pub(crate) struct PostTaskReq {
     /// If this aggregator is the leader, this is the token to use to authenticate requests to
     /// the helper. If this aggregator is the helper, the value is `None`.
     pub(crate) aggregator_auth_token: Option<AuthenticationToken>,
+    /// If this aggregator is the leader, this is the token hash used to authenticate collection
+    /// sub-protocol requests received from the helper. If this aggregator is the helper, the value
+    /// is `None`.
+    pub(crate) collector_auth_token_hash: Option<AuthenticationTokenHash>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,11 +120,6 @@ pub(crate) struct TaskResp {
     /// initial response to a task creation request and only when the role is helper. Subsequent
     /// `TaskResp`s obtained from `GET /tasks/:task_id` will not contain the authentication token.
     pub(crate) aggregator_auth_token: Option<AuthenticationToken>,
-    /// The authentication token used by the task's Collector to authenticate to the Leader.
-    /// `Some` if `role` is Leader, `None` otherwise.
-    // TODO(#1509) This field will have to change as Janus leaders will only store a salted hash
-    // of collector auth tokens.
-    pub(crate) collector_auth_token: Option<AuthenticationToken>,
     /// HPKE configuration used by the collector to decrypt aggregate shares.
     pub(crate) collector_hpke_config: HpkeConfig,
     /// HPKE configuration(s) used by this aggregator to decrypt report shares.
@@ -148,7 +151,6 @@ impl TryFrom<&AggregatorTask> for TaskResp {
             time_precision: *task.time_precision(),
             tolerable_clock_skew: *task.tolerable_clock_skew(),
             aggregator_auth_token: None,
-            collector_auth_token: task.collector_auth_token().cloned(),
             collector_hpke_config: task
                 .collector_hpke_config()
                 .ok_or("collector_hpke_config is required")?

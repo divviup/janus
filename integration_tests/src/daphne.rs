@@ -6,7 +6,7 @@ use janus_interop_binaries::{
     get_rust_log_level, test_util::await_http_server, ContainerLogsDropGuard, ContainerLogsSource,
 };
 use janus_messages::{Role, Time};
-use testcontainers::{clients::Cli, images::generic::GenericImage, RunnableImage};
+use testcontainers::{clients::Cli, GenericImage, RunnableImage};
 
 const DAPHNE_HELPER_IMAGE_NAME_AND_TAG: &str = "cloudflare/daphne-worker-helper:sha-f6b3ef1";
 

@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use backoff::{future::retry, ExponentialBackoff};
-use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
 use deadpool::managed::TimeoutType;
 use deadpool_postgres::{Manager, Pool, PoolError, Runtime, Timeouts};
@@ -140,7 +140,7 @@ pub async fn datastore<C: Clock>(
         .iter()
         .filter(|k| !k.is_empty())
         .map(|k| {
-            STANDARD_NO_PAD
+            URL_SAFE_NO_PAD
                 .decode(k)
                 .context("couldn't base64-decode datastore keys")
                 .and_then(|k| {
@@ -206,7 +206,7 @@ pub struct CommonBinaryOptions {
         hide_env_values = true,
         num_args = 1,
         use_value_delimiter = true,
-        help = "datastore encryption keys, encoded in base64 then comma-separated"
+        help = "datastore encryption keys, encoded in url-safe unpadded base64 then comma-separated"
     )]
     pub datastore_keys: Vec<String>,
 

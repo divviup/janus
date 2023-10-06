@@ -21,6 +21,7 @@ use prio::{
 };
 use rand::random;
 use std::{convert::Infallible, fmt::Debug, io::Cursor, time::SystemTimeError};
+use tokio::try_join;
 use url::Url;
 
 #[derive(Debug, thiserror::Error)]
@@ -62,7 +63,7 @@ static CLIENT_USER_AGENT: &str = concat!(
 /// The DAP client's view of task parameters.
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
-pub struct ClientParameters {
+struct ClientParameters {
     /// Unique identifier for the task.
     task_id: TaskId,
     /// URL relative to which the Leader's API endpoints are found.
@@ -139,7 +140,7 @@ impl ClientParameters {
 /// Fetches HPKE configuration from the specified aggregator using the aggregator endpoints in the
 /// provided [`ClientParameters`].
 #[tracing::instrument(err)]
-pub async fn aggregator_hpke_config(
+async fn aggregator_hpke_config(
     client_parameters: &ClientParameters,
     aggregator_role: &Role,
     http_client: &reqwest::Client,
@@ -193,39 +194,163 @@ pub fn default_http_client() -> Result<reqwest::Client, Error> {
         .build()?)
 }
 
+/// Builder for configuring a [`Client`].
+pub struct ClientBuilder<V: vdaf::Client<16>> {
+    parameters: ClientParameters,
+    vdaf: V,
+    http_client: Option<reqwest::Client>,
+}
+
+impl<V: vdaf::Client<16>> ClientBuilder<V> {
+    /// Construct a [`ClientBuilder`] from its required DAP task parameters.
+    pub fn new(
+        task_id: TaskId,
+        leader_aggregator_endpoint: Url,
+        helper_aggregator_endpoint: Url,
+        time_precision: Duration,
+        vdaf: V,
+    ) -> Self {
+        Self {
+            parameters: ClientParameters::new(
+                task_id,
+                leader_aggregator_endpoint,
+                helper_aggregator_endpoint,
+                time_precision,
+            ),
+            vdaf,
+            http_client: None,
+        }
+    }
+
+    /// Finalize construction of a [`Client`]. This will fetch HPKE configurations from each
+    /// aggregator via HTTPS.
+    pub async fn build(self) -> Result<Client<V>, Error> {
+        let http_client = if let Some(http_client) = self.http_client {
+            http_client
+        } else {
+            default_http_client()?
+        };
+        let (leader_hpke_config, helper_hpke_config) = try_join!(
+            aggregator_hpke_config(&self.parameters, &Role::Leader, &http_client),
+            aggregator_hpke_config(&self.parameters, &Role::Helper, &http_client)
+        )?;
+        Ok(Client {
+            parameters: self.parameters,
+            vdaf: self.vdaf,
+            http_client,
+            leader_hpke_config,
+            helper_hpke_config,
+        })
+    }
+
+    /// Finalize construction of a [`Client`], and provide aggregator HPKE configurations through an
+    /// out-of-band mechanism.
+    pub fn build_with_hpke_configs(
+        self,
+        leader_hpke_config: HpkeConfig,
+        helper_hpke_config: HpkeConfig,
+    ) -> Result<Client<V>, Error> {
+        let http_client = if let Some(http_client) = self.http_client {
+            http_client
+        } else {
+            default_http_client()?
+        };
+        Ok(Client {
+            parameters: self.parameters,
+            vdaf: self.vdaf,
+            http_client,
+            leader_hpke_config,
+            helper_hpke_config,
+        })
+    }
+
+    /// Override the HTTPS client configuration to be used.
+    pub fn with_http_client(mut self, http_client: reqwest::Client) -> Self {
+        self.http_client = Some(http_client);
+        self
+    }
+
+    /// Override the exponential backoff parameters used when retrying HTTPS requests.
+    pub fn with_backoff(mut self, http_request_retry_parameters: ExponentialBackoff) -> Self {
+        self.parameters.http_request_retry_parameters = http_request_retry_parameters;
+        self
+    }
+}
+
 /// A DAP client.
 #[derive(Debug)]
 pub struct Client<V: vdaf::Client<16>> {
     parameters: ClientParameters,
-    vdaf_client: V,
+    vdaf: V,
     http_client: reqwest::Client,
     leader_hpke_config: HpkeConfig,
     helper_hpke_config: HpkeConfig,
 }
 
 impl<V: vdaf::Client<16>> Client<V> {
-    pub fn new(
-        parameters: ClientParameters,
-        vdaf_client: V,
-        http_client: &reqwest::Client,
+    /// Construct a new client from the required set of DAP task parameters.
+    pub async fn new(
+        task_id: TaskId,
+        leader_aggregator_endpoint: Url,
+        helper_aggregator_endpoint: Url,
+        time_precision: Duration,
+        vdaf: V,
+    ) -> Result<Self, Error> {
+        ClientBuilder::new(
+            task_id,
+            leader_aggregator_endpoint,
+            helper_aggregator_endpoint,
+            time_precision,
+            vdaf,
+        )
+        .build()
+        .await
+    }
+
+    /// Construct a new client, and provide the aggregator HPKE configurations through an
+    /// out-of-band means.
+    pub fn with_hpke_configs(
+        task_id: TaskId,
+        leader_aggregator_endpoint: Url,
+        helper_aggregator_endpoint: Url,
+        time_precision: Duration,
+        vdaf: V,
         leader_hpke_config: HpkeConfig,
         helper_hpke_config: HpkeConfig,
-    ) -> Self {
-        Self {
-            parameters,
-            vdaf_client,
-            http_client: http_client.clone(),
-            leader_hpke_config,
-            helper_hpke_config,
-        }
+    ) -> Result<Self, Error> {
+        ClientBuilder::new(
+            task_id,
+            leader_aggregator_endpoint,
+            helper_aggregator_endpoint,
+            time_precision,
+            vdaf,
+        )
+        .build_with_hpke_configs(leader_hpke_config, helper_hpke_config)
+    }
+
+    /// Creates a [`ClientBuilder`] for further configuration from the required set of DAP task
+    /// parameters.
+    pub fn builder(
+        task_id: TaskId,
+        leader_aggregator_endpoint: Url,
+        helper_aggregator_endpoint: Url,
+        time_precision: Duration,
+        vdaf: V,
+    ) -> ClientBuilder<V> {
+        ClientBuilder::new(
+            task_id,
+            leader_aggregator_endpoint,
+            helper_aggregator_endpoint,
+            time_precision,
+            vdaf,
+        )
     }
 
     /// Shard a measurement, encrypt its shares, and construct a [`janus_core::message::Report`]
     /// to be uploaded.
     fn prepare_report(&self, measurement: &V::Measurement, time: &Time) -> Result<Report, Error> {
         let report_id: ReportId = random();
-        let (public_share, input_shares) =
-            self.vdaf_client.shard(measurement, report_id.as_ref())?;
+        let (public_share, input_shares) = self.vdaf.shard(measurement, report_id.as_ref())?;
         assert_eq!(input_shares.len(), 2); // DAP only supports VDAFs using two aggregators.
 
         let time = time
@@ -281,48 +406,26 @@ impl<V: vdaf::Client<16>> Client<V> {
     /// the leader.
     ///
     /// ```no_run
-    /// # use janus_client::{default_http_client, Client, ClientParameters};
-    /// # use janus_core::hpke::generate_hpke_config_and_private_key;
-    /// # use janus_messages::{Duration, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId};
-    /// # use prio::vdaf::{prio3::Prio3};
+    /// # use janus_client::{Client, Error};
+    /// # use janus_messages::Duration;
+    /// # use prio::vdaf::prio3::Prio3;
     /// # use rand::random;
     /// #
-    /// # let client_parameters = ClientParameters::new(
-    /// #     random(),
-    /// #     "https://example.com/".parse().unwrap(),
-    /// #     "https://example.net/".parse().unwrap(),
-    /// #     Duration::from_seconds(3600),
-    /// # );
+    /// # async fn test() -> Result<(), Error> {
     /// # let measurement = 1;
     /// # let timestamp = 1_700_000_000;
-    /// # let leader_hpke_config = generate_hpke_config_and_private_key(
-    /// #     HpkeConfigId::from(0),
-    /// #     HpkeKemId::X25519HkdfSha256,
-    /// #     HpkeKdfId::HkdfSha256,
-    /// #     HpkeAeadId::Aes128Gcm,
-    /// # )
-    /// # .unwrap()
-    /// # .config()
-    /// # .clone();
-    /// # let helper_hpke_config = generate_hpke_config_and_private_key(
-    /// #     HpkeConfigId::from(0),
-    /// #     HpkeKemId::X25519HkdfSha256,
-    /// #     HpkeKdfId::HkdfSha256,
-    /// #     HpkeAeadId::Aes128Gcm,
-    /// # )
-    /// # .unwrap()
-    /// # .config()
-    /// # .clone();
     /// # let vdaf = Prio3::new_count(2).unwrap();
     /// let client = Client::new(
-    ///     client_parameters,
+    ///     random(),
+    ///     "https://example.com/".parse().unwrap(),
+    ///     "https://example.net/".parse().unwrap(),
+    ///     Duration::from_seconds(3600),
     ///     vdaf,
-    ///     &default_http_client().unwrap(),
-    ///     leader_hpke_config,
-    ///     helper_hpke_config,
-    /// );
-    /// client.upload_with_time(&measurement, std::time::SystemTime::now());
-    /// client.upload_with_time(&measurement, janus_messages::Time::from_seconds_since_epoch(timestamp));
+    /// ).await?;
+    /// client.upload_with_time(&measurement, std::time::SystemTime::now()).await?;
+    /// client.upload_with_time(&measurement, janus_messages::Time::from_seconds_since_epoch(timestamp)).await?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[tracing::instrument(skip(measurement), err)]
     pub async fn upload_with_time<T>(
@@ -380,21 +483,21 @@ mod tests {
     use rand::random;
     use url::Url;
 
-    fn setup_client<V: vdaf::Client<16>>(server: &mockito::Server, vdaf_client: V) -> Client<V> {
+    fn setup_client<V: vdaf::Client<16>>(server: &mockito::Server, vdaf: V) -> Client<V> {
         let server_url = Url::parse(&server.url()).unwrap();
-        Client::new(
-            ClientParameters::new_with_backoff(
-                random(),
-                server_url.clone(),
-                server_url,
-                Duration::from_seconds(1),
-                test_http_request_exponential_backoff(),
-            ),
-            vdaf_client,
-            &default_http_client().unwrap(),
+        Client::builder(
+            random(),
+            server_url.clone(),
+            server_url,
+            Duration::from_seconds(1),
+            vdaf,
+        )
+        .with_backoff(test_http_request_exponential_backoff())
+        .build_with_hpke_configs(
             generate_test_hpke_config_and_private_key().config().clone(),
             generate_test_hpke_config_and_private_key().config().clone(),
         )
+        .unwrap()
     }
 
     #[test]
@@ -523,19 +626,18 @@ mod tests {
     async fn upload_bad_time_precision() {
         install_test_trace_subscriber();
 
-        let client_parameters = ClientParameters::new(
+        let client = Client::builder(
             random(),
             "https://leader.endpoint".parse().unwrap(),
             "https://helper.endpoint".parse().unwrap(),
             Duration::from_seconds(0),
-        );
-        let client = Client::new(
-            client_parameters,
             Prio3::new_count(2).unwrap(),
-            &default_http_client().unwrap(),
+        )
+        .build_with_hpke_configs(
             generate_test_hpke_config_and_private_key().config().clone(),
             generate_test_hpke_config_and_private_key().config().clone(),
-        );
+        )
+        .unwrap();
         let result = client.upload(&1).await;
         assert_matches!(result, Err(Error::InvalidParameter(_)));
     }

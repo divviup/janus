@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
 use janus_aggregator::{
     binary_utils::{database_pool, datastore, read_config, CommonBinaryOptions},
@@ -265,7 +265,7 @@ async fn create_datastore_key(
         .sample_iter(Standard)
         .take(AES_128_GCM.key_len())
         .collect();
-    let secret_content = STANDARD_NO_PAD.encode(key_bytes);
+    let secret_content = URL_SAFE_NO_PAD.encode(key_bytes);
 
     // Write the secret.
     secrets_api
@@ -454,7 +454,7 @@ impl From<kube::Client> for LazyKubeClient {
 #[cfg(test)]
 mod tests {
     use super::{fetch_datastore_keys, CommandLineOptions, ConfigFile, KubernetesSecretOptions};
-    use crate::{LazyKubeClient, STANDARD_NO_PAD};
+    use crate::{LazyKubeClient, URL_SAFE_NO_PAD};
     use base64::Engine;
     use clap::CommandFactory;
     use janus_aggregator::{
@@ -730,9 +730,9 @@ mod tests {
   aggregator_auth_token:
     type: Bearer
     token: Y29sbGVjdG9yLWFiZjU0MDhlMmIxNjAxODMxNjI1YWYzOTU5MTA2NDU4
-  collector_auth_token:
+  collector_auth_token_hash:
     type: Bearer
-    token: Y29sbGVjdG9yLWFiZjU0MDhlMmIxNjAxODMxNjI1YWYzOTU5MTA2NDU4
+    hash: MJOoBO_ysLEuG_lv2C37eEOf1Ngetsr-Ers0ZYj4vdQ
   hpke_keys: []
 - peer_aggregator_endpoint: https://leader
   query_type: TimeInterval
@@ -801,8 +801,8 @@ mod tests {
 
         for task in &got_tasks {
             match task.role() {
-                Role::Leader => assert!(task.collector_auth_token().is_some()),
-                Role::Helper => assert!(task.collector_auth_token().is_none()),
+                Role::Leader => assert!(task.collector_auth_token_hash().is_some()),
+                Role::Helper => assert!(task.collector_auth_token_hash().is_none()),
                 role => panic!("unexpected role {role}"),
             }
         }
@@ -840,7 +840,7 @@ mod tests {
 
         // Verify that the written secret data can be parsed as a comma-separated list of datastore
         // keys.
-        let datastore_key_bytes = STANDARD_NO_PAD.decode(&secret_data[0]).unwrap();
+        let datastore_key_bytes = URL_SAFE_NO_PAD.decode(&secret_data[0]).unwrap();
         UnboundKey::new(&AES_128_GCM, &datastore_key_bytes).unwrap();
     }
 

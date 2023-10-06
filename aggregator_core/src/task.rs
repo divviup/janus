@@ -433,10 +433,11 @@ impl AggregatorTask {
         self.aggregator_parameters.collector_hpke_config()
     }
 
-    /// Returns the collector authentication token for this task, if this aggregator is the leader.
-    /// TODO(#1509): make this an AuthenticationTokenHash
-    pub fn collector_auth_token(&self) -> Option<&AuthenticationToken> {
-        self.aggregator_parameters.collector_auth_token()
+    /// Returns the collector [`AuthenticationTokenHash`] for this task, used by the leader to
+    /// authenticate collection sub-protocol requests received from the collector, or `None` for the
+    /// helper.
+    pub fn collector_auth_token_hash(&self) -> Option<&AuthenticationTokenHash> {
+        self.aggregator_parameters.collector_auth_token_hash()
     }
 
     /// Return the HPKE keypairs used by this aggregator to decrypt client reports, or an empty map
@@ -472,10 +473,7 @@ impl AggregatorTask {
         &self,
         incoming_auth_token: Option<&AuthenticationToken>,
     ) -> bool {
-        // TODO(#1509): Leader should hold only an AuthenticaitonTokenHash, making the
-        // AuthenticationTokenHash::from call here unnecessary.
-        self.collector_auth_token()
-            .map(AuthenticationTokenHash::from)
+        self.collector_auth_token_hash()
             .zip(incoming_auth_token)
             .map(|(own_token_hash, incoming_token)| own_token_hash.validate(incoming_token))
             .unwrap_or(false)
@@ -491,9 +489,9 @@ pub enum AggregatorTaskParameters {
         /// Authentication token used to make requests to the helper during the aggregation
         /// sub-protocol.
         aggregator_auth_token: AuthenticationToken,
-        /// Authentication token used to validate requests from the collector during the collection
-        /// sub-protocol.
-        collector_auth_token: AuthenticationToken,
+        /// Authentication token hash used to validate requests from the collector during the
+        /// collection sub-protocol.
+        collector_auth_token_hash: AuthenticationTokenHash,
         /// HPKE configuration for the collector.
         collector_hpke_config: HpkeConfig,
     },
@@ -559,14 +557,15 @@ impl AggregatorTaskParameters {
         }
     }
 
-    /// Returns the collector authentication token for this task, if this aggregator is the leader.
-    /// TODO(#1509): make this an AuthenticationTokenHash
-    fn collector_auth_token(&self) -> Option<&AuthenticationToken> {
+    /// Returns the collector [`AuthenticationTokenHash`] for this task, used by the leader to
+    /// authenticate collection sub-protocol requests received from the collector, or `None` for the
+    /// helper.
+    fn collector_auth_token_hash(&self) -> Option<&AuthenticationTokenHash> {
         match self {
             Self::Leader {
-                collector_auth_token,
+                collector_auth_token_hash,
                 ..
-            } => Some(collector_auth_token),
+            } => Some(collector_auth_token_hash),
             _ => None,
         }
     }
@@ -591,7 +590,7 @@ pub struct SerializedAggregatorTask {
     collector_hpke_config: HpkeConfig,
     aggregator_auth_token: Option<AuthenticationToken>,
     aggregator_auth_token_hash: Option<AuthenticationTokenHash>,
-    collector_auth_token: Option<AuthenticationToken>,
+    collector_auth_token_hash: Option<AuthenticationTokenHash>,
     hpke_keys: Vec<HpkeKeypair>, // uses unpadded base64url
 }
 
@@ -671,7 +670,10 @@ impl Serialize for AggregatorTask {
                 .aggregator_parameters
                 .aggregator_auth_token_hash()
                 .cloned(),
-            collector_auth_token: self.aggregator_parameters.collector_auth_token().cloned(),
+            collector_auth_token_hash: self
+                .aggregator_parameters
+                .collector_auth_token_hash()
+                .cloned(),
             hpke_keys,
         }
         .serialize(serializer)
@@ -697,9 +699,9 @@ impl TryFrom<SerializedAggregatorTask> for AggregatorTask {
                 aggregator_auth_token: serialized_task
                     .aggregator_auth_token
                     .ok_or(Error::InvalidParameter("missing aggregator auth token"))?,
-                collector_auth_token: serialized_task
-                    .collector_auth_token
-                    .ok_or(Error::InvalidParameter("missing collector auth token"))?,
+                collector_auth_token_hash: serialized_task
+                    .collector_auth_token_hash
+                    .ok_or(Error::InvalidParameter("missing collector auth token hash"))?,
                 collector_hpke_config: serialized_task.collector_hpke_config,
             },
             Role::Helper => AggregatorTaskParameters::Helper {
@@ -1005,7 +1007,9 @@ pub mod test_util {
                 self.leader_hpke_keys.values().cloned().collect::<Vec<_>>(),
                 AggregatorTaskParameters::Leader {
                     aggregator_auth_token: self.aggregator_auth_token.clone(),
-                    collector_auth_token: self.collector_auth_token.clone(),
+                    collector_auth_token_hash: AuthenticationTokenHash::from(
+                        &self.collector_auth_token,
+                    ),
                     collector_hpke_config: self.collector_hpke_keypair.config().clone(),
                 },
             )
@@ -1445,10 +1449,10 @@ mod tests {
                         "YWdncmVnYXRvciB0b2tlbg",
                     )
                     .unwrap(),
-                    collector_auth_token: AuthenticationToken::new_bearer_token_from_string(
-                        "Y29sbGVjdG9yIHRva2Vu",
-                    )
-                    .unwrap(),
+                    collector_auth_token_hash: AuthenticationTokenHash::from(
+                        &AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu")
+                            .unwrap(),
+                    ),
                     collector_hpke_config: HpkeConfig::new(
                         HpkeConfigId::from(8),
                         HpkeKemId::X25519HkdfSha256,
@@ -1545,19 +1549,19 @@ mod tests {
                 Token::StructEnd,
                 Token::Str("aggregator_auth_token_hash"),
                 Token::None,
-                Token::Str("collector_auth_token"),
+                Token::Str("collector_auth_token_hash"),
                 Token::Some,
                 Token::Struct {
-                    name: "AuthenticationToken",
+                    name: "AuthenticationTokenHash",
                     len: 2,
                 },
                 Token::Str("type"),
                 Token::UnitVariant {
-                    name: "AuthenticationToken",
+                    name: "AuthenticationTokenHash",
                     variant: "Bearer",
                 },
-                Token::Str("token"),
-                Token::Str("Y29sbGVjdG9yIHRva2Vu"),
+                Token::Str("hash"),
+                Token::Str("LdjsTjGZXsaitZonqNIi2LcDLce3OLP6SeWv2eUx4rY"),
                 Token::StructEnd,
                 Token::Str("hpke_keys"),
                 Token::Seq { len: Some(1) },
@@ -1747,7 +1751,7 @@ mod tests {
                 Token::Str("hash"),
                 Token::Str("MJOoBO_ysLEuG_lv2C37eEOf1Ngetsr-Ers0ZYj4vdQ"),
                 Token::StructEnd,
-                Token::Str("collector_auth_token"),
+                Token::Str("collector_auth_token_hash"),
                 Token::None,
                 Token::Str("hpke_keys"),
                 Token::Seq { len: Some(1) },

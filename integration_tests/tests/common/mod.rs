@@ -1,7 +1,7 @@
 use backoff::{future::retry, ExponentialBackoffBuilder};
 use itertools::Itertools;
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
-use janus_collector::{Collection, Collector, CollectorParameters};
+use janus_collector::{Collection, Collector};
 use janus_core::{
     retries::test_http_request_exponential_backoff,
     time::{Clock, RealClock, TimeExt},
@@ -131,12 +131,12 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
     let leader_endpoint = task_parameters
         .endpoint_fragments
         .port_forwarded_leader_endpoint(leader_port);
-    let collector_params = CollectorParameters::new(
+    let collector = Collector::builder(
         task_parameters.task_id,
         leader_endpoint,
         task_parameters.collector_auth_token.clone(),
-        task_parameters.collector_hpke_keypair.config().clone(),
-        task_parameters.collector_hpke_keypair.private_key().clone(),
+        task_parameters.collector_hpke_keypair.clone(),
+        vdaf,
     )
     .with_http_request_backoff(test_http_request_exponential_backoff())
     .with_collect_poll_backoff(
@@ -145,12 +145,9 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
             .with_max_interval(time::Duration::from_millis(500))
             .with_max_elapsed_time(Some(time::Duration::from_secs(60)))
             .build(),
-    );
-    let collector = Collector::new(
-        collector_params,
-        vdaf,
-        janus_collector::default_http_client().unwrap(),
-    );
+    )
+    .build()
+    .unwrap();
 
     // Send a collect request and verify that we got the correct result.
     match &task_parameters.query_type {

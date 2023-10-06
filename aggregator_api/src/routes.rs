@@ -48,6 +48,8 @@ pub(super) async fn get_config(
             SupportedQueryType::TimeInterval,
             SupportedQueryType::FixedSize,
         ],
+        // Unconditionally indicate to divviup-api that we support collector auth token hashes
+        features: &["TokenHash"],
     })
 }
 
@@ -113,11 +115,17 @@ pub(super) async fn post_task<C: Clock>(
                         .to_string(),
                 )
             })?;
+            let collector_auth_token_hash = req.collector_auth_token_hash.ok_or_else(|| {
+                Error::BadRequest(
+                    "aggregator acting in leader role must be provided a collector auth token"
+                        .to_string(),
+                )
+            })?;
             (
                 None,
                 AggregatorTaskParameters::Leader {
                     aggregator_auth_token,
-                    collector_auth_token: random(),
+                    collector_auth_token_hash,
                     collector_hpke_config: req.collector_hpke_config,
                 },
             )
@@ -348,7 +356,6 @@ pub(super) async fn patch_global_hpke_config<C: Clock>(
     let config_id = conn.hpke_config_id_param()?;
 
     ds.run_tx_with_name("patch_hpke_global_keypair", |tx| {
-        let config_id = config_id;
         Box::pin(async move {
             tx.set_global_hpke_keypair_state(&config_id, &req.state)
                 .await
