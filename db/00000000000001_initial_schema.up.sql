@@ -201,7 +201,7 @@ CREATE TABLE aggregation_jobs(
     updated_at TIMESTAMP NOT NULL,  -- when the row was last changed
     updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
-    CONSTRAINT aggregation_jobs_unique_id UNIQUE(aggregation_job_id),
+    CONSTRAINT aggregation_jobs_unique_id UNIQUE(task_id, aggregation_job_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 CREATE INDEX aggregation_jobs_state_and_lease_expiry ON aggregation_jobs(state, lease_expiry) WHERE state = 'IN_PROGRESS';
@@ -334,7 +334,7 @@ CREATE TABLE collection_jobs(
     updated_at TIMESTAMP NOT NULL,  -- when the row was last changed
     updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
-    CONSTRAINT collection_jobs_unique_id UNIQUE(collection_job_id),
+    CONSTRAINT collection_jobs_unique_id UNIQUE(task_id, collection_job_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 CREATE INDEX collection_jobs_task_id_batch_id ON collection_jobs(task_id, batch_identifier);
