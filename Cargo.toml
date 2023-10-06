@@ -28,6 +28,7 @@ anyhow = "1"
 # (yet) need other default features.
 # https://docs.rs/chrono/latest/chrono/#duration
 chrono = { version = "0.4", default-features = false }
+derivative = "2.2.0"
 itertools = "0.10"
 janus_aggregator = { version = "0.5", path = "aggregator" }
 janus_aggregator_api = { version = "0.5", path = "aggregator_api" }

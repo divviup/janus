@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use derivative::Derivative;
 use janus_aggregator_core::{
     datastore::models::{GlobalHpkeKeypair, HpkeKeyState},
     task::{QueryType, Task},
@@ -20,8 +21,10 @@ pub(crate) enum AggregatorRole {
     Helper,
 }
 
-#[derive(Serialize, PartialEq, Eq, Debug)]
+#[derive(Serialize, PartialEq, Eq, Derivative)]
+#[derivative(Debug)]
 pub(crate) struct AggregatorApiConfig {
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
     pub dap_url: Url,
     pub role: AggregatorRole,
     pub vdafs: Vec<SupportedVdaf>,
@@ -46,10 +49,12 @@ pub(crate) struct GetTaskIdsResp {
     pub(crate) pagination_token: Option<TaskId>,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Derivative, PartialEq, Eq, Serialize, Deserialize)]
+#[derivative(Debug)]
 pub(crate) struct PostTaskReq {
     /// URL relative to which this task's peer aggregator's DAP API can be found. The peer
     /// aggregator plays the DAP role opposite to the one in the `role` field.
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
     pub(crate) peer_aggregator_endpoint: Url,
     /// DAP query type for this task.
     pub(crate) query_type: QueryType,
@@ -76,12 +81,14 @@ pub(crate) struct PostTaskReq {
     pub(crate) aggregator_auth_token: Option<AuthenticationToken>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Derivative, PartialEq, Eq, Serialize, Deserialize)]
+#[derivative(Debug)]
 pub(crate) struct TaskResp {
     /// ID of the DAP Task.
     pub(crate) task_id: TaskId,
     /// URL relative to which this task's peer aggregator's DAP API can be found. The peer
     /// aggregator plays the DAP role opposite to the one in the `role` field.
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
     pub(crate) peer_aggregator_endpoint: Url,
     /// DAP query type for this task.
     pub(crate) query_type: QueryType,
