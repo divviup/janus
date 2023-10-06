@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
+use derivative::Derivative;
 use janus_aggregator::{
     aggregator::{self, garbage_collector::GarbageCollector, http_handlers::aggregator_handler},
     binary_utils::{
@@ -203,8 +204,9 @@ pub struct HeaderEntry {
 }
 
 /// Options for serving the aggregator API.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Derivative, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[derivative(Debug)]
 pub struct AggregatorApi {
     /// Address on which this server should listen for connections to the Janus aggregator API
     /// and serve its API endpoints, independently from the address on which the DAP API is
@@ -218,6 +220,7 @@ pub struct AggregatorApi {
     path_prefix: Option<String>,
     /// Resource location at which the DAP service managed by this aggregator api can be found
     /// on the public internet. Required.
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
     public_dap_url: Url,
 }
 
