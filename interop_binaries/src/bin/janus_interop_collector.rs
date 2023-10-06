@@ -2,6 +2,7 @@ use anyhow::{anyhow, Context};
 use backoff::ExponentialBackoffBuilder;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::{value_parser, Arg, Command};
+use derivative::Derivative;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::types::extra::{U15, U31, U63};
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -37,9 +38,12 @@ use tokio::{sync::Mutex, task::JoinHandle};
 use trillium::{Conn, Handler};
 use trillium_api::{api, Json, State};
 use trillium_router::Router;
-#[derive(Debug, Deserialize)]
+
+#[derive(Derivative, Deserialize)]
+#[derivative(Debug)]
 struct AddTaskRequest {
     task_id: String,
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
     leader: Url,
     vdaf: VdafObject,
     collector_authentication_token: String,

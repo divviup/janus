@@ -21,7 +21,7 @@ bytes = "1.5.0"
 chrono = "0.4"
 deadpool = { version = "0.10.0", features = ["rt_tokio_1"] }
 deadpool-postgres = "0.11.0"
-derivative = "2.2.0"
+derivative.workspace = true
 futures = "0.3.28"
 hex = { version = "0.4.3", features = ["serde"], optional = true }
 http = "0.2.9"
