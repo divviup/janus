@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
+use derivative::Derivative;
 use janus_aggregator::{
     aggregator::{self, garbage_collector::GarbageCollector, http_handlers::aggregator_handler},
     binary_utils::{
@@ -240,8 +241,9 @@ pub struct HeaderEntry {
 }
 
 /// Options for serving the aggregator API.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Derivative, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
+#[derivative(Debug)]
 pub enum AggregatorApi {
     ListenAddress {
         /// Address on which this server should listen for connections to the Janus aggregator API
@@ -250,6 +252,7 @@ pub enum AggregatorApi {
         listen_address: SocketAddr,
         /// Resource location at which the DAP service managed by this aggregator api can be found
         /// on the public internet. Required.
+        #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
         public_dap_url: Url,
     },
     PathPrefix {
@@ -260,6 +263,7 @@ pub enum AggregatorApi {
         path_prefix: String,
         /// Resource location at which the DAP service managed by this aggregator api can be found
         /// on the public internet. Required.
+        #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
         public_dap_url: Url,
     },
 }

@@ -1,6 +1,7 @@
 //! Functionality for tests interacting with Daphne (<https://github.com/cloudflare/daphne>).
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use derivative::Derivative;
 use janus_aggregator_core::task::QueryType;
 use janus_aggregator_core::task::{test_util::TaskBuilder, Task};
 use janus_interop_binaries::test_util::await_http_server;
@@ -127,10 +128,13 @@ async fn aggregator_add_task(port: u16, task: Task) {
     );
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Derivative, Serialize, Deserialize)]
+#[derivative(Debug)]
 pub struct AggregatorAddTaskRequest {
     pub task_id: TaskId, // uses unpadded base64url
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
     pub leader: Url,
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
     pub helper: Url,
     pub vdaf: VdafObject,
     pub leader_authentication_token: String,

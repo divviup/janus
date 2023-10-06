@@ -12,6 +12,7 @@ version.workspace = true
 anyhow.workspace = true
 async-trait = "0.1"
 base64 = "0.21.4"
+derivative.workspace = true
 janus_aggregator_core.workspace = true
 janus_core.workspace = true
 janus_messages.workspace = true
