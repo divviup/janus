@@ -38,7 +38,7 @@ postgres-types = { version = "0.2.6", features = ["derive", "array-impls"] }
 prio = { workspace = true }
 rand = { version = "0.8", features = ["min_const_gen"] }
 regex = "1"
-reqwest = { version = "0.11.21", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.11.22", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.17.0"
 serde.workspace = true
 serde_json.workspace = true

@@ -48,7 +48,7 @@ k8s-openapi = { workspace = true, optional = true }
 lazy_static = { version = "1", optional = true }
 prio.workspace = true
 rand = "0.8"
-reqwest = { version = "0.11.21", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.11.22", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.17.0"
 serde.workspace = true
 serde_json = { workspace = true, optional = true }
