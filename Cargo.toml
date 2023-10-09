@@ -31,7 +31,7 @@ base64 = "0.21.3"
 # https://docs.rs/chrono/latest/chrono/#duration
 chrono = { version = "0.4", default-features = false }
 derivative = "2.2.0"
-itertools = "0.10"
+itertools = "0.11"
 janus_aggregator = { version = "0.6.0-prerelease-3", path = "aggregator" }
 janus_aggregator_api = { version = "0.6.0-prerelease-3", path = "aggregator_api" }
 janus_aggregator_core = { version = "0.6.0-prerelease-3", path = "aggregator_core" }
