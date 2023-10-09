@@ -51,7 +51,7 @@ serde_yaml = "0.9.25"
 rstest = "0.17.0"
 testcontainers = "0.15.0"
 thiserror = "1.0"
-tokio = { version = "1.32", features = ["full", "tracing"] }
+tokio = { version = "1.33", features = ["full", "tracing"] }
 trillium = "0.2.9"
 trillium-api = { version = "0.2.0-rc.4", default-features = false }
 trillium-caching-headers = "0.2.1"
