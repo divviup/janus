@@ -143,7 +143,7 @@ impl<C: Clock> Datastore<C> {
         let datastore = Self::new_without_supported_versions(pool, crypter, clock, meter).await;
 
         let (current_version, migration_description) = datastore
-            .run_tx_with_name("check schema version", |tx| {
+            .run_tx("check schema version", |tx| {
                 Box::pin(async move { tx.get_current_schema_migration_version().await })
             })
             .await?;
@@ -201,20 +201,10 @@ impl<C: Clock> Datastore<C> {
     /// rolling back & retrying with a new transaction, so the given function should support being
     /// called multiple times. Values read from the transaction should not be considered as
     /// "finalized" until the transaction is committed, i.e. after `run_tx` is run to completion.
-    pub fn run_tx<'s, F, T>(&'s self, f: F) -> impl Future<Output = Result<T, Error>> + 's
-    where
-        F: 's,
-        T: 's,
-        for<'a> F:
-            Fn(&'a Transaction<C>) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
-    {
-        self.run_tx_with_name("default", f)
-    }
-
-    /// See [`Datastore::run_tx`]. This method additionally allows specifying a name for the
-    /// transaction, for use in database-related metrics.
+    ///
+    /// This method requires a transaction name for use in database metrics.
     #[tracing::instrument(level = "trace", skip(self, f))]
-    pub async fn run_tx_with_name<F, T>(&self, name: &'static str, f: F) -> Result<T, Error>
+    pub async fn run_tx<F, T>(&self, name: &'static str, f: F) -> Result<T, Error>
     where
         for<'a> F:
             Fn(&'a Transaction<C>) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
@@ -306,11 +296,26 @@ impl<C: Clock> Datastore<C> {
         (rslt, retry.load(Ordering::Relaxed))
     }
 
+    /// See [`Datastore::run_tx`]. This method provides a placeholder transaction name. It is useful
+    /// for tests where the transaction name is not important.
+    #[cfg(feature = "test-util")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
+    #[tracing::instrument(level = "trace", skip(self, f))]
+    pub fn run_unnamed_tx<'s, F, T>(&'s self, f: F) -> impl Future<Output = Result<T, Error>> + 's
+    where
+        F: 's,
+        T: 's,
+        for<'a> F:
+            Fn(&'a Transaction<C>) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
+    {
+        self.run_tx("default", f)
+    }
+
     /// Write a task into the datastore.
     #[cfg(feature = "test-util")]
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
     pub async fn put_aggregator_task(&self, task: &AggregatorTask) -> Result<(), Error> {
-        self.run_tx_with_name("test-put-task", |tx| {
+        self.run_tx("test-put-task", |tx| {
             let task = task.clone();
             Box::pin(async move { tx.put_aggregator_task(&task).await })
         })

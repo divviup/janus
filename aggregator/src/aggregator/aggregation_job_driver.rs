@@ -143,7 +143,7 @@ impl AggregationJobDriver {
     {
         // Read all information about the aggregation job.
         let (task, aggregation_job, report_aggregations, client_reports, verify_key) = datastore
-            .run_tx_with_name("step_aggregation_job_1", |tx| {
+            .run_tx("step_aggregation_job_1", |tx| {
                 let (lease, vdaf) = (Arc::clone(&lease), Arc::clone(&vdaf));
                 Box::pin(async move {
                     let task = tx
@@ -704,7 +704,7 @@ impl AggregationJobDriver {
 
         let accumulator = Arc::new(accumulator);
         datastore
-            .run_tx_with_name("step_aggregation_job_2", |tx| {
+            .run_tx("step_aggregation_job_2", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let aggregation_job_writer = Arc::clone(&aggregation_job_writer);
                 let accumulator = Arc::clone(&accumulator);
@@ -786,7 +786,7 @@ impl AggregationJobDriver {
         let vdaf = Arc::new(vdaf);
         let lease = Arc::new(lease);
         datastore
-            .run_tx_with_name("cancel_aggregation_job", |tx| {
+            .run_tx("cancel_aggregation_job", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let lease = Arc::clone(&lease);
 
@@ -855,7 +855,7 @@ impl AggregationJobDriver {
             let datastore = Arc::clone(&datastore);
             Box::pin(async move {
                 datastore
-                    .run_tx_with_name("acquire_aggregation_jobs", |tx| {
+                    .run_tx("acquire_aggregation_jobs", |tx| {
                         Box::pin(async move {
                             tx.acquire_incomplete_aggregation_jobs(
                                 &lease_duration,
@@ -1019,7 +1019,7 @@ mod tests {
         let aggregation_job_id = random();
 
         let collection_job = ds
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let (vdaf, task, report, aggregation_param) = (
                     vdaf.clone(),
                     leader_task.clone(),
@@ -1215,7 +1215,7 @@ mod tests {
         let want_collection_job = collection_job.with_state(CollectionJobState::Collectable);
 
         let (got_aggregation_job, got_report_aggregation, got_batch, got_collection_job) = ds
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let task = task.clone();
                 let report_id = *report.metadata().id();
@@ -1323,7 +1323,7 @@ mod tests {
         let aggregation_job_id = random();
 
         let lease = ds
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let (vdaf, task, report, repeated_extension_report) = (
                     vdaf.clone(),
                     leader_task.clone(),
@@ -1545,7 +1545,7 @@ mod tests {
             got_missing_report_report_aggregation,
             got_batch,
         ) = ds
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let (vdaf, task, report_id, repeated_extension_report_id) = (
                     Arc::clone(&vdaf),
                     task.clone(),
@@ -1672,7 +1672,7 @@ mod tests {
         let aggregation_job_id = random();
 
         let lease = ds
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let (vdaf, task, report, aggregation_param) = (
                     vdaf.clone(),
                     leader_task.clone(),
@@ -1830,7 +1830,7 @@ mod tests {
         );
 
         let (got_aggregation_job, got_report_aggregation, got_batch) = ds
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let (vdaf, task, report_id) =
                     (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
                 Box::pin(async move {
@@ -1925,7 +1925,7 @@ mod tests {
         let aggregation_job_id = random();
 
         let lease = ds
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let (vdaf, task, report) = (vdaf.clone(), leader_task.clone(), report.clone());
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await?;
@@ -2089,7 +2089,7 @@ mod tests {
         );
 
         let (got_aggregation_job, got_report_aggregation, got_batch) = ds
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let (vdaf, task, report_id) =
                     (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
                 Box::pin(async move {
@@ -2181,7 +2181,7 @@ mod tests {
         let aggregation_job_id = random();
 
         let lease = ds
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let (vdaf, task, report, aggregation_param) = (
                     vdaf.clone(),
                     leader_task.clone(),
@@ -2339,7 +2339,7 @@ mod tests {
         );
 
         let (got_aggregation_job, got_report_aggregation, got_batch) = ds
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let (vdaf, task, report_id) =
                     (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
                 Box::pin(async move {
@@ -2447,7 +2447,7 @@ mod tests {
             .unwrap();
 
         let (lease, want_collection_job) = ds
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let (vdaf, task, aggregation_param, report, transcript) = (
                     vdaf.clone(),
                     leader_task.clone(),
@@ -2689,7 +2689,7 @@ mod tests {
             got_other_batch,
             got_collection_job,
         ) = ds
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let (vdaf, task, report_metadata, aggregation_param, collection_job_id) = (
                     Arc::clone(&vdaf),
                     leader_task.clone(),
@@ -2850,7 +2850,7 @@ mod tests {
             .unwrap();
 
         let (lease, collection_job) = ds
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let (vdaf, task, report, aggregation_param, transcript) = (
                     vdaf.clone(),
                     leader_task.clone(),
@@ -3061,7 +3061,7 @@ mod tests {
             got_batch,
             got_collection_job,
         ) = ds
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let (vdaf, task, report_metadata, aggregation_param, collection_job_id) = (
                     Arc::clone(&vdaf),
                     leader_task.clone(),
@@ -3201,7 +3201,7 @@ mod tests {
         );
 
         let lease = ds
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let (vdaf, task, report, aggregation_job, report_aggregation) = (
                     vdaf.clone(),
                     task.clone(),
@@ -3262,7 +3262,7 @@ mod tests {
         );
 
         let (got_aggregation_job, got_report_aggregation, got_batch, got_leases) = ds
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let (vdaf, task, report_id) =
                     (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
                 Box::pin(async move {
@@ -3377,7 +3377,7 @@ mod tests {
         );
 
         // Set up fixtures in the database.
-        ds.run_tx(|tx| {
+        ds.run_unnamed_tx(|tx| {
             let vdaf = vdaf.clone();
             let task = leader_task.clone();
             let report = report.clone();
@@ -3519,7 +3519,7 @@ mod tests {
 
         // Confirm in the database that the job was abandoned.
         let (got_aggregation_job, got_batch) = ds
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
                     let got_aggregation_job = tx

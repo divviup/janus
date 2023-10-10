@@ -101,7 +101,7 @@ impl TaskprovTestCase {
             .build();
 
         datastore
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let global_hpke_key = global_hpke_key.clone();
                 let peer_aggregator = peer_aggregator.clone();
                 Box::pin(async move {
@@ -330,7 +330,7 @@ async fn taskprov_aggregate_init() {
 
     let (aggregation_jobs, got_task) = test
         .datastore
-        .run_tx(|tx| {
+        .run_unnamed_tx(|tx| {
             let task_id = test.task_id;
             Box::pin(async move {
                 Ok((
@@ -760,7 +760,7 @@ async fn taskprov_aggregate_continue() {
 
     let (transcript, report_share, aggregation_param) = test.next_report_share();
     test.datastore
-        .run_tx(|tx| {
+        .run_unnamed_tx(|tx| {
             let task = test.task.clone();
             let report_share = report_share.clone();
             let transcript = transcript.clone();
@@ -902,7 +902,7 @@ async fn taskprov_aggregate_share() {
     let (transcript, _, aggregation_param) = test.next_report_share();
     let batch_id = random();
     test.datastore
-        .run_tx(|tx| {
+        .run_unnamed_tx(|tx| {
             let task = test.task.clone();
             let interval =
                 Interval::new(Time::from_seconds_since_epoch(6000), *task.time_precision())
