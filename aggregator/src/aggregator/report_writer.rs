@@ -123,7 +123,7 @@ impl<C: Clock> ReportWriteBatcher<C> {
         // Run all report writes concurrently.
         let report_writers = Arc::new(report_writers);
         let rslts = ds
-            .run_tx_with_name("upload", |tx| {
+            .run_tx("upload", |tx| {
                 let report_writers = Arc::clone(&report_writers);
                 Box::pin(async move {
                     Ok(join_all(report_writers.iter().map(|rw| rw.write_report(tx))).await)

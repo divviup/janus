@@ -462,7 +462,7 @@ mod tests {
             prepare_init_generator.next(&IdpfInput::from_bools(&[true]));
 
         datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (task, aggregation_param, prepare_init, transcript) = (
                     helper_task.clone(),
                     aggregation_param.clone(),
@@ -630,7 +630,7 @@ mod tests {
 
         let (before_aggregation_job, before_report_aggregations) = test_case
             .datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (task_id, unrelated_prepare_init, aggregation_job_id) = (
                     *test_case.task.id(),
                     unrelated_prepare_init.clone(),
@@ -689,7 +689,7 @@ mod tests {
         // Make sure the state of the aggregation job and report aggregations has not changed
         let (after_aggregation_job, after_report_aggregations) = test_case
             .datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (task_id, aggregation_job_id) =
                     (*test_case.task.id(), test_case.aggregation_job_id);
                 Box::pin(async move {
@@ -727,7 +727,7 @@ mod tests {
 
         test_case
             .datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (task_id, aggregation_job_id) =
                     (*test_case.task.id(), test_case.aggregation_job_id);
                 Box::pin(async move {

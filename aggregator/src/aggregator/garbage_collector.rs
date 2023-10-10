@@ -38,7 +38,7 @@ impl<C: Clock> GarbageCollector<C> {
         // Retrieve tasks.
         let tasks = self
             .datastore
-            .run_tx_with_name("garbage_collector_get_tasks", |tx| {
+            .run_tx("garbage_collector_get_tasks", |tx| {
                 Box::pin(async move { tx.get_aggregator_tasks().await })
             })
             .await
@@ -57,7 +57,7 @@ impl<C: Clock> GarbageCollector<C> {
 
     async fn gc_task(&self, task: Arc<AggregatorTask>) -> Result<()> {
         self.datastore
-            .run_tx_with_name("garbage_collector", |tx| {
+            .run_tx("garbage_collector", |tx| {
                 let task = Arc::clone(&task);
                 let report_limit = self.report_limit;
                 let aggregation_limit = self.aggregation_limit;
@@ -121,7 +121,7 @@ mod tests {
 
         // Setup.
         let task = ds
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (clock, vdaf) = (clock.clone(), vdaf.clone());
                 Box::pin(async move {
                     let task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
@@ -240,7 +240,7 @@ mod tests {
         clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
         // Verify.
-        ds.run_tx(|tx| {
+        ds.run_tx_default(|tx| {
             let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
             Box::pin(async move {
                 assert!(tx
@@ -301,7 +301,7 @@ mod tests {
 
         // Setup.
         let task = ds
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let clock = clock.clone();
                 Box::pin(async move {
                     let task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
@@ -427,7 +427,7 @@ mod tests {
         clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
         // Verify.
-        ds.run_tx(|tx| {
+        ds.run_tx_default(|tx| {
             let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
             Box::pin(async move {
                 assert!(tx
@@ -488,7 +488,7 @@ mod tests {
 
         // Setup.
         let task = ds
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (clock, vdaf) = (clock.clone(), vdaf.clone());
                 Box::pin(async move {
                     let task = TaskBuilder::new(
@@ -608,7 +608,7 @@ mod tests {
         clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
         // Verify.
-        ds.run_tx(|tx| {
+        ds.run_tx_default(|tx| {
             let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
             Box::pin(async move {
                 assert!(tx
@@ -674,7 +674,7 @@ mod tests {
 
         // Setup.
         let task = ds
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let clock = clock.clone();
                 Box::pin(async move {
                     let task = TaskBuilder::new(
@@ -807,7 +807,7 @@ mod tests {
         clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
         // Verify.
-        ds.run_tx(|tx| {
+        ds.run_tx_default(|tx| {
             let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
             Box::pin(async move {
                 assert!(tx

@@ -82,7 +82,7 @@ impl GlobalHpkeKeypairCache {
         keypairs: &StdMutex<HpkeKeypairs>,
     ) -> Result<(), Error> {
         let global_keypairs = datastore
-            .run_tx_with_name("refresh_global_hpke_keypairs_cache", |tx| {
+            .run_tx("refresh_global_hpke_keypairs_cache", |tx| {
                 Box::pin(async move { tx.get_global_hpke_keypairs().await })
             })
             .await?;
@@ -153,7 +153,7 @@ impl PeerAggregatorCache {
     pub async fn new<C: Clock>(datastore: &Datastore<C>) -> Result<Self, Error> {
         Ok(Self {
             peers: datastore
-                .run_tx_with_name("refresh_peer_aggregators_cache", |tx| {
+                .run_tx("refresh_peer_aggregators_cache", |tx| {
                     Box::pin(async move { tx.get_taskprov_peer_aggregators().await })
                 })
                 .await?

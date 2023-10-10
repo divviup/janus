@@ -186,7 +186,7 @@ async fn provision_tasks<C: Clock>(
     // Write all tasks requested.
     info!(task_count = %tasks.len(), "Writing tasks");
     let written_tasks = datastore
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let tasks = Arc::clone(&tasks);
             Box::pin(async move {
                 let mut written_tasks = Vec::new();
@@ -599,7 +599,7 @@ mod tests {
         let want_tasks = task_hashmap_from_slice(tasks);
         let written_tasks = task_hashmap_from_slice(written_tasks);
         let got_tasks = task_hashmap_from_slice(
-            ds.run_tx(|tx| Box::pin(async move { tx.get_aggregator_tasks().await }))
+            ds.run_tx_default(|tx| Box::pin(async move { tx.get_aggregator_tasks().await }))
                 .await
                 .unwrap(),
         );
@@ -626,7 +626,7 @@ mod tests {
         let written_tasks = task_hashmap_from_slice(written_tasks);
         assert_eq!(want_tasks, written_tasks);
         let got_tasks = task_hashmap_from_slice(
-            ds.run_tx(|tx| Box::pin(async move { tx.get_aggregator_tasks().await }))
+            ds.run_tx_default(|tx| Box::pin(async move { tx.get_aggregator_tasks().await }))
                 .await
                 .unwrap(),
         );
@@ -692,7 +692,7 @@ mod tests {
 
         // Verify that the expected tasks were written.
         let got_tasks = task_hashmap_from_slice(
-            ds.run_tx(|tx| Box::pin(async move { tx.get_aggregator_tasks().await }))
+            ds.run_tx_default(|tx| Box::pin(async move { tx.get_aggregator_tasks().await }))
                 .await
                 .unwrap(),
         );
@@ -793,7 +793,7 @@ mod tests {
 
         // Verify that the expected tasks were written.
         let got_tasks = ds
-            .run_tx(|tx| Box::pin(async move { tx.get_aggregator_tasks().await }))
+            .run_tx_default(|tx| Box::pin(async move { tx.get_aggregator_tasks().await }))
             .await
             .unwrap();
 

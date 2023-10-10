@@ -66,7 +66,7 @@ pub(super) async fn get_task_ids<C: Clock>(
         .map_err(|err| Error::BadRequest(format!("Couldn't parse pagination_token: {:?}", err)))?;
 
     let task_ids = ds
-        .run_tx_with_name("get_task_ids", |tx| {
+        .run_tx("get_task_ids", |tx| {
             Box::pin(async move { tx.get_task_ids(lower_bound).await })
         })
         .await?;
@@ -182,7 +182,7 @@ pub(super) async fn post_task<C: Clock>(
         .map_err(|err| Error::BadRequest(format!("Error constructing task: {err}")))?,
     );
 
-    ds.run_tx_with_name("post_task", |tx| {
+    ds.run_tx("post_task", |tx| {
         let task = Arc::clone(&task);
         Box::pin(async move {
             if let Some(existing_task) = tx.get_aggregator_task(task.id()).await? {
@@ -230,7 +230,7 @@ pub(super) async fn get_task<C: Clock>(
     let task_id = conn.task_id_param()?;
 
     let task = ds
-        .run_tx_with_name("get_task", |tx| {
+        .run_tx("get_task", |tx| {
             Box::pin(async move { tx.get_aggregator_task(&task_id).await })
         })
         .await?
@@ -247,7 +247,7 @@ pub(super) async fn delete_task<C: Clock>(
 ) -> Result<Status, Error> {
     let task_id = conn.task_id_param()?;
     match ds
-        .run_tx_with_name("delete_task", |tx| {
+        .run_tx("delete_task", |tx| {
             Box::pin(async move { tx.delete_task(&task_id).await })
         })
         .await
@@ -264,7 +264,7 @@ pub(super) async fn get_task_metrics<C: Clock>(
     let task_id = conn.task_id_param()?;
 
     let (reports, report_aggregations) = ds
-        .run_tx_with_name("get_task_metrics", |tx| {
+        .run_tx("get_task_metrics", |tx| {
             Box::pin(async move { tx.get_task_metrics(&task_id).await })
         })
         .await?
@@ -281,7 +281,7 @@ pub(super) async fn get_global_hpke_configs<C: Clock>(
     State(ds): State<Arc<Datastore<C>>>,
 ) -> Result<Json<Vec<GlobalHpkeConfigResp>>, Error> {
     Ok(Json(
-        ds.run_tx_with_name("get_global_hpke_configs", |tx| {
+        ds.run_tx("get_global_hpke_configs", |tx| {
             Box::pin(async move { tx.get_global_hpke_keypairs().await })
         })
         .await?
@@ -297,7 +297,7 @@ pub(super) async fn get_global_hpke_config<C: Clock>(
 ) -> Result<Json<GlobalHpkeConfigResp>, Error> {
     let config_id = conn.hpke_config_id_param()?;
     Ok(Json(GlobalHpkeConfigResp::from(
-        ds.run_tx_with_name("get_global_hpke_config", |tx| {
+        ds.run_tx("get_global_hpke_config", |tx| {
             Box::pin(async move { tx.get_global_hpke_keypair(&config_id).await })
         })
         .await?
@@ -310,7 +310,7 @@ pub(super) async fn put_global_hpke_config<C: Clock>(
     (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PutGlobalHpkeConfigReq>),
 ) -> Result<(Status, Json<GlobalHpkeConfigResp>), Error> {
     let existing_keypairs = ds
-        .run_tx_with_name("put_global_hpke_config_determine_id", |tx| {
+        .run_tx("put_global_hpke_config_determine_id", |tx| {
             Box::pin(async move { tx.get_global_hpke_keypairs().await })
         })
         .await?
@@ -333,7 +333,7 @@ pub(super) async fn put_global_hpke_config<C: Clock>(
     )?;
 
     let inserted_keypair = ds
-        .run_tx_with_name("put_global_hpke_config", |tx| {
+        .run_tx("put_global_hpke_config", |tx| {
             let keypair = keypair.clone();
             Box::pin(async move {
                 tx.put_global_hpke_keypair(&keypair).await?;
@@ -355,7 +355,7 @@ pub(super) async fn patch_global_hpke_config<C: Clock>(
 ) -> Result<Status, Error> {
     let config_id = conn.hpke_config_id_param()?;
 
-    ds.run_tx_with_name("patch_hpke_global_keypair", |tx| {
+    ds.run_tx("patch_hpke_global_keypair", |tx| {
         Box::pin(async move {
             tx.set_global_hpke_keypair_state(&config_id, &req.state)
                 .await
@@ -372,7 +372,7 @@ pub(super) async fn delete_global_hpke_config<C: Clock>(
 ) -> Result<Status, Error> {
     let config_id = conn.hpke_config_id_param()?;
     match ds
-        .run_tx_with_name("delete_global_hpke_config", |tx| {
+        .run_tx("delete_global_hpke_config", |tx| {
             Box::pin(async move { tx.delete_global_hpke_keypair(&config_id).await })
         })
         .await
@@ -387,7 +387,7 @@ pub(super) async fn get_taskprov_peer_aggregators<C: Clock>(
     State(ds): State<Arc<Datastore<C>>>,
 ) -> Result<Json<Vec<TaskprovPeerAggregatorResp>>, Error> {
     Ok(Json(
-        ds.run_tx_with_name("get_taskprov_peer_aggregators", |tx| {
+        ds.run_tx("get_taskprov_peer_aggregators", |tx| {
             Box::pin(async move { tx.get_taskprov_peer_aggregators().await })
         })
         .await?
@@ -422,7 +422,7 @@ pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
     );
 
     let inserted = ds
-        .run_tx_with_name("post_taskprov_peer_aggregator", |tx| {
+        .run_tx("post_taskprov_peer_aggregator", |tx| {
             let to_insert = to_insert.clone();
             Box::pin(async move {
                 tx.put_taskprov_peer_aggregator(&to_insert).await?;
@@ -445,7 +445,7 @@ pub(super) async fn delete_taskprov_peer_aggregator<C: Clock>(
     ),
 ) -> Result<Status, Error> {
     match ds
-        .run_tx_with_name("delete_taskprov_peer_aggregator", |tx| {
+        .run_tx("delete_taskprov_peer_aggregator", |tx| {
             let req = req.clone();
             Box::pin(async move {
                 tx.delete_taskprov_peer_aggregator(&req.endpoint, &req.role)

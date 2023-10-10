@@ -151,7 +151,7 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
         want_tasks.insert(*task.id(), task.clone());
 
         let err = ds
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let task = task.clone();
                 Box::pin(async move { tx.delete_task(task.id()).await })
             })
@@ -160,7 +160,7 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
         assert_matches!(err, Error::MutationTargetNotFound);
 
         let retrieved_task = ds
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let task = task.clone();
                 Box::pin(async move { tx.get_aggregator_task(task.id()).await })
             })
@@ -171,7 +171,7 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
         ds.put_aggregator_task(&task).await.unwrap();
 
         let retrieved_task = ds
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let task = task.clone();
                 Box::pin(async move { tx.get_aggregator_task(task.id()).await })
             })
@@ -179,7 +179,7 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
             .unwrap();
         assert_eq!(Some(&task), retrieved_task.as_ref());
 
-        ds.run_tx(|tx| {
+        ds.run_tx_default(|tx| {
             let task = task.clone();
             Box::pin(async move { tx.delete_task(task.id()).await })
         })
@@ -187,7 +187,7 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
         .unwrap();
 
         let retrieved_task = ds
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let task = task.clone();
                 Box::pin(async move { tx.get_aggregator_task(task.id()).await })
             })
@@ -196,7 +196,7 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
         assert_eq!(None, retrieved_task);
 
         let err = ds
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let task = task.clone();
                 Box::pin(async move { tx.delete_task(task.id()).await })
             })
@@ -210,7 +210,7 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
         ds.put_aggregator_task(&task).await.unwrap();
 
         let retrieved_task = ds
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let task = task.clone();
                 Box::pin(async move { tx.get_aggregator_task(task.id()).await })
             })
@@ -220,7 +220,7 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
     }
 
     let got_tasks: HashMap<TaskId, AggregatorTask> = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             Box::pin(async move {
                 tx.check_timestamp_columns("tasks", "test-put-task", false)
                     .await;
@@ -251,7 +251,7 @@ async fn put_task_invalid_aggregator_auth_tokens(ephemeral_datastore: EphemeralD
     ds.put_aggregator_task(&task).await.unwrap();
 
     for (auth_token, auth_token_type) in [("NULL", "'BEARER'"), ("'\\xDEADBEEF'::bytea", "NULL")] {
-        ds.run_tx(|tx| {
+        ds.run_tx_default(|tx| {
             Box::pin(async move {
                 let err = tx
                     .query_one(
@@ -290,7 +290,7 @@ async fn put_task_invalid_collector_auth_tokens(ephemeral_datastore: EphemeralDa
     ds.put_aggregator_task(&task).await.unwrap();
 
     for (auth_token, auth_token_type) in [("NULL", "'BEARER'"), ("'\\xDEADBEEF'::bytea", "NULL")] {
-        ds.run_tx(|tx| {
+        ds.run_tx_default(|tx| {
             Box::pin(async move {
                 let err = tx
                     .query_one(
@@ -327,7 +327,7 @@ async fn get_task_metrics(ephemeral_datastore: EphemeralDatastore) {
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let task_id = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             Box::pin(async move {
                 let task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
@@ -496,7 +496,7 @@ async fn get_task_metrics(ephemeral_datastore: EphemeralDatastore) {
     // Advance the clock to "enable" report expiry.
     clock.advance(&REPORT_EXPIRY_AGE);
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         Box::pin(async move {
             // Verify we get the correct results when we check metrics on our target task.
             assert_eq!(
@@ -523,7 +523,7 @@ async fn get_task_ids(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
     let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         Box::pin(async move {
             const TOTAL_TASK_ID_COUNT: usize = 20;
             let tasks: Vec<_> = iter::repeat_with(|| {
@@ -572,7 +572,7 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
         .leader_view()
         .unwrap();
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let task = task.clone();
         Box::pin(async move { tx.put_aggregator_task(&task).await })
     })
@@ -599,7 +599,7 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
 
     // Write a report twice to prove it is idempotent
     for _ in 0..2 {
-        ds.run_tx_with_name("test-put-client-report", |tx| {
+        ds.run_tx("test-put-client-report", |tx| {
             let report = report.clone();
             Box::pin(async move {
                 tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report)
@@ -610,7 +610,7 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
         .unwrap();
 
         let retrieved_report = ds
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let task_id = *report.task_id();
                 Box::pin(async move {
                     tx.get_client_report::<0, dummy_vdaf::Vdaf>(
@@ -630,7 +630,7 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
 
     // Try to write a different report with the same ID, and verify we get the expected error.
     let result = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let task_id = *report.task_id();
             Box::pin(async move {
                 tx.put_client_report(
@@ -658,7 +658,7 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
         .await;
     assert_matches!(result, Err(Error::MutationTargetAlreadyExists));
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         Box::pin(async move {
             tx.check_timestamp_columns("client_reports", "test-put-client-report", true)
                 .await;
@@ -671,7 +671,7 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
     // Advance the clock so that the report is expired, and verify that it does not exist.
     clock.advance(&Duration::from_seconds(1));
     let retrieved_report = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let task_id = *report.task_id();
             Box::pin(async move {
                 tx.get_client_report::<0, dummy_vdaf::Vdaf>(
@@ -694,7 +694,7 @@ async fn report_not_found(ephemeral_datastore: EphemeralDatastore) {
     let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
     let rslt = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             Box::pin(async move {
                 tx.get_client_report(&dummy_vdaf::Vdaf::new(), &random(), &random())
                     .await
@@ -746,7 +746,7 @@ async fn get_unaggregated_client_report_ids_for_task(ephemeral_datastore: Epheme
         LeaderStoredReport::new_dummy(*unrelated_task.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
     // Set up state.
-    ds.run_tx_with_name("test-unaggregated-reports", |tx| {
+    ds.run_tx("test-unaggregated-reports", |tx| {
         let task = task.clone();
         let unrelated_task = unrelated_task.clone();
         let first_unaggregated_report = first_unaggregated_report.clone();
@@ -784,7 +784,7 @@ async fn get_unaggregated_client_report_ids_for_task(ephemeral_datastore: Epheme
 
     // Verify that we can acquire both unaggregated reports.
     let got_reports = HashSet::from_iter(
-        ds.run_tx_with_name("test-unaggregated-reports", |tx| {
+        ds.run_tx("test-unaggregated-reports", |tx| {
             let task = task.clone();
             Box::pin(async move {
                 // At this point, first_unaggregated_report and second_unaggregated_report are
@@ -818,7 +818,7 @@ async fn get_unaggregated_client_report_ids_for_task(ephemeral_datastore: Epheme
 
     // Verify that attempting to acquire again does not return the reports.
     let got_reports = HashSet::<(ReportId, Time)>::from_iter(
-        ds.run_tx_with_name("test-unaggregated-reports", |tx| {
+        ds.run_tx("test-unaggregated-reports", |tx| {
             let task = task.clone();
             Box::pin(async move {
                 // At this point, all reports have started aggregation.
@@ -838,7 +838,7 @@ async fn get_unaggregated_client_report_ids_for_task(ephemeral_datastore: Epheme
     assert!(got_reports.is_empty());
 
     // Mark one report un-aggregated.
-    ds.run_tx_with_name("test-unaggregated-reports", |tx| {
+    ds.run_tx("test-unaggregated-reports", |tx| {
         let (task, first_unaggregated_report) = (task.clone(), first_unaggregated_report.clone());
         Box::pin(async move {
             tx.mark_reports_unaggregated(task.id(), &[*first_unaggregated_report.metadata().id()])
@@ -850,7 +850,7 @@ async fn get_unaggregated_client_report_ids_for_task(ephemeral_datastore: Epheme
 
     // Verify that we can retrieve the un-aggregated report again.
     let got_reports = HashSet::from_iter(
-        ds.run_tx_with_name("test-unaggregated-reports", |tx| {
+        ds.run_tx("test-unaggregated-reports", |tx| {
             let task = task.clone();
             Box::pin(async move {
                 // At this point, first_unaggregated_report is unaggregated.
@@ -875,7 +875,7 @@ async fn get_unaggregated_client_report_ids_for_task(ephemeral_datastore: Epheme
         ),]),
     );
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let (first_unaggregated_report, second_unaggregated_report) = (
             first_unaggregated_report.clone(),
             second_unaggregated_report.clone(),
@@ -968,7 +968,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
         LeaderStoredReport::new_dummy(*unrelated_task.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
     // Set up state.
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let task = task.clone();
         let unrelated_task = unrelated_task.clone();
         let no_reports_task = no_reports_task.clone();
@@ -1004,7 +1004,7 @@ async fn count_client_reports_for_interval(ephemeral_datastore: EphemeralDatasto
     clock.advance(&REPORT_EXPIRY_AGE);
 
     let (report_count, no_reports_task_report_count) = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let (task, no_reports_task) = (task.clone(), no_reports_task.clone());
             Box::pin(async move {
                 let report_count = tx
@@ -1074,7 +1074,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
 
     // Set up state.
     let batch_id = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let (task, unrelated_task) = (task.clone(), unrelated_task.clone());
 
             Box::pin(async move {
@@ -1219,7 +1219,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
     clock.advance(&REPORT_EXPIRY_AGE);
 
     let report_count = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let task_id = *task.id();
             Box::pin(async move {
                 tx.count_client_reports_for_batch_id(&task_id, &batch_id)
@@ -1254,7 +1254,7 @@ async fn roundtrip_report_share(ephemeral_datastore: EphemeralDatastore) {
         ),
     );
 
-    ds.run_tx_with_name("test-put-report-share", |tx| {
+    ds.run_tx("test-put-report-share", |tx| {
         let (task, report_share) = (task.clone(), report_share.clone());
         Box::pin(async move {
             tx.put_aggregator_task(&task).await?;
@@ -1270,7 +1270,7 @@ async fn roundtrip_report_share(ephemeral_datastore: EphemeralDatastore) {
     .unwrap();
 
     let (got_task_id, got_extensions, got_leader_input_share, got_helper_input_share) = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let report_share_metadata = report_share.metadata().clone();
             Box::pin(async move {
                 let row = tx
@@ -1316,7 +1316,7 @@ async fn roundtrip_report_share(ephemeral_datastore: EphemeralDatastore) {
     assert!(got_helper_input_share.is_none());
 
     // Put the same report share again. This should not cause an error.
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let (task_id, report_share) = (*task.id(), report_share.clone());
         Box::pin(async move {
             tx.put_report_share(&task_id, &report_share).await.unwrap();
@@ -1369,7 +1369,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
         AggregationJobStep::from(0),
     );
 
-    ds.run_tx_with_name("test-put-aggregation-jobs", |tx| {
+    ds.run_tx("test-put-aggregation-jobs", |tx| {
         let (task, leader_aggregation_job, helper_aggregation_job) = (
             task.clone(),
             leader_aggregation_job.clone(),
@@ -1397,7 +1397,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     clock.advance(&REPORT_EXPIRY_AGE);
 
     let (got_leader_aggregation_job, got_helper_aggregation_job) = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let (leader_aggregation_job, helper_aggregation_job) = (
                 leader_aggregation_job.clone(),
                 helper_aggregation_job.clone(),
@@ -1434,7 +1434,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
         .clone()
         .with_state(AggregationJobState::Finished);
     let new_helper_aggregation_job = helper_aggregation_job.with_last_request_hash([3; 32]);
-    ds.run_tx_with_name("test-update-aggregation-jobs", |tx| {
+    ds.run_tx("test-update-aggregation-jobs", |tx| {
         let (new_leader_aggregation_job, new_helper_aggregation_job) = (
             new_leader_aggregation_job.clone(),
             new_helper_aggregation_job.clone(),
@@ -1462,7 +1462,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     .unwrap();
 
     let (got_leader_aggregation_job, got_helper_aggregation_job) = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let (new_leader_aggregation_job, new_helper_aggregation_job) = (
                 new_leader_aggregation_job.clone(),
                 new_helper_aggregation_job.clone(),
@@ -1509,7 +1509,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
         AggregationJobState::InProgress,
         AggregationJobStep::from(0),
     );
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let new_leader_aggregation_job = new_leader_aggregation_job.clone();
         Box::pin(async move {
             let error = tx
@@ -1528,7 +1528,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     // returned.
     clock.advance(&Duration::from_seconds(2));
     let (got_leader_aggregation_job, got_helper_aggregation_job) = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let (new_leader_aggregation_job, new_helper_aggregation_job) = (
                 new_leader_aggregation_job.clone(),
                 new_helper_aggregation_job.clone(),
@@ -1578,7 +1578,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
         .collect();
     aggregation_job_ids.sort();
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let (task, aggregation_job_ids) = (task.clone(), aggregation_job_ids.clone());
         Box::pin(async move {
             // Write a few aggregation jobs we expect to be able to retrieve with
@@ -1720,7 +1720,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
                 // for a little while to keep this from affecting test outcome.
                 let results = try_join_all(
                     iter::repeat_with(|| {
-                        ds.run_tx(|tx| {
+                        ds.run_tx_default(|tx| {
                             Box::pin(async move {
                                 tx.acquire_incomplete_aggregation_jobs(
                                     &LEASE_DURATION,
@@ -1779,7 +1779,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
         .map(|lease| (lease.leased().clone(), *lease.lease_expiry_time()))
         .collect();
     jobs_to_release.sort();
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let leases_to_release = leases_to_release.clone();
         Box::pin(async move {
             for lease in leases_to_release {
@@ -1792,7 +1792,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     .unwrap();
 
     let mut got_aggregation_jobs: Vec<_> = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             Box::pin(async move {
                 tx.acquire_incomplete_aggregation_jobs(&LEASE_DURATION, MAXIMUM_ACQUIRE_COUNT)
                     .await
@@ -1831,7 +1831,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
         })
         .collect();
     let mut got_aggregation_jobs: Vec<_> = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             Box::pin(async move {
                 // This time, we just acquire all jobs in a single go for simplicity -- we've
                 // already tested the maximum acquire count functionality above.
@@ -1859,7 +1859,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
     // fails.
     clock.advance(&Duration::from_seconds(LEASE_DURATION.as_secs()));
     let lease = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             Box::pin(async move {
                 Ok(tx
                     .acquire_incomplete_aggregation_jobs(&LEASE_DURATION, 1)
@@ -1875,7 +1875,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
         random(),
         lease.lease_attempts(),
     );
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let lease_with_random_token = lease_with_random_token.clone();
         Box::pin(async move { tx.release_aggregation_job(&lease_with_random_token).await })
     })
@@ -1884,7 +1884,7 @@ async fn aggregation_job_acquire_release(ephemeral_datastore: EphemeralDatastore
 
     // Replace the original lease token and verify that we can release successfully with it in
     // place.
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let lease = lease.clone();
         Box::pin(async move { tx.release_aggregation_job(&lease).await })
     })
@@ -1899,7 +1899,7 @@ async fn aggregation_job_not_found(ephemeral_datastore: EphemeralDatastore) {
     let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
     let rslt = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             Box::pin(async move {
                 tx.get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
                     &random(),
@@ -1913,7 +1913,7 @@ async fn aggregation_job_not_found(ephemeral_datastore: EphemeralDatastore) {
     assert_eq!(rslt, None);
 
     let rslt = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             Box::pin(async move {
                 tx.update_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
                     &AggregationJob::new(
@@ -1988,7 +1988,7 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
         aggregation_job_with_request_hash,
     ]);
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let (task, want_agg_jobs) = (task.clone(), want_agg_jobs.clone());
         Box::pin(async move {
             tx.put_aggregator_task(&task).await?;
@@ -2029,7 +2029,7 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
     // Run.
     want_agg_jobs.sort_by_key(|agg_job| *agg_job.id());
     let mut got_agg_jobs = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let task = task.clone();
             Box::pin(async move { tx.get_aggregation_jobs_for_task(task.id()).await })
         })
@@ -2109,7 +2109,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         let report_id = random();
 
         let want_report_aggregation = ds
-            .run_tx_with_name("test-put-report-aggregations", |tx| {
+            .run_tx("test-put-report-aggregations", |tx| {
                 let (task, state, aggregation_param) =
                     (task.clone(), state.clone(), aggregation_param.clone());
                 Box::pin(async move {
@@ -2186,7 +2186,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         clock.advance(&REPORT_EXPIRY_AGE);
 
         let got_report_aggregation = ds
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (vdaf, task, aggregation_param) =
                     (Arc::clone(&vdaf), task.clone(), aggregation_param.clone());
                 Box::pin(async move {
@@ -2225,7 +2225,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
             want_report_aggregation.state().clone(),
         );
 
-        ds.run_tx_with_name("test-update-report-aggregation", |tx| {
+        ds.run_tx("test-update-report-aggregation", |tx| {
             let want_report_aggregation = want_report_aggregation.clone();
             Box::pin(async move {
                 tx.update_report_aggregation(&want_report_aggregation)
@@ -2253,7 +2253,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         .unwrap();
 
         let got_report_aggregation = ds
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (vdaf, task, aggregation_param) =
                     (Arc::clone(&vdaf), task.clone(), aggregation_param.clone());
                 Box::pin(async move {
@@ -2276,7 +2276,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
         clock.advance(&REPORT_EXPIRY_AGE);
 
         let got_report_aggregation = ds
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (vdaf, task, aggregation_param) =
                     (Arc::clone(&vdaf), task.clone(), aggregation_param.clone());
                 Box::pin(async move {
@@ -2316,7 +2316,7 @@ async fn check_other_report_aggregation_exists(ephemeral_datastore: EphemeralDat
     let aggregation_job_id = random();
     let report_id = random();
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let task_id = *task.id();
         Box::pin(async move {
             tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
@@ -2362,7 +2362,7 @@ async fn check_other_report_aggregation_exists(ephemeral_datastore: EphemeralDat
     // Advance the clock to "enable" report expiry.
     clock.advance(&REPORT_EXPIRY_AGE);
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let task_id = *task.id();
         Box::pin(async move {
             assert!(tx
@@ -2428,7 +2428,7 @@ async fn check_other_report_aggregation_exists(ephemeral_datastore: EphemeralDat
     // Advance the clock again to expire all relevant datastore items.
     clock.advance(&REPORT_EXPIRY_AGE);
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let task_id = *task.id();
         Box::pin(async move {
             assert!(!tx
@@ -2457,7 +2457,7 @@ async fn report_aggregation_not_found(ephemeral_datastore: EphemeralDatastore) {
     let vdaf = Arc::new(dummy_vdaf::Vdaf::default());
 
     let rslt = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let vdaf = Arc::clone(&vdaf);
             Box::pin(async move {
                 tx.get_report_aggregation(
@@ -2476,7 +2476,7 @@ async fn report_aggregation_not_found(ephemeral_datastore: EphemeralDatastore) {
     assert_eq!(rslt, None);
 
     let rslt = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             Box::pin(async move {
                 tx.update_report_aggregation::<0, dummy_vdaf::Vdaf>(&ReportAggregation::new(
                     random(),
@@ -2528,7 +2528,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
     let aggregation_job_id = random();
 
     let want_report_aggregations = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let (task, vdaf_transcript, aggregation_param) = (
                 task.clone(),
                 vdaf_transcript.clone(),
@@ -2608,7 +2608,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
     clock.advance(&REPORT_EXPIRY_AGE);
 
     let got_report_aggregations = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
             Box::pin(async move {
                 tx.get_report_aggregations_for_aggregation_job(
@@ -2628,7 +2628,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
     clock.advance(&REPORT_EXPIRY_AGE);
 
     let got_report_aggregations = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
             Box::pin(async move {
                 tx.get_report_aggregations_for_aggregation_job(
@@ -2709,7 +2709,7 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
     let aggregation_param = AggregationParam(13);
 
     let (first_collection_job, second_collection_job) = ds
-        .run_tx_with_name("test-put-collection-job", |tx| {
+        .run_tx("test-put-collection-job", |tx| {
             let task = task.clone();
             Box::pin(async move {
                 tx.put_aggregator_task(&task).await.unwrap();
@@ -2746,7 +2746,7 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
     // Advance the clock to "enable" report expiry.
     clock.advance(&REPORT_EXPIRY_AGE);
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let task = task.clone();
         let first_collection_job = first_collection_job.clone();
         let second_collection_job = second_collection_job.clone();
@@ -2819,7 +2819,7 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
     // Advance the clock again to expire everything that has been written.
     clock.advance(&REPORT_EXPIRY_AGE);
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let task = task.clone();
         let first_collection_job = first_collection_job.clone();
         let second_collection_job = second_collection_job.clone();
@@ -2877,7 +2877,7 @@ async fn update_collection_jobs(ephemeral_datastore: EphemeralDatastore) {
     )
     .unwrap();
 
-    ds.run_tx_with_name("test-update-collection-jobs", |tx| {
+    ds.run_tx("test-update-collection-jobs", |tx| {
         let task = task.clone();
         Box::pin(async move {
             tx.put_aggregator_task(&task).await?;
@@ -3095,7 +3095,7 @@ async fn setup_collection_job_acquire_test_case<Q: TestQueryTypeExt>(
     ds: &Datastore<MockClock>,
     test_case: CollectionJobAcquireTestCase<Q>,
 ) -> CollectionJobAcquireTestCase<Q> {
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let mut test_case = test_case.clone();
         Box::pin(async move {
             for task_id in &test_case.task_ids {
@@ -3174,7 +3174,7 @@ async fn run_collection_job_acquire_test_case<Q: TestQueryTypeExt>(
     let test_case = setup_collection_job_acquire_test_case(ds, test_case).await;
 
     let clock = &ds.clock;
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let test_case = test_case.clone();
         let clock = clock.clone();
         Box::pin(async move {
@@ -3279,7 +3279,7 @@ async fn time_interval_collection_job_acquire_release_happy_path(
     .await;
 
     let reacquired_jobs = ds
-        .run_tx_with_name("test-acquire-leases", |tx| {
+        .run_tx("test-acquire-leases", |tx| {
             let collection_job_leases = collection_job_leases.clone();
             Box::pin(async move {
                 // Try to re-acquire collection jobs. Nothing should happen because the lease is still
@@ -3324,7 +3324,7 @@ async fn time_interval_collection_job_acquire_release_happy_path(
     // Advance time by the lease duration
     clock.advance(&Duration::from_seconds(100));
 
-    ds.run_tx_with_name("test-reacquire-leases", |tx| {
+    ds.run_tx("test-reacquire-leases", |tx| {
         let reacquired_jobs = reacquired_jobs.clone();
         Box::pin(async move {
             // Re-acquire the jobs whose lease should have lapsed.
@@ -3420,7 +3420,7 @@ async fn fixed_size_collection_job_acquire_release_happy_path(
     .await;
 
     let reacquired_jobs = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let collection_job_leases = collection_job_leases.clone();
             Box::pin(async move {
                 // Try to re-acquire collection jobs. Nothing should happen because the lease is still
@@ -3462,7 +3462,7 @@ async fn fixed_size_collection_job_acquire_release_happy_path(
     // Advance time by the lease duration
     clock.advance(&Duration::from_seconds(100));
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let reacquired_jobs = reacquired_jobs.clone();
         Box::pin(async move {
             // Re-acquire the jobs whose lease should have lapsed.
@@ -3903,7 +3903,7 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
     )
     .await;
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let test_case = test_case.clone();
         let clock = clock.clone();
         Box::pin(async move {
@@ -4074,7 +4074,7 @@ async fn collection_job_acquire_state_filtering(ephemeral_datastore: EphemeralDa
     )
     .await;
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         Box::pin(async move {
             // No collection jobs should be acquired because none of them are in the START state
             let acquired_collection_jobs = tx
@@ -4112,7 +4112,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
     let aggregation_param = AggregationParam(12);
 
     let (first_batch_aggregation, second_batch_aggregation, third_batch_aggregation) = ds
-        .run_tx_with_name("test-put-batch-aggregations", |tx| {
+        .run_tx("test-put-batch-aggregations", |tx| {
             let task = task.clone();
             let other_task = other_task.clone();
 
@@ -4300,7 +4300,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
     // Advance the clock to "enable" report expiry.
     clock.advance(&REPORT_EXPIRY_AGE);
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let task = task.clone();
         let first_batch_aggregation = first_batch_aggregation.clone();
         let second_batch_aggregation = second_batch_aggregation.clone();
@@ -4393,7 +4393,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
     // Advance the clock again to expire all written entities.
     clock.advance(&REPORT_EXPIRY_AGE);
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let task = task.clone();
         Box::pin(async move {
             let vdaf = dummy_vdaf::Vdaf::new();
@@ -4448,7 +4448,7 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
     let aggregate_share = AggregateShare(23);
     let aggregation_param = AggregationParam(12);
     let batch_aggregation = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let task = task.clone();
             Box::pin(async move {
                 let other_task = TaskBuilder::new(
@@ -4574,7 +4574,7 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
     // Advance the clock to "enable" report expiry.
     clock.advance(&REPORT_EXPIRY_AGE);
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let task = task.clone();
         let batch_aggregation = batch_aggregation.clone();
         Box::pin(async move {
@@ -4623,7 +4623,7 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
     // Advance the clock again to expire all written entities.
     clock.advance(&REPORT_EXPIRY_AGE);
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let task = task.clone();
         Box::pin(async move {
             let vdaf = dummy_vdaf::Vdaf::new();
@@ -4655,7 +4655,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let aggregate_share_job = ds
-        .run_tx_with_name("test-roundtrip-aggregate-share-job", |tx| {
+        .run_tx("test-roundtrip-aggregate-share-job", |tx| {
             Box::pin(async move {
                 let task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
@@ -4709,7 +4709,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
     // Advance the clock to "enable" report expiry.
     clock.advance(&REPORT_EXPIRY_AGE);
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let want_aggregate_share_job = aggregate_share_job.clone();
         Box::pin(async move {
             let vdaf = dummy_vdaf::Vdaf::new();
@@ -4779,7 +4779,7 @@ async fn roundtrip_aggregate_share_job_time_interval(ephemeral_datastore: Epheme
     // Advance the clock to expire all written entities.
     clock.advance(&REPORT_EXPIRY_AGE);
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let want_aggregate_share_job = aggregate_share_job.clone();
         Box::pin(async move {
             let vdaf = dummy_vdaf::Vdaf::new();
@@ -4841,7 +4841,7 @@ async fn roundtrip_aggregate_share_job_fixed_size(ephemeral_datastore: Ephemeral
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let aggregate_share_job = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             Box::pin(async move {
                 let task = TaskBuilder::new(
                     task::QueryType::FixedSize {
@@ -4891,7 +4891,7 @@ async fn roundtrip_aggregate_share_job_fixed_size(ephemeral_datastore: Ephemeral
     // Advance the clock to "enable" report expiry.
     clock.advance(&REPORT_EXPIRY_AGE);
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let want_aggregate_share_job = aggregate_share_job.clone();
         Box::pin(async move {
             let vdaf = dummy_vdaf::Vdaf::new();
@@ -4939,7 +4939,7 @@ async fn roundtrip_aggregate_share_job_fixed_size(ephemeral_datastore: Ephemeral
     // Advance the clock to expire all written entities.
     clock.advance(&REPORT_EXPIRY_AGE);
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let want_aggregate_share_job = aggregate_share_job.clone();
         Box::pin(async move {
             let vdaf = dummy_vdaf::Vdaf::new();
@@ -4989,7 +4989,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
         .unwrap();
 
     let (task_id_1, batch_id_1, task_id_2, batch_id_2) = ds
-        .run_tx_with_name("test-put-outstanding-batches", |tx| {
+        .run_tx("test-put-outstanding-batches", |tx| {
             let clock = clock.clone();
             Box::pin(async move {
                 let task_1 = TaskBuilder::new(
@@ -5243,7 +5243,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
         outstanding_batches_task_2,
         outstanding_batches_empty_time_bucket,
     ) = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             Box::pin(async move {
                 let outstanding_batches_task_1 =
                     tx.get_outstanding_batches(&task_id_1, &None).await?;
@@ -5297,7 +5297,9 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
 
     // Verify that the batch is no longer available.
     let outstanding_batches = ds
-        .run_tx(|tx| Box::pin(async move { tx.get_outstanding_batches(&task_id_1, &None).await }))
+        .run_tx_default(|tx| {
+            Box::pin(async move { tx.get_outstanding_batches(&task_id_1, &None).await })
+        })
         .await
         .unwrap();
     assert!(outstanding_batches.is_empty());
@@ -5306,14 +5308,16 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
     clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
     // Delete the outstanding batch, then check that it is no longer available.
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         Box::pin(async move { tx.delete_outstanding_batch(&task_id_1, &batch_id_1).await })
     })
     .await
     .unwrap();
 
     let outstanding_batches = ds
-        .run_tx(|tx| Box::pin(async move { tx.get_outstanding_batches(&task_id_1, &None).await }))
+        .run_tx_default(|tx| {
+            Box::pin(async move { tx.get_outstanding_batches(&task_id_1, &None).await })
+        })
         .await
         .unwrap();
     assert!(outstanding_batches.is_empty());
@@ -5336,7 +5340,7 @@ async fn roundtrip_batch(ephemeral_datastore: EphemeralDatastore) {
         Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1)).unwrap(),
     );
 
-    ds.run_tx_with_name("test-put-batch", |tx| {
+    ds.run_tx("test-put-batch", |tx| {
         let want_batch = want_batch.clone();
         Box::pin(async move {
             tx.put_aggregator_task(
@@ -5368,7 +5372,7 @@ async fn roundtrip_batch(ephemeral_datastore: EphemeralDatastore) {
     // Advance the clock to "enable" report expiry.
     clock.advance(&REPORT_EXPIRY_AGE);
 
-    ds.run_tx_with_name("test-update-batch", |tx| {
+    ds.run_tx("test-update-batch", |tx| {
         let want_batch = want_batch.clone();
         Box::pin(async move {
             // Try reading the batch back, and verify that modifying any of the primary key
@@ -5445,7 +5449,7 @@ async fn roundtrip_batch(ephemeral_datastore: EphemeralDatastore) {
     // Advance the clock to expire the batch.
     clock.advance(&REPORT_EXPIRY_AGE);
 
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         let want_batch = want_batch.clone();
         Box::pin(async move {
             // Try reading the batch back, and verify it is expired.
@@ -5481,7 +5485,7 @@ async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) 
         .difference(&OLDEST_ALLOWED_REPORT_TIMESTAMP)
         .unwrap();
     let (task_id, new_report_id, other_task_id, other_task_report_id) = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             Box::pin(async move {
                 let task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
                     .with_report_expiry_age(Some(report_expiry_age))
@@ -5529,7 +5533,7 @@ async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) 
         .unwrap();
 
     // Run.
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         Box::pin(async move {
             tx.delete_expired_client_reports(&task_id, u64::try_from(i64::MAX)?)
                 .await
@@ -5541,7 +5545,7 @@ async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) 
     // Verify.
     let want_report_ids = HashSet::from([new_report_id, other_task_report_id]);
     let got_report_ids = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let vdaf = vdaf.clone();
             Box::pin(async move {
                 let task_client_reports = tx.get_client_reports_for_task(&vdaf, &task_id).await?;
@@ -5647,7 +5651,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
         want_aggregation_job_ids,
         want_report_ids,
     ) = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             Box::pin(async move {
                 let leader_time_interval_task =
                     TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
@@ -5908,7 +5912,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
     clock.advance(&REPORT_EXPIRY_AGE);
 
     // Run.
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         Box::pin(async move {
             tx.delete_expired_aggregation_artifacts(
                 &leader_time_interval_task_id,
@@ -5938,7 +5942,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
 
     // Verify.
     let (got_aggregation_job_ids, got_report_ids) = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let vdaf = vdaf.clone();
             Box::pin(async move {
                 let leader_time_interval_aggregation_job_ids = tx
@@ -6165,7 +6169,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
         want_batch_aggregation_ids,
         time_bucket_starts,
     ) = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             Box::pin(async move {
                 let leader_time_interval_task =
                     TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
@@ -6628,7 +6632,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
     clock.advance(&REPORT_EXPIRY_AGE);
 
     // Run.
-    ds.run_tx(|tx| {
+    ds.run_tx_default(|tx| {
         Box::pin(async move {
             tx.delete_expired_collection_artifacts(
                 &leader_time_interval_task_id,
@@ -6677,7 +6681,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
         got_outstanding_batch_ids,
         got_batch_aggregation_ids,
     ) = ds
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let time_bucket_starts = time_bucket_starts.clone();
             Box::pin(async move {
                 let vdaf = dummy_vdaf::Vdaf::new();
@@ -7000,7 +7004,7 @@ async fn roundtrip_interval_sql(ephemeral_datastore: EphemeralDatastore) {
     let datastore = ephemeral_datastore.datastore(MockClock::default()).await;
 
     datastore
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             Box::pin(async move {
                 let interval = tx
                     .query_one(
@@ -7112,7 +7116,7 @@ async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) 
     let keypair = generate_test_hpke_config_and_private_key();
 
     datastore
-        .run_tx_with_name("test-put-keys", |tx| {
+        .run_tx("test-put-keys", |tx| {
             let keypair = keypair.clone();
             let clock = clock.clone();
             Box::pin(async move {
@@ -7162,7 +7166,7 @@ async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) 
     // Should not be able to set keypair with the same id.
     assert_matches!(
         datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let keypair = keypair.clone();
                 Box::pin(async move { tx.put_global_hpke_keypair(&keypair).await })
             })
@@ -7171,7 +7175,7 @@ async fn roundtrip_global_hpke_keypair(ephemeral_datastore: EphemeralDatastore) 
     );
 
     datastore
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let keypair = keypair.clone();
             Box::pin(async move {
                 tx.delete_global_hpke_keypair(keypair.config().id()).await?;
@@ -7212,7 +7216,7 @@ async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatast
         .build();
 
     datastore
-        .run_tx_with_name("test-put-peer-aggregator", |tx| {
+        .run_tx("test-put-peer-aggregator", |tx| {
             let example_leader_peer_aggregator = example_leader_peer_aggregator.clone();
             let example_helper_peer_aggregator = example_helper_peer_aggregator.clone();
             let another_example_leader_peer_aggregator =
@@ -7236,7 +7240,7 @@ async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatast
     // Should not be able to put an aggregator with the same endpoint and role.
     assert_matches!(
         datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 Box::pin(async move {
                     let colliding_peer_aggregator = PeerAggregatorBuilder::new().build();
                     tx.put_taskprov_peer_aggregator(&colliding_peer_aggregator)
@@ -7248,7 +7252,7 @@ async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatast
     );
 
     datastore
-        .run_tx(|tx| {
+        .run_tx_default(|tx| {
             let example_leader_peer_aggregator = example_leader_peer_aggregator.clone();
             let example_helper_peer_aggregator = example_helper_peer_aggregator.clone();
             let another_example_leader_peer_aggregator =

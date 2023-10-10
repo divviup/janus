@@ -817,7 +817,7 @@ mod tests {
         // in the database.
         let first_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(1);
         datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let keypair = first_hpke_keypair.clone();
                 Box::pin(async move {
                     tx.put_global_hpke_keypair(&keypair).await?;
@@ -861,7 +861,7 @@ mod tests {
         // Insert an inactive HPKE config.
         let second_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(2);
         datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let keypair = second_hpke_keypair.clone();
                 Box::pin(async move { tx.put_global_hpke_keypair(&keypair).await })
             })
@@ -878,7 +878,7 @@ mod tests {
 
         // Set key active.
         datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let keypair = second_hpke_keypair.clone();
                 Box::pin(async move {
                     tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
@@ -913,7 +913,7 @@ mod tests {
 
         // Expire a key.
         datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let keypair = second_hpke_keypair.clone();
                 Box::pin(async move {
                     tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Expired)
@@ -933,7 +933,7 @@ mod tests {
 
         // Delete a key, no keys left.
         datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let keypair = first_hpke_keypair.clone();
                 Box::pin(async move { tx.delete_global_hpke_keypair(keypair.config().id()).await })
             })
@@ -952,7 +952,7 @@ mod tests {
         // in the database.
         let first_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(1);
         datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let keypair = first_hpke_keypair.clone();
                 Box::pin(async move {
                     tx.put_global_hpke_keypair(&keypair).await?;
@@ -1651,7 +1651,7 @@ mod tests {
         let (prepare_init_8, transcript_8) = prep_init_generator.next(&measurement);
 
         let (conflicting_aggregation_job, non_conflicting_aggregation_job) = datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let task = helper_task.clone();
                 let report_share_4 = prepare_init_4.report_share().clone();
                 let report_share_5 = prepare_init_5.report_share().clone();
@@ -1870,7 +1870,7 @@ mod tests {
 
             // Check aggregation job in datastore.
             let aggregation_jobs = datastore
-                .run_tx(|tx| {
+                .run_tx_default(|tx| {
                     let task = task.clone();
                     Box::pin(async move {
                         tx.get_aggregation_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
@@ -1940,7 +1940,7 @@ mod tests {
                 .into(),
         );
         datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let global_hpke_keypair_same_id = global_hpke_keypair_same_id.clone();
                 let global_hpke_keypair_different_id = global_hpke_keypair_different_id.clone();
                 Box::pin(async move {
@@ -2197,7 +2197,7 @@ mod tests {
         // datastore.
         let client_reports = test_case
             .datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let task_id = *test_case.task.id();
                 Box::pin(async move {
                     let reports = tx.get_report_metadatas_for_task(&task_id).await.unwrap();
@@ -2452,7 +2452,7 @@ mod tests {
         );
 
         datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let task = helper_task.clone();
                 let (report_share_0, report_share_1, report_share_2) = (
                     report_share_0.clone(),
@@ -2578,7 +2578,7 @@ mod tests {
 
         // Validate datastore.
         let (aggregation_job, report_aggregations) = datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
                 Box::pin(async move {
                     let aggregation_job = tx
@@ -2788,7 +2788,7 @@ mod tests {
             );
 
         datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let task = helper_task.clone();
                 let (report_share_0, report_share_1, report_share_2) = (
                     report_share_0.clone(),
@@ -2918,7 +2918,7 @@ mod tests {
 
         // Map the batch aggregation ordinal value to 0, as it may vary due to sharding.
         let first_batch_got_batch_aggregations: Vec<_> = datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (task, vdaf, report_metadata_0, aggregation_param) = (
                     helper_task.clone(),
                     vdaf.clone(),
@@ -3000,7 +3000,7 @@ mod tests {
         );
 
         let second_batch_got_batch_aggregations = datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (task, vdaf, report_metadata_2, aggregation_param) = (
                     helper_task.clone(),
                     vdaf.clone(),
@@ -3119,7 +3119,7 @@ mod tests {
         );
 
         datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let task = helper_task.clone();
                 let (report_share_3, report_share_4, report_share_5) = (
                     report_share_3.clone(),
@@ -3221,7 +3221,7 @@ mod tests {
         // batch aggregations over the same interval. (the task & aggregation parameter will always
         // be the same)
         let merged_first_batch_aggregation = datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (task, vdaf, report_metadata_0, aggregation_param) = (
                     helper_task.clone(),
                     vdaf.clone(),
@@ -3308,7 +3308,7 @@ mod tests {
         );
 
         let second_batch_got_batch_aggregations = datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (task, vdaf, report_metadata_2, aggregation_param) = (
                     helper_task.clone(),
                     vdaf.clone(),
@@ -3373,7 +3373,7 @@ mod tests {
 
         // Setup datastore.
         datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (task, aggregation_param, report_metadata, transcript) = (
                     helper_task.clone(),
                     aggregation_param.clone(),
@@ -3490,7 +3490,7 @@ mod tests {
 
         // Setup datastore.
         datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (task, aggregation_param, report_metadata, transcript, helper_report_share) = (
                     helper_task.clone(),
                     aggregation_param.clone(),
@@ -3562,7 +3562,7 @@ mod tests {
 
         // Check datastore state.
         let (aggregation_job, report_aggregation) = datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (vdaf, task, report_metadata) =
                     (vdaf.clone(), task.clone(), report_metadata.clone());
                 Box::pin(async move {
@@ -3648,7 +3648,7 @@ mod tests {
 
         // Setup datastore.
         datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (task, aggregation_param, report_metadata, transcript) = (
                     helper_task.clone(),
                     aggregation_param.clone(),
@@ -3769,7 +3769,7 @@ mod tests {
 
         // Setup datastore.
         datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (
                     task,
                     aggregation_param,
@@ -3917,7 +3917,7 @@ mod tests {
 
         // Setup datastore.
         datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let (task, report_metadata) = (helper_task.clone(), report_metadata.clone());
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await?;
@@ -4305,7 +4305,7 @@ mod tests {
 
         test_case
             .datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let task_id = *test_case.task.id();
 
                 Box::pin(async move {
@@ -4347,7 +4347,7 @@ mod tests {
 
         let (got_collection_job, got_batches) = test_case
             .datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let task_id = *test_case.task.id();
 
                 Box::pin(async move {
@@ -4374,7 +4374,7 @@ mod tests {
         // job should now be complete.
         test_case
             .datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let task = test_case.task.clone();
                 let helper_aggregate_share_bytes = helper_aggregate_share.get_encoded();
                 Box::pin(async move {
@@ -4499,7 +4499,7 @@ mod tests {
 
         test_case
             .datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let task = test_case.task.clone();
                 Box::pin(async move {
                     tx.put_batch_aggregation(
@@ -4567,7 +4567,7 @@ mod tests {
 
         test_case
             .datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let task = test_case.task.clone();
                 Box::pin(async move {
                     tx.put_batch_aggregation(
@@ -4852,7 +4852,7 @@ mod tests {
 
         // Put some batch aggregations in the DB.
         datastore
-            .run_tx(|tx| {
+            .run_tx_default(|tx| {
                 let task = helper_task.clone();
                 Box::pin(async move {
                     for aggregation_param in [
