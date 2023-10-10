@@ -73,13 +73,13 @@ jobs:
       run: cargo build --profile ci --package janus_core
     # Note: keep Build & Test steps consecutive, and match flags other than `--no-run`.
     - name: Build
-      run: cargo test --profile ci --no-run --locked --all-targets
+      run: cargo test --profile ci --no-run --locked --all-targets --features fpvec_bounded_l2
     - name: Test
       id: test
       env:
         JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
         DIVVIUP_TS_INTEROP_CONTAINER: ${{ steps.default-input-values.outputs.divviup_ts_interop_container }}
-      run: cargo test --profile ci --locked --all-targets
+      run: cargo test --profile ci --locked --all-targets --features fpvec_bounded_l2
       # Continue on error so we can upload logs
       continue-on-error: true
     - name: Upload container logs
