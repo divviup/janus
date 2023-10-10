@@ -38,7 +38,9 @@ impl<C: Clock> GarbageCollector<C> {
         // Retrieve tasks.
         let tasks = self
             .datastore
-            .run_tx(|tx| Box::pin(async move { tx.get_aggregator_tasks().await }))
+            .run_tx_with_name("garbage_collector_get_tasks", |tx| {
+                Box::pin(async move { tx.get_aggregator_tasks().await })
+            })
             .await
             .context("couldn't retrieve tasks")?;
 
@@ -55,7 +57,7 @@ impl<C: Clock> GarbageCollector<C> {
 
     async fn gc_task(&self, task: Arc<AggregatorTask>) -> Result<()> {
         self.datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("garbage_collector", |tx| {
                 let task = Arc::clone(&task);
                 let report_limit = self.report_limit;
                 let aggregation_limit = self.aggregation_limit;
