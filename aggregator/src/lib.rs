@@ -2,6 +2,7 @@
 #![allow(clippy::too_many_arguments)]
 
 pub mod aggregator;
+pub mod binaries;
 pub mod binary_utils;
 pub mod cache;
 pub mod config;
