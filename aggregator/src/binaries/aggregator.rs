@@ -16,13 +16,34 @@ use std::{
     pin::Pin,
 };
 use std::{iter::Iterator, net::SocketAddr, sync::Arc, time::Duration};
-use tokio::{join, time::interval};
+use tokio::{join, sync::watch, time::interval};
 use tracing::{error, info};
 use trillium::{Handler, Headers};
 use trillium_router::router;
 use url::Url;
 
 pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
+    let (sender, _) = watch::channel(None);
+    run_aggregator(ctx, sender).await
+}
+
+/// This produces a future that runs the aggregator and provides a [`tokio::sync::watch::Receiver`]
+/// that returns the socket address that the aggregator server listens on. This is useful when
+/// specifying ephemeral socket addresses.
+pub fn make_callback_ephemeral_address(
+    ctx: BinaryContext<RealClock, Options, Config>,
+) -> (
+    impl Future<Output = Result<()>>,
+    watch::Receiver<Option<SocketAddr>>,
+) {
+    let (sender, receiver) = watch::channel(None);
+    (run_aggregator(ctx, sender), receiver)
+}
+
+async fn run_aggregator(
+    ctx: BinaryContext<RealClock, Options, Config>,
+    sender: watch::Sender<Option<SocketAddr>>,
+) -> Result<()> {
     let BinaryContext {
         clock,
         options,
@@ -115,6 +136,7 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
     )
     .await
     .context("failed to create aggregator server")?;
+    sender.send_replace(Some(aggregator_bound_address));
 
     info!(?aggregator_bound_address, "Running aggregator");
 
