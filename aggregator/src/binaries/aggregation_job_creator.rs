@@ -1,20 +1,16 @@
 use crate::{
     aggregator::aggregation_job_creator::AggregationJobCreator,
-    binary_utils::{setup_signal_handler, BinaryContext, BinaryOptions, CommonBinaryOptions},
+    binary_utils::{BinaryContext, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
 use janus_core::time::RealClock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use trillium_tokio::Stopper;
 
 pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
-    let stopper = Stopper::new();
-    setup_signal_handler(stopper.clone()).context("failed to register SIGTERM signal handler")?;
-
     // Start creating aggregation jobs.
     let aggregation_job_creator = Arc::new(AggregationJobCreator::new(
         ctx.datastore,
@@ -24,7 +20,7 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
         ctx.config.min_aggregation_job_size,
         ctx.config.max_aggregation_job_size,
     ));
-    aggregation_job_creator.run(stopper).await;
+    aggregation_job_creator.run(ctx.stopper).await;
 
     Ok(())
 }

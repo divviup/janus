@@ -1,8 +1,6 @@
 use crate::{
     aggregator::{self, garbage_collector::GarbageCollector, http_handlers::aggregator_handler},
-    binary_utils::{
-        setup_server, setup_signal_handler, BinaryContext, BinaryOptions, CommonBinaryOptions,
-    },
+    binary_utils::{setup_server, BinaryContext, BinaryOptions, CommonBinaryOptions},
     cache::GlobalHpkeKeypairCache,
     config::{BinaryConfig, CommonConfig, TaskprovConfig},
 };
@@ -22,7 +20,6 @@ use tokio::{join, time::interval};
 use tracing::{error, info};
 use trillium::{Handler, Headers};
 use trillium_router::router;
-use trillium_tokio::Stopper;
 use url::Url;
 
 pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
@@ -32,11 +29,10 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
         mut config,
         datastore,
         meter,
+        stopper,
     } = ctx;
 
     let datastore = Arc::new(datastore);
-    let stopper = Stopper::new();
-    setup_signal_handler(stopper.clone()).context("failed to register SIGTERM signal handler")?;
     let response_headers = config
         .response_headers()
         .context("failed to parse response headers")?;

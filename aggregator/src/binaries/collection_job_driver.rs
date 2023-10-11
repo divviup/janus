@@ -1,9 +1,6 @@
 use crate::{
     aggregator::collection_job_driver::CollectionJobDriver,
-    binary_utils::{
-        job_driver::JobDriver, setup_signal_handler, BinaryContext, BinaryOptions,
-        CommonBinaryOptions,
-    },
+    binary_utils::{job_driver::JobDriver, BinaryContext, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig, JobDriverConfig},
 };
 use anyhow::{Context, Result};
@@ -11,7 +8,6 @@ use clap::Parser;
 use janus_core::{time::RealClock, TokioRuntime};
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, sync::Arc, time::Duration};
-use trillium_tokio::Stopper;
 
 pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Result<()> {
     const CLIENT_USER_AGENT: &str = concat!(
@@ -32,15 +28,13 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
     ));
     let lease_duration =
         Duration::from_secs(ctx.config.job_driver_config.worker_lease_duration_secs);
-    let stopper = Stopper::new();
-    setup_signal_handler(stopper.clone()).context("failed to register SIGTERM signal handler")?;
 
     // Start running.
     let job_driver = Arc::new(JobDriver::new(
         ctx.clock,
         TokioRuntime,
         ctx.meter,
-        stopper,
+        ctx.stopper,
         Duration::from_secs(ctx.config.job_driver_config.min_job_discovery_delay_secs),
         Duration::from_secs(ctx.config.job_driver_config.max_job_discovery_delay_secs),
         ctx.config.job_driver_config.max_concurrent_job_workers,

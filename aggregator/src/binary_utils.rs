@@ -263,6 +263,7 @@ pub struct BinaryContext<C: Clock, Options: BinaryOptions, Config: BinaryConfig>
     pub config: Config,
     pub datastore: Datastore<C>,
     pub meter: Meter,
+    pub stopper: Stopper,
 }
 
 pub async fn janus_main<C, Options, Config, F, Fut>(clock: C, f: F) -> anyhow::Result<()>
@@ -284,6 +285,10 @@ where
         .await
         .context("failed to install metrics exporter")?;
     let meter = opentelemetry::global::meter("janus_aggregator");
+
+    // Register signal handler.
+    let stopper = Stopper::new();
+    setup_signal_handler(stopper.clone()).context("failed to register SIGTERM signal handler")?;
 
     info!(common_options = ?options.common_options(), ?config, "Starting up");
 
@@ -316,6 +321,7 @@ where
         config,
         datastore,
         meter,
+        stopper,
     })
     .await;
 
