@@ -34,7 +34,7 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
 )]
 pub struct Options {
     #[clap(flatten)]
-    common: CommonBinaryOptions,
+    pub common: CommonBinaryOptions,
 }
 
 impl BinaryOptions for Options {
