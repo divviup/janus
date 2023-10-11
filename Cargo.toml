@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "adapter",
     "aggregator",
     "aggregator_api",
     "aggregator_core",
