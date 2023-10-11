@@ -10,11 +10,11 @@ use janus_messages::Role;
 use testcontainers::{clients::Cli, RunnableImage};
 
 /// Represents a running Janus test instance in a container.
-pub struct Janus<'a> {
+pub struct JanusContainer<'a> {
     container: ContainerLogsDropGuard<'a, Aggregator>,
 }
 
-impl<'a> Janus<'a> {
+impl<'a> JanusContainer<'a> {
     /// Create and start a new hermetic Janus test instance in the given Docker network, configured
     /// to service the given task. The aggregator port is also exposed to the host.
     pub async fn new(
@@ -23,7 +23,7 @@ impl<'a> Janus<'a> {
         network: &str,
         task: &Task,
         role: Role,
-    ) -> Janus<'a> {
+    ) -> JanusContainer<'a> {
         // Start the Janus interop aggregator container running.
         let endpoint = match role {
             Role::Leader => task.leader_aggregator_endpoint(),
