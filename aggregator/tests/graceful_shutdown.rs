@@ -4,13 +4,24 @@
 //! it times out waiting for the process to do so.
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use janus_aggregator::{
+    binaries::{
+        aggregation_job_creator::Config as AggregationJobCreatorConfig,
+        aggregation_job_driver::Config as AggregationJobDriverConfig,
+        aggregator::{AggregatorApi, Config as AggregatorConfig},
+        collection_job_driver::Config as CollectionJobDriverConfig,
+    },
+    config::{BinaryConfig, CommonConfig, DbConfig, JobDriverConfig, TaskprovConfig},
+    metrics::MetricsConfiguration,
+    trace::TraceConfiguration,
+};
 use janus_aggregator_core::{
     datastore::test_util::ephemeral_datastore,
     task::{test_util::TaskBuilder, QueryType},
 };
 use janus_core::{test_util::install_test_trace_subscriber, time::RealClock, vdaf::VdafInstance};
 use reqwest::Url;
-use serde_yaml::{Mapping, Value};
+use serde::Serialize;
 use std::{
     future::Future,
     io::{ErrorKind, Write},
@@ -102,7 +113,7 @@ fn forward_stdout_stderr(
     }
 }
 
-async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
+async fn graceful_shutdown<C: BinaryConfig + Serialize>(binary: &Path, mut config: C) {
     let binary_name = binary.file_name().unwrap().to_str().unwrap();
     install_test_trace_subscriber();
 
@@ -114,14 +125,10 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
     let health_check_port = select_open_port().await.unwrap();
     let health_check_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, health_check_port));
 
-    let mut db_config = Mapping::new();
-    db_config.insert("url".into(), ephemeral_datastore.connection_string().into());
-    db_config.insert("connection_pool_timeout_secs".into(), "60".into());
-    config.insert("database".into(), db_config.into());
-    config.insert(
-        "health_check_listen_address".into(),
-        format!("{health_check_listen_address}").into(),
-    );
+    let common_config = config.common_config_mut();
+    common_config.database.url = ephemeral_datastore.connection_string().parse().unwrap();
+    common_config.database.connection_pool_timeouts_secs = 60;
+    common_config.health_check_listen_address = health_check_listen_address;
 
     let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
         .build()
@@ -131,11 +138,10 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
 
     // Save the above configuration to a temporary file, so that we can pass
     // the file's path to the binary under test on the command line.
+    let serialized = serde_yaml::to_string(&config).unwrap();
     let config_path = spawn_blocking(move || {
         let mut config_temp_file = tempfile::NamedTempFile::new().unwrap();
-        config_temp_file
-            .write_all(serde_yaml::to_string(&config).unwrap().as_bytes())
-            .unwrap();
+        config_temp_file.write_all(serialized.as_bytes()).unwrap();
         config_temp_file.into_temp_path()
     })
     .await
@@ -235,21 +241,31 @@ async fn aggregator_shutdown() {
     let aggregator_api_listen_address =
         SocketAddr::from((Ipv4Addr::LOCALHOST, aggregator_api_port));
 
-    let mut config = Mapping::new();
-    config.insert(
-        "listen_address".into(),
-        format!("{aggregator_listen_address}").into(),
-    );
-    let mut aggregator_api = Mapping::new();
-    aggregator_api.insert(
-        "listen_address".into(),
-        format!("{aggregator_api_listen_address}").into(),
-    );
-    aggregator_api.insert("public_dap_url".into(), "https://public.dap.url".into());
-    config.insert("aggregator_api".into(), Value::Mapping(aggregator_api));
-    config.insert("max_upload_batch_size".into(), 100.into());
-    config.insert("max_upload_batch_write_delay_ms".into(), 250.into());
-    config.insert("batch_aggregation_shard_count".into(), 32u64.into());
+    let config = AggregatorConfig {
+        common_config: CommonConfig {
+            database: DbConfig {
+                url: "postgres://localhost".parse().unwrap(),
+                connection_pool_timeouts_secs: 60,
+                check_schema_version: true,
+            },
+            logging_config: TraceConfiguration::default(),
+            metrics_config: MetricsConfiguration::default(),
+            health_check_listen_address: "127.0.0.1:9001".parse().unwrap(),
+        },
+        taskprov_config: TaskprovConfig { enabled: false },
+        garbage_collection: None,
+        listen_address: aggregator_listen_address,
+        aggregator_api: Some(AggregatorApi {
+            listen_address: Some(aggregator_api_listen_address),
+            path_prefix: None,
+            public_dap_url: "https://public.dap.url".parse().unwrap(),
+        }),
+        response_headers: Vec::new(),
+        max_upload_batch_size: 100,
+        max_upload_batch_write_delay_ms: 250,
+        batch_aggregation_shard_count: 32,
+        global_hpke_configs_refresh_interval: None,
+    };
 
     graceful_shutdown(trycmd::cargo::cargo_bin!("aggregator"), config).await;
 }
@@ -257,14 +273,22 @@ async fn aggregator_shutdown() {
 #[tokio::test(flavor = "multi_thread")]
 #[cfg_attr(not(target_os = "linux"), ignore)]
 async fn aggregation_job_creator_shutdown() {
-    let mut config = Mapping::new();
-    config.insert("tasks_update_frequency_secs".into(), 3600u64.into());
-    config.insert(
-        "aggregation_job_creation_interval_secs".into(),
-        60u64.into(),
-    );
-    config.insert("min_aggregation_job_size".into(), 100u64.into());
-    config.insert("max_aggregation_job_size".into(), 100u64.into());
+    let config = AggregationJobCreatorConfig {
+        common_config: CommonConfig {
+            database: DbConfig {
+                url: "postgres://localhost".parse().unwrap(),
+                connection_pool_timeouts_secs: 60,
+                check_schema_version: true,
+            },
+            logging_config: TraceConfiguration::default(),
+            metrics_config: MetricsConfiguration::default(),
+            health_check_listen_address: "127.0.0.1:9001".parse().unwrap(),
+        },
+        tasks_update_frequency_secs: 3600,
+        aggregation_job_creation_interval_secs: 60,
+        min_aggregation_job_size: 100,
+        max_aggregation_job_size: 100,
+    };
 
     graceful_shutdown(trycmd::cargo::cargo_bin!("aggregation_job_creator"), config).await;
 }
@@ -272,17 +296,28 @@ async fn aggregation_job_creator_shutdown() {
 #[tokio::test(flavor = "multi_thread")]
 #[cfg_attr(not(target_os = "linux"), ignore)]
 async fn aggregation_job_driver_shutdown() {
-    let mut config = Mapping::new();
-    config.insert("min_job_discovery_delay_secs".into(), 10u64.into());
-    config.insert("max_job_discovery_delay_secs".into(), 60u64.into());
-    config.insert("max_concurrent_job_workers".into(), 10u64.into());
-    config.insert("worker_lease_duration_secs".into(), 600u64.into());
-    config.insert(
-        "worker_lease_clock_skew_allowance_secs".into(),
-        60u64.into(),
-    );
-    config.insert("maximum_attempts_before_failure".into(), 5u64.into());
-    config.insert("batch_aggregation_shard_count".into(), 32u64.into());
+    let config = AggregationJobDriverConfig {
+        common_config: CommonConfig {
+            database: DbConfig {
+                url: "postgres://localhost".parse().unwrap(),
+                connection_pool_timeouts_secs: 60,
+                check_schema_version: true,
+            },
+            logging_config: TraceConfiguration::default(),
+            metrics_config: MetricsConfiguration::default(),
+            health_check_listen_address: "127.0.0.1:9001".parse().unwrap(),
+        },
+        job_driver_config: JobDriverConfig {
+            min_job_discovery_delay_secs: 10,
+            max_job_discovery_delay_secs: 60,
+            max_concurrent_job_workers: 10,
+            worker_lease_duration_secs: 600,
+            worker_lease_clock_skew_allowance_secs: 60,
+            maximum_attempts_before_failure: 5,
+        },
+        taskprov_config: TaskprovConfig { enabled: false },
+        batch_aggregation_shard_count: 32,
+    };
 
     graceful_shutdown(trycmd::cargo::cargo_bin!("aggregation_job_driver"), config).await;
 }
@@ -290,17 +325,27 @@ async fn aggregation_job_driver_shutdown() {
 #[tokio::test(flavor = "multi_thread")]
 #[cfg_attr(not(target_os = "linux"), ignore)]
 async fn collection_job_driver_shutdown() {
-    let mut config = Mapping::new();
-    config.insert("min_job_discovery_delay_secs".into(), 10u64.into());
-    config.insert("max_job_discovery_delay_secs".into(), 60u64.into());
-    config.insert("max_concurrent_job_workers".into(), 10u64.into());
-    config.insert("worker_lease_duration_secs".into(), 600u64.into());
-    config.insert(
-        "worker_lease_clock_skew_allowance_secs".into(),
-        60u64.into(),
-    );
-    config.insert("maximum_attempts_before_failure".into(), 5u64.into());
-    config.insert("batch_aggregation_shard_count".into(), 32u64.into());
+    let config = CollectionJobDriverConfig {
+        common_config: CommonConfig {
+            database: DbConfig {
+                url: "postgres://localhost".parse().unwrap(),
+                connection_pool_timeouts_secs: 60,
+                check_schema_version: true,
+            },
+            logging_config: TraceConfiguration::default(),
+            metrics_config: MetricsConfiguration::default(),
+            health_check_listen_address: "127.0.0.1:9001".parse().unwrap(),
+        },
+        job_driver_config: JobDriverConfig {
+            min_job_discovery_delay_secs: 10,
+            max_job_discovery_delay_secs: 60,
+            max_concurrent_job_workers: 10,
+            worker_lease_duration_secs: 600,
+            worker_lease_clock_skew_allowance_secs: 60,
+            maximum_attempts_before_failure: 5,
+        },
+        batch_aggregation_shard_count: 32,
+    };
 
     graceful_shutdown(trycmd::cargo::cargo_bin!("collection_job_driver"), config).await;
 }

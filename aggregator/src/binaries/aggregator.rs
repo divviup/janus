@@ -205,17 +205,17 @@ pub struct AggregatorApi {
     /// Address on which this server should listen for connections to the Janus aggregator API
     /// and serve its API endpoints, independently from the address on which the DAP API is
     /// served. This is mutually exclusive with `path_prefix`.
-    listen_address: Option<SocketAddr>,
+    pub listen_address: Option<SocketAddr>,
     /// The Janus aggregator API will be served on the same address as the DAP API, but relative
     /// to the provided prefix. e.g., if `path_prefix` is `aggregator-api`, then the DAP API's
     /// uploads endpoint would be `{listen-address}/tasks/{task-id}/reports`, while task IDs
     /// could be obtained from the aggregator API at `{listen-address}/aggregator-api/task_ids`.
     /// This is mutually exclusive with `listen_address`.
-    path_prefix: Option<String>,
+    pub path_prefix: Option<String>,
     /// Resource location at which the DAP service managed by this aggregator api can be found
     /// on the public internet. Required.
     #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
-    public_dap_url: Url,
+    pub public_dap_url: Url,
 }
 
 fn deserialize_aggregator_api<'de, D>(deserializer: D) -> Result<Option<AggregatorApi>, D::Error>
@@ -299,64 +299,64 @@ where
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
     #[serde(flatten)]
-    common_config: CommonConfig,
+    pub common_config: CommonConfig,
 
     #[serde(default)]
-    taskprov_config: TaskprovConfig,
+    pub taskprov_config: TaskprovConfig,
 
     #[serde(default)]
-    garbage_collection: Option<GarbageCollectorConfig>,
+    pub garbage_collection: Option<GarbageCollectorConfig>,
 
     /// Address on which this server should listen for connections to the DAP aggregator API and
     /// serve its API endpoints.
     // TODO(#232): options for terminating TLS, unless that gets handled in a load balancer?
-    listen_address: SocketAddr,
+    pub listen_address: SocketAddr,
 
     /// How to serve the Janus aggregator API. If not set, the aggregator API is not served.
     #[serde(default, deserialize_with = "deserialize_aggregator_api")]
-    aggregator_api: Option<AggregatorApi>,
+    pub aggregator_api: Option<AggregatorApi>,
 
     /// Additional headers that will be added to all responses.
     #[serde(default)]
-    response_headers: Vec<HeaderEntry>,
+    pub response_headers: Vec<HeaderEntry>,
 
     /// Defines the maximum size of a batch of uploaded reports which will be written in a single
     /// transaction.
-    max_upload_batch_size: usize,
+    pub max_upload_batch_size: usize,
 
     /// Defines the maximum delay in milliseconds before writing a batch of uploaded reports, even
     /// if it has not yet reached `max_batch_upload_size`.
-    max_upload_batch_write_delay_ms: u64,
+    pub max_upload_batch_write_delay_ms: u64,
 
     /// Defines the number of shards to break each batch aggregation into. Increasing this value
     /// will reduce the amount of database contention during helper aggregation, while increasing
     /// the cost of collection.
-    batch_aggregation_shard_count: u64,
+    pub batch_aggregation_shard_count: u64,
 
     /// Defines how often to refresh the global HPKE configs cache in milliseconds. This affects how
     /// often an aggregator becomes aware of key state changes. If unspecified, default is defined
     /// by [`GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally have to
     /// specify this.
     #[serde(default)]
-    global_hpke_configs_refresh_interval: Option<u64>,
+    pub global_hpke_configs_refresh_interval: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct GarbageCollectorConfig {
+pub struct GarbageCollectorConfig {
     /// How frequently garbage collection is run, in seconds.
-    gc_frequency_s: u64,
+    pub gc_frequency_s: u64,
 
     /// The limit to the number of client report artifacts deleted for a single task by a single run
     /// of the garbage collector.
-    report_limit: u64,
+    pub report_limit: u64,
 
     /// The limit to the number of aggregation jobs, and related aggregation artifacts, deleted for
     /// a single task by a single run of the garbage collector.
-    aggregation_limit: u64,
+    pub aggregation_limit: u64,
 
     /// The limit to the number of batches, and related collection artifacts, deleted for a single
     /// task by a single run of the garbage collector.
-    collection_limit: u64,
+    pub collection_limit: u64,
 }
 
 impl Config {

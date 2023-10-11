@@ -70,18 +70,18 @@ impl BinaryOptions for Options {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
     #[serde(flatten)]
-    common_config: CommonConfig,
+    pub common_config: CommonConfig,
 
     /// How frequently we look for new tasks to start creating aggregation jobs for, in seconds.
-    tasks_update_frequency_secs: u64,
+    pub tasks_update_frequency_secs: u64,
     /// How frequently we attempt to create new aggregation jobs for each task, in seconds.
-    aggregation_job_creation_interval_secs: u64,
+    pub aggregation_job_creation_interval_secs: u64,
     /// The minimum number of client reports to include in an aggregation job. Applies to the
     /// "current" batch only; historical batches will create aggregation jobs of any size, on the
     /// theory that almost all reports will have be received for these batches already.
-    min_aggregation_job_size: usize,
+    pub min_aggregation_job_size: usize,
     /// The maximum number of client reports to include in an aggregation job.
-    max_aggregation_job_size: usize,
+    pub max_aggregation_job_size: usize,
 }
 
 impl BinaryConfig for Config {

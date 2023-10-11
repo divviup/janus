@@ -107,16 +107,16 @@ impl BinaryOptions for Options {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
     #[serde(flatten)]
-    common_config: CommonConfig,
+    pub common_config: CommonConfig,
     #[serde(flatten)]
-    job_driver_config: JobDriverConfig,
+    pub job_driver_config: JobDriverConfig,
     #[serde(default)]
-    taskprov_config: TaskprovConfig,
+    pub taskprov_config: TaskprovConfig,
 
     /// Defines the number of shards to break each batch aggregation into. Increasing this value
     /// will reduce the amount of database contention during leader aggregation, while increasing
     /// the cost of collection.
-    batch_aggregation_shard_count: u64,
+    pub batch_aggregation_shard_count: u64,
 }
 
 impl BinaryConfig for Config {
