@@ -185,7 +185,7 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
 
     test_case
         .datastore
-        .run_tx(|tx| {
+        .run_unnamed_tx(|tx| {
             let task = test_case.task.clone();
             Box::pin(async move {
                 for batch_id in [batch_id_1, batch_id_2] {
@@ -295,7 +295,7 @@ async fn collection_job_success_fixed_size() {
         // Update the collection job with the aggregate shares. collection job should now be complete.
         let batch_id = test_case
             .datastore
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let task = test_case.task.clone();
                 let vdaf = vdaf.clone();
                 let helper_aggregate_share_bytes = helper_aggregate_share.get_encoded();
@@ -450,7 +450,7 @@ async fn collection_job_put_idempotence_time_interval() {
     // There should only be a single collection job despite two successful PUTs
     test_case
         .datastore
-        .run_tx(|tx| {
+        .run_unnamed_tx(|tx| {
             let task_id = *test_case.task.id();
             let vdaf = dummy_vdaf::Vdaf::new();
             Box::pin(async move {
@@ -500,7 +500,7 @@ async fn collection_job_put_idempotence_time_interval_varied_collection_id() {
 
     test_case
         .datastore
-        .run_tx(|tx| {
+        .run_unnamed_tx(|tx| {
             let task_id = *test_case.task.id();
             let collection_job_ids = collection_job_ids.clone();
 
@@ -554,7 +554,7 @@ async fn collection_job_put_idempotence_fixed_size_varied_collection_id() {
 
     test_case
         .datastore
-        .run_tx(|tx| {
+        .run_unnamed_tx(|tx| {
             let task_id = *test_case.task.id();
             let collection_job_ids = collection_job_ids.clone();
 
@@ -682,7 +682,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch() {
         // batch ID after each PUT
         let batch_id = test_case
             .datastore
-            .run_tx(|tx| {
+            .run_unnamed_tx(|tx| {
                 let task_id = *test_case.task.id();
                 Box::pin(async move {
                     let vdaf = dummy_vdaf::Vdaf::new();
@@ -798,7 +798,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id() {
 
     test_case
         .datastore
-        .run_tx(|tx| {
+        .run_unnamed_tx(|tx| {
             let task_id = *test_case.task.id();
             Box::pin(async move {
                 tx.put_batch(&Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
@@ -852,7 +852,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_batch_id()
 
     test_case
         .datastore
-        .run_tx(|tx| {
+        .run_unnamed_tx(|tx| {
             let task_id = *test_case.task.id();
             Box::pin(async move {
                 for batch_id in [first_batch_id, second_batch_id] {
@@ -922,7 +922,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_aggregatio
 
     test_case
         .datastore
-        .run_tx(|tx| {
+        .run_unnamed_tx(|tx| {
             let task_id = *test_case.task.id();
             Box::pin(async move {
                 for aggregation_param in [first_aggregation_param, second_aggregation_param] {

@@ -98,7 +98,7 @@ async fn get_task_ids() {
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
     let mut task_ids: Vec<_> = ds
-        .run_tx(|tx| {
+        .run_unnamed_tx(|tx| {
             Box::pin(async move {
                 let tasks: Vec<_> = iter::repeat_with(|| {
                     TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
@@ -328,7 +328,7 @@ async fn post_task_helper_no_optional_fields() {
     );
 
     let got_task = ds
-        .run_tx(|tx| {
+        .run_unnamed_tx(|tx| {
             let got_task_resp = got_task_resp.clone();
             Box::pin(async move { tx.get_aggregator_task(&got_task_resp.task_id).await })
         })
@@ -468,7 +468,7 @@ async fn post_task_idempotence() {
     );
 
     let got_tasks = ds
-        .run_tx(|tx| Box::pin(async move { tx.get_aggregator_tasks().await }))
+        .run_unnamed_tx(|tx| Box::pin(async move { tx.get_aggregator_tasks().await }))
         .await
         .unwrap();
 
@@ -538,7 +538,7 @@ async fn post_task_leader_all_optional_fields() {
     .unwrap();
 
     let got_task = ds
-        .run_tx(|tx| {
+        .run_unnamed_tx(|tx| {
             let got_task_resp = got_task_resp.clone();
             Box::pin(async move { tx.get_aggregator_task(&got_task_resp.task_id).await })
         })
@@ -633,7 +633,7 @@ async fn get_task(#[case] role: Role) {
         .view_for_role(role)
         .unwrap();
 
-    ds.run_tx(|tx| {
+    ds.run_unnamed_tx(|tx| {
         let task = task.clone();
         Box::pin(async move {
             tx.put_aggregator_task(&task).await?;
@@ -690,7 +690,7 @@ async fn delete_task() {
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
     let task_id = ds
-        .run_tx(|tx| {
+        .run_unnamed_tx(|tx| {
             Box::pin(async move {
                 let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
                     .build()
@@ -716,7 +716,7 @@ async fn delete_task() {
         "",
     );
 
-    ds.run_tx(|tx| {
+    ds.run_unnamed_tx(|tx| {
         Box::pin(async move {
             assert_eq!(tx.get_aggregator_task(&task_id).await.unwrap(), None);
             Ok(())
@@ -766,7 +766,7 @@ async fn get_task_metrics() {
 
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
     let task_id = ds
-        .run_tx(|tx| {
+        .run_unnamed_tx(|tx| {
             Box::pin(async move {
                 let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
                     .build()
@@ -894,7 +894,7 @@ async fn get_global_hpke_configs() {
         HpkeAeadId::Aes128Gcm,
     )
     .unwrap();
-    ds.run_tx(|tx| {
+    ds.run_unnamed_tx(|tx| {
         let keypair1 = keypair1.clone();
         let keypair2 = keypair2.clone();
         Box::pin(async move {
@@ -996,7 +996,7 @@ async fn get_global_hpke_config() {
         HpkeAeadId::Aes128Gcm,
     )
     .unwrap();
-    ds.run_tx(|tx| {
+    ds.run_unnamed_tx(|tx| {
         let keypair1 = keypair1.clone();
         let keypair2 = keypair2.clone();
         Box::pin(async move {
@@ -1090,7 +1090,7 @@ async fn put_global_hpke_config() {
     .unwrap();
 
     let (got_key1, got_key2) = ds
-        .run_tx(|tx| {
+        .run_unnamed_tx(|tx| {
             let key1 = key1.config.clone();
             let key2 = key2.config.clone();
             Box::pin(async move {
@@ -1186,7 +1186,7 @@ async fn patch_global_hpke_config() {
     );
 
     let keypair = generate_test_hpke_config_and_private_key();
-    ds.run_tx(|tx| {
+    ds.run_unnamed_tx(|tx| {
         let keypair = keypair.clone();
         Box::pin(async move { tx.put_global_hpke_keypair(&keypair).await })
     })
@@ -1203,7 +1203,7 @@ async fn patch_global_hpke_config() {
     assert_response!(conn, Status::Ok);
 
     let got_key = ds
-        .run_tx(|tx| {
+        .run_unnamed_tx(|tx| {
             let keypair = keypair.clone();
             Box::pin(async move { tx.get_global_hpke_keypair(keypair.config().id()).await })
         })
@@ -1257,7 +1257,7 @@ async fn delete_global_hpke_config() {
     );
 
     let keypair = generate_test_hpke_config_and_private_key();
-    ds.run_tx(|tx| {
+    ds.run_unnamed_tx(|tx| {
         let keypair = keypair.clone();
         Box::pin(async move { tx.put_global_hpke_keypair(&keypair).await })
     })
@@ -1273,7 +1273,7 @@ async fn delete_global_hpke_config() {
     assert_response!(conn, Status::NoContent);
 
     assert_eq!(
-        ds.run_tx(|tx| Box::pin(async move { tx.get_global_hpke_keypairs().await }))
+        ds.run_unnamed_tx(|tx| Box::pin(async move { tx.get_global_hpke_keypairs().await }))
             .await
             .unwrap(),
         vec![]
@@ -1293,7 +1293,7 @@ async fn get_taskprov_peer_aggregator() {
         .with_role(Role::Helper)
         .build();
 
-    ds.run_tx(|tx| {
+    ds.run_unnamed_tx(|tx| {
         let leader = leader.clone();
         let helper = helper.clone();
         Box::pin(async move {
@@ -1398,9 +1398,11 @@ async fn post_taskprov_peer_aggregator() {
     );
 
     assert_eq!(
-        ds.run_tx(|tx| { Box::pin(async move { tx.get_taskprov_peer_aggregators().await }) })
-            .await
-            .unwrap(),
+        ds.run_unnamed_tx(|tx| {
+            Box::pin(async move { tx.get_taskprov_peer_aggregators().await })
+        })
+        .await
+        .unwrap(),
         vec![leader]
     );
 
@@ -1438,7 +1440,7 @@ async fn delete_taskprov_peer_aggregator() {
         .with_role(Role::Leader)
         .build();
 
-    ds.run_tx(|tx| {
+    ds.run_unnamed_tx(|tx| {
         let leader = leader.clone();
         Box::pin(async move { tx.put_taskprov_peer_aggregator(&leader).await })
     })
@@ -1463,9 +1465,11 @@ async fn delete_taskprov_peer_aggregator() {
     );
 
     assert_eq!(
-        ds.run_tx(|tx| { Box::pin(async move { tx.get_taskprov_peer_aggregators().await }) })
-            .await
-            .unwrap(),
+        ds.run_unnamed_tx(|tx| {
+            Box::pin(async move { tx.get_taskprov_peer_aggregators().await })
+        })
+        .await
+        .unwrap(),
         vec![]
     );
 

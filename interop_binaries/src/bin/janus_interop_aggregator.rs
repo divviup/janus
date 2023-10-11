@@ -121,7 +121,7 @@ async fn handle_add_task(
     .context("error constructing task")?;
 
     datastore
-        .run_tx(move |tx| {
+        .run_unnamed_tx(move |tx| {
             let task = task.clone();
             Box::pin(async move { tx.put_aggregator_task(&task).await })
         })
