@@ -1,5 +1,6 @@
 //! Functionality for tests interacting with Janus (<https://github.com/divviup/janus>).
 
+#[cfg(feature = "testcontainer")]
 use crate::interop_api;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator::{
@@ -26,20 +27,24 @@ use janus_aggregator_core::{
     test_util::noop_meter,
 };
 use janus_core::time::RealClock;
+#[cfg(feature = "testcontainer")]
 use janus_interop_binaries::{
     get_rust_log_level, test_util::await_http_server, testcontainer::Aggregator,
     ContainerLogsDropGuard,
 };
 use janus_messages::Role;
 use std::net::{Ipv4Addr, SocketAddr};
+#[cfg(feature = "testcontainer")]
 use testcontainers::{clients::Cli, RunnableImage};
 use trillium_tokio::Stopper;
 
 /// Represents a running Janus test instance in a container.
+#[cfg(feature = "testcontainer")]
 pub struct JanusContainer<'a> {
     container: ContainerLogsDropGuard<'a, Aggregator>,
 }
 
+#[cfg(feature = "testcontainer")]
 impl<'a> JanusContainer<'a> {
     /// Create and start a new hermetic Janus test instance in the given Docker network, configured
     /// to service the given task. The aggregator port is also exposed to the host.

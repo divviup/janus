@@ -4,11 +4,10 @@ use janus_core::{
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
     vdaf::VdafInstance,
 };
+#[cfg(feature = "testcontainer")]
+use janus_integration_tests::janus::JanusContainer;
 use janus_integration_tests::{
-    client::ClientBackend,
-    daphne::Daphne,
-    janus::{JanusContainer, JanusInProcess},
-    AggregatorEndpointFragments,
+    client::ClientBackend, daphne::Daphne, janus::JanusInProcess, AggregatorEndpointFragments,
 };
 use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
@@ -18,6 +17,7 @@ mod common;
 // This test places Daphne in the leader role & Janus in the helper role.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "Daphne does not yet publish a leader container image"]
+#[cfg(feature = "testcontainer")]
 async fn daphne_janus() {
     static TEST_NAME: &str = "daphne_janus";
     install_test_trace_subscriber();
@@ -56,6 +56,7 @@ async fn daphne_janus() {
 // This test places Janus in the leader role & Daphne in the helper role.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "Daphne does not currently support DAP-07 (issue #1669)"]
+#[cfg(feature = "testcontainer")]
 async fn janus_daphne() {
     static TEST_NAME: &str = "janus_daphne";
     install_test_trace_subscriber();

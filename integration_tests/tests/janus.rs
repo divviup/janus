@@ -1,21 +1,23 @@
-use common::{submit_measurements_and_verify_aggregate, test_task_builder, test_task_builder_host};
+#[cfg(feature = "testcontainer")]
+use common::test_task_builder;
+use common::{submit_measurements_and_verify_aggregate, test_task_builder_host};
 use janus_aggregator_core::task::QueryType;
-use janus_core::{
-    test_util::{install_test_trace_subscriber, testcontainers::container_client},
-    vdaf::VdafInstance,
-};
-use janus_integration_tests::{
-    client::ClientBackend,
-    janus::{JanusContainer, JanusInProcess},
-    TaskParameters,
-};
+#[cfg(feature = "testcontainer")]
+use janus_core::test_util::testcontainers::container_client;
+use janus_core::{test_util::install_test_trace_subscriber, vdaf::VdafInstance};
+#[cfg(feature = "testcontainer")]
+use janus_integration_tests::janus::JanusContainer;
+use janus_integration_tests::{client::ClientBackend, janus::JanusInProcess, TaskParameters};
+#[cfg(feature = "testcontainer")]
 use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
+#[cfg(feature = "testcontainer")]
 use testcontainers::clients::Cli;
 
 mod common;
 
 /// A pair of Janus instances, running in containers, against which integration tests may be run.
+#[cfg(feature = "testcontainer")]
 struct JanusContainerPair<'a> {
     /// Task parameters needed by the client and collector, for the task configured in both Janus
     /// aggregators.
@@ -27,6 +29,7 @@ struct JanusContainerPair<'a> {
     helper: JanusContainer<'a>,
 }
 
+#[cfg(feature = "testcontainer")]
 impl<'a> JanusContainerPair<'a> {
     /// Set up a new pair of containerized Janus test instances, and set up a new task in each using
     /// the given VDAF and query type.
@@ -89,6 +92,7 @@ impl JanusInProcessPair {
 
 /// This test exercises Prio3Count with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
+#[cfg(feature = "testcontainer")]
 async fn janus_janus_count() {
     static TEST_NAME: &str = "janus_janus_count";
     install_test_trace_subscriber();
@@ -134,6 +138,7 @@ async fn janus_in_process_count() {
 
 /// This test exercises Prio3Sum with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
+#[cfg(feature = "testcontainer")]
 async fn janus_janus_sum_16() {
     static TEST_NAME: &str = "janus_janus_sum_16";
     install_test_trace_subscriber();
@@ -179,6 +184,7 @@ async fn janus_in_process_sum_16() {
 
 /// This test exercises Prio3Histogram with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
+#[cfg(feature = "testcontainer")]
 async fn janus_janus_histogram_4_buckets() {
     static TEST_NAME: &str = "janus_janus_histogram_4_buckets";
     install_test_trace_subscriber();
@@ -233,6 +239,7 @@ async fn janus_in_process_histogram_4_buckets() {
 
 /// This test exercises the fixed-size query type with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
+#[cfg(feature = "testcontainer")]
 async fn janus_janus_fixed_size() {
     static TEST_NAME: &str = "janus_janus_fixed_size";
     install_test_trace_subscriber();
@@ -287,6 +294,7 @@ async fn janus_in_process_fixed_size() {
 
 /// This test exercises Prio3SumVec with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
+#[cfg(feature = "testcontainer")]
 async fn janus_janus_sum_vec() {
     static TEST_NAME: &str = "janus_janus_sum_vec";
     install_test_trace_subscriber();
