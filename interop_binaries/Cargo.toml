@@ -59,7 +59,7 @@ url = { version = "2.4.1", features = ["serde"] }
 zstd = { version = "0.13", optional = true }
 
 [dev-dependencies]
-janus_interop_binaries = { path = ".", features = ["fpvec_bounded_l2", "testcontainer", "test-util"] }
+janus_interop_binaries = { path = ".", features = ["fpvec_bounded_l2", "test-util"] }
 janus_core = { workspace = true, features = ["test-util", "fpvec_bounded_l2"] }
 reqwest = { version = "0.11.22", default-features = false, features = ["json"] }
 

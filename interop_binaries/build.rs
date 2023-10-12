@@ -5,6 +5,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=RUSTC_WRAPPER");
     if let Ok(rustc_wrapper) = env::var("RUSTC_WRAPPER") {
         if rustc_wrapper.ends_with("/rust-analyzer") {
+            #[allow(clippy::needless_return)]
             return;
         }
     }
