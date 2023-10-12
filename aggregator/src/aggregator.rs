@@ -2655,7 +2655,7 @@ fn decode_taskprov_task_config<Q: QueryType>(
         ));
     } else if !taskprov_extensions
         .windows(2)
-        .all(|report_shares| report_shares[0] == report_shares[1])
+        .all(|extensions| extensions[0] == extensions[1])
     {
         return Err(Error::UnrecognizedMessage(
             Some(*task_id),
