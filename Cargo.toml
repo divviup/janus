@@ -20,7 +20,7 @@ homepage = "https://divviup.org"
 license = "MPL-2.0"
 repository = "https://github.com/divviup/janus"
 rust-version = "1.71.0"
-version = "0.5.23"
+version = "0.5.24"
 
 [workspace.dependencies]
 anyhow = "1"
