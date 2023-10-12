@@ -307,6 +307,7 @@ impl VdafOps {
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use janus_aggregator_core::task::Task;
+    use janus_core::task::AuthenticationToken;
     use janus_messages::{AggregateContinueReq, AggregateContinueResp};
     use prio::codec::{Decode, Encode};
     use serde_json::json;
@@ -317,12 +318,11 @@ pub mod test_util {
         task: &Task,
         request: &AggregateContinueReq,
         handler: &impl Handler,
+        auth_token: &AuthenticationToken,
     ) -> TestConn {
+        let auth = auth_token.request_authentication();
         post(task.aggregation_job_uri().unwrap().path())
-            .with_request_header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_ref().to_owned(),
-            )
+            .with_request_header(auth.0, auth.1)
             .with_request_header(
                 KnownHeaderName::ContentType,
                 AggregateContinueReq::MEDIA_TYPE,
@@ -336,8 +336,9 @@ pub mod test_util {
         task: &Task,
         request: &AggregateContinueReq,
         handler: &impl Handler,
+        auth_token: &AuthenticationToken,
     ) -> AggregateContinueResp {
-        let mut test_conn = post_aggregation_job(task, request, handler).await;
+        let mut test_conn = post_aggregation_job(task, request, handler, auth_token).await;
 
         assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_eq!(
@@ -360,9 +361,10 @@ pub mod test_util {
         task: &Task,
         request: &AggregateContinueReq,
         handler: &impl Handler,
+        auth_token: &AuthenticationToken,
         want_status: Status,
     ) -> Option<trillium::Body> {
-        let mut test_conn = post_aggregation_job(task, request, handler).await;
+        let mut test_conn = post_aggregation_job(task, request, handler, auth_token).await;
 
         assert_eq!(want_status, test_conn.status().unwrap());
 
@@ -373,11 +375,14 @@ pub mod test_util {
         task: &Task,
         request: &AggregateContinueReq,
         handler: &impl Handler,
+        auth_token: &AuthenticationToken,
         want_status: Status,
         want_error_type: &str,
         want_error_title: &str,
     ) {
-        let body = post_aggregation_job_expecting_status(task, request, handler, want_status).await;
+        let body =
+            post_aggregation_job_expecting_status(task, request, handler, auth_token, want_status)
+                .await;
 
         let problem_details: serde_json::Value =
             serde_json::from_slice(&body.unwrap().into_bytes().await.unwrap()).unwrap();

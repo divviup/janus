@@ -872,8 +872,10 @@ impl Decode for Extension {
 /// DAP protocol message representing the type of an extension included in a client report.
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, TryFromPrimitive)]
 #[repr(u16)]
+#[non_exhaustive]
 pub enum ExtensionType {
     Tbd = 0,
+    Taskprov = 0xFF00,
 }
 
 impl Encode for ExtensionType {

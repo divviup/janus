@@ -46,6 +46,7 @@ impl<'a> JanusPair<'a> {
 
 /// This test exercises Prio3Count with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "subscriber-01 cannot operate as a leader"]
 async fn janus_janus_count() {
     install_test_trace_subscriber();
 
@@ -69,6 +70,7 @@ async fn janus_janus_count() {
 
 /// This test exercises Prio3Sum with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "subscriber-01 cannot operate as a leader"]
 async fn janus_janus_sum_16() {
     install_test_trace_subscriber();
 
@@ -92,6 +94,7 @@ async fn janus_janus_sum_16() {
 
 /// This test exercises Prio3Histogram with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "subscriber-01 cannot operate as a leader"]
 async fn janus_janus_histogram_4_buckets() {
     install_test_trace_subscriber();
 
@@ -117,6 +120,7 @@ async fn janus_janus_histogram_4_buckets() {
 
 /// This test exercises Prio3CountVec with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "subscriber-01 cannot operate as a leader"]
 async fn janus_janus_count_vec_15() {
     install_test_trace_subscriber();
 
@@ -140,6 +144,7 @@ async fn janus_janus_count_vec_15() {
 
 /// This test exercises the fixed-size query type with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "subscriber-01 cannot operate as a leader"]
 async fn janus_janus_fixed_size() {
     install_test_trace_subscriber();
 
