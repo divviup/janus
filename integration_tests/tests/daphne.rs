@@ -23,7 +23,10 @@ async fn daphne_janus() {
         test_task_builder(VdafInstance::Prio3Count, QueryType::TimeInterval);
 
     // Daphne is hardcoded to serve from a path starting with /v04/.
-    task_parameters.endpoint_fragments.leader_endpoint_path = "/v04/".to_string();
+    task_parameters
+        .endpoint_fragments
+        .leader
+        .set_path("/v04/".to_string());
     let mut leader_aggregator_endpoint = task_builder.leader_aggregator_endpoint().clone();
     leader_aggregator_endpoint.set_path("/v04/");
     let task = task_builder
@@ -58,7 +61,10 @@ async fn janus_daphne() {
         test_task_builder(VdafInstance::Prio3Count, QueryType::TimeInterval);
 
     // Daphne is hardcoded to serve from a path starting with /v04/.
-    task_parameters.endpoint_fragments.leader_endpoint_path = "/v04/".to_string();
+    task_parameters
+        .endpoint_fragments
+        .helper
+        .set_path("/v04/".to_string());
     let mut helper_aggregator_endpoint = task_builder.helper_aggregator_endpoint().clone();
     helper_aggregator_endpoint.set_path("/v04/");
     let task = task_builder

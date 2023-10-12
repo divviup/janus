@@ -9,7 +9,7 @@ use janus_core::{
 };
 use janus_integration_tests::{
     client::{ClientBackend, ClientImplementation, InteropClientEncoding},
-    EndpointFragments, TaskParameters,
+    AggregatorEndpointFragments, EndpointFragments, TaskParameters,
 };
 use janus_messages::{
     problem_type::DapProblemType,
@@ -22,17 +22,22 @@ use std::{iter, time::Duration as StdDuration};
 use tokio::time::{self, sleep};
 use url::Url;
 
-/// Returns a tuple of [`TaskParameters`] and a task builder.
+/// Returns a tuple of [`TaskParameters`] and a task builder. This is suitable for test aggregators
+/// running in virtual networks (a Docker network or a Kind cluster).
 pub fn test_task_builder(
     vdaf: VdafInstance,
     query_type: QueryType,
 ) -> (TaskParameters, TaskBuilder) {
     let endpoint_random_value = hex::encode(random::<[u8; 4]>());
     let endpoint_fragments = EndpointFragments {
-        leader_endpoint_host: format!("leader-{endpoint_random_value}"),
-        leader_endpoint_path: "/".to_string(),
-        helper_endpoint_host: format!("helper-{endpoint_random_value}"),
-        helper_endpoint_path: "/".to_string(),
+        leader: AggregatorEndpointFragments::VirtualNetwork {
+            host: format!("leader-{endpoint_random_value}"),
+            path: "/".to_string(),
+        },
+        helper: AggregatorEndpointFragments::VirtualNetwork {
+            host: format!("helper-{endpoint_random_value}"),
+            path: "/".to_string(),
+        },
     };
     let task_builder = TaskBuilder::new(query_type, vdaf.clone())
         .with_leader_aggregator_endpoint(
@@ -43,6 +48,42 @@ pub fn test_task_builder(
         )
         .with_min_batch_size(46)
         // Force use of DAP-Auth-Tokens, as required by interop testing standard.
+        .with_dap_auth_aggregator_token()
+        .with_dap_auth_collector_token();
+    let task_parameters = TaskParameters {
+        task_id: *task_builder.task_id(),
+        endpoint_fragments,
+        query_type,
+        vdaf,
+        min_batch_size: task_builder.min_batch_size(),
+        time_precision: *task_builder.time_precision(),
+        collector_hpke_keypair: task_builder.collector_hpke_keypair().clone(),
+        collector_auth_token: task_builder.collector_auth_token().clone(),
+    };
+
+    (task_parameters, task_builder)
+}
+
+/// Returns a tuple of [`TaskParameters`] and a task builder. This is suitable for test aggregators
+/// running on the host. Note that the task builder must be updated with the helper's endpoint
+/// before passing task parameters to the leader.
+#[allow(unused)]
+pub fn test_task_builder_host(
+    vdaf: VdafInstance,
+    query_type: QueryType,
+) -> (TaskParameters, TaskBuilder) {
+    let endpoint_fragments = EndpointFragments {
+        leader: AggregatorEndpointFragments::Localhost {
+            path: "/".to_string(),
+        },
+        helper: AggregatorEndpointFragments::Localhost {
+            path: "/".to_string(),
+        },
+    };
+    let task_builder = TaskBuilder::new(query_type, vdaf.clone())
+        .with_leader_aggregator_endpoint(Url::parse("http://invalid/").unwrap())
+        .with_helper_aggregator_endpoint(Url::parse("http://invalid/").unwrap())
+        .with_min_batch_size(46)
         .with_dap_auth_aggregator_token()
         .with_dap_auth_collector_token();
     let task_parameters = TaskParameters {
@@ -130,7 +171,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
 
     let leader_endpoint = task_parameters
         .endpoint_fragments
-        .port_forwarded_leader_endpoint(leader_port);
+        .leader_endpoint_for_host(leader_port);
     let collector = Collector::builder(
         task_parameters.task_id,
         leader_endpoint,

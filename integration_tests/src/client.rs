@@ -225,7 +225,7 @@ where
     ) -> Result<ClientImplementation<'static, V>, janus_client::Error> {
         let (leader_aggregator_endpoint, helper_aggregator_endpoint) = task_parameters
             .endpoint_fragments
-            .port_forwarded_endpoints(leader_port, helper_port);
+            .endpoints_for_host_client(leader_port, helper_port);
         let client = Client::new(
             task_parameters.task_id,
             leader_aggregator_endpoint,
@@ -260,7 +260,7 @@ where
         let http_client = reqwest::Client::new();
         let (leader_aggregator_endpoint, helper_aggregator_endpoint) = task_parameters
             .endpoint_fragments
-            .container_network_endpoints();
+            .endpoints_for_virtual_network_client();
         ClientImplementation::Container(Box::new(ContainerClientImplementation {
             _container: container,
             leader: leader_aggregator_endpoint,
