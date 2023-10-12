@@ -666,6 +666,7 @@ impl<C: Clock> Aggregator<C> {
 
     /// subscriber-01 only: We ignore task-specific authorization tokens and just use the global
     /// auth token for every helper request.
+    #[tracing::instrument(skip(self, auth_token), err)]
     async fn authorize_helper_request(
         &self,
         task_id: &TaskId,
