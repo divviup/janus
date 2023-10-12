@@ -22,7 +22,7 @@ repository = "https://github.com/divviup/janus"
 rust-version = "1.71.0"
 # The format is [origin branch]-[purpose].[version]. Increment [version] to update the crate version.
 # See https://github.com/divviup/janus/pull/1732 for context.
-version = "0.5.12-subscriber-01.10"
+version = "0.5.12-subscriber-01.11"
 
 [workspace.dependencies]
 anyhow = "1"
