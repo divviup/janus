@@ -7,9 +7,9 @@ use clap::{
 };
 use derivative::Derivative;
 #[cfg(feature = "fpvec_bounded_l2")]
-use fixed::types::extra::{U15, U31, U63};
+use fixed::types::extra::{U15, U31};
 #[cfg(feature = "fpvec_bounded_l2")]
-use fixed::{FixedI16, FixedI32, FixedI64};
+use fixed::{FixedI16, FixedI32};
 use janus_collector::{default_http_client, AuthenticationToken, Collector};
 use janus_core::hpke::{DivviUpHpkeConfig, HpkeKeypair, HpkePrivateKey};
 use janus_messages::{
@@ -465,13 +465,6 @@ where
         #[cfg(feature = "fpvec_bounded_l2")]
         (VdafType::FixedPoint32BitBoundedL2VecSum, Some(length), None) => {
             let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>> =
-                Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
-                    .map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(options, vdaf, http_client, query, &()).await
-        }
-        #[cfg(feature = "fpvec_bounded_l2")]
-        (VdafType::FixedPoint64BitBoundedL2VecSum, Some(length), None) => {
-            let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>> =
                 Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
                     .map_err(|err| Error::Anyhow(err.into()))?;
             run_collection_generic(options, vdaf, http_client, query, &()).await
