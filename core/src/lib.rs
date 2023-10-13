@@ -5,6 +5,7 @@ use tokio::task::JoinHandle;
 use url::Url;
 
 pub mod auth_tokens;
+pub mod dp;
 pub mod hpke;
 pub mod http;
 pub mod report_id;

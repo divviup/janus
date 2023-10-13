@@ -27,6 +27,7 @@ use opentelemetry::{
 };
 use prio::{
     codec::{Decode, Encode},
+    dp::DifferentialPrivacyStrategy,
     vdaf,
 };
 use reqwest::Method;
@@ -81,24 +82,26 @@ impl CollectionJobDriver {
     ) -> Result<(), Error> {
         match lease.leased().query_type() {
             task::QueryType::TimeInterval => {
-                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH, dp_strategy, DpStrategy) => {
                     self.step_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
                         C,
                         TimeInterval,
+                        DpStrategy,
                         VdafType
-                    >(datastore, Arc::new(vdaf), lease)
+                    >(datastore, Arc::new(vdaf), lease, dp_strategy)
                     .await
                 })
             }
             task::QueryType::FixedSize { .. } => {
-                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
+                vdaf_dispatch!(lease.leased().vdaf(), (vdaf, VdafType, VERIFY_KEY_LENGTH, dp_strategy, DpStrategy) => {
                     self.step_collection_job_generic::<
                         VERIFY_KEY_LENGTH,
                         C,
                         FixedSize,
+                        DpStrategy,
                         VdafType
-                    >(datastore, Arc::new(vdaf), lease)
+                    >(datastore, Arc::new(vdaf), lease, dp_strategy)
                     .await
                 })
             }
@@ -109,12 +112,14 @@ impl CollectionJobDriver {
         const SEED_SIZE: usize,
         C: Clock,
         Q: CollectableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+        S: DifferentialPrivacyStrategy,
+        A: vdaf::AggregatorWithNoise<SEED_SIZE, 16, S> + Send + Sync,
     >(
         &self,
         datastore: Arc<Datastore<C>>,
         vdaf: Arc<A>,
         lease: Arc<Lease<AcquiredCollectionJob>>,
+        dp_strategy: S,
     ) -> Result<(), Error>
     where
         A: 'static,
@@ -208,10 +213,18 @@ impl CollectionJobDriver {
             return Ok(());
         }
 
-        let (leader_aggregate_share, report_count, checksum) =
-            compute_aggregate_share::<SEED_SIZE, Q, A>(&task, &batch_aggregations)
+        let (mut leader_aggregate_share, report_count, checksum) =
+            compute_aggregate_share::<SEED_SIZE, Q, S, A>(&task, &batch_aggregations)
                 .await
                 .map_err(|e| datastore::Error::User(e.into()))?;
+
+        vdaf.add_noise_to_agg_share(
+            &dp_strategy,
+            collection_job.aggregation_parameter(),
+            &mut leader_aggregate_share,
+            report_count.try_into()?,
+        )
+        .map_err(Error::DifferentialPrivacy)?;
 
         // Send an aggregate share request to the helper.
         let req = AggregateShareReq::<Q>::new(
