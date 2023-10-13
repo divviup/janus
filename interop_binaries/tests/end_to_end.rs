@@ -762,45 +762,6 @@ async fn e2e_prio3_fixed32vec() {
 }
 
 #[tokio::test]
-async fn e2e_prio3_fixed64vec() {
-    let fp64_4_inv = fixed!(0.25: I1F63);
-    let fp64_8_inv = fixed!(0.125: I1F63);
-    let fp64_16_inv = fixed!(0.0625: I1F63);
-    let result = run(
-        "e2e_prio3_fixed64vec",
-        QueryKind::TimeInterval,
-        json!({"type": "Prio3FixedPointBoundedL2VecSum",
-               "bitsize": "BitSize64",
-               "length": "3"}),
-        &[
-            json!([
-                fp64_4_inv.to_string(),
-                fp64_8_inv.to_string(),
-                fp64_8_inv.to_string()
-            ]),
-            json!([
-                fp64_16_inv.to_string(),
-                fp64_8_inv.to_string(),
-                fp64_16_inv.to_string()
-            ]),
-            json!([
-                fp64_8_inv.to_string(),
-                fp64_8_inv.to_string(),
-                fp64_4_inv.to_string()
-            ]),
-            json!([
-                fp64_16_inv.to_string(),
-                fp64_8_inv.to_string(),
-                fp64_4_inv.to_string()
-            ]),
-        ],
-        b"",
-    )
-    .await;
-    assert_eq!(result, json!(["0.5", "0.5", "0.6875"]));
-}
-
-#[tokio::test]
 async fn e2e_prio3_fixed16vec_fixed_size() {
     let fp16_4_inv = fixed!(0.25: I1F15);
     let fp16_8_inv = fixed!(0.125: I1F15);
@@ -870,45 +831,6 @@ async fn e2e_prio3_fixed32vec_fixed_size() {
                 fp32_16_inv.to_string(),
                 fp32_8_inv.to_string(),
                 fp32_4_inv.to_string()
-            ]),
-        ],
-        b"",
-    )
-    .await;
-    assert_eq!(result, json!(["0.5", "0.5", "0.6875"]));
-}
-
-#[tokio::test]
-async fn e2e_prio3_fixed64vec_fixed_size() {
-    let fp64_4_inv = fixed!(0.25: I1F63);
-    let fp64_8_inv = fixed!(0.125: I1F63);
-    let fp64_16_inv = fixed!(0.0625: I1F63);
-    let result = run(
-        "e2e_prio3_fixed64vec_fixed_size",
-        QueryKind::FixedSize,
-        json!({"type": "Prio3FixedPointBoundedL2VecSum",
-               "bitsize": "BitSize64",
-               "length": "3"}),
-        &[
-            json!([
-                fp64_4_inv.to_string(),
-                fp64_8_inv.to_string(),
-                fp64_8_inv.to_string()
-            ]),
-            json!([
-                fp64_16_inv.to_string(),
-                fp64_8_inv.to_string(),
-                fp64_16_inv.to_string()
-            ]),
-            json!([
-                fp64_8_inv.to_string(),
-                fp64_8_inv.to_string(),
-                fp64_4_inv.to_string()
-            ]),
-            json!([
-                fp64_16_inv.to_string(),
-                fp64_8_inv.to_string(),
-                fp64_4_inv.to_string()
             ]),
         ],
         b"",

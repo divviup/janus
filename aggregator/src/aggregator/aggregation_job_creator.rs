@@ -1,8 +1,8 @@
 use crate::aggregator::aggregation_job_writer::AggregationJobWriter;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{
-    types::extra::{U15, U31, U63},
-    FixedI16, FixedI32, FixedI64,
+    types::extra::{U15, U31},
+    FixedI16, FixedI32,
 };
 use janus_aggregator_core::{
     datastore::models::{
@@ -350,14 +350,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>>(task, vdaf)
                             .await
                 }
-                Prio3FixedPointBoundedL2VecSumBitSize::BitSize64 => {
-                    let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>> =
-                        Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
-                            2, *length,
-                        )?);
-                    self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>>(task, vdaf)
-                            .await
-                }
             },
 
             (
@@ -494,16 +486,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         self.create_aggregation_jobs_for_fixed_size_task_no_param::<
                                 VERIFY_KEY_LENGTH,
                             Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>,
-                            >(task, vdaf, max_batch_size, batch_time_window_size).await
-                    }
-                    janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize::BitSize64 => {
-                        let vdaf: Arc<Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>> =
-                            Arc::new(Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
-                                2, *length,
-                            )?);
-                        self.create_aggregation_jobs_for_fixed_size_task_no_param::<
-                                VERIFY_KEY_LENGTH,
-                            Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>,
                             >(task, vdaf, max_batch_size, batch_time_window_size).await
                     }
                 }

@@ -12,7 +12,6 @@ pub const VERIFY_KEY_LENGTH: usize = 16;
 pub enum Prio3FixedPointBoundedL2VecSumBitSize {
     BitSize16,
     BitSize32,
-    BitSize64,
 }
 
 /// Contains dedicated enums which describe the differential privacy strategies
@@ -324,16 +323,6 @@ macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
                     )?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<
                     ::fixed::FixedI32<::fixed::types::extra::U31>,
-                >;
-                $body
-            },
-            janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize::BitSize64 => {
-                let $vdaf =
-                    ::prio::vdaf::prio3::Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(
-                        2, *$length,
-                    )?;
-                type $Vdaf = ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<
-                    ::fixed::FixedI64<::fixed::types::extra::U63>,
                 >;
                 $body
             },
