@@ -504,8 +504,10 @@ mod tests {
             Vec::from(["datastore-key-1".to_string(), "datastore-key-2".to_string()]);
 
         // Keys provided at command line, not present in k8s
-        let mut common_options = CommonBinaryOptions::default();
-        common_options.datastore_keys = expected_datastore_keys.clone();
+        let common_options = CommonBinaryOptions {
+            datastore_keys: expected_datastore_keys.clone(),
+            ..Default::default()
+        };
 
         let kubernetes_secret_options = KubernetesSecretOptions {
             datastore_keys_secret_name: "secret-name".to_string(),

@@ -177,7 +177,7 @@ pub trait BinaryOptions: Parser + Debug {
 }
 
 #[cfg_attr(doc, doc = "Common options that are used by all Janus binaries.")]
-#[derive(Default, Parser)]
+#[derive(Default, Clone, Parser)]
 pub struct CommonBinaryOptions {
     /// Path to configuration YAML.
     #[clap(
@@ -187,7 +187,7 @@ pub struct CommonBinaryOptions {
         required(true),
         help = "path to configuration file"
     )]
-    config_file: PathBuf,
+    pub config_file: PathBuf,
 
     /// Password for the PostgreSQL database connection. If specified, must not be specified in the
     /// connection string.
@@ -220,7 +220,7 @@ pub struct CommonBinaryOptions {
         value_name = "KEY=value",
         use_value_delimiter = true
     )]
-    otlp_tracing_metadata: Vec<(String, String)>,
+    pub otlp_tracing_metadata: Vec<(String, String)>,
 
     /// Additional OTLP/gRPC metadata key/value pairs. (concatenated with those in the metrics
     /// configuration sections)
@@ -232,7 +232,7 @@ pub struct CommonBinaryOptions {
         value_name = "KEY=value",
         use_value_delimiter = true
     )]
-    otlp_metrics_metadata: Vec<(String, String)>,
+    pub otlp_metrics_metadata: Vec<(String, String)>,
 }
 
 impl Debug for CommonBinaryOptions {

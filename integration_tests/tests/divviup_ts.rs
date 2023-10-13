@@ -8,7 +8,7 @@ use janus_core::{
 };
 use janus_integration_tests::{
     client::{ClientBackend, InteropClient},
-    janus::Janus,
+    janus::JanusContainer,
 };
 use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
@@ -24,8 +24,10 @@ async fn run_divviup_ts_integration_test(
     let (task_parameters, task_builder) = test_task_builder(vdaf, QueryType::TimeInterval);
     let task = task_builder.build();
     let network = generate_network_name();
-    let leader = Janus::new(test_name, container_client, &network, &task, Role::Leader).await;
-    let helper = Janus::new(test_name, container_client, &network, &task, Role::Helper).await;
+    let leader =
+        JanusContainer::new(test_name, container_client, &network, &task, Role::Leader).await;
+    let helper =
+        JanusContainer::new(test_name, container_client, &network, &task, Role::Helper).await;
 
     let client_backend = ClientBackend::Container {
         container_client,
