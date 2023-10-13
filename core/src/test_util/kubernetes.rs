@@ -181,7 +181,7 @@ impl EphemeralCluster {
         // lockstep with the version of kind installed by the ci-build workflow.
         // https://github.com/kubernetes-sigs/kind/releases/tag/v0.17.0
         // https://cloud.google.com/kubernetes-engine/docs/release-notes#regular-channel
-        assert!(Command::new("kind")
+        let output = Command::new("kind")
             .args([
                 "create",
                 "cluster",
@@ -194,11 +194,16 @@ impl EphemeralCluster {
                  577c630ce8e509131eab1aea12c022190978dd2f745aac5eb1fe65c0807eb315",
             ])
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .unwrap()
-            .success());
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "`kind create cluster` failed\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
 
         Self {
             // Kind prefixes the cluster name with "kind-" when creating a kubectl context
