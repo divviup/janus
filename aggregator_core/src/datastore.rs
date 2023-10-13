@@ -1473,12 +1473,43 @@ impl<C: Clock> Transaction<'_, C> {
         // Slow path: no rows were affected, meaning a row with the new report ID already existed
         // and we hit the query's ON CONFLICT DO NOTHING clause. We need to check whether the new
         // report matches the existing one.
-        let existing_report = match self
-            .get_client_report(vdaf, new_report.task_id(), new_report.metadata().id())
+        let existing_report = {
+            // We intentionally don't use `get_client_report` because it omits expired reports. It
+            // is possible that we have conflicted with an expired report that hasn't been fully
+            // GC'd yet.
+            let stmt = self
+                .prepare_cached(
+                    "SELECT
+                        client_reports.client_timestamp,
+                        client_reports.extensions,
+                        client_reports.public_share,
+                        client_reports.leader_input_share,
+                        client_reports.helper_encrypted_input_share
+                    FROM client_reports
+                    JOIN tasks ON tasks.id = client_reports.task_id
+                    WHERE tasks.task_id = $1
+                      AND client_reports.report_id = $2",
+                )
+                .await?;
+
+            self.query_opt(
+                &stmt,
+                &[
+                    /* task_id */ &new_report.task_id().as_ref(),
+                    /* report_id */ &new_report.metadata().id().as_ref(),
+                ],
+            )
             .await?
-        {
-            Some(e) => e,
-            None => {
+            .map(|row| {
+                Self::client_report_from_row(
+                    vdaf,
+                    *new_report.task_id(),
+                    *new_report.metadata().id(),
+                    row,
+                )
+            })
+            .transpose()?
+            .ok_or_else(|| {
                 // This codepath can be taken due to a quirk of how the Repeatable Read isolation
                 // level works. It cannot occur at the Serializable isolation level.
                 //
@@ -1500,8 +1531,8 @@ impl<C: Clock> Transaction<'_, C> {
                 // will be able to read the report written by the successful writer. (It doesn't
                 // matter what error we return here, as the transaction will be retried.)
                 self.retry();
-                return Err(Error::MutationTargetAlreadyExists);
-            }
+                Error::MutationTargetAlreadyExists
+            })?
         };
 
         // If the existing report does not match the new report, then someone is trying to mutate an

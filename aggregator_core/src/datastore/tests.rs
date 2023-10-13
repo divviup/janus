@@ -7317,3 +7317,73 @@ async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatast
         .await
         .unwrap();
 }
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn reject_expired_reports_with_same_id(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
+    let clock = MockClock::default();
+    let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+
+    let report_expiry_age = Duration::from_seconds(60);
+    let task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
+        .with_report_expiry_age(Some(report_expiry_age))
+        .build()
+        .leader_view()
+        .unwrap();
+
+    datastore.put_aggregator_task(&task).await.unwrap();
+
+    // Use same ID for each report.
+    let report_id = random();
+
+    datastore
+        .run_unnamed_tx(|tx| {
+            let report = LeaderStoredReport::<0, dummy_vdaf::Vdaf>::new(
+                *task.id(),
+                ReportMetadata::new(report_id, clock.now()),
+                (),
+                Vec::new(),
+                dummy_vdaf::InputShare::default(),
+                HpkeCiphertext::new(
+                    HpkeConfigId::from(13),
+                    Vec::from("encapsulated_context_0"),
+                    Vec::from("payload_0"),
+                ),
+            );
+            Box::pin(async move {
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report)
+                    .await
+            })
+        })
+        .await
+        .unwrap();
+
+    // Advance the clock well past the report expiry age.
+    clock.advance(&report_expiry_age.add(&report_expiry_age).unwrap());
+
+    // Insert a client report with the same ID, but a more current timestamp.
+    assert_matches!(
+        datastore
+            .run_unnamed_tx(|tx| {
+                let report = LeaderStoredReport::<0, dummy_vdaf::Vdaf>::new(
+                    *task.id(),
+                    ReportMetadata::new(report_id, clock.now()),
+                    (),
+                    Vec::new(),
+                    dummy_vdaf::InputShare::default(),
+                    HpkeCiphertext::new(
+                        HpkeConfigId::from(13),
+                        Vec::from("encapsulated_context_0"),
+                        Vec::from("payload_0"),
+                    ),
+                );
+                Box::pin(async move {
+                    tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report)
+                        .await
+                })
+            })
+            .await,
+        Err(Error::MutationTargetAlreadyExists)
+    )
+}
