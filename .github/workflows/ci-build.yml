@@ -24,6 +24,7 @@ jobs:
     permissions:
       id-token: "write"
       contents: "read"
+    needs: janus_interop_docker
     env:
       CARGO_INCREMENTAL: 0
       CARGO_TERM_COLOR: always
@@ -54,40 +55,37 @@ jobs:
       with:
         driver: docker-container
         use: true
+    - name: Fetch container images
+      uses: actions/download-artifact@v3
+      with:
+        name: interop-binary-images
+        path: /tmp
+    - name: Load container images
+      run: |
+        docker load --input /tmp/images.tar
+        docker image ls -a
     - name: Cache dependencies
       uses: Swatinem/rust-cache@v2
       with:
         key: ${{ steps.os-version.outputs.release }}
-    - name: Pre-build embedded container images
-      uses: docker/bake-action@v4.0.0
-      with:
-        files: docker-bake.hcl
-        workdir: .
-        targets: interop_binaries_small
-        load: true
-    - name: Expose GitHub Runtime
-      uses: crazy-max/ghaction-github-runtime@v3
     - name: Build minimal janus_messages
       run: cargo build --profile ci --package janus_messages --no-default-features
     - name: Build janus_core
       run: cargo build --profile ci --package janus_core
     # Note: keep Build & Test steps consecutive, and match flags other than `--no-run`.
     - name: Build
-      run: cargo test --profile ci --locked --all-targets --no-run
+      run: cargo test --profile ci --locked --all-targets --features testcontainer --no-run
     - name: Test
       id: test
       env:
         JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
         DIVVIUP_TS_INTEROP_CONTAINER: ${{ steps.default-input-values.outputs.divviup_ts_interop_container }}
-      run: cargo test --profile ci --locked --all-targets
+        JANUS_INTEROP_CLIENT_IMAGE: janus_interop_client
+        JANUS_INTEROP_AGGREGATOR_IMAGE: janus_interop_aggregator
+        JANUS_INTEROP_COLLECTOR_IMAGE: janus_interop_collector
+      run: cargo test --profile ci --locked --all-targets --features testcontainer
       # Continue on error so we can upload logs
       continue-on-error: true
-    # TODO: pass in images directly instead of using the xtask, use 'ci' profile, use --locked
-    - name: Docker tests
-      id: test-docker
-      env:
-        JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
-      run: cargo xtask test-docker
     - name: Upload container logs
       # Only get logs on test failure
       if: steps.test.outcome == 'failure'
@@ -100,9 +98,6 @@ jobs:
     # Force overall job to fail if tests fail
     - name: test status
       if: steps.test.outcome == 'failure'
-      run: exit 1
-    - name: test-docker status
-      if: steps.test-docker.outcome == 'failure'
       run: exit 1
   
   janus_lints:
@@ -174,8 +169,21 @@ jobs:
         driver: docker-container
         use: true
     - name: Build
+      id: bake
       uses: docker/bake-action@v4.0.0
       with:
         files: docker-bake.hcl
         workdir: .
-        targets: interop_binaries
+        targets: interop_binaries_small
+        load: true
+        set: |
+          janus_interop_client_small.tags=janus_interop_client
+          janus_interop_aggregator_small.tags=janus_interop_aggregator
+          janus_interop_collector_small.tags=janus_interop_collector
+    - name: Save tarball
+      run: docker save --output=/tmp/images.tar janus_interop_client janus_interop_aggregator janus_interop_collector
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: interop-binary-images
+        path: /tmp/images.tar
