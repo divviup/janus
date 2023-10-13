@@ -117,7 +117,7 @@ pub(super) async fn post_task<C: Clock>(
             })?;
             let collector_auth_token_hash = req.collector_auth_token_hash.ok_or_else(|| {
                 Error::BadRequest(
-                    "aggregator acting in leader role must be provided a collector auth token"
+                    "aggregator acting in leader role must be provided a collector auth token hash"
                         .to_string(),
                 )
             })?;
