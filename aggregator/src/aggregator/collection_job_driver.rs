@@ -214,7 +214,7 @@ impl CollectionJobDriver {
         }
 
         let (mut leader_aggregate_share, report_count, checksum) =
-            compute_aggregate_share::<SEED_SIZE, Q, S, A>(&task, &batch_aggregations)
+            compute_aggregate_share::<SEED_SIZE, Q, A>(&task, &batch_aggregations)
                 .await
                 .map_err(|e| datastore::Error::User(e.into()))?;
 

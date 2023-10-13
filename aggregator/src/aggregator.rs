@@ -2957,7 +2957,7 @@ impl VdafOps {
                             );
 
                             let (mut helper_aggregate_share, report_count, checksum) =
-                                compute_aggregate_share::<SEED_SIZE, Q, S, A>(
+                                compute_aggregate_share::<SEED_SIZE, Q, A>(
                                     &task,
                                     &batch_aggregations,
                                 )
