@@ -1528,10 +1528,12 @@ impl<C: Clock> Transaction<'_, C> {
                 // `None` (since all reads in the same transaction are from the same snapshot), so
                 // so it can't evaluate idempotency. All it can do is give up on this transaction
                 // and try again, by calling `retry` and returning an error; once it retries, it
-                // will be able to read the report written by the successful writer. (It doesn't
-                // matter what error we return here, as the transaction will be retried.)
+                // will be able to read the report written by the successful writer.
                 self.retry();
-                Error::MutationTargetAlreadyExists
+                Error::DbState(
+                    "retrying transaction because another writer has concurrently inserted this report"
+                        .to_string(),
+                )
             })?
         };
 
