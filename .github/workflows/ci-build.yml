@@ -73,15 +73,21 @@ jobs:
       run: cargo build --profile ci --package janus_core
     # Note: keep Build & Test steps consecutive, and match flags other than `--no-run`.
     - name: Build
-      run: cargo test --profile ci --locked --all-targets --features testcontainer --no-run
+      run: cargo test --profile ci --locked --all-targets --no-run
     - name: Test
       id: test
       env:
         JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
         DIVVIUP_TS_INTEROP_CONTAINER: ${{ steps.default-input-values.outputs.divviup_ts_interop_container }}
-      run: cargo test --profile ci --locked --all-targets --features testcontainer
+      run: cargo test --profile ci --locked --all-targets
       # Continue on error so we can upload logs
       continue-on-error: true
+    # TODO: pass in images directly instead of using the xtask, use 'ci' profile, use --locked
+    - name: Docker tests
+      id: test-docker
+      env:
+        JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
+      run: cargo xtask test-docker
     - name: Upload container logs
       # Only get logs on test failure
       if: steps.test.outcome == 'failure'
@@ -94,6 +100,9 @@ jobs:
     # Force overall job to fail if tests fail
     - name: test status
       if: steps.test.outcome == 'failure'
+      run: exit 1
+    - name: test-docker status
+      if: steps.test-docker.outcome == 'failure'
       run: exit 1
   
   janus_lints:

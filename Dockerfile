@@ -10,7 +10,6 @@ COPY Cargo.toml Cargo.lock /src/
 COPY aggregator /src/aggregator
 COPY aggregator_api /src/aggregator_api
 COPY aggregator_core /src/aggregator_core
-COPY build_script_utils /src/build_script_utils
 COPY client /src/client
 COPY collector /src/collector
 COPY core /src/core
@@ -18,6 +17,7 @@ COPY integration_tests /src/integration_tests
 COPY interop_binaries /src/interop_binaries
 COPY messages /src/messages
 COPY tools /src/tools
+COPY xtask /src/xtask
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
@@ -27,7 +27,6 @@ COPY Cargo.toml Cargo.lock /src/
 COPY aggregator /src/aggregator
 COPY aggregator_api /src/aggregator_api
 COPY aggregator_core /src/aggregator_core
-COPY build_script_utils /src/build_script_utils
 COPY client /src/client
 COPY collector /src/collector
 COPY core /src/core
@@ -36,6 +35,7 @@ COPY integration_tests /src/integration_tests
 COPY interop_binaries /src/interop_binaries
 COPY messages /src/messages
 COPY tools /src/tools
+COPY xtask /src/xtask
 ARG BINARY=aggregator
 ARG GIT_REVISION=unknown
 ENV GIT_REVISION ${GIT_REVISION}

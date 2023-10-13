@@ -3,7 +3,6 @@ members = [
     "aggregator",
     "aggregator_api",
     "aggregator_core",
-    "build_script_utils",
     "client",
     "collector",
     "core",
@@ -11,6 +10,7 @@ members = [
     "interop_binaries",
     "messages",
     "tools",
+    "xtask",
 ]
 resolver = "2"
 
@@ -35,7 +35,6 @@ itertools = "0.11"
 janus_aggregator = { version = "0.6", path = "aggregator" }
 janus_aggregator_api = { version = "0.6", path = "aggregator_api" }
 janus_aggregator_core = { version = "0.6", path = "aggregator_core" }
-janus_build_script_utils = { version = "0.6", path = "build_script_utils" }
 janus_client = { version = "0.6", path = "client" }
 janus_collector = { version = "0.6", path = "collector" }
 janus_core = { version = "0.6", path = "core" }
