@@ -53,7 +53,7 @@ pub struct NewTaskRequest {
     pub max_batch_size: Option<u64>,
     pub expiration: String,
     pub time_precision_seconds: u64,
-    pub hpke_config_id: String,
+    pub collector_credential_id: String,
 }
 
 /// Representation of a DAP task in responses from divviup-api. This application ignores several
@@ -81,18 +81,19 @@ pub struct DivviUpAggregator {
     pub dap_url: Url,
 }
 
-/// Request to create an HPKE config in divviup-api.
+/// Request to create a collector credential in divviup-api.
 #[derive(Serialize)]
-pub struct NewHpkeConfigRequest {
+pub struct NewCollectorCredentialRequest {
     pub name: String,
-    pub contents: String,
+    pub hpke_config: String,
 }
 
-/// Representation of an HPKE config in responses from divviup-api. This application ignores most
-/// fields that we never use.
+/// Representation of a collector credential in responses from divviup-api. This application ignores
+/// most fields that we never use.
 #[derive(Deserialize)]
-pub struct DivviUpHpkeConfig {
+pub struct DivviUpCollectorCredential {
     pub id: String,
+    pub token: String,
 }
 
 /// Representation of a collector auth token in divviup-api.
@@ -189,16 +190,16 @@ impl DivviupApiClient {
         .await
     }
 
-    pub async fn create_hpke_config(
+    pub async fn create_collector_credential(
         &self,
         account: &Account,
-        request: &NewHpkeConfigRequest,
-    ) -> DivviUpHpkeConfig {
+        request: &NewCollectorCredentialRequest,
+    ) -> DivviUpCollectorCredential {
         self.make_request(
             Method::POST,
-            &format!("accounts/{}/hpke_configs", account.id),
+            &format!("accounts/{}/collector_credentials", account.id),
             Some(request),
-            "HPKE config creation",
+            "collector credential creation",
         )
         .await
     }
