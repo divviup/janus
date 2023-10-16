@@ -48,7 +48,7 @@ kube = { workspace = true, optional = true, features = ["rustls-tls"] }
 k8s-openapi = { workspace = true, optional = true }
 prio.workspace = true
 rand = "0.8"
-regex = "1.9.6"
+regex = "1.10.2"
 reqwest = { version = "0.11.22", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.17.2"
 serde.workspace = true
