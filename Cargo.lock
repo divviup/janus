@@ -449,11 +449,12 @@ checksum = "a2bd12c1caf447e69cd4528f47f94d203fd2582878ecb9e9465484c4148a8223"
 
 [[package]]
 name = "cc"
-version = "1.0.79"
+version = "1.0.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50d30906286121d95be3d479533b458f87493b30a4b5f79a607db8f5d11aa91f"
+checksum = "f1174fb0b6ec23863f8b971027804a42614e347eafb0a95bf0b12cdae21fc4d0"
 dependencies = [
  "jobserver",
+ "libc",
 ]
 
 [[package]]
@@ -1792,7 +1793,7 @@ dependencies = [
  "rand",
  "regex",
  "reqwest",
- "ring 0.17.2",
+ "ring 0.17.4",
  "routefinder",
  "rstest",
  "rustc_version",
@@ -1844,7 +1845,7 @@ dependencies = [
  "opentelemetry",
  "querystring",
  "rand",
- "ring 0.17.2",
+ "ring 0.17.4",
  "serde",
  "serde_json",
  "serde_test",
@@ -1891,7 +1892,7 @@ dependencies = [
  "rand",
  "regex",
  "reqwest",
- "ring 0.17.2",
+ "ring 0.17.4",
  "rstest",
  "rstest_reuse",
  "rustc_version",
@@ -1991,7 +1992,7 @@ dependencies = [
  "prio",
  "rand",
  "reqwest",
- "ring 0.17.2",
+ "ring 0.17.4",
  "rstest",
  "serde",
  "serde_json",
@@ -2067,7 +2068,7 @@ dependencies = [
  "rand",
  "regex",
  "reqwest",
- "ring 0.17.2",
+ "ring 0.17.4",
  "serde",
  "serde_json",
  "sqlx",
@@ -2249,9 +2250,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.147"
+version = "0.2.149"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4668fb0ea861c1df094127ac5f1da3409a82116a4ba74fca2e58ef927159bb3"
+checksum = "a08173bc88b7955d1b3145aa561539096c421ac8debde8cbc3612ec635fee29b"
 
 [[package]]
 name = "libm"
@@ -3218,9 +3219,9 @@ dependencies = [
 
 [[package]]
 name = "ring"
-version = "0.17.2"
+version = "0.17.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "911b295d2d302948838c8ac142da1ee09fa7863163b44e6715bc9357905878b8"
+checksum = "fce3045ffa7c981a6ee93f640b538952e155f1ae3a1a02b84547fc7a56b7059a"
 dependencies = [
  "cc",
  "getrandom",
