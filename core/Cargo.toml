@@ -60,7 +60,7 @@ testcontainers = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt"] }
 tokio-stream = { version = "0.1.14", features = ["net"], optional = true }
-tracing = "0.1.37"
+tracing = "0.1.39"
 tracing-log = { version = "0.1.3", optional = true }
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"], optional = true }
 trillium.workspace = true
