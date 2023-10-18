@@ -7363,27 +7363,25 @@ async fn reject_expired_reports_with_same_id(ephemeral_datastore: EphemeralDatas
     clock.advance(&report_expiry_age.add(&report_expiry_age).unwrap());
 
     // Insert a client report with the same ID, but a more current timestamp.
-    assert_matches!(
-        datastore
-            .run_unnamed_tx(|tx| {
-                let report = LeaderStoredReport::<0, dummy_vdaf::Vdaf>::new(
-                    *task.id(),
-                    ReportMetadata::new(report_id, clock.now()),
-                    (),
-                    Vec::new(),
-                    dummy_vdaf::InputShare::default(),
-                    HpkeCiphertext::new(
-                        HpkeConfigId::from(13),
-                        Vec::from("encapsulated_context_0"),
-                        Vec::from("payload_0"),
-                    ),
-                );
-                Box::pin(async move {
-                    tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report)
-                        .await
-                })
+    let result = datastore
+        .run_unnamed_tx(|tx| {
+            let report = LeaderStoredReport::<0, dummy_vdaf::Vdaf>::new(
+                *task.id(),
+                ReportMetadata::new(report_id, clock.now()),
+                (),
+                Vec::new(),
+                dummy_vdaf::InputShare::default(),
+                HpkeCiphertext::new(
+                    HpkeConfigId::from(13),
+                    Vec::from("encapsulated_context_0"),
+                    Vec::from("payload_0"),
+                ),
+            );
+            Box::pin(async move {
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report)
+                    .await
             })
-            .await,
-        Err(Error::MutationTargetAlreadyExists)
-    )
+        })
+        .await;
+    assert_matches!(result, Err(Error::MutationTargetAlreadyExists));
 }

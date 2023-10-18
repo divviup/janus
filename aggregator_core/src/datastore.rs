@@ -1530,9 +1530,8 @@ impl<C: Clock> Transaction<'_, C> {
                 // and try again, by calling `retry` and returning an error; once it retries, it
                 // will be able to read the report written by the successful writer.
                 self.retry();
-                Error::DbState(
-                    "retrying transaction because another writer has concurrently inserted this report"
-                        .to_string(),
+                Error::Concurrency(
+                    "retrying transaction because another writer has concurrently inserted this report",
                 )
             })?
         };
@@ -5003,6 +5002,9 @@ pub enum Error {
     TimeOverflow(&'static str),
     #[error("batch already collected")]
     AlreadyCollected,
+    /// An error that occurred due to concurrency problems with another Janus replica.
+    #[error("{0}")]
+    Concurrency(&'static str),
 }
 
 impl From<ring::error::Unspecified> for Error {
