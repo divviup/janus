@@ -15,8 +15,7 @@ in-cluster = ["dep:k8s-openapi", "dep:kube"]
 anyhow.workspace = true
 backoff = { version = "0.4", features = ["tokio"] }
 base64.workspace = true
-# TOOD(timg): change pinned commit or tag once https://github.com/divviup/divviup-api/pull/583 lands
-divviup-client = { git = "https://github.com/divviup/divviup-api", features = ["admin"], rev = "804f7fe856478d3791f50ff4f4659ecc9a6d91fe" }
+divviup-client = { git = "https://github.com/divviup/divviup-api", features = ["admin"], rev = "81fe8753bb1b9bc7d3abb3aa7a2ce96d1e0623e8" }
 futures = "0.3.28"
 hex = "0.4"
 http = "0.2"
