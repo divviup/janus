@@ -181,7 +181,7 @@ impl InClusterJanusPair {
         assert_eq!(collector_auth_tokens[0].r#type, "Bearer");
 
         // Update the task parameters with the ID and collector auth token from divviup-api.
-        task_parameters.task_id = TaskId::from_str(&provisioned_task.id.as_ref()).unwrap();
+        task_parameters.task_id = TaskId::from_str(provisioned_task.id.as_ref()).unwrap();
         task_parameters.collector_auth_token = AuthenticationToken::new_bearer_token_from_string(
             collector_auth_tokens[0].token.clone(),
         )
