@@ -1859,7 +1859,7 @@ dependencies = [
  "rand",
  "regex",
  "reqwest",
- "ring 0.17.4",
+ "ring 0.17.5",
  "routefinder",
  "rstest",
  "rustc_version",
@@ -1912,7 +1912,7 @@ dependencies = [
  "opentelemetry",
  "querystring",
  "rand",
- "ring 0.17.4",
+ "ring 0.17.5",
  "rstest",
  "serde",
  "serde_json",
@@ -1959,7 +1959,7 @@ dependencies = [
  "rand",
  "regex",
  "reqwest",
- "ring 0.17.4",
+ "ring 0.17.5",
  "rstest",
  "rstest_reuse",
  "rustc_version",
@@ -2062,7 +2062,7 @@ dependencies = [
  "rand",
  "regex",
  "reqwest",
- "ring 0.17.4",
+ "ring 0.17.5",
  "rstest",
  "serde",
  "serde_json",
@@ -2140,7 +2140,7 @@ dependencies = [
  "rand",
  "regex",
  "reqwest",
- "ring 0.17.4",
+ "ring 0.17.5",
  "serde",
  "serde_json",
  "sqlx",
@@ -3407,9 +3407,9 @@ dependencies = [
 
 [[package]]
 name = "ring"
-version = "0.17.4"
+version = "0.17.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fce3045ffa7c981a6ee93f640b538952e155f1ae3a1a02b84547fc7a56b7059a"
+checksum = "fb0205304757e5d899b9c2e448b867ffd03ae7f988002e47cd24954391394d0b"
 dependencies = [
  "cc",
  "getrandom",
