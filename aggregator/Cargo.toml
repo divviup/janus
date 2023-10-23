@@ -37,7 +37,7 @@ async-trait = "0.1"
 anyhow.workspace = true
 atty = "0.2"
 backoff = { version = "0.4.0", features = ["tokio"] }
-base64 = "0.21.4"
+base64 = "0.21.5"
 bytes = "1.5.0"
 chrono.workspace = true
 clap = { version = "4.4.6", features = ["derive", "env"] }
