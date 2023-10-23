@@ -951,7 +951,7 @@ dependencies = [
 [[package]]
 name = "divviup-client"
 version = "0.0.1"
-source = "git+https://github.com/divviup/divviup-api?rev=81fe8753bb1b9bc7d3abb3aa7a2ce96d1e0623e8#81fe8753bb1b9bc7d3abb3aa7a2ce96d1e0623e8"
+source = "git+https://github.com/divviup/divviup-api?tag=0.0.30#073f7700ea02748739a24d80b019a9a95a8d96e4"
 dependencies = [
  "base64 0.21.4",
  "email_address",
