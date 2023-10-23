@@ -888,10 +888,11 @@ dependencies = [
 
 [[package]]
 name = "deranged"
-version = "0.3.8"
+version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2696e8a945f658fd14dc3b87242e6b80cd0f36ff04ea560fa39082368847946"
+checksum = "0f32d04922c60427da6f9fef14d042d9edddef64cb9d4ce0d64d0685fbeb1fd3"
 dependencies = [
+ "powerfmt",
  "serde",
 ]
 
@@ -951,11 +952,11 @@ dependencies = [
 [[package]]
 name = "divviup-client"
 version = "0.0.1"
-source = "git+https://github.com/divviup/divviup-api?rev=06667dbeb93d4870bb257b7ddf9a19b37a7e5da5#06667dbeb93d4870bb257b7ddf9a19b37a7e5da5"
+source = "git+https://github.com/divviup/divviup-api?tag=0.0.30#073f7700ea02748739a24d80b019a9a95a8d96e4"
 dependencies = [
  "base64 0.21.4",
  "email_address",
- "janus_messages 0.5.20",
+ "janus_messages 0.5.24",
  "log",
  "pad-adapter",
  "serde",
@@ -2159,16 +2160,16 @@ dependencies = [
 
 [[package]]
 name = "janus_messages"
-version = "0.5.20"
+version = "0.5.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c7269662cdac52cea2a98cf10cb35028d1d673951e4ff1bcf8c653b5d3b8577"
+checksum = "7189ed015947d1da772e0d376f43d2a334383a1174443ef46142f230af369a9b"
 dependencies = [
  "anyhow",
  "base64 0.21.4",
  "derivative",
  "hex",
  "num_enum",
- "prio 0.12.3",
+ "prio 0.12.4",
  "rand",
  "serde",
  "thiserror",
@@ -3016,6 +3017,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "powerfmt"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
+
+[[package]]
 name = "ppv-lite86"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3023,9 +3030,9 @@ checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
 
 [[package]]
 name = "prio"
-version = "0.12.3"
+version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56d6fbe33c4d999c3ba5e5f2673cfeadffd2c8e1ffd58ab67a3cf06cd576d834"
+checksum = "e3d13d814fa9a577a07b129e27745f67477679e6750673c8617d034cdf899a5b"
 dependencies = [
  "base64 0.21.4",
  "byteorder",
@@ -4391,12 +4398,13 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.3.28"
+version = "0.3.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17f6bb557fd245c28e6411aa56b6403c689ad95061f50e4be16c274e70a17e48"
+checksum = "c4a34ab300f2dee6e562c10a046fc05e358b29f9bf92277f30c3c8d82275f6f5"
 dependencies = [
  "deranged",
  "itoa",
+ "powerfmt",
  "serde",
  "time-core",
  "time-macros",
@@ -4404,15 +4412,15 @@ dependencies = [
 
 [[package]]
 name = "time-core"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7300fbefb4dadc1af235a9cef3737cea692a9d97e1b9cbcd4ebdae6f8868e6fb"
+checksum = "ef927ca75afb808a4d64dd374f00a2adf8d0fcff8e7b184af886c3c87ec4a3f3"
 
 [[package]]
 name = "time-macros"
-version = "0.2.14"
+version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a942f44339478ef67935ab2bbaec2fb0322496cf3cbe84b261e06ac3814c572"
+checksum = "4ad70d68dba9e1f8aceda7aa6711965dfec1cac869f311a51bd08b3a2ccbce20"
 dependencies = [
  "time-core",
 ]

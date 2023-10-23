@@ -1,8 +1,7 @@
 #![cfg(feature = "in-cluster")]
 use common::{submit_measurements_and_verify_aggregate, test_task_builder};
 use divviup_client::{
-    Client, CollectorAuthenticationToken, DivviupClient, Histogram, HpkeConfigContents,
-    NewAggregator, NewSharedAggregator, NewTask, Vdaf,
+    Client, DivviupClient, Histogram, HpkeConfig, NewAggregator, NewSharedAggregator, NewTask, Vdaf,
 };
 use janus_aggregator_core::task::QueryType;
 use janus_core::{
@@ -145,10 +144,10 @@ impl InClusterJanusPair {
             .unwrap();
 
         let hpke_config = task.collector_hpke_keypair().config();
-        let collector_hpke_config = divviup_api
-            .create_hpke_config(
+        let collector_credential = divviup_api
+            .create_collector_credential(
                 account.id,
-                &HpkeConfigContents::new(
+                &HpkeConfig::new(
                     u8::from(*hpke_config.id()).into(),
                     u16::from(*hpke_config.kem_id()).try_into().unwrap(),
                     u16::from(*hpke_config.kdf_id()).try_into().unwrap(),
@@ -200,7 +199,7 @@ impl InClusterJanusPair {
                 QueryType::FixedSize { max_batch_size, .. } => Some(*max_batch_size),
             },
             time_precision_seconds: task.time_precision().as_seconds(),
-            hpke_config_id: collector_hpke_config.id,
+            collector_credential_id: collector_credential.id,
         };
 
         // Provision the task into both aggregators via divviup-api
@@ -209,18 +208,12 @@ impl InClusterJanusPair {
             .await
             .unwrap();
 
-        let CollectorAuthenticationToken::Bearer { token } = divviup_api
-            .task_collector_auth_tokens(&provisioned_task.id)
-            .await
-            .unwrap()
-            .into_iter()
-            .next()
-            .unwrap();
-
         // Update the task parameters with the ID and collector auth token from divviup-api.
         task_parameters.task_id = TaskId::from_str(&provisioned_task.id).unwrap();
-        task_parameters.collector_auth_token =
-            AuthenticationToken::new_bearer_token_from_string(token.clone()).unwrap();
+        task_parameters.collector_auth_token = AuthenticationToken::new_bearer_token_from_string(
+            collector_credential.token.clone().unwrap(),
+        )
+        .unwrap();
 
         Self {
             task_parameters,
