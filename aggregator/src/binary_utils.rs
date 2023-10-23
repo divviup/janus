@@ -521,12 +521,10 @@ mod tests {
         let req = TraceconfigzBody {
             filter: "debug".to_string(),
         };
-        let mut test_conn = dbg!(
-            put("/traceconfigz")
-                .with_request_body(serde_json::to_vec(&req).unwrap())
-                .run_async(&handler)
-                .await
-        );
+        let mut test_conn = put("/traceconfigz")
+            .with_request_body(serde_json::to_vec(&req).unwrap())
+            .run_async(&handler)
+            .await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_eq!(
             serde_json::from_slice::<TraceconfigzBody>(&take_response_body(&mut test_conn).await)
