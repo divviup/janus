@@ -48,6 +48,22 @@ human-readable or structured JSON log format will be chosen automatically. This
 can be overridden with the `force_json_output` and `stackdriver_json_output`
 configuration parameters under `logging_config`.
 
+The environment variable can be overridden at runtime using the `/traceconfigz`
+path on the `health_check_listen_address` endpoint. Here's an example using this
+with `curl`:
+
+```bash
+$ HEALTH_CHECK_LISTEN_ADDRESS=http://localhost:8000
+
+$ curl $HEALTH_CHECK_LISTEN_ADDRESS/traceconfigz
+{"filter":"info"}
+
+$ curl $HEALTH_CHECK_LISTEN_ADDRESS/traceconfigz -X PUT -d '{"filter":"debug"}'
+{"filter":"debug"}
+```
+
+The `filter` field corresponds exactly to the [EnvFilter] format.
+
 [EnvFilter]: https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html
 
 ##### Metrics
