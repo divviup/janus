@@ -5,7 +5,7 @@ pub mod job_driver;
 use crate::{
     config::{BinaryConfig, DbConfig},
     metrics::{install_metrics_exporter, MetricsExporterConfiguration},
-    trace::{install_trace_subscriber, OpenTelemetryTraceConfiguration},
+    trace::{install_trace_subscriber, OpenTelemetryTraceConfiguration, TraceReloadHandle},
 };
 use anyhow::{anyhow, Context as _, Result};
 use backoff::{future::retry, ExponentialBackoff};
@@ -18,6 +18,7 @@ use janus_aggregator_core::datastore::{Crypter, Datastore};
 use janus_core::time::Clock;
 use opentelemetry::metrics::Meter;
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
+use serde::{Deserialize, Serialize};
 use std::{
     fmt::{self, Debug, Formatter},
     fs,
@@ -26,12 +27,15 @@ use std::{
     panic,
     path::PathBuf,
     str::FromStr,
+    sync::Arc,
     time::Duration,
 };
 use tokio::sync::oneshot;
 use tokio_postgres::NoTls;
 use tracing::{debug, info};
-use trillium::{Handler, Headers, Info, Init};
+use tracing_subscriber::EnvFilter;
+use trillium::{Handler, Headers, Info, Init, Status};
+use trillium_api::{api, Json, State};
 use trillium_head::Head;
 use trillium_router::Router;
 use trillium_tokio::Stopper;
@@ -279,8 +283,9 @@ where
     let config: Config = read_config(options.common_options())?;
 
     // Install tracing/metrics handlers.
-    let _guards = install_trace_subscriber(&config.common_config().logging_config)
-        .context("couldn't install tracing subscriber")?;
+    let (_guards, trace_reload_handle) =
+        install_trace_subscriber(&config.common_config().logging_config)
+            .context("couldn't install tracing subscriber")?;
     let _metrics_exporter = install_metrics_exporter(&config.common_config().metrics_config)
         .await
         .context("failed to install metrics exporter")?;
@@ -310,10 +315,9 @@ where
     .context("couldn't create datastore")?;
 
     let health_check_listen_address = config.common_config().health_check_listen_address;
-    let healthz_task_handle =
-        tokio::task::spawn(
-            async move { health_endpoint_server(health_check_listen_address).await },
-        );
+    let zpages_task_handle = tokio::task::spawn(async move {
+        zpages_server(health_check_listen_address, trace_reload_handle).await
+    });
 
     let result = f(BinaryContext {
         clock,
@@ -325,26 +329,92 @@ where
     })
     .await;
 
-    healthz_task_handle.abort();
+    zpages_task_handle.abort();
 
     result
 }
 
-/// Listen for HTTP requests on a given port, and respond to requests for "/healthz" with an empty
-/// body and status code 200. Each Janus component exposes this HTTP server to enable health
-/// checks, and to indicate when it has successfully started up.
-async fn health_endpoint_server(address: SocketAddr) {
-    let router = Router::new().get(
-        "/healthz",
-        |conn: trillium::Conn| async move { conn.ok("") },
-    );
-    let handler = (Head::new(), router);
+/// A trillium server which serves z-pages, which are utility endpoints for health checks and
+/// tracing configuration. It listens on the given address and port. It also takes the reload
+/// handle necessary for reloading the tracing_subscriber configuration.
+///
+/// `/healthz` responds with an empty body and status code 200, which serves as a healthcheck to
+/// indicate when Janus has started up.
+///
+/// `/traceconfigz` responds with the tracing_subscriber configuration, or allows configuring it
+/// with a PUT request.
+async fn zpages_server(address: SocketAddr, trace_reload_handle: TraceReloadHandle) {
+    let handler = zpages_handler(trace_reload_handle);
     trillium_tokio::config()
         .with_port(address.port())
         .with_host(&address.ip().to_string())
         .without_signals()
         .run_async(handler)
         .await;
+}
+
+fn zpages_handler(trace_reload_handle: TraceReloadHandle) -> impl Handler {
+    (
+        Head::new(),
+        State(Arc::new(trace_reload_handle)),
+        Router::new()
+            .get(
+                "/healthz",
+                |conn: trillium::Conn| async move { conn.ok("") },
+            )
+            .get("/traceconfigz", api(get_traceconfigz))
+            .put("/traceconfigz", api(put_traceconfigz)),
+    )
+}
+
+async fn get_traceconfigz(
+    conn: &mut trillium::Conn,
+    State(trace_filter_handler): State<Arc<TraceReloadHandle>>,
+) -> Result<Json<TraceconfigzBody>, Status> {
+    Ok(Json(TraceconfigzBody {
+        filter: trace_filter_handler
+            .with_current(|trace_filter| trace_filter.to_string())
+            .map_err(|err| {
+                conn.set_body(format!("failed to get current filter: {}", err));
+                Status::InternalServerError
+            })?,
+    }))
+}
+
+async fn put_traceconfigz(
+    conn: &mut trillium::Conn,
+    (State(trace_filter_handler), Json(req)): (
+        State<Arc<TraceReloadHandle>>,
+        Json<TraceconfigzBody>,
+    ),
+) -> Result<Json<TraceconfigzBody>, Status> {
+    trace_filter_handler
+        .reload(EnvFilter::new(req.filter))
+        .map_err(|err| {
+            conn.set_body(format!("failed to update filter: {}", err));
+            // Note: reload will accept malformed filter directives, and fall back to the `error`
+            // filter. An error indicating malformation is never propagated up, so we can't give
+            // a proper HTTP status code. The error state will be revealed to the operator in the
+            // response body, however, since it will show the fallback log filter rather than their
+            // desired one.
+            Status::InternalServerError
+        })?;
+    Ok(Json(TraceconfigzBody {
+        filter: trace_filter_handler
+            .with_current(|trace_filter| trace_filter.to_string())
+            .map_err(|err| {
+                conn.set_body(format!("failed to get current filter: {}", err));
+                Status::InternalServerError
+            })?,
+    }))
+}
+
+/// The response and request body used by /traceconfigz for reporting and updating its configuration.
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct TraceconfigzBody {
+    /// The directive that filters spans and events. This field follows the [`EnvFilter`][1] syntax.
+    /// [1]: https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives
+    filter: String,
 }
 
 /// Register a signal handler for SIGTERM, and stop the [`Stopper`] when a SIGTERM signal is
@@ -408,10 +478,60 @@ pub async fn setup_server(
 #[cfg(test)]
 mod tests {
     use super::CommonBinaryOptions;
+    use crate::{
+        aggregator::http_handlers::test_util::take_response_body,
+        binary_utils::{zpages_handler, TraceconfigzBody},
+    };
     use clap::CommandFactory;
+    use tracing_subscriber::{layer::SubscriberExt, reload, EnvFilter, Registry};
+    use trillium::Status;
+    use trillium_testing::prelude::*;
 
     #[test]
     fn verify_app() {
         CommonBinaryOptions::command().debug_assert()
+    }
+
+    #[tokio::test]
+    async fn healthz() {
+        let (_, filter_handle) = reload::Layer::new(EnvFilter::new("info"));
+        let handler = zpages_handler(filter_handle);
+
+        let test_conn = get("/healthz").run_async(&handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+    }
+
+    #[tokio::test]
+    async fn traceconfigz() {
+        let (filter, filter_handle) = reload::Layer::new(EnvFilter::new("info"));
+        let _subscriber = Registry::default().with(filter);
+
+        let handler = zpages_handler(filter_handle);
+
+        let mut test_conn = get("/traceconfigz").run_async(&handler).await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert_eq!(
+            serde_json::from_slice::<TraceconfigzBody>(&take_response_body(&mut test_conn).await)
+                .unwrap(),
+            TraceconfigzBody {
+                filter: "info".to_string()
+            }
+        );
+
+        let req = TraceconfigzBody {
+            filter: "debug".to_string(),
+        };
+        let mut test_conn = dbg!(
+            put("/traceconfigz")
+                .with_request_body(serde_json::to_vec(&req).unwrap())
+                .run_async(&handler)
+                .await
+        );
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert_eq!(
+            serde_json::from_slice::<TraceconfigzBody>(&take_response_body(&mut test_conn).await)
+                .unwrap(),
+            req,
+        );
     }
 }

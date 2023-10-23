@@ -618,7 +618,7 @@ pub mod test_util {
     use std::borrow::Cow;
     use trillium_testing::{assert_headers, TestConn};
 
-    async fn take_response_body(test_conn: &mut TestConn) -> Cow<'_, [u8]> {
+    pub async fn take_response_body(test_conn: &mut TestConn) -> Cow<'_, [u8]> {
         test_conn
             .take_response_body()
             .unwrap()

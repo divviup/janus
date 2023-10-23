@@ -142,8 +142,10 @@ impl Command {
 async fn install_tracing_and_metrics_handlers(
     config: &CommonConfig,
 ) -> Result<(TraceGuards, MetricsExporterHandle)> {
-    let trace_guard = install_trace_subscriber(&config.logging_config)
+    // Discard the trace reload handler, since this program is short-lived.
+    let (trace_guard, _) = install_trace_subscriber(&config.logging_config)
         .context("couldn't install tracing subscriber")?;
+
     let metrics_guard = install_metrics_exporter(&config.metrics_config)
         .await
         .context("failed to install metrics exporter")?;
