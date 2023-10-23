@@ -72,7 +72,7 @@ prometheus = { version = "0.13.3", optional = true }
 rand = { version = "0.8", features = ["min_const_gen"] }
 regex = "1"
 reqwest = { version = "0.11.22", default-features = false, features = ["rustls-tls", "json"] }
-ring = "0.17.4"
+ring = "0.17.5"
 routefinder = "0.5.3"
 serde.workspace = true
 serde_json.workspace = true
