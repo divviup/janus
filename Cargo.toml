@@ -20,7 +20,7 @@ homepage = "https://divviup.org"
 license = "MPL-2.0"
 repository = "https://github.com/divviup/janus"
 rust-version = "1.71.0"
-version = "0.6.0-prerelease-5"
+version = "0.6.0"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -32,16 +32,16 @@ base64 = "0.21.3"
 chrono = { version = "0.4", default-features = false }
 derivative = "2.2.0"
 itertools = "0.11"
-janus_aggregator = { version = "0.6.0-prerelease-5", path = "aggregator" }
-janus_aggregator_api = { version = "0.6.0-prerelease-5", path = "aggregator_api" }
-janus_aggregator_core = { version = "0.6.0-prerelease-5", path = "aggregator_core" }
-janus_build_script_utils = { version = "0.6.0-prerelease-5", path = "build_script_utils" }
-janus_client = { version = "0.6.0-prerelease-5", path = "client" }
-janus_collector = { version = "0.6.0-prerelease-5", path = "collector" }
-janus_core = { version = "0.6.0-prerelease-5", path = "core" }
-janus_integration_tests = { version = "0.6.0-prerelease-5", path = "integration_tests" }
-janus_interop_binaries = { version = "0.6.0-prerelease-5", path = "interop_binaries" }
-janus_messages = { version = "0.6.0-prerelease-5", path = "messages" }
+janus_aggregator = { version = "0.6", path = "aggregator" }
+janus_aggregator_api = { version = "0.6", path = "aggregator_api" }
+janus_aggregator_core = { version = "0.6", path = "aggregator_core" }
+janus_build_script_utils = { version = "0.6", path = "build_script_utils" }
+janus_client = { version = "0.6", path = "client" }
+janus_collector = { version = "0.6", path = "collector" }
+janus_core = { version = "0.6", path = "core" }
+janus_integration_tests = { version = "0.6", path = "integration_tests" }
+janus_interop_binaries = { version = "0.6", path = "interop_binaries" }
+janus_messages = { version = "0.6", path = "messages" }
 k8s-openapi = { version = "0.18.0", features = ["v1_24"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
 kube = { version = "0.82.2", default-features = false, features = ["client", "rustls-tls"] }
 opentelemetry = { version = "0.20", features = ["metrics"] }
