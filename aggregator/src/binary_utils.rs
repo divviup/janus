@@ -381,6 +381,9 @@ async fn get_traceconfigz(
     }))
 }
 
+/// Allows modifying the runtime tracing filter. Accepts a request with a body corresponding to
+/// [`TraceconfigzBody`]. If the `filter` field is empty, the filter will fallback to `error`.
+/// See [`EnvFilter::try_new`] for details.
 async fn put_traceconfigz(
     conn: &mut trillium::Conn,
     (State(trace_filter_handler), Json(req)): (
@@ -388,17 +391,14 @@ async fn put_traceconfigz(
         Json<TraceconfigzBody>,
     ),
 ) -> Result<Json<TraceconfigzBody>, Status> {
-    trace_filter_handler
-        .reload(EnvFilter::new(req.filter))
-        .map_err(|err| {
-            conn.set_body(format!("failed to update filter: {}", err));
-            // Note: reload will accept malformed filter directives, and fall back to the `error`
-            // filter. An error indicating malformation is never propagated up, so we can't give
-            // a proper HTTP status code. The error state will be revealed to the operator in the
-            // response body, however, since it will show the fallback log filter rather than their
-            // desired one.
-            Status::InternalServerError
-        })?;
+    let new_filter = EnvFilter::try_new(req.filter).map_err(|err| {
+        conn.set_body(format!("invalid filter: {}", err));
+        Status::BadRequest
+    })?;
+    trace_filter_handler.reload(new_filter).map_err(|err| {
+        conn.set_body(format!("failed to update filter: {}", err));
+        Status::InternalServerError
+    })?;
     Ok(Json(TraceconfigzBody {
         filter: trace_filter_handler
             .with_current(|trace_filter| trace_filter.to_string())
