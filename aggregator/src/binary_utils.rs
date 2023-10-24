@@ -368,15 +368,17 @@ fn zpages_handler(trace_reload_handle: TraceReloadHandle) -> impl Handler {
 }
 
 async fn get_traceconfigz(
-    conn: &mut trillium::Conn,
+    _: &mut trillium::Conn,
     State(trace_filter_handler): State<Arc<TraceReloadHandle>>,
-) -> Result<Json<TraceconfigzBody>, Status> {
+) -> Result<Json<TraceconfigzBody>, (String, Status)> {
     Ok(Json(TraceconfigzBody {
         filter: trace_filter_handler
             .with_current(|trace_filter| trace_filter.to_string())
             .map_err(|err| {
-                conn.set_body(format!("failed to get current filter: {}", err));
-                Status::InternalServerError
+                (
+                    format!("failed to get current filter: {err}"),
+                    Status::InternalServerError,
+                )
             })?,
     }))
 }
@@ -385,26 +387,28 @@ async fn get_traceconfigz(
 /// [`TraceconfigzBody`]. If the `filter` field is empty, the filter will fallback to `error`.
 /// See [`EnvFilter::try_new`] for details.
 async fn put_traceconfigz(
-    conn: &mut trillium::Conn,
+    _: &mut trillium::Conn,
     (State(trace_filter_handler), Json(req)): (
         State<Arc<TraceReloadHandle>>,
         Json<TraceconfigzBody>,
     ),
-) -> Result<Json<TraceconfigzBody>, Status> {
-    let new_filter = EnvFilter::try_new(req.filter).map_err(|err| {
-        conn.set_body(format!("invalid filter: {}", err));
-        Status::BadRequest
-    })?;
+) -> Result<Json<TraceconfigzBody>, (String, Status)> {
+    let new_filter = EnvFilter::try_new(req.filter)
+        .map_err(|err| (format!("invalid filter: {err}"), Status::BadRequest))?;
     trace_filter_handler.reload(new_filter).map_err(|err| {
-        conn.set_body(format!("failed to update filter: {}", err));
-        Status::InternalServerError
+        (
+            format!("failed to update filter: {err}"),
+            Status::InternalServerError,
+        )
     })?;
     Ok(Json(TraceconfigzBody {
         filter: trace_filter_handler
             .with_current(|trace_filter| trace_filter.to_string())
             .map_err(|err| {
-                conn.set_body(format!("failed to get current filter: {}", err));
-                Status::InternalServerError
+                (
+                    format!("failed to get current filter: {err}"),
+                    Status::InternalServerError,
+                )
             })?,
     }))
 }
@@ -483,7 +487,7 @@ mod tests {
         binary_utils::{zpages_handler, TraceconfigzBody},
     };
     use clap::CommandFactory;
-    use tracing_subscriber::{layer::SubscriberExt, reload, EnvFilter, Registry};
+    use tracing_subscriber::{reload, EnvFilter};
     use trillium::Status;
     use trillium_testing::prelude::*;
 
@@ -503,9 +507,7 @@ mod tests {
 
     #[tokio::test]
     async fn traceconfigz() {
-        let (filter, filter_handle) = reload::Layer::new(EnvFilter::new("info"));
-        let _subscriber = Registry::default().with(filter);
-
+        let (_filter, filter_handle) = reload::Layer::new(EnvFilter::new("info"));
         let handler = zpages_handler(filter_handle);
 
         let mut test_conn = get("/traceconfigz").run_async(&handler).await;
