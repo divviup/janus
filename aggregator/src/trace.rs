@@ -9,7 +9,9 @@ use std::{
 use tracing::Level;
 use tracing_chrome::{ChromeLayerBuilder, TraceStyle};
 use tracing_log::LogTracer;
-use tracing_subscriber::{filter::FromEnvError, layer::SubscriberExt, EnvFilter, Layer, Registry};
+use tracing_subscriber::{
+    filter::FromEnvError, layer::SubscriberExt, reload, EnvFilter, Layer, Registry,
+};
 
 #[cfg(feature = "otlp")]
 use {
@@ -122,17 +124,23 @@ fn make_trace_filter() -> Result<EnvFilter, FromEnvError> {
         .from_env()
 }
 
-/// Configures and installs a tracing subscriber, to capture events logged with
-/// [`tracing::info`] and the like. Captured events are written to stdout, with
-/// formatting affected by the provided [`TraceConfiguration`].
-pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<TraceGuards, Error> {
+pub type TraceReloadHandle = reload::Handle<EnvFilter, Registry>;
+
+/// Configures and installs a tracing subscriber, to capture events logged with [`tracing::info`]
+/// and the like. Captured events are written to stdout, with formatting affected by the provided
+/// [`TraceConfiguration`]. A handle to the stdout [`EnvFilter`] is provided, so that the filter
+/// configuration can be altered later on at runtime.
+pub fn install_trace_subscriber(
+    config: &TraceConfiguration,
+) -> Result<(TraceGuards, TraceReloadHandle), Error> {
     // If stdout is not a tty or if forced by config, output logs as JSON
     // structures
     let output_json = !stdout().is_terminal() || config.force_json_output;
 
     // Configure filters with RUST_LOG env var. Format discussed at
     // https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html
-    let stdout_filter = EnvFilter::builder().from_env()?;
+    let (stdout_filter, stdout_filter_handle) =
+        reload::Layer::new(EnvFilter::builder().from_env()?);
 
     let mut layers = Vec::new();
     match (
@@ -237,10 +245,13 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<TraceGuar
     // Install a logger that converts logs into tracing events
     LogTracer::init()?;
 
-    Ok(TraceGuards {
-        uses_otel_tracer: config.open_telemetry_config.is_some(),
-        _chrome_guard: chrome_guard,
-    })
+    Ok((
+        TraceGuards {
+            uses_otel_tracer: config.open_telemetry_config.is_some(),
+            _chrome_guard: chrome_guard,
+        },
+        stdout_filter_handle,
+    ))
 }
 
 pub struct TraceGuards {
