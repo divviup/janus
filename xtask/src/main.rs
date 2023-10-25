@@ -9,6 +9,18 @@ use std::{
 };
 use tempfile::tempdir;
 
+/// Command line arguments that will get passed through to Cargo.
+#[derive(Args)]
+struct CargoArgs {
+    /// Build artifacts with the specified profile
+    #[clap(long)]
+    profile: Option<String>,
+
+    /// Require Cargo.lock is up to date
+    #[clap(long, action)]
+    locked: bool,
+}
+
 #[derive(Parser)]
 enum Subcommand {
     /// Build container images for use in Docker-based integration tests
@@ -16,9 +28,8 @@ enum Subcommand {
 
     /// Build container images and run Docker-based integration tests
     TestDocker {
-        /// Cargo profile
-        #[clap(long)]
-        profile: Option<String>,
+        #[clap(flatten)]
+        cargo_args: CargoArgs,
     },
 
     /// Run Docker-based integration tests with a provided set of container images
@@ -26,9 +37,8 @@ enum Subcommand {
         #[clap(flatten)]
         images: ContainerImages,
 
-        /// Cargo profile
-        #[clap(long)]
-        profile: Option<String>,
+        #[clap(flatten)]
+        cargo_args: CargoArgs,
     },
 }
 
@@ -39,15 +49,17 @@ fn main() -> Result<()> {
             let images = build_container_images()?;
             println!("{images:#?}");
         }
-        Subcommand::TestDocker { profile } => test_docker(profile)?,
-        Subcommand::TestDockerWithImages { images, profile } => run_docker_tests(images, profile)?,
+        Subcommand::TestDocker { cargo_args } => test_docker(cargo_args)?,
+        Subcommand::TestDockerWithImages { images, cargo_args } => {
+            run_docker_tests(images, cargo_args)?
+        }
     }
     Ok(())
 }
 
-fn test_docker(profile: Option<String>) -> Result<()> {
+fn test_docker(cargo_args: CargoArgs) -> Result<()> {
     let images = build_container_images()?;
-    run_docker_tests(images, profile)?;
+    run_docker_tests(images, cargo_args)?;
     Ok(())
 }
 
@@ -113,12 +125,15 @@ fn build_container_images() -> Result<ContainerImages> {
     })
 }
 
-fn run_docker_tests(images: ContainerImages, profile: Option<String>) -> Result<()> {
+fn run_docker_tests(images: ContainerImages, cargo_args: CargoArgs) -> Result<()> {
     let cargo_path = env::var_os("CARGO").context("CARGO environment variable was not set")?;
     let mut command = Command::new(cargo_path);
     command.arg("test");
-    if let Some(profile) = profile {
+    if let Some(profile) = cargo_args.profile {
         command.arg(format!("--profile={profile}"));
+    }
+    if cargo_args.locked {
+        command.arg("--locked");
     }
     command.args([
         "--package=janus_interop_binaries",

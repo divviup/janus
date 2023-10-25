@@ -85,13 +85,13 @@ jobs:
       continue-on-error: true
     - name: Build (Docker-specific tests)
       # This matches the `cargo test` command invoked by `cargo xtask test-docker-with-images`, except for `--no-run`.
-      run: cargo test --profile ci --package=janus_interop_binaries --package=janus_integration_tests --features=testcontainer --no-run
+      run: cargo test --profile ci --locked --package=janus_interop_binaries --package=janus_integration_tests --features=testcontainer --no-run
     - name: Test (Docker)
       id: test-docker
       env:
         JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
         DIVVIUP_TS_INTEROP_CONTAINER: ${{ steps.default-input-values.outputs.divviup_ts_interop_container }}
-      run: cargo xtask test-docker-with-images --profile=ci janus_interop_client janus_interop_aggregator janus_interop_collector
+      run: cargo xtask test-docker-with-images --profile=ci --locked janus_interop_client janus_interop_aggregator janus_interop_collector
       # Continue on error so we can upload logs
       continue-on-error: true
     - name: Upload container logs
