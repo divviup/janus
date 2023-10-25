@@ -74,21 +74,29 @@ jobs:
       run: cargo build --profile ci --package janus_core
     # Note: keep Build & Test steps consecutive, and match flags other than `--no-run`.
     - name: Build
-      run: cargo test --profile ci --locked --all-targets --features testcontainer --no-run
+      run: cargo test --profile ci --locked --all-targets --no-run
     - name: Test
       id: test
       env:
         JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
         DIVVIUP_TS_INTEROP_CONTAINER: ${{ steps.default-input-values.outputs.divviup_ts_interop_container }}
-        JANUS_INTEROP_CLIENT_IMAGE: janus_interop_client
-        JANUS_INTEROP_AGGREGATOR_IMAGE: janus_interop_aggregator
-        JANUS_INTEROP_COLLECTOR_IMAGE: janus_interop_collector
-      run: cargo test --profile ci --locked --all-targets --features testcontainer
+      run: cargo test --profile ci --locked --all-targets
+      # Continue on error so we can upload logs
+      continue-on-error: true
+    - name: Build (Docker-specific tests)
+      # This matches the `cargo test` command invoked by `cargo xtask test-docker-with-images`, except for `--no-run`.
+      run: cargo test --profile ci --package=janus_interop_binaries --package=janus_integration_tests --features=testcontainer --no-run
+    - name: Test (Docker)
+      id: test-docker
+      env:
+        JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
+        DIVVIUP_TS_INTEROP_CONTAINER: ${{ steps.default-input-values.outputs.divviup_ts_interop_container }}
+      run: cargo xtask test-docker-with-images --profile=ci janus_interop_client janus_interop_aggregator janus_interop_collector
       # Continue on error so we can upload logs
       continue-on-error: true
     - name: Upload container logs
       # Only get logs on test failure
-      if: steps.test.outcome == 'failure'
+      if: steps.test.outcome == 'failure' || steps.test-docker.outcome == 'failure'
       uses: actions/upload-artifact@v3
       with:
         name: container-logs
@@ -97,7 +105,7 @@ jobs:
         if-no-files-found: ignore
     # Force overall job to fail if tests fail
     - name: test status
-      if: steps.test.outcome == 'failure'
+      if: steps.test.outcome == 'failure' || steps.test-docker.outcome == 'failure'
       run: exit 1
   
   janus_lints:

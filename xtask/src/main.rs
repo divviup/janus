@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use clap::Parser;
+use clap::{Args, Parser};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -11,21 +11,43 @@ use tempfile::tempdir;
 
 #[derive(Parser)]
 enum Subcommand {
+    /// Build container images for use in Docker-based integration tests
+    BuildDocker,
+
     /// Build container images and run Docker-based integration tests
-    TestDocker,
+    TestDocker {
+        /// Cargo profile
+        #[clap(long)]
+        profile: Option<String>,
+    },
+
+    /// Run Docker-based integration tests with a provided set of container images
+    TestDockerWithImages {
+        #[clap(flatten)]
+        images: ContainerImages,
+
+        /// Cargo profile
+        #[clap(long)]
+        profile: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
     let subcommand = Subcommand::parse();
     match subcommand {
-        Subcommand::TestDocker => test_docker()?,
+        Subcommand::BuildDocker => {
+            let images = build_container_images()?;
+            println!("{images:#?}");
+        }
+        Subcommand::TestDocker { profile } => test_docker(profile)?,
+        Subcommand::TestDockerWithImages { images, profile } => run_docker_tests(images, profile)?,
     }
     Ok(())
 }
 
-fn test_docker() -> Result<()> {
+fn test_docker(profile: Option<String>) -> Result<()> {
     let images = build_container_images()?;
-    run_docker_tests(images)?;
+    run_docker_tests(images, profile)?;
     Ok(())
 }
 
@@ -36,9 +58,13 @@ struct DockerBakeTargetMetadata {
 }
 
 /// Janus interop test container image identifiers.
+#[derive(Args, Debug)]
 struct ContainerImages {
+    /// Container image for janus_interop_client
     client: String,
+    /// Container image for janus_interop_aggregator
     aggregator: String,
+    /// Container image for janus_interop_collector
     collector: String,
 }
 
@@ -87,21 +113,24 @@ fn build_container_images() -> Result<ContainerImages> {
     })
 }
 
-fn run_docker_tests(images: ContainerImages) -> Result<()> {
+fn run_docker_tests(images: ContainerImages, profile: Option<String>) -> Result<()> {
     let cargo_path = env::var_os("CARGO").context("CARGO environment variable was not set")?;
-    let status = Command::new(cargo_path)
-        .args([
-            "test",
-            "--package=janus_interop_binaries",
-            "--package=janus_integration_tests",
-            "--features=testcontainer",
-        ])
-        .envs([
-            ("JANUS_INTEROP_CLIENT_IMAGE", &images.client),
-            ("JANUS_INTEROP_AGGREGATOR_IMAGE", &images.aggregator),
-            ("JANUS_INTEROP_COLLECTOR_IMAGE", &images.collector),
-        ])
-        .status()?;
+    let mut command = Command::new(cargo_path);
+    command.arg("test");
+    if let Some(profile) = profile {
+        command.arg(format!("--profile={profile}"));
+    }
+    command.args([
+        "--package=janus_interop_binaries",
+        "--package=janus_integration_tests",
+        "--features=testcontainer",
+    ]);
+    command.envs([
+        ("JANUS_INTEROP_CLIENT_IMAGE", &images.client),
+        ("JANUS_INTEROP_AGGREGATOR_IMAGE", &images.aggregator),
+        ("JANUS_INTEROP_COLLECTOR_IMAGE", &images.collector),
+    ]);
+    let status = command.status()?;
     if !status.success() {
         return Err(anyhow!("cargo test exited with status code {status}"));
     }
