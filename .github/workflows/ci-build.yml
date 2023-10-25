@@ -24,7 +24,7 @@ jobs:
     permissions:
       id-token: "write"
       contents: "read"
-    needs: janus_interop_docker
+    needs: janus_interop_docker # We rely on this populating our Docker cache backend
     env:
       CARGO_INCREMENTAL: 0
       CARGO_TERM_COLOR: always
@@ -55,19 +55,12 @@ jobs:
       with:
         driver: docker-container
         use: true
-    - name: Fetch container images
-      uses: actions/download-artifact@v3
-      with:
-        name: interop-binary-images
-        path: /tmp
-    - name: Load container images
-      run: |
-        docker load --input /tmp/images.tar
-        docker image ls -a
     - name: Cache dependencies
       uses: Swatinem/rust-cache@v2
       with:
         key: ${{ steps.os-version.outputs.release }}
+    - name: Expose GitHub Runtime
+      uses: crazy-max/ghaction-github-runtime@v3
     - name: Build minimal janus_messages
       run: cargo build --profile ci --package janus_messages --no-default-features
     - name: Build janus_core
@@ -84,14 +77,14 @@ jobs:
       # Continue on error so we can upload logs
       continue-on-error: true
     - name: Build (Docker-specific tests)
-      # This matches the `cargo test` command invoked by `cargo xtask test-docker-with-images`, except for `--no-run`.
+      # This matches the `cargo test` command invoked by `cargo xtask test-docker`, except for `--no-run`.
       run: cargo test --profile ci --locked --package=janus_interop_binaries --package=janus_integration_tests --features=testcontainer --no-run
     - name: Test (Docker)
       id: test-docker
       env:
         JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
         DIVVIUP_TS_INTEROP_CONTAINER: ${{ steps.default-input-values.outputs.divviup_ts_interop_container }}
-      run: cargo xtask test-docker-with-images --profile=ci --locked janus_interop_client janus_interop_aggregator janus_interop_collector
+      run: cargo xtask test-docker --profile=ci --locked
       # Continue on error so we can upload logs
       continue-on-error: true
     - name: Upload container logs
@@ -177,21 +170,8 @@ jobs:
         driver: docker-container
         use: true
     - name: Build
-      id: bake
       uses: docker/bake-action@v4.0.0
       with:
         files: docker-bake.hcl
         workdir: .
         targets: interop_binaries_small
-        load: true
-        set: |
-          janus_interop_client_small.tags=janus_interop_client
-          janus_interop_aggregator_small.tags=janus_interop_aggregator
-          janus_interop_collector_small.tags=janus_interop_collector
-    - name: Save tarball
-      run: docker save --output=/tmp/images.tar janus_interop_client janus_interop_aggregator janus_interop_collector
-    - name: Upload artifact
-      uses: actions/upload-artifact@v3
-      with:
-        name: interop-binary-images
-        path: /tmp/images.tar
