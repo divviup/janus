@@ -208,6 +208,8 @@ pub(crate) static AGGREGATION_JOB_ROUTE: &str =
 pub(crate) static COLLECTION_JOB_ROUTE: &str = "tasks/:task_id/collection_jobs/:collection_job_id";
 pub(crate) static AGGREGATE_SHARES_ROUTE: &str = "tasks/:task_id/aggregate_shares";
 
+static ROBOTS_TXT: &str = "User-agent: *\nDisallow: /\n";
+
 /// Constructs a Trillium handler for the aggregator.
 pub async fn aggregator_handler<C: Clock>(
     datastore: Arc<Datastore<C>>,
@@ -228,6 +230,12 @@ async fn aggregator_handler_with_aggregator<C: Clock>(
         metrics("janus_aggregator").with_route(|conn| conn.route().map(ToString::to_string)),
         Router::new()
             .without_options_handling()
+            // Discourage web scrapers from indexing Janus. DAP clients which submit reports on
+            // page load may be triggered by a web scraper.
+            .get(
+                "robots.txt",
+                |conn: Conn| async move { conn.ok(ROBOTS_TXT) },
+            )
             .get("hpke_config", instrumented(api(hpke_config::<C>)))
             .with_route(
                 trillium::Method::Options,
@@ -651,7 +659,8 @@ mod tests {
             empty_batch_aggregations,
             http_handlers::{
                 aggregator_handler, aggregator_handler_with_aggregator,
-                test_util::{decode_response_body, take_problem_details},
+                test_util::{decode_response_body, take_problem_details, take_response_body},
+                ROBOTS_TXT,
             },
             tests::{
                 create_report, create_report_custom, default_aggregator_config,
@@ -746,6 +755,17 @@ mod tests {
         .unwrap();
 
         (clock, ephemeral_datastore, datastore, handler)
+    }
+
+    #[tokio::test]
+    async fn robots() {
+        let (_, _, _, handler) = setup_http_handler_test().await;
+        let mut test_conn = dbg!(get("/robots.txt").run_async(&handler).await);
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert_eq!(
+            String::from_utf8_lossy(&take_response_body(&mut test_conn).await),
+            ROBOTS_TXT,
+        );
     }
 
     #[tokio::test]
