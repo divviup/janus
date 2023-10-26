@@ -22,21 +22,28 @@ branch.
 
 | Git branch | Draft version | Conforms to protocol? | Status |
 | ---------- | ------------- | --------------------- | ------ |
-| `release/0.1` | [`draft-ietf-ppm-dap-01`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/01/) | Yes | Unmaintained as of December 7, 2022 |
-| `release/0.2` | [`draft-ietf-ppm-dap-02`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/02/) | Yes | Unmaintained as of July 13, 2023 |
-| `release/0.3` | [`draft-ietf-ppm-dap-03`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/03/) | Yes | Unmaintained as of February 6, 2023 |
-| `release/0.4` | [`draft-ietf-ppm-dap-04`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/04/) | Yes | Unmaintained as of May 24, 2023 |
-| `release/0.subscriber-01` | [`draft-ietf-ppm-dap-02`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/02/) plus extensions | No | Supported |
-| `release/0.5` | [`draft-ietf-ppm-dap-04`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/04/) | Yes | Supported |
-| `main` | [`draft-ietf-ppm-dap-07`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/07/) | Yes | Supported |
+| `release/0.1` | [`draft-ietf-ppm-dap-01`][dap-01] | Yes | Unmaintained as of December 7, 2022 |
+| `release/0.2` | [`draft-ietf-ppm-dap-02`][dap-02] | Yes | Unmaintained as of July 13, 2023 |
+| `release/0.3` | [`draft-ietf-ppm-dap-03`][dap-03] | Yes | Unmaintained as of February 6, 2023 |
+| `release/0.4` | [`draft-ietf-ppm-dap-04`][dap-04] | Yes | Unmaintained as of May 24, 2023 |
+| `release/0.subscriber-01` | [`draft-ietf-ppm-dap-02`][dap-02] plus extensions | No | Supported |
+| `release/0.5` | [`draft-ietf-ppm-dap-04`][dap-04] | Yes | Supported |
+| `main` | [`draft-ietf-ppm-dap-07`][dap-07] | Yes | Supported |
 
 Note that no version of Janus supports `draft-ietf-ppm-dap-05` or `-06`. Draft
 05 was skipped because there were flaws in its usage of the new ping-pong
 topology introduced in `draft-irtf-cfrg-vdaf-06`. Draft 6 fixed those issues,
 but was skipped because it was published from the wrong commit of
-[`draft-ietf-ppm-dap`](https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap) and so
-contains a couple of bugs. `draft-ietf-ppm-dap-07` is effectively identical to
-draft 6, but with those bugs fixed.
+[`draft-ietf-ppm-dap`][dap-gh] and so contains a couple of bugs.
+`draft-ietf-ppm-dap-07` is effectively identical to draft 6, but with those bugs
+fixed.
+
+[dap-01]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/01/
+[dap-02]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/02/
+[dap-03]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/03/
+[dap-04]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/04/
+[dap-07]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/07/
+[dap-gh]: https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap
 
 ## Building
 
@@ -51,7 +58,7 @@ subtle incompatibilities between the two that will cause tests to fail.
 To build container images, run `docker buildx bake --load`. This will produce
 images tagged `janus_aggregator`, `janus_aggregation_job_creator`,
 `janus_aggregation_job_driver`, `janus_collection_job_driver`, `janus_cli`,
-`janus_interop_client`, `janus_interop_aggregator`, and
+`janus_db_migrator`, `janus_interop_client`, `janus_interop_aggregator`, and
 `janus_interop_collector` by default.
 
 Pre-built container images are available at
@@ -67,22 +74,23 @@ preceding minor versions.
 Tests require that [`docker`](https://www.docker.com) and
 [`kind`](https://kind.sigs.k8s.io) be installed on the machine running the tests
 and in the `PATH` of the test-runner's environment. The `docker` daemon must be
-running. CI tests currently use [`kind`
-0.17.0](https://github.com/kubernetes-sigs/kind/releases/tag/v0.17.0) and the
+running. CI tests currently use [`kind` 0.17.0][kind-release] and the
 corresponding Kubernetes 1.24 node image
 (kindest/node:v1.24.7@sha256:577c630ce8e509131eab1aea12c022190978dd2f745aac5eb1fe65c0807eb315).
 Using the same versions for local development is recommended.
 
 To run Janus tests, execute `cargo test`.
 
+[kind-release]: https://github.com/kubernetes-sigs/kind/releases/tag/v0.17.0
+
 ### inotify limits
 
 If you experience issues with tests using Kind on Linux, you may need to [adjust
-inotify
-sysctls](https://kind.sigs.k8s.io/docs/user/known-issues/#pod-errors-due-to-too-many-open-files).
-Both systemd and Kubernetes inside each Kind node make use of inotify. When
-combined with other services and desktop applications, they may exhaust per-user
-limits.
+inotify sysctls][inotify]. Both systemd and Kubernetes inside each Kind node
+make use of inotify. When combined with other services and desktop applications,
+they may exhaust per-user limits.
+
+[inotify]: https://kind.sigs.k8s.io/docs/user/known-issues/#pod-errors-due-to-too-many-open-files
 
 ## Deploying Janus
 
