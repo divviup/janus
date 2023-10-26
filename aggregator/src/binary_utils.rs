@@ -18,20 +18,22 @@ use janus_aggregator_core::datastore::{Crypter, Datastore};
 use janus_core::time::Clock;
 use opentelemetry::metrics::Meter;
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
+use rustls::RootCertStore;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{self, Debug, Formatter},
-    fs,
+    fs::{self, File},
     future::Future,
+    io::{self, BufReader},
     net::SocketAddr,
     panic,
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
     time::Duration,
 };
 use tokio::sync::oneshot;
-use tokio_postgres::NoTls;
+use tokio_postgres_rustls::MakeRustlsConnect;
 use tracing::{debug, info};
 use tracing_subscriber::EnvFilter;
 use trillium::{Handler, Headers, Info, Init, Status};
@@ -89,7 +91,16 @@ pub async fn database_pool(db_config: &DbConfig, db_password: Option<&str>) -> R
 
     let connection_pool_timeout = Duration::from_secs(db_config.connection_pool_timeouts_secs);
 
-    let conn_mgr = Manager::new(database_config, NoTls);
+    let root_store = if let Some(ref path) = db_config.tls_trust_store_path {
+        load_pem_trust_store(path).context("failed to load TLS trust store")?
+    } else {
+        RootCertStore::empty()
+    };
+    let rustls_config = rustls::ClientConfig::builder()
+        .with_safe_defaults()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+    let conn_mgr = Manager::new(database_config, MakeRustlsConnect::new(rustls_config));
     let pool = Pool::builder(conn_mgr)
         .runtime(Runtime::Tokio1)
         .timeouts(Timeouts {
@@ -172,6 +183,16 @@ pub async fn datastore<C: Clock>(
     };
 
     Ok(datastore)
+}
+
+/// Loads a series of certificates from a PEM file into a rustls [`RootCertStore`].
+fn load_pem_trust_store(path: impl AsRef<Path>) -> Result<RootCertStore, io::Error> {
+    let mut buf_read = BufReader::new(File::open(path)?);
+    let der_certs = rustls_pemfile::certs(&mut buf_read)?;
+    let mut root_cert_store = RootCertStore::empty();
+    let (added, ignored) = root_cert_store.add_parsable_certificates(&der_certs);
+    info!("loaded {added} root certificates for database connections, ignored {ignored}");
+    Ok(root_cert_store)
 }
 
 /// Options for Janus binaries.
@@ -477,12 +498,18 @@ pub async fn setup_server(
 
 #[cfg(test)]
 mod tests {
-    use super::CommonBinaryOptions;
     use crate::{
         aggregator::http_handlers::test_util::take_response_body,
-        binary_utils::{zpages_handler, TraceconfigzBody},
+        binary_utils::{database_pool, zpages_handler, CommonBinaryOptions, TraceconfigzBody},
+        config::DbConfig,
     };
     use clap::CommandFactory;
+    use janus_core::test_util::{
+        install_test_trace_subscriber,
+        testcontainers::{container_client, Postgres, Volume},
+    };
+    use std::fs;
+    use testcontainers::RunnableImage;
     use tracing_subscriber::{reload, EnvFilter};
     use trillium::Status;
     use trillium_testing::prelude::*;
@@ -571,5 +598,75 @@ mod tests {
             String::from_utf8_lossy(&take_response_body(&mut test_conn).await)
                 .starts_with("failed to update filter:")
         );
+    }
+
+    #[tokio::test]
+    async fn postgres_tls_connection() {
+        install_test_trace_subscriber();
+
+        let client = container_client();
+        // We need to be careful about providing the certificate and private key to the Postgres
+        // container. The key must have '-rw-------' permissions, and both must be readable by the
+        // postgres user, which has UID 70 inside the container at time of writing. Merely mounting
+        // a host directory in the container would be insufficient, because the files' owner UIDs
+        // will not match the postgres user's UID. Instead, we create a temporary Docker volume, run
+        // a setup container with both the volume and a host directory mounted in, copy the
+        // certificate and key into the volume, and fix up their ownership (and permissions, in
+        // case those were lost on a non-POSIX host). Then, we run a second container with the volume
+        // mounted in, and use the fixed files in the volume in database configuration.
+        let volume = Volume::new();
+        let setup_image = RunnableImage::from((
+            Postgres::with_entrypoint("/bin/bash".to_string()),
+            Vec::from([
+                "-c".to_string(),
+                concat!(
+                    "cp /etc/ssl/postgresql_host/* /etc/ssl/postgresql/ && ",
+                    "chown postgres /etc/ssl/postgresql/* && ",
+                    "chmod 600 /etc/ssl/postgresql/127.0.0.1-key.pem && ",
+                    // This satisfies the ReadyCondition.
+                    "echo 'database system is ready to accept connections' >&2",
+                )
+                .to_string(),
+            ]),
+        ))
+        .with_volume((
+            fs::canonicalize("tests/tls_files")
+                .unwrap()
+                .into_os_string()
+                .into_string()
+                .unwrap(),
+            "/etc/ssl/postgresql_host",
+        ))
+        .with_volume((volume.name(), "/etc/ssl/postgresql"));
+        let setup_container = client.run(setup_image);
+        drop(setup_container);
+
+        let image = RunnableImage::from((
+            Postgres::default(),
+            Vec::from([
+                "-c".to_string(),
+                "ssl=on".to_string(),
+                "-c".to_string(),
+                "ssl_cert_file=/etc/ssl/postgresql/127.0.0.1.pem".to_string(),
+                "-c".to_string(),
+                "ssl_key_file=/etc/ssl/postgresql/127.0.0.1-key.pem".to_string(),
+            ]),
+        ))
+        .with_volume((volume.name(), "/etc/ssl/postgresql"));
+        let db_container = client.run(image);
+        const POSTGRES_DEFAULT_PORT: u16 = 5432;
+        let port = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT);
+
+        let db_config = DbConfig {
+            url: format!("postgres://postgres@127.0.0.1:{port}/postgres?sslmode=require")
+                .parse()
+                .unwrap(),
+            connection_pool_timeouts_secs: 5,
+            check_schema_version: false,
+            tls_trust_store_path: Some("tests/tls_files/rootCA.pem".to_string()),
+        };
+        let pool = database_pool(&db_config, None).await.unwrap();
+        let conn = pool.get().await.unwrap();
+        conn.query_one("SELECT 1", &[]).await.unwrap();
     }
 }
