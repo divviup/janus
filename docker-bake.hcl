@@ -180,11 +180,12 @@ target "janus_db_migrator" {
   }
   dockerfile = "Dockerfile.sqlx"
   cache-from = [
-    "type=gha,scope=main-janus",
-    "type=gha,scope=${GITHUB_BASE_REF}-janus",
-    "type=gha,scope=${GITHUB_REF_NAME}-janus",
+    "type=gha,scope=main-sqlx",
+    "type=gha,scope=${GITHUB_BASE_REF}-sqlx",
+    "type=gha,scope=${GITHUB_REF_NAME}-sqlx",
   ]
-  tags = ["janus_db_migrator:${VERSION}"]
+  cache-to = ["type=gha,scope=${GITHUB_REF_NAME}-sqlx,mode=max"]
+  tags     = ["janus_db_migrator:${VERSION}"]
 }
 
 target "janus_db_migrator_release" {
