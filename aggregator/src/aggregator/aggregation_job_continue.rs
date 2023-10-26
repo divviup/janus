@@ -82,12 +82,14 @@ impl VdafOps {
                 break report_agg;
             };
 
-            // Make sure this report isn't in an interval that has already started collection.
-            let conflicting_aggregate_share_jobs = tx
-                .get_aggregate_share_jobs_including_time::<SEED_SIZE, A>(
+            // Make sure this report is not part of a batch that has started collection.
+            let conflicting_aggregate_share_jobs =
+                Q::get_conflicting_aggregate_share_jobs::<SEED_SIZE, C, A>(
+                    tx,
                     &vdaf,
                     task.id(),
-                    report_aggregation.time(),
+                    helper_aggregation_job.partial_batch_identifier(),
+                    &report_aggregation.report_metadata(),
                 )
                 .await?;
 
