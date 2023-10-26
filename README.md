@@ -40,9 +40,9 @@ fixed.
 
 [dap-01]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/01/
 [dap-02]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/02/
-[03]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/03/
-[04]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/04/
-[07]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/07/
+[dap-03]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/03/
+[dap-04]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/04/
+[dap-07]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/07/
 [dap-gh]: https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap
 
 ## Building
@@ -75,13 +75,13 @@ Tests require that [`docker`](https://www.docker.com) and
 [`kind`](https://kind.sigs.k8s.io) be installed on the machine running the tests
 and in the `PATH` of the test-runner's environment. The `docker` daemon must be
 running. CI tests currently use [`kind` 0.17.0][kind-release] and the
-corresponding [Kubernetes 1.24 node image][kind-node]. Using the same versions
-for local development is recommended.
+corresponding Kubernetes 1.24 node image
+(kindest/node:v1.24.7@sha256:577c630ce8e509131eab1aea12c022190978dd2f745aac5eb1fe65c0807eb315).
+Using the same versions for local development is recommended.
 
 To run Janus tests, execute `cargo test`.
 
 [kind-release]: https://github.com/kubernetes-sigs/kind/releases/tag/v0.17.0
-[kind-node]: kindest/node:v1.24.7@sha256:577c630ce8e509131eab1aea12c022190978dd2f745aac5eb1fe65c0807eb315
 
 ### inotify limits
 
