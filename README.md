@@ -41,7 +41,7 @@ subtle incompatibilities between the two that will cause tests to fail.
 To build container images, run `docker buildx bake --load`. This will produce images
 tagged `janus_aggregator`, `janus_aggregation_job_creator`,
 `janus_aggregation_job_driver`, `janus_collection_job_driver`, `janus_cli`,
-`janus_interop_client`, `janus_interop_aggregator`, and
+`janus_db_migrator`, `janus_interop_client`, `janus_interop_aggregator`, and
 `janus_interop_collector` by default.
 
 Pre-built container images are available at
@@ -57,22 +57,23 @@ preceding minor versions.
 Tests require that [`docker`](https://www.docker.com) and
 [`kind`](https://kind.sigs.k8s.io) be installed on the machine running the tests
 and in the `PATH` of the test-runner's environment. The `docker` daemon must be
-running. CI tests currently use [`kind`
-0.17.0](https://github.com/kubernetes-sigs/kind/releases/tag/v0.17.0) and the
+running. CI tests currently use [`kind` 0.17.0][kind-release] and the
 corresponding Kubernetes 1.24 node image
 (kindest/node:v1.24.7@sha256:577c630ce8e509131eab1aea12c022190978dd2f745aac5eb1fe65c0807eb315).
 Using the same versions for local development is recommended.
 
 To run Janus tests, execute `cargo test`.
 
+[kind-release]: https://github.com/kubernetes-sigs/kind/releases/tag/v0.17.0
+
 ### inotify limits
 
 If you experience issues with tests using Kind on Linux, you may need to [adjust
-inotify
-sysctls](https://kind.sigs.k8s.io/docs/user/known-issues/#pod-errors-due-to-too-many-open-files).
-Both systemd and Kubernetes inside each Kind node make use of inotify. When
-combined with other services and desktop applications, they may exhaust per-user
-limits.
+inotify sysctls][inotify]. Both systemd and Kubernetes inside each Kind node
+make use of inotify. When combined with other services and desktop applications,
+they may exhaust per-user limits.
+
+[inotify]: https://kind.sigs.k8s.io/docs/user/known-issues/#pod-errors-due-to-too-many-open-files
 
 ## Deploying Janus
 
