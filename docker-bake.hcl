@@ -6,6 +6,10 @@ variable "VERSION" {
   default = "latest"
 }
 
+variable "SQLX_VERSION" {
+  default = "0.7.2"
+}
+
 variable "GITHUB_REF_NAME" {}
 
 variable "GITHUB_BASE_REF" {}
@@ -21,6 +25,7 @@ group "janus" {
     "janus_aggregation_job_driver",
     "janus_collection_job_driver",
     "janus_cli",
+    "janus_db_migrator",
   ]
 }
 
@@ -43,6 +48,7 @@ group "janus_release" {
     "janus_aggregation_job_driver_release",
     "janus_collection_job_driver_release",
     "janus_cli_release",
+    "janus_db_migrator_release",
   ]
 }
 
@@ -164,6 +170,28 @@ target "janus_cli_release" {
   tags = [
     "us-west2-docker.pkg.dev/janus-artifacts/janus/janus_cli:${VERSION}",
     "us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_cli:${VERSION}",
+  ]
+}
+
+target "janus_db_migrator" {
+  args = {
+    GIT_REVISION = "${GIT_REVISION}"
+    SQLX_VERSION = "${SQLX_VERSION}"
+  }
+  dockerfile = "Dockerfile.sqlx"
+  cache-from = [
+    "type=gha,scope=main-janus",
+    "type=gha,scope=${GITHUB_BASE_REF}-janus",
+    "type=gha,scope=${GITHUB_REF_NAME}-janus",
+  ]
+  tags = ["janus_db_migrator:${VERSION}"]
+}
+
+target "janus_db_migrator_release" {
+  inherits = ["janus_db_migrator"]
+  tags = [
+    "us-west2-docker.pkg.dev/janus-artifacts/janus/janus_db_migrator:${VERSION}",
+    "us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_db_migrator:${VERSION}",
   ]
 }
 

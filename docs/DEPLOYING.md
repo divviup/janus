@@ -119,6 +119,10 @@ using the `--source` argument to point to `janus/db` and providing database
 connection information in any of the ways supported by `sqlx` (see its
 documentation).
 
+Note that migrations _must_ be applied using `sqlx` as Janus will fail to start
+if it cannot locate a `_sqlx_migrations` table to determine whether it supports
+the current schema version.
+
 For simple or experimental deployments where the complexity of `sqlx` is not
 warranted, it is possible to create a single schema file by concatenating the
 `.up.sql` scripts, in order, and applying this schema to the database. When
@@ -127,7 +131,20 @@ configuration file. Note that such deployments will not easily be able to
 migrate to later versions of the schema, so this technique is likely not
 appropriate for deployments which need to retain data across deployments.
 
+Janus also provides a container image called `janus_db_migrator` that makes it
+easier to apply SQL migrations in many deployment environments.
+`janus_db_migrator` contains the `sqlx` binary as well as the migration scripts
+from the corresponding Janus version in the `/migrations` directory inside the
+container so that deployments do not have to fetch the migrations from somewhere
+else. The image's entrypoint simply invokes `sqlx` so that deployments can pass
+the appropriate database configuration and subcommands. See [`sqlx`][sqlx-cli]'s
+documentation for more on working with that tool.
+
+Pre-built `janus_db_migrator` images are available at
+[us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_db_migrator][migrator-images].
+
 [sqlx-cli]: https://crates.io/crates/sqlx-cli
+[migrator-images]: https://us-west2-docker.pkg.dev/divviup-artifacts-public/janus
 
 ### Datastore Keys
 
