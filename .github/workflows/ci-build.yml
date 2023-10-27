@@ -24,6 +24,7 @@ jobs:
     permissions:
       id-token: "write"
       contents: "read"
+    needs: janus_interop_docker # We rely on this populating our Docker cache backend
     env:
       CARGO_INCREMENTAL: 0
       CARGO_TERM_COLOR: always
@@ -58,13 +59,6 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         key: ${{ steps.os-version.outputs.release }}
-    - name: Pre-build embedded container images
-      uses: docker/bake-action@v4.0.0
-      with:
-        files: docker-bake.hcl
-        workdir: .
-        targets: interop_binaries_small
-        load: true
     - name: Expose GitHub Runtime
       uses: crazy-max/ghaction-github-runtime@v3
     - name: Build minimal janus_messages
@@ -73,7 +67,7 @@ jobs:
       run: cargo build --profile ci --package janus_core
     # Note: keep Build & Test steps consecutive, and match flags other than `--no-run`.
     - name: Build
-      run: cargo test --profile ci --no-run --locked --all-targets
+      run: cargo test --profile ci --locked --all-targets --no-run
     - name: Test
       id: test
       env:
@@ -82,9 +76,20 @@ jobs:
       run: cargo test --profile ci --locked --all-targets
       # Continue on error so we can upload logs
       continue-on-error: true
+    - name: Build (Docker-specific tests)
+      # This matches the `cargo test` command invoked by `cargo xtask test-docker`, except for `--no-run`.
+      run: cargo test --profile ci --locked --package=janus_interop_binaries --package=janus_integration_tests --features=testcontainer --no-run
+    - name: Test (Docker)
+      id: test-docker
+      env:
+        JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
+        DIVVIUP_TS_INTEROP_CONTAINER: ${{ steps.default-input-values.outputs.divviup_ts_interop_container }}
+      run: cargo xtask test-docker --profile=ci --locked
+      # Continue on error so we can upload logs
+      continue-on-error: true
     - name: Upload container logs
       # Only get logs on test failure
-      if: steps.test.outcome == 'failure'
+      if: steps.test.outcome == 'failure' || steps.test-docker.outcome == 'failure'
       uses: actions/upload-artifact@v3
       with:
         name: container-logs
@@ -93,7 +98,7 @@ jobs:
         if-no-files-found: ignore
     # Force overall job to fail if tests fail
     - name: test status
-      if: steps.test.outcome == 'failure'
+      if: steps.test.outcome == 'failure' || steps.test-docker.outcome == 'failure'
       run: exit 1
   
   janus_lints:
@@ -169,4 +174,4 @@ jobs:
       with:
         files: docker-bake.hcl
         workdir: .
-        targets: interop_binaries
+        targets: interop_binaries_small

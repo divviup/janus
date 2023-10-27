@@ -79,7 +79,8 @@ corresponding Kubernetes 1.24 node image
 (kindest/node:v1.24.7@sha256:577c630ce8e509131eab1aea12c022190978dd2f745aac5eb1fe65c0807eb315).
 Using the same versions for local development is recommended.
 
-To run Janus tests, execute `cargo test`.
+To run Janus tests, execute `cargo test`. To run tests on Docker images, execute
+`cargo xtask test-docker`.
 
 [kind-release]: https://github.com/kubernetes-sigs/kind/releases/tag/v0.17.0
 

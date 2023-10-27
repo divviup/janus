@@ -1,5 +1,5 @@
 [package]
-name = "janus_build_script_utils"
+name = "xtask"
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
@@ -9,4 +9,8 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-zstd = { version = "0.13" }
+anyhow.workspace = true
+clap = { version = "4.4.6", features = ["derive"] }
+serde.workspace = true
+serde_json.workspace = true
+tempfile = "3.8.0"

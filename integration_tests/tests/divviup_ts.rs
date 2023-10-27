@@ -1,3 +1,4 @@
+#![cfg(feature = "testcontainer")]
 //! These tests check interoperation between the divviup-ts client and Janus aggregators.
 
 use common::{submit_measurements_and_verify_aggregate, test_task_builder};

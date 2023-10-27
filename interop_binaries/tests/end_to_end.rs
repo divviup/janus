@@ -1,3 +1,5 @@
+#![cfg(feature = "testcontainer")]
+
 use backoff::{backoff::Backoff, ExponentialBackoffBuilder};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use futures::future::join_all;

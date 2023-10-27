@@ -10,6 +10,7 @@ version.workspace = true
 
 [features]
 in-cluster = ["dep:k8s-openapi", "dep:kube"]
+testcontainer = ["janus_interop_binaries/testcontainer"]
 
 [dependencies]
 anyhow.workspace = true
@@ -25,7 +26,7 @@ janus_aggregator_core = { workspace = true, features = ["test-util"] }
 janus_client.workspace = true
 janus_collector.workspace = true
 janus_core = { workspace = true, features = ["test-util"] }
-janus_interop_binaries = { workspace = true, features = ["testcontainer"] }
+janus_interop_binaries = { workspace = true, features = ["test-util"] }
 janus_messages.workspace = true
 k8s-openapi = { workspace = true, optional = true }
 kube = { workspace = true, optional = true }

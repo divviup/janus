@@ -2010,13 +2010,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "janus_build_script_utils"
-version = "0.6.1"
-dependencies = [
- "zstd",
-]
-
-[[package]]
 name = "janus_client"
 version = "0.6.1"
 dependencies = [
@@ -2156,7 +2149,6 @@ dependencies = [
  "hex",
  "janus_aggregator",
  "janus_aggregator_core",
- "janus_build_script_utils",
  "janus_client",
  "janus_collector",
  "janus_core",
@@ -5493,6 +5485,17 @@ dependencies = [
  "curve25519-dalek",
  "rand_core 0.6.4",
  "zeroize",
+]
+
+[[package]]
+name = "xtask"
+version = "0.6.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

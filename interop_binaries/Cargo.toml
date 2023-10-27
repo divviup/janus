@@ -16,10 +16,7 @@ test-util = [
     "dep:regex",
     "dep:zstd",
 ]
-testcontainer = [
-    "dep:janus_build_script_utils",
-    "test-util",
-]
+testcontainer = ["test-util"]
 
 [dependencies]
 anyhow.workspace = true
@@ -59,9 +56,6 @@ url = { version = "2.4.1", features = ["serde"] }
 zstd = { version = "0.13", optional = true }
 
 [dev-dependencies]
-janus_interop_binaries = { path = ".", features = ["fpvec_bounded_l2", "testcontainer", "test-util"] }
+janus_interop_binaries = { path = ".", features = ["fpvec_bounded_l2", "test-util"] }
 janus_core = { workspace = true, features = ["test-util", "fpvec_bounded_l2"] }
 reqwest = { version = "0.11.22", default-features = false, features = ["json"] }
-
-[build-dependencies]
-janus_build_script_utils = { workspace = true, optional = true }

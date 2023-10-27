@@ -24,6 +24,7 @@ use url::Url;
 
 /// Returns a tuple of [`TaskParameters`] and a task builder. This is suitable for test aggregators
 /// running in virtual networks (a Docker network or a Kind cluster).
+#[allow(unused)] // TODO(#1795): this will be unneccessary after unifying integration tests
 pub fn test_task_builder(
     vdaf: VdafInstance,
     query_type: QueryType,
@@ -67,7 +68,7 @@ pub fn test_task_builder(
 /// Returns a tuple of [`TaskParameters`] and a task builder. This is suitable for test aggregators
 /// running on the host. Note that the task builder must be updated with the helper's endpoint
 /// before passing task parameters to the leader.
-#[allow(unused)]
+#[allow(unused)] // TODO(#1795): this will be unneccessary after unifying integration tests
 pub fn test_task_builder_host(
     vdaf: VdafInstance,
     query_type: QueryType,
