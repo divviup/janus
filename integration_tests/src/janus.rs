@@ -139,6 +139,7 @@ impl JanusInProcess {
                 url: database_url,
                 connection_pool_timeouts_secs: 60,
                 check_schema_version: false,
+                tls_trust_store_path: None,
             },
             logging_config,
             metrics_config: MetricsConfiguration { exporter: None },

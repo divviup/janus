@@ -6,6 +6,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     fmt::Debug,
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::PathBuf,
 };
 use url::Url;
 
@@ -62,16 +63,21 @@ pub struct DbConfig {
     /// URL at which to connect to the database.
     #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
     pub url: Url,
+
     /// Timeout in seconds to apply when creating, waiting for, or recycling
     /// connection pool objects. This value will be used to construct a
     /// `deadpool_postgres::Timeouts` value.
     #[serde(default = "DbConfig::default_connection_pool_timeout")]
     pub connection_pool_timeouts_secs: u64,
+
     /// If false, the program will not check whether the database's current
     /// schema version is supported.
     #[serde(default = "DbConfig::default_check_schema_version")]
     pub check_schema_version: bool,
-    // TODO(#231): add option for connecting to database over TLS, if necessary
+
+    /// Path to a PEM file with root certificates to trust for TLS database connections.
+    #[serde(default)]
+    pub tls_trust_store_path: Option<PathBuf>,
 }
 
 impl DbConfig {
@@ -160,6 +166,7 @@ pub mod test_util {
             url: Url::parse("postgres://postgres:postgres@localhost:5432/postgres").unwrap(),
             connection_pool_timeouts_secs: DbConfig::default_connection_pool_timeout(),
             check_schema_version: DbConfig::default_check_schema_version(),
+            tls_trust_store_path: None,
         }
     }
 
