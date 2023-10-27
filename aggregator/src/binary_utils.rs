@@ -663,7 +663,7 @@ mod tests {
                 .unwrap(),
             connection_pool_timeouts_secs: 5,
             check_schema_version: false,
-            tls_trust_store_path: Some("tests/tls_files/rootCA.pem".to_string()),
+            tls_trust_store_path: Some("tests/tls_files/rootCA.pem".into()),
         };
         let pool = database_pool(&db_config, None).await.unwrap();
         let conn = pool.get().await.unwrap();

@@ -6,6 +6,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     fmt::Debug,
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::PathBuf,
 };
 use url::Url;
 
@@ -76,7 +77,7 @@ pub struct DbConfig {
 
     /// Path to a PEM file with root certificates to trust for TLS database connections.
     #[serde(default)]
-    pub tls_trust_store_path: Option<String>,
+    pub tls_trust_store_path: Option<PathBuf>,
 }
 
 impl DbConfig {
