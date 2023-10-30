@@ -1401,15 +1401,6 @@ checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
 
 [[package]]
 name = "hashbrown"
-version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43a3c133739dddd0d2990f9a4bdf8eb4b21ef50e4851ca85ab661199821d510e"
-dependencies = [
- "ahash",
-]
-
-[[package]]
-name = "hashbrown"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c6201b9ff9fd90a5a3bac2e56a830d0caa509576f0e503818ee82c181b3437a"
@@ -2345,15 +2336,9 @@ dependencies = [
 
 [[package]]
 name = "memchr"
-version = "2.6.3"
+version = "2.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f232d6ef707e1956a43342693d2a31e72989554d58299d7a88738cc95b0d35c"
-
-[[package]]
-name = "memmem"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a64a92489e2744ce060c349162be1c5f33c6969234104dbd99ddb5feb08b8c15"
+checksum = "f665ee40bc4a3c5590afb1e9677db74a508659dfd71e126420da8274909a0167"
 
 [[package]]
 name = "memoffset"
@@ -4645,21 +4630,21 @@ dependencies = [
 
 [[package]]
 name = "trillium"
-version = "0.2.9"
+version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f06392b9c819adcd9416b88d26244603e73ca84d40b191e7a751524b30bb3a9"
+checksum = "6a924e0aeb1b4e0cb844cd57d9a8b81bea9cba1a0bdb323bd753920149089fe2"
 dependencies = [
  "async-trait",
- "futures-lite 1.13.0",
+ "futures-lite 2.0.0",
  "log",
  "trillium-http",
 ]
 
 [[package]]
 name = "trillium-api"
-version = "0.2.0-rc.4"
+version = "0.2.0-rc.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09858200af96cce5cb8c5353df2ed6f5048b62856b35c733af4eecae8479211c"
+checksum = "fcba1c3eea6f5d3b7cbe56fdf059ff5ecf1f4707770140094a3692c8b4a7891a"
 dependencies = [
  "log",
  "mime",
@@ -4692,17 +4677,17 @@ dependencies = [
 
 [[package]]
 name = "trillium-http"
-version = "0.3.2"
+version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "150f7908e705f7fe806735b23a7a81c342ff0c1cc29faee39bd7a16e30e3aab0"
+checksum = "29d26d4a07ecbc874a465d9f0c97a795ca7170160a4c78d9b3442c25238b92f0"
 dependencies = [
  "encoding_rs",
- "futures-lite 1.13.0",
- "hashbrown 0.13.2",
+ "futures-lite 2.0.0",
+ "hashbrown 0.14.0",
  "httparse",
  "httpdate",
  "log",
- "memmem",
+ "memchr",
  "mime",
  "smallvec",
  "smartcow",
