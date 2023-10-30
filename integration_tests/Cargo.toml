@@ -16,7 +16,7 @@ anyhow.workspace = true
 backoff = { version = "0.4", features = ["tokio"] }
 base64 = "0.21.5"
 derivative.workspace = true
-futures = "0.3.28"
+futures = "0.3.29"
 hex = "0.4"
 http = "0.2"
 janus_aggregator = { workspace = true, features = ["test-util"] }
