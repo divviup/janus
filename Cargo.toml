@@ -45,10 +45,10 @@ k8s-openapi = { version = "0.18.0", features = ["v1_24"] }  # keep this version 
 kube = { version = "0.82.2", default-features = false, features = ["client", "rustls-tls"] }
 opentelemetry = { version = "0.20", features = ["metrics"] }
 prio = { version = "0.15.3", features = ["multithreaded", "experimental"] }
-serde = { version = "1.0.189", features = ["derive"] }
-serde_json = "1.0.106"
+serde = { version = "1.0.190", features = ["derive"] }
+serde_json = "1.0.108"
 serde_test = "1.0.175"
-serde_yaml = "0.9.25"
+serde_yaml = "0.9.27"
 rstest = "0.17.0"
 testcontainers = "0.15.0"
 thiserror = "1.0"
