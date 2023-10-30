@@ -187,7 +187,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81953c529336010edd6d8e358f886d9581267795c61b19475b71314bffa46d35"
 dependencies = [
  "concurrent-queue",
- "event-listener",
+ "event-listener 2.5.3",
  "futures-core",
 ]
 
@@ -1062,6 +1062,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0206175f82b8d6bf6652ff7d71a1e27fd2e4efde587fd368662814d6ec1d9ce0"
 
 [[package]]
+name = "event-listener"
+version = "3.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01cec0252c2afff729ee6f00e903d479fba81784c8e2bd77447673471fdfaea1"
+dependencies = [
+ "concurrent-queue",
+ "parking",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1265,6 +1276,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49a9d51ce47660b1e808d3c990b4709f2f415d928835a17dfd16991515c46bce"
 dependencies = [
  "fastrand 1.9.0",
+ "futures-core",
+ "futures-io",
+ "memchr",
+ "parking",
+ "pin-project-lite",
+ "waker-fn",
+]
+
+[[package]]
+name = "futures-lite"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c1155db57329dca6d018b61e76b1488ce9a2e5e44028cac420a5898f4fcef63"
+dependencies = [
+ "fastrand 2.0.0",
  "futures-core",
  "futures-io",
  "memchr",
@@ -2842,9 +2868,9 @@ dependencies = [
 
 [[package]]
 name = "pin-project-lite"
-version = "0.2.12"
+version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12cc1b0bf1727a77a54b6654e7b5f1af8604923edc8b81885f8ec92f9e3f0a05"
+checksum = "8afb450f006bf6385ca15ef45d71d2288452bc3683ce2e2cacc0d18e4be60b58"
 
 [[package]]
 name = "pin-utils"
@@ -3817,7 +3843,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "38aabbeafa6f6dead8cebf246fe9fae1f9215c8d29b3a69f93bd62a9e4a3dcd6"
 dependencies = [
- "event-listener",
+ "event-listener 2.5.3",
 ]
 
 [[package]]
@@ -3975,7 +4001,7 @@ dependencies = [
  "crossbeam-queue",
  "dotenvy",
  "either",
- "event-listener",
+ "event-listener 2.5.3",
  "futures-channel",
  "futures-core",
  "futures-intrusive",
@@ -4154,13 +4180,13 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stopper"
-version = "0.2.0"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4573bf2456e356934de15c7151d1c9fc8873e8866a7c2b5e0bb20f8244bd0073"
+checksum = "c3cbaa496909aa4ff7ff606b9d7fe90bc8b619a1ece49c25bd5fb4c93bb466fb"
 dependencies = [
- "futures-lite",
- "pin-project",
- "waker-set",
+ "event-listener 3.0.1",
+ "futures-lite 2.0.0",
+ "pin-project-lite",
 ]
 
 [[package]]
@@ -4731,7 +4757,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f06392b9c819adcd9416b88d26244603e73ca84d40b191e7a751524b30bb3a9"
 dependencies = [
  "async-trait",
- "futures-lite",
+ "futures-lite 1.13.0",
  "log",
  "trillium-http",
 ]
@@ -4778,7 +4804,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "150f7908e705f7fe806735b23a7a81c342ff0c1cc29faee39bd7a16e30e3aab0"
 dependencies = [
  "encoding_rs",
- "futures-lite",
+ "futures-lite 1.13.0",
  "hashbrown 0.13.2",
  "httparse",
  "httpdate",
@@ -4845,7 +4871,7 @@ checksum = "004466f0e82f7467463d15b42f3f4c7a576895f3dadb828a858e838e7ae68237"
 dependencies = [
  "async-trait",
  "async_cell",
- "futures-lite",
+ "futures-lite 1.13.0",
  "log",
  "rlimit",
  "trillium",
@@ -4863,7 +4889,7 @@ dependencies = [
  "async-channel",
  "async-dup",
  "cfg-if",
- "futures-lite",
+ "futures-lite 1.13.0",
  "portpicker",
  "trillium",
  "trillium-http",
