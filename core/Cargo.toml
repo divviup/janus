@@ -53,7 +53,7 @@ ring = "0.17.5"
 serde.workspace = true
 serde_json = { workspace = true, optional = true }
 serde_yaml.workspace = true
-stopper = { version = "0.2.0", optional = true }
+stopper = { version = "0.2.2", optional = true }
 tempfile = { version = "3", optional = true }
 testcontainers = { workspace = true, optional = true }
 thiserror.workspace = true
