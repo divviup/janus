@@ -1811,7 +1811,7 @@ dependencies = [
  "tonic 0.9.2",
  "tracing",
  "tracing-chrome",
- "tracing-log",
+ "tracing-log 0.2.0",
  "tracing-opentelemetry",
  "tracing-stackdriver",
  "tracing-subscriber",
@@ -1907,7 +1907,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tracing",
- "tracing-log",
+ "tracing-log 0.2.0",
  "trillium",
  "trillium-macros",
  "trillium-router",
@@ -1940,7 +1940,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
- "tracing-log",
+ "tracing-log 0.2.0",
  "tracing-subscriber",
  "url",
 ]
@@ -2005,7 +2005,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
- "tracing-log",
+ "tracing-log 0.2.0",
  "tracing-subscriber",
  "trillium",
  "url",
@@ -2075,7 +2075,7 @@ dependencies = [
  "testcontainers",
  "tokio",
  "tracing",
- "tracing-log",
+ "tracing-log 0.2.0",
  "tracing-subscriber",
  "trillium",
  "trillium-api",
@@ -2122,7 +2122,7 @@ dependencies = [
  "serde_yaml",
  "tokio",
  "tracing",
- "tracing-log",
+ "tracing-log 0.2.0",
  "tracing-subscriber",
  "trycmd",
  "url",
@@ -4536,6 +4536,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-log"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee855f1f400bd0e5c02d150ae5de3840039a3f54b025156404e34c23c03f47c3"
+dependencies = [
+ "log",
+ "once_cell",
+ "tracing-core",
+]
+
+[[package]]
 name = "tracing-opentelemetry"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4547,7 +4558,7 @@ dependencies = [
  "smallvec",
  "tracing",
  "tracing-core",
- "tracing-log",
+ "tracing-log 0.1.4",
  "tracing-subscriber",
 ]
 
@@ -4593,7 +4604,7 @@ dependencies = [
  "thread_local",
  "tracing",
  "tracing-core",
- "tracing-log",
+ "tracing-log 0.1.4",
  "tracing-serde",
 ]
 
