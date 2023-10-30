@@ -23,7 +23,7 @@ janus_messages.workspace = true
 prio.workspace = true
 reqwest = { version = "0.11.22", default-features = false, features = ["rustls-tls", "json"] }
 serde_json.workspace = true
-serde_yaml = "0.9.25"
+serde_yaml = "0.9.27"
 tokio.workspace = true
 tracing = "0.1.40"
 tracing-log = "0.2.0"
