@@ -33,7 +33,7 @@ url = { version = "2.4.1", features = ["serde"] }
 
 [dev-dependencies]
 assert_matches.workspace = true
-futures = "0.3.28"
+futures = "0.3.29"
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
 rstest.workspace = true
 tokio.workspace = true
