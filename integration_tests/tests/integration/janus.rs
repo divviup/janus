@@ -1,6 +1,6 @@
 #[cfg(feature = "testcontainer")]
-use common::test_task_builder;
-use common::{submit_measurements_and_verify_aggregate, test_task_builder_host};
+use crate::common::test_task_builder;
+use crate::common::{submit_measurements_and_verify_aggregate, test_task_builder_host};
 use janus_aggregator_core::task::QueryType;
 #[cfg(feature = "testcontainer")]
 use janus_core::test_util::testcontainers::container_client;
@@ -13,8 +13,6 @@ use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
 #[cfg(feature = "testcontainer")]
 use testcontainers::clients::Cli;
-
-mod common;
 
 /// A pair of Janus instances, running in containers, against which integration tests may be run.
 #[cfg(feature = "testcontainer")]

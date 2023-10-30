@@ -1,5 +1,6 @@
 #![cfg(feature = "in-cluster")]
-use common::{submit_measurements_and_verify_aggregate, test_task_builder};
+
+use crate::common::{submit_measurements_and_verify_aggregate, test_task_builder};
 use divviup_client::{
     Client, DivviupClient, Histogram, HpkeConfig, NewAggregator, NewSharedAggregator, NewTask, Vdaf,
 };
@@ -17,8 +18,6 @@ use janus_messages::TaskId;
 use std::{env, str::FromStr};
 use trillium_tokio::ClientConfig;
 use url::Url;
-
-mod common;
 
 struct InClusterJanusPair {
     /// Task parameters needed by the client and collector, for the task configured in both Janus

@@ -1,4 +1,4 @@
-use common::{submit_measurements_and_verify_aggregate, test_task_builder};
+use crate::common::{submit_measurements_and_verify_aggregate, test_task_builder};
 use janus_aggregator_core::task::QueryType;
 use janus_core::{
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
@@ -11,8 +11,6 @@ use janus_integration_tests::{
 };
 use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
-
-mod common;
 
 // This test places Daphne in the leader role & Janus in the helper role.
 #[tokio::test(flavor = "multi_thread")]
