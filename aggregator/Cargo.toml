@@ -109,7 +109,7 @@ janus_aggregator = { path = ".", features = ["fpvec_bounded_l2", "test-util"] }
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
 mockito = "1.2.0"
 rstest.workspace = true
-tempfile = "3.8.0"
+tempfile = "3.8.1"
 tokio = { version = "1", features = ["test-util"] } # ensure this remains compatible with the non-dev dependency
 trillium-testing.workspace = true
 trycmd = "0.14.19"
