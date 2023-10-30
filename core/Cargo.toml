@@ -38,7 +38,7 @@ base64.workspace = true
 chrono = { workspace = true, features = ["clock"] }
 derivative.workspace = true
 fixed = { version = "1.24", optional = true }
-futures = "0.3.28"
+futures = "0.3.29"
 hex = "0.4"
 hpke-dispatch = { version = "0.5.1", features = ["serde"] }
 http = "0.2.9"
