@@ -54,7 +54,7 @@ testcontainers = "0.15.0"
 thiserror = "1.0"
 tokio = { version = "1.33", features = ["full", "tracing"] }
 trillium = "0.2.11"
-trillium-api = { version = "0.2.0-rc.4", default-features = false }
+trillium-api = { version = "0.2.0-rc.7", default-features = false }
 trillium-caching-headers = "0.2.1"
 trillium-head = "0.2.0"
 trillium-opentelemetry = "0.3.0"
