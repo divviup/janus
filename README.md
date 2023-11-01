@@ -26,7 +26,7 @@ branch.
 | `release/0.2` | [`draft-ietf-ppm-dap-02`][dap-02] | Yes | Unmaintained as of July 13, 2023 |
 | `release/0.3` | [`draft-ietf-ppm-dap-03`][dap-03] | Yes | Unmaintained as of February 6, 2023 |
 | `release/0.4` | [`draft-ietf-ppm-dap-04`][dap-04] | Yes | Unmaintained as of May 24, 2023 |
-| `release/0.subscriber-01` | [`draft-ietf-ppm-dap-02`][dap-02] plus extensions | No | Supported |
+| `release/0.subscriber-01` | [`draft-ietf-ppm-dap-02`][dap-02] plus extensions | No | Unmaintained as of November 1, 2023 |
 | `release/0.5` | [`draft-ietf-ppm-dap-04`][dap-04] | Yes | Supported |
 | `main` | [`draft-ietf-ppm-dap-07`][dap-07] | Yes | Supported |
 
