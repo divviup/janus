@@ -56,10 +56,10 @@ an example using this with `curl`:
 $ HEALTH_CHECK_LISTEN_ADDRESS=http://localhost:8000
 
 $ curl $HEALTH_CHECK_LISTEN_ADDRESS/traceconfigz
-{"filter":"info"}
+info
 
-$ curl $HEALTH_CHECK_LISTEN_ADDRESS/traceconfigz -X PUT -d '{"filter":"debug"}'
-{"filter":"debug"}
+$ curl $HEALTH_CHECK_LISTEN_ADDRESS/traceconfigz -X PUT -d 'debug'
+debug
 ```
 
 The `filter` field corresponds exactly to the [EnvFilter] format.
