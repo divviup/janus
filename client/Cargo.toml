@@ -29,5 +29,5 @@ assert_matches.workspace = true
 hex-literal = "0.4.1"
 janus_core = { workspace = true, features = ["test-util"]}
 mockito = "1.2.0"
-tracing-log = "0.1.4"
+tracing-log = "0.2.0"
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"] }

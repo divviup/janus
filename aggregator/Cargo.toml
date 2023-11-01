@@ -86,7 +86,7 @@ tokio-postgres-rustls = "0.10.0"
 tonic = { version = "0.9.2", optional = true, features = ["tls", "tls-webpki-roots"] }  # keep this version in sync with what opentelemetry-otlp uses
 tracing = "0.1.40"
 tracing-chrome = "0.7.1"
-tracing-log = "0.1.4"
+tracing-log = "0.2.0"
 tracing-opentelemetry = { version = "0.21", optional = true }
 tracing-stackdriver = "0.8.0"
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt", "json"] }

@@ -26,7 +26,7 @@ serde_json.workspace = true
 serde_yaml.workspace = true
 tokio.workspace = true
 tracing = "0.1.40"
-tracing-log = "0.1.4"
+tracing-log = "0.2.0"
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"] }
 url = "2.4.1"
 
