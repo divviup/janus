@@ -1110,19 +1110,7 @@ macro_rules! vdaf_ops_dispatch {
 }
 
 impl VdafOps {
-    #[tracing::instrument(
-        skip(
-            self,
-            clock,
-            upload_decrypt_failure_counter,
-            upload_decode_failure_counter,
-            task,
-            report_writer,
-            report
-        ),
-        fields(task_id = ?task.id()),
-        err
-    )]
+    #[tracing::instrument(skip_all, fields(task_id = ?task.id()), err)]
     async fn handle_upload<C: Clock>(
         &self,
         clock: &C,
@@ -1170,7 +1158,7 @@ impl VdafOps {
     /// Implements the `/aggregate` endpoint for initialization requests for the helper, described
     /// in §4.4.4.1 & §4.4.4.2 of draft-gpew-priv-ppm.
     #[tracing::instrument(
-        skip(self, datastore, aggregate_step_failure_counter, task, req_bytes),
+        skip(self, datastore, global_hpke_keypairs, aggregate_step_failure_counter, task, req_bytes),
         fields(task_id = ?task.id()),
         err
     )]
