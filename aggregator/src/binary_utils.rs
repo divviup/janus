@@ -19,7 +19,6 @@ use janus_core::time::Clock;
 use opentelemetry::metrics::Meter;
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use rustls::RootCertStore;
-use serde::{Deserialize, Serialize};
 use std::{
     fmt::{self, Debug, Formatter},
     fs::{self, File},
@@ -37,7 +36,7 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 use tracing::{debug, info};
 use tracing_subscriber::EnvFilter;
 use trillium::{Handler, Headers, Info, Init, Status};
-use trillium_api::{api, Json, State};
+use trillium_api::{api, State};
 use trillium_head::Head;
 use trillium_router::Router;
 use trillium_tokio::Stopper;
@@ -391,15 +390,13 @@ fn zpages_handler(trace_reload_handle: TraceReloadHandle) -> impl Handler {
 async fn get_traceconfigz(
     conn: &mut trillium::Conn,
     State(trace_reload_handle): State<Arc<TraceReloadHandle>>,
-) -> Result<Json<TraceconfigzBody>, Status> {
-    Ok(Json(TraceconfigzBody {
-        filter: trace_reload_handle
-            .with_current(|trace_filter| trace_filter.to_string())
-            .map_err(|err| {
-                conn.set_body(format!("failed to get current filter: {err}"));
-                Status::InternalServerError
-            })?,
-    }))
+) -> Result<String, Status> {
+    trace_reload_handle
+        .with_current(|trace_filter| trace_filter.to_string())
+        .map_err(|err| {
+            conn.set_body(format!("failed to get current filter: {err}"));
+            Status::InternalServerError
+        })
 }
 
 /// Allows modifying the runtime tracing filter. Accepts a request with a body corresponding to
@@ -407,12 +404,9 @@ async fn get_traceconfigz(
 /// See [`EnvFilter::try_new`] for details.
 async fn put_traceconfigz(
     conn: &mut trillium::Conn,
-    (State(trace_reload_handle), Json(req)): (
-        State<Arc<TraceReloadHandle>>,
-        Json<TraceconfigzBody>,
-    ),
-) -> Result<Json<TraceconfigzBody>, Status> {
-    let new_filter = EnvFilter::try_new(req.filter).map_err(|err| {
+    (State(trace_reload_handle), request): (State<Arc<TraceReloadHandle>>, String),
+) -> Result<String, Status> {
+    let new_filter = EnvFilter::try_new(request).map_err(|err| {
         conn.set_body(format!("invalid filter: {err}"));
         Status::BadRequest
     })?;
@@ -420,22 +414,12 @@ async fn put_traceconfigz(
         conn.set_body(format!("failed to update filter: {err}"));
         Status::InternalServerError
     })?;
-    Ok(Json(TraceconfigzBody {
-        filter: trace_reload_handle
-            .with_current(|trace_filter| trace_filter.to_string())
-            .map_err(|err| {
-                conn.set_body(format!("failed to get current filter: {err}"));
-                Status::InternalServerError
-            })?,
-    }))
-}
-
-/// The response and request body used by /traceconfigz for reporting and updating its configuration.
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct TraceconfigzBody {
-    /// The directive that filters spans and events. This field follows the [`EnvFilter`][1] syntax.
-    /// [1]: https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives
-    filter: String,
+    trace_reload_handle
+        .with_current(|trace_filter| trace_filter.to_string())
+        .map_err(|err| {
+            conn.set_body(format!("failed to get current filter: {err}"));
+            Status::InternalServerError
+        })
 }
 
 /// Register a signal handler for SIGTERM, and stop the [`Stopper`] when a SIGTERM signal is
@@ -500,7 +484,7 @@ pub async fn setup_server(
 mod tests {
     use crate::{
         aggregator::http_handlers::test_util::take_response_body,
-        binary_utils::{database_pool, zpages_handler, CommonBinaryOptions, TraceconfigzBody},
+        binary_utils::{database_pool, zpages_handler, CommonBinaryOptions},
         config::DbConfig,
     };
     use clap::CommandFactory;
@@ -536,36 +520,24 @@ mod tests {
         let mut test_conn = get("/traceconfigz").run_async(&handler).await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_eq!(
-            serde_json::from_slice::<TraceconfigzBody>(&take_response_body(&mut test_conn).await)
-                .unwrap(),
-            TraceconfigzBody {
-                filter: "info".to_string()
-            }
+            String::from_utf8_lossy(&take_response_body(&mut test_conn).await),
+            "info",
         );
 
-        let req = TraceconfigzBody {
-            filter: "debug".to_string(),
-        };
         let mut test_conn = put("/traceconfigz")
-            .with_request_body(serde_json::to_vec(&req).unwrap())
+            .with_request_body("debug")
             .run_async(&handler)
             .await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
         assert_eq!(
-            serde_json::from_slice::<TraceconfigzBody>(&take_response_body(&mut test_conn).await)
-                .unwrap(),
-            req,
+            String::from_utf8_lossy(&take_response_body(&mut test_conn).await),
+            "debug",
         );
 
-        let req = TraceconfigzBody {
-            filter: "!(#*$#@)".to_string(),
-        };
-        let mut test_conn = dbg!(
-            put("/traceconfigz")
-                .with_request_body(serde_json::to_vec(&req).unwrap())
-                .run_async(&handler)
-                .await
-        );
+        let mut test_conn = put("/traceconfigz")
+            .with_request_body("!@($*$#)")
+            .run_async(&handler)
+            .await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
         assert!(
             String::from_utf8_lossy(&take_response_body(&mut test_conn).await)
@@ -586,11 +558,8 @@ mod tests {
                 .starts_with("failed to get current filter:")
         );
 
-        let req = TraceconfigzBody {
-            filter: "debug".to_string(),
-        };
         let mut test_conn = put("/traceconfigz")
-            .with_request_body(serde_json::to_vec(&req).unwrap())
+            .with_request_body("debug")
             .run_async(&handler)
             .await;
         assert_eq!(test_conn.status(), Some(Status::InternalServerError));
