@@ -692,7 +692,10 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
             assert_eq!(row.get::<_, Option<Vec<u8>>>("extensions"), None);
             assert_eq!(row.get::<_, Option<Vec<u8>>>("public_share"), None);
             assert_eq!(row.get::<_, Option<Vec<u8>>>("leader_input_share"), None);
-            assert_eq!(row.get::<_, Option<Vec<u8>>>("helper_encrypted_input_share"), None);
+            assert_eq!(
+                row.get::<_, Option<Vec<u8>>>("helper_encrypted_input_share"),
+                None
+            );
 
             Ok(())
         })
