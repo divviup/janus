@@ -3327,28 +3327,23 @@ mod tests {
         assert_eq!(task.id(), got_report.task_id());
         assert_eq!(report.metadata(), got_report.metadata());
 
-        // Report uploads are idempotent
+        // Report uploads are idempotent.
         aggregator
             .handle_upload(task.id(), &report.get_encoded())
             .await
             .unwrap();
 
-        // Reports may not be mutated
+        // Even if the report is modified, it is still reported as a duplicate.
         let mutated_report = create_report_custom(
             &leader_task,
             clock.now(),
             *report.metadata().id(),
             leader_task.current_hpke_key(),
         );
-        let error = aggregator
+        aggregator
             .handle_upload(task.id(), &mutated_report.get_encoded())
             .await
-            .unwrap_err();
-        assert_matches!(error.as_ref(), Error::ReportRejected(task_id, report_id, timestamp) => {
-            assert_eq!(task.id(), task_id);
-            assert_eq!(mutated_report.metadata().id(), report_id);
-            assert_eq!(mutated_report.metadata().time(), timestamp);
-        });
+            .unwrap();
     }
 
     #[tokio::test]

@@ -314,6 +314,13 @@ impl AggregationJobDriver {
         A::InputShare: PartialEq + Send + Sync,
         A::PublicShare: PartialEq + Send + Sync,
     {
+        // We currently scrub all reports included in an aggregation job as part of completing the
+        // first step. Once we support VDAFs which accept use an aggregation parameter &
+        // permit/require multiple aggregations per report, we will need a more complicated strategy
+        // where we only scrub a report as part of the _final_ aggregation over the report.
+        let report_ids_to_scrub = client_reports.keys().copied().collect();
+
+        // Only process non-failed report aggregations.
         let report_aggregations: Vec<_> = report_aggregations
             .into_iter()
             .filter(|report_aggregation| {
@@ -435,6 +442,7 @@ impl AggregationJobDriver {
             aggregation_job,
             &stepped_aggregations,
             report_aggregations_to_write,
+            report_ids_to_scrub,
             resp.prepare_resps(),
         )
         .await
@@ -493,8 +501,8 @@ impl AggregationJobDriver {
                     message,
                 ));
                 stepped_aggregations.push(SteppedAggregation {
-                    report_aggregation: report_aggregation.clone(),
-                    leader_state: prep_state.clone(),
+                    report_aggregation,
+                    leader_state: prep_state,
                 });
             }
         }
@@ -529,6 +537,7 @@ impl AggregationJobDriver {
             aggregation_job,
             &stepped_aggregations,
             report_aggregations_to_write,
+            Vec::new(), /* reports are only scrubbed on the initial step */
             resp.prepare_resps(),
         )
         .await
@@ -549,6 +558,7 @@ impl AggregationJobDriver {
         aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
         stepped_aggregations: &[SteppedAggregation<SEED_SIZE, A>],
         mut report_aggregations_to_write: Vec<ReportAggregation<SEED_SIZE, A>>,
+        report_ids_to_scrub: Vec<ReportId>,
         helper_prep_resps: &[PrepareResp],
     ) -> Result<()>
     where
@@ -702,18 +712,26 @@ impl AggregationJobDriver {
         )?;
         let aggregation_job_writer = Arc::new(aggregation_job_writer);
 
+        let report_ids_to_scrub = Arc::new(report_ids_to_scrub);
         let accumulator = Arc::new(accumulator);
         datastore
             .run_tx("step_aggregation_job_2", |tx| {
+                let task_id = *task.id();
                 let vdaf = Arc::clone(&vdaf);
                 let aggregation_job_writer = Arc::clone(&aggregation_job_writer);
                 let accumulator = Arc::clone(&accumulator);
+                let report_ids_to_scrub = Arc::clone(&report_ids_to_scrub);
                 let lease = Arc::clone(&lease);
 
                 Box::pin(async move {
-                    let (unwritable_ra_report_ids, unwritable_ba_report_ids, _) = try_join!(
+                    let (unwritable_ra_report_ids, unwritable_ba_report_ids, _, _) = try_join!(
                         aggregation_job_writer.write(tx, Arc::clone(&vdaf)),
                         accumulator.flush_to_datastore(tx, &vdaf),
+                        try_join_all(
+                            report_ids_to_scrub
+                                .iter()
+                                .map(|report_id| tx.scrub_client_report(&task_id, report_id))
+                        ),
                         tx.release_aggregation_job(&lease),
                     )?;
 

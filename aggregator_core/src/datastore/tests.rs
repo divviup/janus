@@ -597,36 +597,34 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
         ),
     );
 
-    // Write a report twice to prove it is idempotent
-    for _ in 0..2 {
-        ds.run_tx("test-put-client-report", |tx| {
-            let report = report.clone();
+    // Write the report, and then read it back.
+    ds.run_tx("test-put-client-report", |tx| {
+        let report = report.clone();
+        Box::pin(async move {
+            tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report)
+                .await
+        })
+    })
+    .await
+    .unwrap();
+
+    let retrieved_report = ds
+        .run_unnamed_tx(|tx| {
+            let task_id = *report.task_id();
             Box::pin(async move {
-                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report)
-                    .await
+                tx.get_client_report::<0, dummy_vdaf::Vdaf>(
+                    &dummy_vdaf::Vdaf::new(),
+                    &task_id,
+                    &report_id,
+                )
+                .await
             })
         })
         .await
+        .unwrap()
         .unwrap();
 
-        let retrieved_report = ds
-            .run_unnamed_tx(|tx| {
-                let task_id = *report.task_id();
-                Box::pin(async move {
-                    tx.get_client_report::<0, dummy_vdaf::Vdaf>(
-                        &dummy_vdaf::Vdaf::new(),
-                        &task_id,
-                        &report_id,
-                    )
-                    .await
-                })
-            })
-            .await
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(report, retrieved_report);
-    }
+    assert_eq!(report, retrieved_report);
 
     // Try to write a different report with the same ID, and verify we get the expected error.
     let result = ds
@@ -662,6 +660,40 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
         Box::pin(async move {
             tx.check_timestamp_columns("client_reports", "test-put-client-report", true)
                 .await;
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
+
+    // Scrub the report, and verify that the expected columns are NULL'ed out.
+    ds.run_unnamed_tx(|tx| {
+        let task_id = *report.task_id();
+
+        Box::pin(async move {
+            tx.scrub_client_report(&task_id, &report_id).await.unwrap();
+
+            let row = tx
+                .query_one(
+                    "SELECT
+                        client_reports.extensions,
+                        client_reports.public_share,
+                        client_reports.leader_input_share,
+                        client_reports.helper_encrypted_input_share
+                    FROM client_reports
+                    JOIN tasks ON tasks.id = client_reports.task_id
+                    WHERE tasks.task_id = $1
+                    AND client_reports.report_id = $2",
+                    &[&task_id.as_ref(), &report_id.as_ref()],
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(row.get::<_, Option<Vec<u8>>>("extensions"), None);
+            assert_eq!(row.get::<_, Option<Vec<u8>>>("public_share"), None);
+            assert_eq!(row.get::<_, Option<Vec<u8>>>("leader_input_share"), None);
+            assert_eq!(row.get::<_, Option<Vec<u8>>>("helper_encrypted_input_share"), None);
+
             Ok(())
         })
     })

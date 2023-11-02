@@ -218,18 +218,9 @@ where
             .put_client_report::<SEED_SIZE, A>(&self.vdaf, &self.report)
             .await
         {
-            Ok(()) => Ok(()),
-
-            // Reject reports whose report IDs have been seen before.
-            // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-4.3.2-16
-            Err(datastore::Error::MutationTargetAlreadyExists) => Err(datastore::Error::User(
-                Error::ReportRejected(
-                    *self.report.task_id(),
-                    *self.report.metadata().id(),
-                    *self.report.metadata().time(),
-                )
-                .into(),
-            )),
+            // If the report already existed in the datastore, assume it is a duplicate and return
+            // OK.
+            Ok(()) | Err(datastore::Error::MutationTargetAlreadyExists) => Ok(()),
 
             err => err,
         }
