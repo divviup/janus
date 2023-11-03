@@ -159,6 +159,54 @@ where
     pub fn helper_encrypted_input_share(&self) -> &HpkeCiphertext {
         &self.helper_encrypted_input_share
     }
+
+    #[cfg(feature = "test-util")]
+    pub fn eq_report(
+        &self,
+        vdaf: &A,
+        leader_hpke_keypair: &HpkeKeypair,
+        report: &janus_messages::Report,
+    ) -> bool
+    where
+        A::PublicShare: PartialEq,
+        A::InputShare: PartialEq,
+    {
+        use janus_core::hpke::{self, HpkeApplicationInfo, Label};
+        use janus_messages::{InputShareAad, PlaintextInputShare};
+        use prio::codec::{Decode, ParameterizedDecode};
+
+        // Decrypt/decode elements from the Report so that we can check them against the parsed
+        // values held by the LeaderStoredReport.
+        let public_share = A::PublicShare::get_decoded_with_param(vdaf, report.public_share())
+            .expect("couldn't parse Leader's PublicShare");
+
+        let encoded_leader_plaintext_input_share = hpke::open(
+            leader_hpke_keypair,
+            &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader),
+            report.leader_encrypted_input_share(),
+            &InputShareAad::new(
+                self.task_id,
+                report.metadata().clone(),
+                report.public_share().to_vec(),
+            )
+            .get_encoded(),
+        )
+        .expect("couldn't decrypt Leader's PlaintextInputShare");
+        let leader_plaintext_input_share =
+            PlaintextInputShare::get_decoded(&encoded_leader_plaintext_input_share)
+                .expect("couldn't decode Leader's PlaintextInputShare");
+        let leader_input_share = A::InputShare::get_decoded_with_param(
+            &(&vdaf, Role::Leader.index().unwrap()),
+            leader_plaintext_input_share.payload(),
+        )
+        .expect("couldn't decode Leader's InputShare");
+
+        // Check equality of all relevant fields.
+        self.metadata() == report.metadata()
+            && self.public_share() == &public_share
+            && self.leader_extensions() == leader_plaintext_input_share.extensions()
+            && self.leader_input_share() == &leader_input_share
+    }
 }
 
 impl<const SEED_SIZE: usize, A> PartialEq for LeaderStoredReport<SEED_SIZE, A>
