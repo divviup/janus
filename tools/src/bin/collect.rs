@@ -214,6 +214,7 @@ struct AuthenticationOptions {
         required = false,
         value_parser = StringValueParser::new().try_map(AuthenticationToken::new_dap_auth_token_from_string),
         env,
+        hide_env_values = true,
         help_heading = "Authorization",
         display_order = 0,
         conflicts_with = "authorization_bearer_token"
@@ -227,6 +228,7 @@ struct AuthenticationOptions {
         required = false,
         value_parser = StringValueParser::new().try_map(AuthenticationToken::new_bearer_token_from_string),
         env,
+        hide_env_values = true,
         help_heading = "Authorization",
         display_order = 1,
         conflicts_with = "dap_auth_token"
@@ -306,6 +308,7 @@ struct Options {
         long,
         value_parser = PrivateKeyValueParser::new(),
         env,
+        hide_env_values = true,
         help_heading = "DAP Task Parameters",
         display_order = 3,
         requires = "hpke_config",
