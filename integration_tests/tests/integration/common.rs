@@ -201,6 +201,22 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
                 Duration::from_seconds(2 * task_parameters.time_precision.as_seconds()),
             )
             .unwrap();
+
+            let collection = collect_generic(
+                &collector,
+                Query::new_time_interval(batch_interval),
+                &test_case.aggregation_parameter,
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                collection.report_count(),
+                u64::try_from(test_case.measurements.len()).unwrap()
+            );
+            assert_eq!(collection.aggregate_result(), &test_case.aggregate_result);
+
+            // Collect again to verify that collections can be repeated.
             let collection = collect_generic(
                 &collector,
                 Query::new_time_interval(batch_interval),
@@ -239,6 +255,22 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
                     }
                 }
             };
+
+            let batch_id = *collection.partial_batch_selector().batch_id();
+            assert_eq!(
+                collection.report_count(),
+                u64::try_from(test_case.measurements.len()).unwrap()
+            );
+            assert_eq!(collection.aggregate_result(), &test_case.aggregate_result);
+
+            // Collect again to verify that collections can be repeated.
+            let collection = collect_generic(
+                &collector,
+                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
+                &test_case.aggregation_parameter,
+            )
+            .await
+            .unwrap();
 
             assert_eq!(
                 collection.report_count(),
