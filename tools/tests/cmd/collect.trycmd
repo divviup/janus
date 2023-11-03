@@ -24,7 +24,7 @@ DAP Task Parameters:
       --hpke-private-key <HPKE_PRIVATE_KEY>
           The collector's HPKE private key, encoded with base64url
           
-          [env: HPKE_PRIVATE_KEY=]
+          [env: HPKE_PRIVATE_KEY]
 
       --hpke-config-json <HPKE_CONFIG_JSON>
           Path to a JSON document containing the collector's HPKE configuration and private key, in the format output by `divviup hpke-config generate`
@@ -33,12 +33,12 @@ Authorization:
       --dap-auth-token <DAP_AUTH_TOKEN>
           Authentication token for the DAP-Auth-Token HTTP header
           
-          [env: DAP_AUTH_TOKEN=]
+          [env: DAP_AUTH_TOKEN]
 
       --authorization-bearer-token <AUTHORIZATION_BEARER_TOKEN>
           Authentication token for the "Authorization: Bearer ..." HTTP header
           
-          [env: AUTHORIZATION_BEARER_TOKEN=]
+          [env: AUTHORIZATION_BEARER_TOKEN]
 
 VDAF Algorithm and Parameters:
       --vdaf <VDAF>
