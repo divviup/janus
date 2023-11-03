@@ -3300,13 +3300,12 @@ mod tests {
     async fn upload() {
         install_test_trace_subscriber();
 
-        let (vdaf, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test(Config {
-                max_upload_batch_size: 1000,
-                max_upload_batch_write_delay: StdDuration::from_millis(500),
-                ..Default::default()
-            })
-            .await;
+        let (vdaf, aggregator, clock, task, ds, _ephemeral_datastore) = setup_upload_test(Config {
+            max_upload_batch_size: 1000,
+            max_upload_batch_write_delay: StdDuration::from_millis(500),
+            ..Default::default()
+        })
+        .await;
         let leader_task = task.leader_view().unwrap();
         let report = create_report(&leader_task, clock.now());
 
@@ -3315,40 +3314,49 @@ mod tests {
             .await
             .unwrap();
 
-        let got_report = datastore
+        let got_report = ds
             .run_unnamed_tx(|tx| {
-                let (vdaf, task_id, report_id) =
-                    (vdaf.clone(), *task.id(), *report.metadata().id());
+                let vdaf = vdaf.clone();
+                let task_id = *task.id();
+                let report_id = *report.metadata().id();
                 Box::pin(async move { tx.get_client_report(&vdaf, &task_id, &report_id).await })
             })
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(task.id(), got_report.task_id());
-        assert_eq!(report.metadata(), got_report.metadata());
+        assert!(got_report.eq_report(&vdaf, leader_task.current_hpke_key(), &report));
 
-        // Report uploads are idempotent
+        // Report uploads are idempotent.
         aggregator
             .handle_upload(task.id(), &report.get_encoded())
             .await
             .unwrap();
 
-        // Reports may not be mutated
+        // Even if the report is modified, it is still reported as a duplicate. The original report
+        // is stored.
         let mutated_report = create_report_custom(
             &leader_task,
             clock.now(),
             *report.metadata().id(),
             leader_task.current_hpke_key(),
         );
-        let error = aggregator
+        aggregator
             .handle_upload(task.id(), &mutated_report.get_encoded())
             .await
-            .unwrap_err();
-        assert_matches!(error.as_ref(), Error::ReportRejected(task_id, report_id, timestamp) => {
-            assert_eq!(task.id(), task_id);
-            assert_eq!(mutated_report.metadata().id(), report_id);
-            assert_eq!(mutated_report.metadata().time(), timestamp);
-        });
+            .unwrap();
+
+        // Verify that the original report, rather than the modified report, is stored.
+        let got_report = ds
+            .run_unnamed_tx(|tx| {
+                let vdaf = vdaf.clone();
+                let task_id = *task.id();
+                let report_id = *report.metadata().id();
+                Box::pin(async move { tx.get_client_report(&vdaf, &task_id, &report_id).await })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(got_report.eq_report(&vdaf, leader_task.current_hpke_key(), &report));
     }
 
     #[tokio::test]

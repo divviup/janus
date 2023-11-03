@@ -1112,20 +1112,28 @@ impl<C: Clock> Transaction<'_, C> {
     {
         let time = Time::from_naive_date_time(&row.get("client_timestamp"));
 
-        let encoded_extensions: Vec<u8> = row.get("extensions");
+        let encoded_extensions: Vec<u8> = row
+            .get::<_, Option<_>>("extensions")
+            .ok_or_else(|| Error::IncompleteReport)?;
         let extensions: Vec<Extension> =
             decode_u16_items(&(), &mut Cursor::new(&encoded_extensions))?;
 
-        let encoded_public_share: Vec<u8> = row.get("public_share");
+        let encoded_public_share: Vec<u8> = row
+            .get::<_, Option<_>>("public_share")
+            .ok_or_else(|| Error::IncompleteReport)?;
         let public_share = A::PublicShare::get_decoded_with_param(vdaf, &encoded_public_share)?;
 
-        let encoded_leader_input_share: Vec<u8> = row.get("leader_input_share");
+        let encoded_leader_input_share: Vec<u8> = row
+            .get::<_, Option<_>>("leader_input_share")
+            .ok_or_else(|| Error::IncompleteReport)?;
         let leader_input_share = A::InputShare::get_decoded_with_param(
             &(vdaf, Role::Leader.index().unwrap()),
             &encoded_leader_input_share,
         )?;
 
-        let encoded_helper_input_share: Vec<u8> = row.get("helper_encrypted_input_share");
+        let encoded_helper_input_share: Vec<u8> = row
+            .get::<_, Option<_>>("helper_encrypted_input_share")
+            .ok_or_else(|| Error::IncompleteReport)?;
         let helper_encrypted_input_share =
             HpkeCiphertext::get_decoded(&encoded_helper_input_share)?;
 
@@ -1441,12 +1449,12 @@ impl<C: Clock> Transaction<'_, C> {
         }
 
         if let Some(row) = rows.into_iter().next() {
-            // Fast path: one row was affected, meaning there was no conflict and we wrote a new
-            // report. We check that the report wasn't expired per the task's report_expiry_age,
-            // but otherwise we are done. (If the report was expired, we need to delete it; we do
-            // this in a separate query rather than the initial insert because the initial insert
-            // cannot discriminate between a row that was skipped due to expiry & a row that was
-            // skipped due to a write conflict.)
+            // One row was affected, meaning there was no conflict and we wrote a new report. We
+            // check that the report wasn't expired per the task's report_expiry_age, but otherwise
+            // we are done. (If the report was expired, we need to delete it; we do this in a
+            // separate query rather than the initial insert because the initial insert cannot
+            // discriminate between a row that was skipped due to expiry & a row that was skipped
+            // due to a write conflict.)
             if row.get("is_expired") {
                 let stmt = self
                     .prepare_cached(
@@ -1470,89 +1478,59 @@ impl<C: Clock> Transaction<'_, C> {
             return Ok(());
         }
 
-        // Slow path: no rows were affected, meaning a row with the new report ID already existed
-        // and we hit the query's ON CONFLICT DO NOTHING clause. We need to check whether the new
-        // report matches the existing one.
-        let existing_report = {
-            // We intentionally don't use `get_client_report` because it omits expired reports. It
-            // is possible that we have conflicted with an expired report that hasn't been fully
-            // GC'd yet.
-            let stmt = self
-                .prepare_cached(
-                    "SELECT
-                        client_reports.client_timestamp,
-                        client_reports.extensions,
-                        client_reports.public_share,
-                        client_reports.leader_input_share,
-                        client_reports.helper_encrypted_input_share
-                    FROM client_reports
-                    JOIN tasks ON tasks.id = client_reports.task_id
-                    WHERE tasks.task_id = $1
-                      AND client_reports.report_id = $2",
-                )
-                .await?;
+        // No rows were affected, meaning a row with the report ID already existed and we hit the
+        // query's ON CONFLICT DO NOTHING clause.
+        Err(Error::MutationTargetAlreadyExists)
+    }
 
-            self.query_opt(
+    /// scrub_client_report removes the client report itself from the datastore, retaining only a
+    /// small amount of metadata required to perform duplicate-report detection & garbage
+    /// collection.
+    ///
+    /// This method is intended for use by aggregators acting in the Leader role. Scrubbed reports
+    /// can no longer be read, so this method should only be called once all aggregations over the
+    /// report have stepped past their START state.
+    pub async fn scrub_client_report(
+        &self,
+        task_id: &TaskId,
+        report_id: &ReportId,
+    ) -> Result<(), Error> {
+        let stmt = self
+            .prepare_cached(
+                "UPDATE client_reports SET
+                    extensions = NULL,
+                    public_share = NULL,
+                    leader_input_share = NULL,
+                    helper_encrypted_input_share = NULL,
+                    updated_at = $1,
+                    updated_by = $2
+                FROM tasks
+                WHERE tasks.id = client_reports.task_id
+                AND tasks.task_id = $3 AND client_reports.report_id = $4",
+            )
+            .await?;
+        check_single_row_mutation(
+            self.execute(
                 &stmt,
                 &[
-                    /* task_id */ &new_report.task_id().as_ref(),
-                    /* report_id */ &new_report.metadata().id().as_ref(),
+                    /* updated_at */ &self.clock.now().as_naive_date_time()?,
+                    /* updated_by */ &self.name,
+                    /* task_id */ &task_id.as_ref(),
+                    /* report_id */ &report_id.as_ref(),
                 ],
             )
-            .await?
-            .map(|row| {
-                Self::client_report_from_row(
-                    vdaf,
-                    *new_report.task_id(),
-                    *new_report.metadata().id(),
-                    row,
-                )
-            })
-            .transpose()?
-            .ok_or_else(|| {
-                // This codepath can be taken due to a quirk of how the Repeatable Read isolation
-                // level works. It cannot occur at the Serializable isolation level.
-                //
-                // For this codepath to be taken, two writers must concurrently choose to write the
-                // same client report (by task & report ID), and this report must not already exist
-                // in the datastore.
-                //
-                // One writer will succeed. The other will receive a unique constraint violation on
-                // (task_id, report_id), since unique constraints are still enforced even in the
-                // presence of snapshot isolation. They will then receive `None` from the
-                // `get_client_report` call, since their snapshot is from before the successful
-                // writer's write, and fall into this codepath.
-                //
-                // The failing writer can't do anything about this problem while in its current
-                // transaction: further attempts to read the client report will continue to return
-                // `None` (since all reads in the same transaction are from the same snapshot), so
-                // so it can't evaluate idempotency. All it can do is give up on this transaction
-                // and try again, by calling `retry` and returning an error; once it retries, it
-                // will be able to read the report written by the successful writer.
-                self.retry();
-                Error::Concurrency(
-                    "retrying transaction because another writer has concurrently inserted this report",
-                )
-            })?
-        };
-
-        // If the existing report does not match the new report, then someone is trying to mutate an
-        // existing report, which is forbidden.
-        if !existing_report.eq(new_report) {
-            return Err(Error::MutationTargetAlreadyExists);
-        }
-
-        // If the existing report does match the new one, then there is no error (PUTting a report
-        // is idempotent).
-        Ok(())
+            .await?,
+        )
     }
 
     /// put_report_share stores a report share, given its associated task ID.
     ///
-    /// This method is intended for use by aggregators acting in the helper role; notably, it does
+    /// This method is intended for use by aggregators acting in the Helper role; notably, it does
     /// not store extensions, public_share, or input_shares, as these are not required to be stored
-    /// for the helper workflow (and the helper never observes the entire set of encrypted input
+    /// for the Helper workflow. (Also, the Helper never observes the entire set of encrypted input
     /// shares, so it could not record the full client report in any case).
+    ///
+    /// This method writes the equivalent of a scrubbed report, per `scrub_client_report`.
     ///
     /// Returns `Err(Error::MutationTargetAlreadyExists)` if an attempt to mutate an existing row
     /// (e.g., changing the timestamp for a known report ID) is detected.
@@ -5002,9 +4980,10 @@ pub enum Error {
     TimeOverflow(&'static str),
     #[error("batch already collected")]
     AlreadyCollected,
-    /// An error that occurred due to concurrency problems with another Janus replica.
-    #[error("{0}")]
-    Concurrency(&'static str),
+    /// A requested report was incomplete, because it has been scrubbed or because it was written
+    /// via `put_report_share`.
+    #[error("report data incomplete")]
+    IncompleteReport,
 }
 
 impl From<ring::error::Unspecified> for Error {

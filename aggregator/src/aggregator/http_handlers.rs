@@ -1114,7 +1114,7 @@ mod tests {
 
         let accepted_report_id = report.metadata().id();
 
-        // Verify that new reports using an existing report ID are rejected with reportRejected
+        // Verify that new reports using an existing report ID are also accepted as a duplicate.
         let duplicate_id_report = create_report_custom(
             &leader_task,
             clock.now(),
@@ -1126,14 +1126,8 @@ mod tests {
             .with_request_body(duplicate_id_report.get_encoded())
             .run_async(&handler)
             .await;
-        check_response(
-            &mut test_conn,
-            Status::BadRequest,
-            "reportRejected",
-            "Report could not be processed.",
-            task.id(),
-        )
-        .await;
+        assert_eq!(test_conn.status(), Some(Status::Ok));
+        assert!(test_conn.take_response_body().is_none());
 
         // Verify that reports older than the report expiry age are rejected with the reportRejected
         // error type.
