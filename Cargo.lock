@@ -2232,6 +2232,7 @@ dependencies = [
  "prio 0.15.3",
  "rand",
  "reqwest",
+ "serde",
  "serde_json",
  "serde_yaml",
  "tempfile",

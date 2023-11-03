@@ -261,7 +261,7 @@ impl HpkeKeypair {
     }
 }
 
-/// HPKE configuration compatible with the output of `divviup hpke-config generate`.
+/// HPKE configuration compatible with the output of `divviup collector-credential generate`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct DivviUpHpkeConfig {
     id: HpkeConfigId,

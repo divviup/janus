@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::{
     builder::{NonEmptyStringValueParser, StringValueParser, TypedValueParser},
@@ -23,6 +23,8 @@ use prio::{
     codec::Decode,
     vdaf::{self, prio3::Prio3},
 };
+use serde::Deserialize;
+use serde_json::{Deserializer, Value};
 use std::{fmt::Debug, fs::File, path::PathBuf};
 use tracing_log::LogTracer;
 use tracing_subscriber::{prelude::*, EnvFilter, Registry};
@@ -317,7 +319,7 @@ struct Options {
     #[derivative(Debug = "ignore")]
     hpke_private_key: Option<HpkePrivateKey>,
     /// Path to a JSON document containing the collector's HPKE configuration and private key, in
-    /// the format output by `divviup hpke-config generate`.
+    /// the format output by `divviup collector-credential generate`.
     #[clap(
         long,
         help_heading = "DAP Task Parameters",
@@ -362,9 +364,19 @@ impl Options {
             (None, None, Some(hpke_config_json_path)) => {
                 let reader =
                     File::open(hpke_config_json_path).context("could not open HPKE config file")?;
-                let divviup_hpke_config: DivviUpHpkeConfig =
-                    serde_json::from_reader(reader).context("could not parse HPKE config file")?;
-                HpkeKeypair::try_from(divviup_hpke_config).context("could not convert HPKE config")
+
+                // Divvi Up credential files come with multiple different top level JSON objects.
+                // Iterate over each one and return the first one that is valid.
+                match Deserializer::from_reader(reader)
+                    .into_iter::<Value>()
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .find_map(|partial| DivviUpHpkeConfig::deserialize(partial).ok())
+                {
+                    Some(divviup_hpke_config) => HpkeKeypair::try_from(divviup_hpke_config)
+                        .context("could not convert HPKE config"),
+                    None => Err(anyhow!("no valid HPKE config present in file")),
+                }
             }
             _ => unreachable!(),
         }
@@ -1096,38 +1108,63 @@ mod tests {
 
     #[test]
     fn hpke_config_json_file() {
+        // A credentials file that is of the full form returned by
+        // `divviup collector-credential generate`.
+        let sample_divviup_credentials_file = r#"{
+  "id": "b17f6ef9-2696-4793-8af2-377b77668c59",
+  "hpke_config": {
+    "id": 66,
+    "kem_id": "X25519HkdfSha256",
+    "kdf_id": "HkdfSha256",
+    "aead_id": "Aes128Gcm",
+    "public_key": "CcDghts2boltt9GQtBUxdUsVR83SCVYHikcGh33aVlU"
+  },
+  "created_at": "2023-11-03T20:28:39.796684Z",
+  "deleted_at": null,
+  "updated_at": "2023-11-03T20:28:39.796685Z",
+  "name": "aaaaaa",
+  "token_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "token": "aaaaaaaaaaaaaaaaaaaaaa"
+}
+"#
+        .to_string()
+            + SAMPLE_DIVVIUP_HPKE_CONFIG;
+
         let hpke_keypair = HpkeKeypair::try_from(
             serde_json::from_str::<DivviUpHpkeConfig>(SAMPLE_DIVVIUP_HPKE_CONFIG).unwrap(),
         )
         .unwrap();
 
-        let mut hpke_config_file = NamedTempFile::new().unwrap();
-        hpke_config_file
-            .write_all(SAMPLE_DIVVIUP_HPKE_CONFIG.as_bytes())
-            .unwrap();
-        let hpke_config_file_path = hpke_config_file.into_temp_path();
+        for sample in [
+            sample_divviup_credentials_file,
+            SAMPLE_DIVVIUP_HPKE_CONFIG.to_string(),
+        ] {
+            let mut hpke_config_file = NamedTempFile::new().unwrap();
+            hpke_config_file.write_all(sample.as_bytes()).unwrap();
+            let hpke_config_file_path = hpke_config_file.into_temp_path();
 
-        let options = Options {
-            task_id: random(),
-            leader: Url::parse("https://example.com").unwrap(),
-            authentication: AuthenticationOptions {
-                dap_auth_token: Some(random()),
-                authorization_bearer_token: None,
-            },
-            hpke_config: None,
-            hpke_private_key: None,
-            hpke_config_json: Some(hpke_config_file_path.to_path_buf()),
-            vdaf: VdafType::Count,
-            length: None,
-            bits: None,
-            query: QueryOptions {
-                batch_interval_start: Some(1_000_000),
-                batch_interval_duration: Some(1_000),
-                batch_id: None,
-                current_batch: false,
-            },
-        };
+            let options = Options {
+                task_id: random(),
+                leader: Url::parse("https://example.com").unwrap(),
+                authentication: AuthenticationOptions {
+                    dap_auth_token: Some(random()),
+                    authorization_bearer_token: None,
+                },
+                hpke_config: None,
+                hpke_private_key: None,
+                hpke_config_json: Some(hpke_config_file_path.to_path_buf()),
+                vdaf: VdafType::Count,
+                length: None,
+                bits: None,
+                query: QueryOptions {
+                    batch_interval_start: Some(1_000_000),
+                    batch_interval_duration: Some(1_000),
+                    batch_id: None,
+                    current_batch: false,
+                },
+            };
 
-        assert_eq!(options.hpke_keypair().unwrap(), hpke_keypair);
+            assert_eq!(options.hpke_keypair().unwrap(), hpke_keypair);
+        }
     }
 }
