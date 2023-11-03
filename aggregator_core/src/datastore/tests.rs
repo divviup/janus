@@ -666,7 +666,8 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
     .await
     .unwrap();
 
-    // Scrub the report, and verify that the expected columns are NULL'ed out.
+    // Scrub the report, verify that the expected columns are NULL'ed out, and that we get the
+    // expected error if we try to read the report at this point.
     ds.run_unnamed_tx(|tx| {
         let task_id = *report.task_id();
 
@@ -695,6 +696,16 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
             assert_eq!(
                 row.get::<_, Option<Vec<u8>>>("helper_encrypted_input_share"),
                 None
+            );
+
+            assert_matches!(
+                tx.get_client_report::<0, dummy_vdaf::Vdaf>(
+                    &dummy_vdaf::Vdaf::new(),
+                    &task_id,
+                    &report_id,
+                )
+                .await,
+                Err(Error::IncompleteReport)
             );
 
             Ok(())
@@ -1306,23 +1317,36 @@ async fn roundtrip_report_share(ephemeral_datastore: EphemeralDatastore) {
 
     let (got_task_id, got_extensions, got_leader_input_share, got_helper_input_share) = ds
         .run_unnamed_tx(|tx| {
-            let report_share_metadata = report_share.metadata().clone();
+            let task_id = *task.id();
+            let report_id = *report_share.metadata().id();
+
             Box::pin(async move {
+                // Verify that attempting to read the report share as a report receives the expected
+                // error, and that the expected columns are NULL'ed out.
+                assert_matches!(
+                    tx.get_client_report::<0, dummy_vdaf::Vdaf>(
+                        &dummy_vdaf::Vdaf::new(),
+                        &task_id,
+                        &report_id,
+                    )
+                    .await,
+                    Err(Error::IncompleteReport)
+                );
+
                 let row = tx
                     .query_one(
                         "SELECT
-                                tasks.task_id,
-                                client_reports.report_id,
-                                client_reports.client_timestamp,
-                                client_reports.extensions,
-                                client_reports.leader_input_share,
-                                client_reports.helper_encrypted_input_share
-                            FROM client_reports JOIN tasks ON tasks.id = client_reports.task_id
-                            WHERE report_id = $1 AND client_timestamp = $2",
+                            tasks.task_id,
+                            client_reports.report_id,
+                            client_reports.client_timestamp,
+                            client_reports.extensions,
+                            client_reports.leader_input_share,
+                            client_reports.helper_encrypted_input_share
+                        FROM client_reports JOIN tasks ON tasks.id = client_reports.task_id
+                        WHERE tasks.task_id = $1 AND client_reports.report_id = $2",
                         &[
-                            /* report_id */ &report_share_metadata.id().as_ref(),
-                            /* client_timestamp */
-                            &report_share_metadata.time().as_naive_date_time()?,
+                            /* task_id */ &task_id.as_ref(),
+                            /* report_id */ &report_id.as_ref(),
                         ],
                     )
                     .await?;

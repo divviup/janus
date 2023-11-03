@@ -1112,20 +1112,28 @@ impl<C: Clock> Transaction<'_, C> {
     {
         let time = Time::from_naive_date_time(&row.get("client_timestamp"));
 
-        let encoded_extensions: Vec<u8> = row.get("extensions");
+        let encoded_extensions: Vec<u8> = row
+            .get::<_, Option<_>>("extensions")
+            .ok_or_else(|| Error::IncompleteReport)?;
         let extensions: Vec<Extension> =
             decode_u16_items(&(), &mut Cursor::new(&encoded_extensions))?;
 
-        let encoded_public_share: Vec<u8> = row.get("public_share");
+        let encoded_public_share: Vec<u8> = row
+            .get::<_, Option<_>>("public_share")
+            .ok_or_else(|| Error::IncompleteReport)?;
         let public_share = A::PublicShare::get_decoded_with_param(vdaf, &encoded_public_share)?;
 
-        let encoded_leader_input_share: Vec<u8> = row.get("leader_input_share");
+        let encoded_leader_input_share: Vec<u8> = row
+            .get::<_, Option<_>>("leader_input_share")
+            .ok_or_else(|| Error::IncompleteReport)?;
         let leader_input_share = A::InputShare::get_decoded_with_param(
             &(vdaf, Role::Leader.index().unwrap()),
             &encoded_leader_input_share,
         )?;
 
-        let encoded_helper_input_share: Vec<u8> = row.get("helper_encrypted_input_share");
+        let encoded_helper_input_share: Vec<u8> = row
+            .get::<_, Option<_>>("helper_encrypted_input_share")
+            .ok_or_else(|| Error::IncompleteReport)?;
         let helper_encrypted_input_share =
             HpkeCiphertext::get_decoded(&encoded_helper_input_share)?;
 
@@ -1475,12 +1483,13 @@ impl<C: Clock> Transaction<'_, C> {
         Err(Error::MutationTargetAlreadyExists)
     }
 
-    // scrub_client_report removes the client report itself from the datastore, retaining only a
-    // small amount of metadata required to perform duplicate-report detection & garbage collection.
-    //
-    // This method is intended for use by aggregators acting in the Leader role. Scrubbed reports
-    // can no longer be read, so this method should only be called once all aggregations over the
-    // report have stepped past their START state.
+    /// scrub_client_report removes the client report itself from the datastore, retaining only a
+    /// small amount of metadata required to perform duplicate-report detection & garbage
+    /// collection.
+    ///
+    /// This method is intended for use by aggregators acting in the Leader role. Scrubbed reports
+    /// can no longer be read, so this method should only be called once all aggregations over the
+    /// report have stepped past their START state.
     pub async fn scrub_client_report(
         &self,
         task_id: &TaskId,
@@ -1489,15 +1498,15 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "UPDATE client_reports SET
-                extensions = NULL,
-                public_share = NULL,
-                leader_input_share = NULL,
-                helper_encrypted_input_share = NULL,
-                updated_at = $1,
-                updated_by = $2
-            FROM tasks
-            WHERE tasks.id = client_reports.task_id
-              AND tasks.task_id = $3 AND client_reports.report_id = $4",
+                    extensions = NULL,
+                    public_share = NULL,
+                    leader_input_share = NULL,
+                    helper_encrypted_input_share = NULL,
+                    updated_at = $1,
+                    updated_by = $2
+                FROM tasks
+                WHERE tasks.id = client_reports.task_id
+                AND tasks.task_id = $3 AND client_reports.report_id = $4",
             )
             .await?;
         check_single_row_mutation(
@@ -1516,10 +1525,12 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// put_report_share stores a report share, given its associated task ID.
     ///
-    /// This method is intended for use by aggregators acting in the helper role; notably, it does
+    /// This method is intended for use by aggregators acting in the Helper role; notably, it does
     /// not store extensions, public_share, or input_shares, as these are not required to be stored
-    /// for the helper workflow (and the helper never observes the entire set of encrypted input
+    /// for the Helper workflow. (Also, the Helper never observes the entire set of encrypted input
     /// shares, so it could not record the full client report in any case).
+    ///
+    /// This method writes the equivalent of a scrubbed report, per `scrub_client_report`.
     ///
     /// Returns `Err(Error::MutationTargetAlreadyExists)` if an attempt to mutate an existing row
     /// (e.g., changing the timestamp for a known report ID) is detected.
@@ -4969,9 +4980,10 @@ pub enum Error {
     TimeOverflow(&'static str),
     #[error("batch already collected")]
     AlreadyCollected,
-    /// An error that occurred due to concurrency problems with another Janus replica.
-    #[error("{0}")]
-    Concurrency(&'static str),
+    /// A requested report was incomplete, because it has been scrubbed or because it was written
+    /// via `put_report_share`.
+    #[error("report data incomplete")]
+    IncompleteReport,
 }
 
 impl From<ring::error::Unspecified> for Error {
