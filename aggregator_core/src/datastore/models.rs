@@ -196,7 +196,7 @@ where
             PlaintextInputShare::get_decoded(&encoded_leader_plaintext_input_share)
                 .expect("couldn't decode Leader's PlaintextInputShare");
         let leader_input_share = A::InputShare::get_decoded_with_param(
-            &(&vdaf, Role::Leader.index().unwrap()),
+            &(vdaf, Role::Leader.index().unwrap()),
             leader_plaintext_input_share.payload(),
         )
         .expect("couldn't decode Leader's InputShare");
