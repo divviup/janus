@@ -29,6 +29,13 @@ Each component must be provided a connection string/URL. Note that the database
 password may be separately passed on the command line or through an environment
 variable, to override (or fill in) the password set in the configuration file.
 
+##### TLS
+
+By default, TLS is never used for database connections. Opportunistic TLS
+connections can be enabled by providing a file with PEM-format CA certificates
+to trust. Furthermore, TLS connections can be required by setting
+`sslmode=require` in the database connection string.
+
 #### Health Check
 
 Each binary starts an HTTP server to service health check requests from
