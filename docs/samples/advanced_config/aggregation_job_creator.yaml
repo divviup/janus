@@ -12,7 +12,9 @@ database:
   check_schema_version: true
 
   # Path to a PEM file with root certificates to trust for TLS database
-  # connections. (optional)
+  # connections. If present, TLS may be used depending on the "sslmode"
+  # connection string parameter, and the server's support for TLS. If absent,
+  # TLS will never be used. (optional)
   tls_trust_store_path: /path/to/file.pem
 
 # Socket address for /healthz and /traceconfigz HTTP requests. Defaults to 127.0.0.1:9001.
