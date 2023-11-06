@@ -278,7 +278,7 @@ impl<V: vdaf::Client<16>> ClientBuilder<V> {
 }
 
 /// A DAP client.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Client<V: vdaf::Client<16>> {
     parameters: ClientParameters,
     vdaf: V,
