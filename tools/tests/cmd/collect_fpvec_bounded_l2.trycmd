@@ -2,7 +2,15 @@
 $ collect --help
 Command-line DAP-PPM collector from ISRG's Divvi Up
 
-Usage: collect [OPTIONS] --task-id <TASK_ID> --leader <LEADER> --vdaf <VDAF> <--dap-auth-token <DAP_AUTH_TOKEN>|--authorization-bearer-token <AUTHORIZATION_BEARER_TOKEN>> <--hpke-config <HPKE_CONFIG>|--hpke-private-key <HPKE_PRIVATE_KEY>|--hpke-config-json <HPKE_CONFIG_JSON>|--hpke-config-json-contents <HPKE_CONFIG_JSON_CONTENTS>> <--batch-interval-start <BATCH_INTERVAL_START>|--batch-interval-duration <BATCH_INTERVAL_DURATION>|--batch-id <BATCH_ID>|--current-batch>
+The default subcommand is "run", which will create a collection job and poll it to completion
+
+Usage: collect [OPTIONS] --task-id <TASK_ID> --leader <LEADER> --vdaf <VDAF> <--dap-auth-token <DAP_AUTH_TOKEN>|--authorization-bearer-token <AUTHORIZATION_BEARER_TOKEN>> <--hpke-config <HPKE_CONFIG>|--hpke-private-key <HPKE_PRIVATE_KEY>|--hpke-config-json <HPKE_CONFIG_JSON>|--hpke-config-json-contents <HPKE_CONFIG_JSON_CONTENTS>> <--batch-interval-start <BATCH_INTERVAL_START>|--batch-interval-duration <BATCH_INTERVAL_DURATION>|--batch-id <BATCH_ID>|--current-batch> [COMMAND]
+
+Commands:
+  run       Create a new collection job and poll it to completion
+  new-job   Initialize a new collection job
+  poll-job  Poll an existing collection job once
+  help      Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help
@@ -13,7 +21,7 @@ Options:
 
 DAP Task Parameters:
       --task-id <TASK_ID>
-          DAP task identifier, encoded with base64url
+          DAP task identifier, encoded with unpadded base64url
 
       --leader <LEADER>
           The leader aggregator's endpoint URL
