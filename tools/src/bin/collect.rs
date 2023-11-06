@@ -369,9 +369,7 @@ impl Options {
                 // Iterate over each one and return the first one that is valid.
                 match Deserializer::from_reader(reader)
                     .into_iter::<Value>()
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter()
-                    .find_map(|partial| DivviUpHpkeConfig::deserialize(partial).ok())
+                    .find_map(|partial| DivviUpHpkeConfig::deserialize(partial.ok()?).ok())
                 {
                     Some(divviup_hpke_config) => HpkeKeypair::try_from(divviup_hpke_config)
                         .context("could not convert HPKE config"),
