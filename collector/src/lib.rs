@@ -51,7 +51,8 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-use backoff::{backoff::Backoff, ExponentialBackoff};
+use backoff::backoff::Backoff;
+pub use backoff::ExponentialBackoff;
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use derivative::Derivative;
 pub use janus_core::auth_tokens::AuthenticationToken;
@@ -83,6 +84,7 @@ use std::{
     time::{Duration as StdDuration, SystemTime},
 };
 use tokio::time::{sleep, Instant};
+use tracing::info;
 use url::Url;
 
 /// Errors that may occur when performing collections.
@@ -620,7 +622,14 @@ impl<V: vdaf::Collector> Collector<V> {
             // poll_once() already retries upon server and connection errors, so propagate any error
             // received from it and return immediately.
             let retry_after = match self.poll_once(job).await? {
-                PollResult::CollectionResult(aggregate_result) => return Ok(aggregate_result),
+                PollResult::CollectionResult(aggregate_result) => {
+                    info!(
+                        job_id = %job.collection_job_id(),
+                        elapsed = ?backoff.get_elapsed_time(),
+                        "collection job complete"
+                    );
+                    return Ok(aggregate_result);
+                }
                 PollResult::NotReady(retry_after) => retry_after,
             };
 
@@ -659,6 +668,13 @@ impl<V: vdaf::Collector> Collector<V> {
             } else {
                 backoff_duration
             };
+
+            info!(
+                job_id = %job.collection_job_id(),
+                ?backoff_duration,
+                retry_after_header = ?retry_after,
+                "collection job not ready, backing off",
+            );
             sleep(sleep_duration).await;
         }
     }
