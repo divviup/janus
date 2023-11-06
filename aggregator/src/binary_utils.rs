@@ -32,6 +32,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::oneshot;
+use tokio_postgres::NoTls;
 use tokio_postgres_rustls::MakeRustlsConnect;
 use tracing::{debug, info};
 use tracing_subscriber::EnvFilter;
@@ -90,16 +91,16 @@ pub async fn database_pool(db_config: &DbConfig, db_password: Option<&str>) -> R
 
     let connection_pool_timeout = Duration::from_secs(db_config.connection_pool_timeouts_secs);
 
-    let root_store = if let Some(ref path) = db_config.tls_trust_store_path {
-        load_pem_trust_store(path).context("failed to load TLS trust store")?
+    let conn_mgr = if let Some(ref path) = db_config.tls_trust_store_path {
+        let root_store = load_pem_trust_store(path).context("failed to load TLS trust store")?;
+        let rustls_config = rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        Manager::new(database_config, MakeRustlsConnect::new(rustls_config))
     } else {
-        RootCertStore::empty()
+        Manager::new(database_config, NoTls)
     };
-    let rustls_config = rustls::ClientConfig::builder()
-        .with_safe_defaults()
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-    let conn_mgr = Manager::new(database_config, MakeRustlsConnect::new(rustls_config));
     let pool = Pool::builder(conn_mgr)
         .runtime(Runtime::Tokio1)
         .timeouts(Timeouts {
