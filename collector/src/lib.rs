@@ -84,7 +84,7 @@ use std::{
     time::{Duration as StdDuration, SystemTime},
 };
 use tokio::time::{sleep, Instant};
-use tracing::info;
+use tracing::debug;
 use url::Url;
 
 /// Errors that may occur when performing collections.
@@ -623,7 +623,7 @@ impl<V: vdaf::Collector> Collector<V> {
             // received from it and return immediately.
             let retry_after = match self.poll_once(job).await? {
                 PollResult::CollectionResult(aggregate_result) => {
-                    info!(
+                    debug!(
                         job_id = %job.collection_job_id(),
                         elapsed = ?backoff.get_elapsed_time(),
                         "collection job complete"
@@ -669,7 +669,7 @@ impl<V: vdaf::Collector> Collector<V> {
                 backoff_duration
             };
 
-            info!(
+            debug!(
                 job_id = %job.collection_job_id(),
                 ?backoff_duration,
                 retry_after_header = ?retry_after,
