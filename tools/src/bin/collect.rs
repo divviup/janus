@@ -518,7 +518,7 @@ where
                 max_interval: StdDuration::from_secs(300),
                 multiplier: 1.2,
                 max_elapsed_time: None,
-                randomization_factor: 0.0,
+                randomization_factor: 0.1,
                 ..Default::default()
             })
             .build()
