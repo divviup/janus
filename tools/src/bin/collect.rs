@@ -10,7 +10,7 @@ use derivative::Derivative;
 use fixed::types::extra::{U15, U31};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32};
-use janus_collector::{default_http_client, AuthenticationToken, Collector};
+use janus_collector::{default_http_client, AuthenticationToken, Collector, ExponentialBackoff};
 use janus_core::hpke::{DivviUpHpkeConfig, HpkeKeypair, HpkePrivateKey};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
@@ -23,7 +23,7 @@ use prio::{
     codec::Decode,
     vdaf::{self, prio3::Prio3},
 };
-use std::{fmt::Debug, fs::File, path::PathBuf};
+use std::{fmt::Debug, fs::File, path::PathBuf, time::Duration as StdDuration};
 use tracing_log::LogTracer;
 use tracing_subscriber::{prelude::*, EnvFilter, Registry};
 use url::Url;
@@ -513,6 +513,14 @@ where
     let collector =
         Collector::builder(task_id, leader_endpoint, authentication, hpke_keypair, vdaf)
             .with_http_client(http_client)
+            .with_collect_poll_backoff(ExponentialBackoff {
+                initial_interval: StdDuration::from_secs(3),
+                max_interval: StdDuration::from_secs(300),
+                multiplier: 1.2,
+                max_elapsed_time: None,
+                randomization_factor: 0.1,
+                ..Default::default()
+            })
             .build()
             .map_err(|err| Error::Anyhow(err.into()))?;
     let collection = collector
