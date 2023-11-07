@@ -2941,7 +2941,7 @@ impl<C: Clock> Transaction<'_, C> {
                   AND batch_aggregations.batch_identifier = $2
                   AND batch_aggregations.aggregation_param = $3
                   AND ord = $4
-                  AND UPPER(batches.client_timestamp_interval) >= COALESCE($5::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND UPPER(COALESCE(batches.batch_interval, batches.client_timestamp_interval)) >= COALESCE($5::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
 
@@ -2996,7 +2996,7 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE tasks.task_id = $1
                   AND batch_aggregations.batch_identifier = $2
                   AND batch_aggregations.aggregation_param = $3
-                  AND UPPER(batches.client_timestamp_interval) >= COALESCE($4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND UPPER(COALESCE(batches.batch_interval, batches.client_timestamp_interval)) >= COALESCE($4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
 
@@ -3046,7 +3046,7 @@ impl<C: Clock> Transaction<'_, C> {
                             AND batches.batch_identifier = batch_aggregations.batch_identifier
                             AND batches.aggregation_param = batch_aggregations.aggregation_param
                 WHERE tasks.task_id = $1
-                  AND UPPER(batches.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND UPPER(COALESCE(batches.batch_interval, batches.client_timestamp_interval)) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
 
@@ -3143,7 +3143,7 @@ impl<C: Clock> Transaction<'_, C> {
                     $11, $12, $13
                 )
                 ON CONFLICT DO NOTHING
-                RETURNING COALESCE(UPPER((SELECT client_timestamp_interval FROM batches WHERE task_id = batch_aggregations.task_id AND batch_identifier = batch_aggregations.batch_identifier AND aggregation_param = batch_aggregations.aggregation_param)) < COALESCE($14::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
+                RETURNING COALESCE(UPPER((SELECT COALESCE(batch_interval, client_timestamp_interval) FROM batches WHERE task_id = batch_aggregations.task_id AND batch_identifier = batch_aggregations.batch_identifier AND aggregation_param = batch_aggregations.aggregation_param)) < COALESCE($14::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
             )
             .await?;
         let rows = self
@@ -3156,7 +3156,7 @@ impl<C: Clock> Transaction<'_, C> {
                     /* batch_interval */ &batch_interval,
                     /* aggregation_param */
                     &batch_aggregation.aggregation_parameter().get_encoded(),
-                    /* ord */ &TryInto::<i64>::try_into(batch_aggregation.ord())?,
+                    /* ord */ &i64::try_from(batch_aggregation.ord())?,
                     /* state */ &batch_aggregation.state(),
                     /* aggregate_share */
                     &batch_aggregation.aggregate_share().map(Encode::get_encoded),
@@ -3185,7 +3185,8 @@ impl<C: Clock> Transaction<'_, C> {
                         WHERE batch_aggregations.task_id = tasks.id
                           AND tasks.task_id = $1
                           AND batch_aggregations.batch_identifier = $2
-                          AND batch_aggregations.aggregation_param = $3",
+                          AND batch_aggregations.aggregation_param = $3
+                          AND batch_aggregations.ord = $4",
                     )
                     .await?;
                 self.execute(
@@ -3196,6 +3197,7 @@ impl<C: Clock> Transaction<'_, C> {
                         &batch_aggregation.batch_identifier().get_encoded(),
                         /* aggregation_param */
                         &batch_aggregation.aggregation_parameter().get_encoded(),
+                        /* ord */ &i64::try_from(batch_aggregation.ord())?,
                     ],
                 )
                 .await?;
@@ -3241,7 +3243,7 @@ impl<C: Clock> Transaction<'_, C> {
                   AND batch_aggregations.batch_identifier = $9
                   AND batch_aggregations.aggregation_param = $10
                   AND ord = $11
-                  AND UPPER(batches.client_timestamp_interval) >= COALESCE($12::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND UPPER(COALESCE(batches.batch_interval, batches.client_timestamp_interval)) >= COALESCE($12::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         check_single_row_mutation(
