@@ -317,7 +317,7 @@ struct Options {
     #[derivative(Debug = "ignore")]
     hpke_private_key: Option<HpkePrivateKey>,
     /// Path to a JSON document containing the collector's HPKE configuration and private key, in
-    /// the format output by `divviup hpke-config generate`.
+    /// the format output by `divviup collector-credential generate`.
     #[clap(
         long,
         help_heading = "DAP Task Parameters",

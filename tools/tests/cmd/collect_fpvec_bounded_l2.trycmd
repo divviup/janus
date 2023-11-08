@@ -27,7 +27,7 @@ DAP Task Parameters:
           [env: HPKE_PRIVATE_KEY]
 
       --hpke-config-json <HPKE_CONFIG_JSON>
-          Path to a JSON document containing the collector's HPKE configuration and private key, in the format output by `divviup hpke-config generate`
+          Path to a JSON document containing the collector's HPKE configuration and private key, in the format output by `divviup collector-credential generate`
 
 Authorization:
       --dap-auth-token <DAP_AUTH_TOKEN>
