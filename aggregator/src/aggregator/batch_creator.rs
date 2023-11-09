@@ -17,7 +17,6 @@ use rand::random;
 use std::{
     cmp::{max, min, Ordering},
     collections::{binary_heap::PeekMut, hash_map, BinaryHeap, HashMap, VecDeque},
-    ops::RangeInclusive,
     sync::Arc,
 };
 use tokio::try_join;
@@ -241,7 +240,7 @@ where
                 let outstanding_batch = OutstandingBatch::new(
                     properties.task_id,
                     batch_id,
-                    RangeInclusive::new(0, desired_aggregation_job_size),
+                    desired_aggregation_job_size,
                 );
                 bucket
                     .outstanding_batches
@@ -408,7 +407,7 @@ struct UpdatedOutstandingBatch {
 impl UpdatedOutstandingBatch {
     fn new(outstanding_batch: OutstandingBatch) -> Self {
         Self {
-            new_max_size: *outstanding_batch.size().end(),
+            new_max_size: outstanding_batch.max_size(),
             inner: outstanding_batch,
         }
     }
