@@ -8,6 +8,7 @@ use opentelemetry::{
     metrics::{Histogram, Meter, Unit},
     KeyValue,
 };
+use rand::{thread_rng, Rng};
 use std::{
     fmt::{Debug, Display},
     future::Future,
@@ -33,10 +34,8 @@ pub struct JobDriver<C: Clock, R, JobAcquirer, JobStepper> {
     stopper: Stopper,
 
     // Configuration values.
-    /// Minimum delay between datastore job discovery passes.
-    min_job_discovery_delay: Duration,
-    /// Maximum delay between datastore job discovery passes.
-    max_job_discovery_delay: Duration,
+    /// The maximum amount of time to wait between job acquisition attempts.
+    job_discovery_interval: Duration,
     /// How many jobs to step at the same time in this process.
     max_concurrent_job_workers: usize,
     /// Allowable clock skew between datastore and job driver, used when determining if a lease has
@@ -76,8 +75,7 @@ where
         runtime: R,
         meter: Meter,
         stopper: Stopper,
-        min_job_discovery_delay: Duration,
-        max_job_discovery_delay: Duration,
+        job_discovery_interval: Duration,
         max_concurrent_job_workers: usize,
         worker_lease_clock_skew_allowance: Duration,
         incomplete_job_acquirer: JobAcquirer,
@@ -90,8 +88,7 @@ where
             runtime,
             meter,
             stopper,
-            min_job_discovery_delay,
-            max_job_discovery_delay,
+            job_discovery_interval,
             max_concurrent_job_workers,
             worker_lease_clock_skew_allowance,
             incomplete_job_acquirer,
@@ -229,15 +226,15 @@ where
         let leases = match leases {
             Ok(leases) => leases,
             Err(error) => {
-                error!(?error, "Couldn't acquire jobs");
-
-                // Go ahead and step job discovery delay in this error case to ensure we don't
-                // tightly loop running transactions that will fail without any delay.
-                *job_discovery_delay = self.step_job_discovery_delay(*job_discovery_delay);
+                // Go ahead and set discovery delay to non-zero in this error case to ensure we
+                // don't tightly loop running transactions that will fail without any delay.
+                *job_discovery_delay =
+                    thread_rng().gen_range(Duration::ZERO..self.job_discovery_interval);
                 job_acquire_time_histogram.record(
                     start.elapsed().as_secs_f64(),
                     &[KeyValue::new("status", "error")],
                 );
+                error!(?error, next_job_discovery_delay = ?job_discovery_delay, "Couldn't acquire jobs");
                 return Vec::new();
             }
         };
@@ -246,8 +243,9 @@ where
             &[KeyValue::new("status", "success")],
         );
         if leases.is_empty() {
-            debug!("No jobs available");
-            *job_discovery_delay = self.step_job_discovery_delay(*job_discovery_delay);
+            *job_discovery_delay =
+                thread_rng().gen_range(Duration::ZERO..self.job_discovery_interval);
+            debug!(next_job_discovery_delay = ?job_discovery_delay, "No jobs available");
             return Vec::new();
         }
         assert!(
@@ -256,24 +254,9 @@ where
             leases.len(),
             max_acquire_count
         );
-        debug!(acquired_job_count = leases.len(), "Acquired jobs");
         *job_discovery_delay = Duration::ZERO;
+        debug!(acquired_job_count = leases.len(), "Acquired jobs");
         leases
-    }
-
-    fn step_job_discovery_delay(&self, delay: Duration) -> Duration {
-        // A zero delay is stepped to the configured minimum delay.
-        if delay == Duration::ZERO {
-            return self.min_job_discovery_delay;
-        }
-
-        // Nonzero delays are doubled, up to the maximum configured delay.
-        // (It's OK to use a saturating multiply here because the following min call causes us to
-        // get the right answer even in the case we saturate.)
-        let new_delay = Duration::from_secs(delay.as_secs().saturating_mul(2));
-        let new_delay = Duration::min(new_delay, self.max_job_discovery_delay);
-        debug!(?new_delay, "Updating job discovery delay");
-        new_delay
     }
 
     fn effective_lease_duration(&self, lease_expiry: &NaiveDateTime) -> Duration {
@@ -393,7 +376,6 @@ mod tests {
                 runtime_manager.with_label("stepper"),
                 noop_meter(),
                 stopper.clone(),
-                Duration::from_secs(1),
                 Duration::from_secs(1),
                 10,
                 Duration::from_secs(60),
