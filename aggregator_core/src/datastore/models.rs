@@ -1486,7 +1486,7 @@ pub struct OutstandingBatch {
     /// The batch ID for this outstanding batch.
     batch_id: BatchId,
     /// The maximum possible size of this batch. The maximum size is the count of reports which are
-    /// currently being aggregated or which have successfully completed the aggregatino process.
+    /// currently being aggregated or which have successfully completed the aggregation process.
     max_size: usize,
 }
 
