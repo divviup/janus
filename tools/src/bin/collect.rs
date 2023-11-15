@@ -533,11 +533,15 @@ where
             Q::format_partial_batch_selector(collection.partial_batch_selector())
         );
     }
+    let (start, duration) = collection.interval();
+
     println!("Number of reports: {}", collection.report_count());
+    println!("Interval start: {}", start);
+    println!("Interval end: {}", *start + *duration);
     println!(
-        "Spanned interval: start: {} length: {}",
-        collection.interval().0,
-        collection.interval().1
+        "Interval length: {:?}",
+        // `std::time::Duration` has the most human-readable debug print for a Duration.
+        duration.to_std().map_err(|err| Error::Anyhow(err.into()))?
     );
     println!("Aggregation result: {:?}", collection.aggregate_result());
     Ok(())
