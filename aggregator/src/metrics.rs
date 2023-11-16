@@ -2,7 +2,7 @@
 
 #[cfg(any(not(feature = "prometheus"), not(feature = "otlp")))]
 use anyhow::anyhow;
-use opentelemetry::sdk::metrics::{reader::AggregationSelector, Aggregation, InstrumentKind};
+use opentelemetry_sdk::metrics::{reader::AggregationSelector, Aggregation, InstrumentKind};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::AddrParseError};
 
@@ -18,18 +18,16 @@ use {
 
 #[cfg(feature = "otlp")]
 use {
-    opentelemetry::runtime::Tokio,
     opentelemetry_otlp::WithExportConfig,
+    opentelemetry_sdk::runtime::Tokio,
     tonic::metadata::{MetadataKey, MetadataMap, MetadataValue},
 };
 
 #[cfg(any(feature = "otlp", feature = "prometheus"))]
 use {
     git_version::git_version,
-    opentelemetry::{
-        sdk::{metrics::MeterProvider, Resource},
-        KeyValue,
-    },
+    opentelemetry::KeyValue,
+    opentelemetry_sdk::{metrics::MeterProvider, Resource},
     std::str::FromStr,
 };
 

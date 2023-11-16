@@ -25,6 +25,7 @@ updates:
         patterns:
           - opentelemetry
           - opentelemetry-*
+          - opentelemetry_*
           - tonic
       trillium:
         patterns:
