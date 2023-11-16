@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
+    ops::RangeInclusive,
 };
 
 // We have to manually implement [Partial]Eq for a number of types because the derived
@@ -1485,18 +1486,20 @@ pub struct OutstandingBatch {
     task_id: TaskId,
     /// The batch ID for this outstanding batch.
     batch_id: BatchId,
-    /// The maximum possible size of this batch. The maximum size is the count of reports which are
-    /// currently being aggregated or which have successfully completed the aggregation process.
-    max_size: usize,
+    /// The range of possible sizes of this batch. The minimum size is the count of reports
+    /// which have successfully completed the aggregation process, while the maximum size is the
+    /// count of reports which are currently being aggregated or have successfully completed the
+    /// aggregation process.
+    size: RangeInclusive<usize>,
 }
 
 impl OutstandingBatch {
     /// Creates a new [`OutstandingBatch`].
-    pub fn new(task_id: TaskId, batch_id: BatchId, max_size: usize) -> Self {
+    pub fn new(task_id: TaskId, batch_id: BatchId, size: RangeInclusive<usize>) -> Self {
         Self {
             task_id,
             batch_id,
-            max_size,
+            size,
         }
     }
 
@@ -1510,10 +1513,12 @@ impl OutstandingBatch {
         &self.batch_id
     }
 
-    /// Gets ths maximum possible size of this batch. The maximum size is the count of reports which
-    /// are currently being aggregated or which have successfully completed the aggregatino process.
-    pub fn max_size(&self) -> usize {
-        self.max_size
+    /// Gets the range of possible sizes of this batch. The minimum size is the count of reports
+    /// which have successfully completed the aggregation process, while the maximum size is the
+    /// count of reports which are currently being aggregated or have successfully completed the
+    /// aggregation process.
+    pub fn size(&self) -> &RangeInclusive<usize> {
+        &self.size
     }
 }
 
