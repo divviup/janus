@@ -76,6 +76,7 @@ async fn run_aggregator(
             if let Some(gc_config) = gc_config {
                 let gc = GarbageCollector::new(
                     datastore,
+                    &meter,
                     gc_config.report_limit,
                     gc_config.aggregation_limit,
                     gc_config.collection_limit,
