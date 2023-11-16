@@ -4085,12 +4085,13 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Deletes old client reports for a given task, that is, client reports whose timestamp is
     /// older than the task's report expiry age. Up to `limit` client reports will be deleted.
+    /// Returns the number of client reports deleted.
     #[tracing::instrument(skip(self), err)]
     pub async fn delete_expired_client_reports(
         &self,
         task_id: &TaskId,
         limit: u64,
-    ) -> Result<(), Error> {
+    ) -> Result<u64, Error> {
         let stmt = self
             .prepare_cached(
                 "WITH client_reports_to_delete AS (
@@ -4113,20 +4114,21 @@ impl<C: Clock> Transaction<'_, C> {
                 /* limit */ &i64::try_from(limit)?,
             ],
         )
-        .await?;
-        Ok(())
+        .await
+        .map_err(Into::into)
     }
 
     /// Deletes old aggregation artifacts (aggregation jobs/report aggregations) for a given task,
     /// that is, aggregation artifacts for which the aggregation job's maximum client timestamp is
     /// older than the task's report expiry age. Up to `limit` aggregation jobs will be deleted,
-    /// along with all related aggregation artifacts.
+    /// along with all related aggregation artifacts. Returns the number of aggregation jobs
+    /// deleted.
     #[tracing::instrument(skip(self), err)]
     pub async fn delete_expired_aggregation_artifacts(
         &self,
         task_id: &TaskId,
         limit: u64,
-    ) -> Result<(), Error> {
+    ) -> Result<u64, Error> {
         let stmt = self
             .prepare_cached(
                 "WITH task_id AS (SELECT id FROM tasks WHERE task_id = $1),
@@ -4154,8 +4156,8 @@ impl<C: Clock> Transaction<'_, C> {
                 /* limit */ &i64::try_from(limit)?,
             ],
         )
-        .await?;
-        Ok(())
+        .await
+        .map_err(Into::into)
     }
 
     /// Deletes old collection artifacts (batches/outstanding batches/batch aggregations/collection
@@ -4176,12 +4178,14 @@ impl<C: Clock> Transaction<'_, C> {
     ///     for GC if the related batch is eligible for GC.
     ///
     /// Up to `limit` batches will be deleted, along with all related collection artifacts.
+    ///
+    /// Returns the number of batches deleted.
     #[tracing::instrument(skip(self), err)]
     pub async fn delete_expired_collection_artifacts(
         &self,
         task_id: &TaskId,
         limit: u64,
-    ) -> Result<(), Error> {
+    ) -> Result<u64, Error> {
         let stmt = self
             .prepare_cached(
                 "WITH batches_to_delete AS (
@@ -4236,8 +4240,8 @@ impl<C: Clock> Transaction<'_, C> {
                 /* limit */ &i64::try_from(limit)?,
             ],
         )
-        .await?;
-        Ok(())
+        .await
+        .map_err(Into::into)
     }
 
     /// Retrieve all global HPKE keypairs.

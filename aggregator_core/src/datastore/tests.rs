@@ -55,7 +55,7 @@ use std::{
     sync::Arc,
     time::Duration as StdDuration,
 };
-use tokio::time::timeout;
+use tokio::{time::timeout, try_join};
 use url::Url;
 
 // This function is only used when there are multiple supported versions.
@@ -5592,16 +5592,18 @@ async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) 
         .unwrap();
 
     // Run.
-    ds.run_unnamed_tx(|tx| {
-        Box::pin(async move {
-            tx.delete_expired_client_reports(&task_id, u64::try_from(i64::MAX)?)
-                .await
+    let deleted_report_count = ds
+        .run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                tx.delete_expired_client_reports(&task_id, u64::try_from(i64::MAX)?)
+                    .await
+            })
         })
-    })
-    .await
-    .unwrap();
+        .await
+        .unwrap();
 
     // Verify.
+    assert_eq!(1, deleted_report_count);
     let want_report_ids = HashSet::from([new_report_id, other_task_report_id]);
     let got_report_ids = ds
         .run_unnamed_tx(|tx| {
@@ -5971,35 +5973,34 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
     clock.advance(&REPORT_EXPIRY_AGE);
 
     // Run.
-    ds.run_unnamed_tx(|tx| {
-        Box::pin(async move {
-            tx.delete_expired_aggregation_artifacts(
-                &leader_time_interval_task_id,
-                u64::try_from(i64::MAX)?,
-            )
-            .await?;
-            tx.delete_expired_aggregation_artifacts(
-                &helper_time_interval_task_id,
-                u64::try_from(i64::MAX)?,
-            )
-            .await?;
-            tx.delete_expired_aggregation_artifacts(
-                &leader_fixed_size_task_id,
-                u64::try_from(i64::MAX)?,
-            )
-            .await?;
-            tx.delete_expired_aggregation_artifacts(
-                &helper_fixed_size_task_id,
-                u64::try_from(i64::MAX)?,
-            )
-            .await?;
-            Ok(())
+    let deleted_aggregation_job_counts = ds
+        .run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                try_join!(
+                    tx.delete_expired_aggregation_artifacts(
+                        &leader_time_interval_task_id,
+                        u64::try_from(i64::MAX)?,
+                    ),
+                    tx.delete_expired_aggregation_artifacts(
+                        &helper_time_interval_task_id,
+                        u64::try_from(i64::MAX)?,
+                    ),
+                    tx.delete_expired_aggregation_artifacts(
+                        &leader_fixed_size_task_id,
+                        u64::try_from(i64::MAX)?,
+                    ),
+                    tx.delete_expired_aggregation_artifacts(
+                        &helper_fixed_size_task_id,
+                        u64::try_from(i64::MAX)?,
+                    )
+                )
+            })
         })
-    })
-    .await
-    .unwrap();
+        .await
+        .unwrap();
 
     // Verify.
+    assert_eq!((1, 1, 1, 1), deleted_aggregation_job_counts);
     let (got_aggregation_job_ids, got_report_ids) = ds
         .run_unnamed_tx(|tx| {
             let vdaf = vdaf.clone();
@@ -6691,48 +6692,41 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
     clock.advance(&REPORT_EXPIRY_AGE);
 
     // Run.
-    ds.run_unnamed_tx(|tx| {
-        Box::pin(async move {
-            tx.delete_expired_collection_artifacts(
-                &leader_time_interval_task_id,
-                u64::try_from(i64::MAX)?,
-            )
-            .await
-            .unwrap();
-            tx.delete_expired_collection_artifacts(
-                &helper_time_interval_task_id,
-                u64::try_from(i64::MAX)?,
-            )
-            .await
-            .unwrap();
-            tx.delete_expired_collection_artifacts(
-                &leader_fixed_size_task_id,
-                u64::try_from(i64::MAX)?,
-            )
-            .await
-            .unwrap();
-            tx.delete_expired_collection_artifacts(
-                &helper_fixed_size_task_id,
-                u64::try_from(i64::MAX)?,
-            )
-            .await
-            .unwrap();
-            tx.delete_expired_collection_artifacts(
-                &leader_fixed_size_time_bucketed_task_id,
-                u64::try_from(i64::MAX)?,
-            )
-            .await
-            .unwrap();
-            Ok(())
+    let deleted_batch_counts = ds
+        .run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                try_join!(
+                    tx.delete_expired_collection_artifacts(
+                        &leader_time_interval_task_id,
+                        u64::try_from(i64::MAX)?,
+                    ),
+                    tx.delete_expired_collection_artifacts(
+                        &helper_time_interval_task_id,
+                        u64::try_from(i64::MAX)?,
+                    ),
+                    tx.delete_expired_collection_artifacts(
+                        &leader_fixed_size_task_id,
+                        u64::try_from(i64::MAX)?,
+                    ),
+                    tx.delete_expired_collection_artifacts(
+                        &helper_fixed_size_task_id,
+                        u64::try_from(i64::MAX)?,
+                    ),
+                    tx.delete_expired_collection_artifacts(
+                        &leader_fixed_size_time_bucketed_task_id,
+                        u64::try_from(i64::MAX)?,
+                    )
+                )
+            })
         })
-    })
-    .await
-    .unwrap();
+        .await
+        .unwrap();
 
     // Reset the clock to "disable" GC-on-read.
     clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
     // Verify.
+    assert_eq!((1, 1, 1, 1, 1), deleted_batch_counts);
     let (
         got_batch_ids,
         got_collection_job_ids,

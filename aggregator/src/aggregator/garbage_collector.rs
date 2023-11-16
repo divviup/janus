@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use futures::future::join_all;
 use janus_aggregator_core::{datastore::Datastore, task::AggregatorTask};
 use janus_core::time::Clock;
+use opentelemetry::metrics::{Counter, Meter, Unit};
 use std::sync::Arc;
 use tokio::try_join;
 use tracing::error;
@@ -14,20 +15,49 @@ pub struct GarbageCollector<C: Clock> {
     report_limit: u64,
     aggregation_limit: u64,
     collection_limit: u64,
+
+    // Metrics.
+    deleted_report_counter: Counter<u64>,
+    deleted_aggregation_job_counter: Counter<u64>,
+    deleted_batch_counter: Counter<u64>,
 }
 
 impl<C: Clock> GarbageCollector<C> {
     pub fn new(
         datastore: Arc<Datastore<C>>,
+        meter: &Meter,
         report_limit: u64,
         aggregation_limit: u64,
         collection_limit: u64,
     ) -> Self {
+        let deleted_report_counter = meter
+            .u64_counter("janus_gc_deleted_reports")
+            .with_description("Count of client reports deleted by the garbage collector.")
+            .with_unit(Unit::new("{report}"))
+            .init();
+        let deleted_aggregation_job_counter = meter
+            .u64_counter("janus_gc_deleted_aggregation_jobs")
+            .with_description("Count of aggregation jobs deleted by the garbage collector.")
+            .with_unit(Unit::new("{job}"))
+            .init();
+        let deleted_batch_counter = meter
+            .u64_counter("janus_gc_deleted_batches")
+            .with_description("Count of batches deleted by the garbage collector.")
+            .with_unit(Unit::new("{batch}"))
+            .init();
+
+        deleted_report_counter.add(0, &[]);
+        deleted_aggregation_job_counter.add(0, &[]);
+        deleted_batch_counter.add(0, &[]);
+
         Self {
             datastore,
             report_limit,
             aggregation_limit,
             collection_limit,
+            deleted_report_counter,
+            deleted_aggregation_job_counter,
+            deleted_batch_counter,
         }
     }
 
@@ -55,8 +85,10 @@ impl<C: Clock> GarbageCollector<C> {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     async fn gc_task(&self, task: Arc<AggregatorTask>) -> Result<()> {
-        self.datastore
+        let (client_reports_deleted, aggregation_jobs_deleted, batches_deleted) = self
+            .datastore
             .run_tx("garbage_collector", |tx| {
                 let task = Arc::clone(&task);
                 let report_limit = self.report_limit;
@@ -68,11 +100,14 @@ impl<C: Clock> GarbageCollector<C> {
                         tx.delete_expired_client_reports(task.id(), report_limit),
                         tx.delete_expired_aggregation_artifacts(task.id(), aggregation_limit),
                         tx.delete_expired_collection_artifacts(task.id(), collection_limit),
-                    )?;
-                    Ok(())
+                    )
                 })
             })
             .await?;
+        self.deleted_report_counter.add(client_reports_deleted, &[]);
+        self.deleted_aggregation_job_counter
+            .add(aggregation_jobs_deleted, &[]);
+        self.deleted_batch_counter.add(batches_deleted, &[]);
         Ok(())
     }
 }
@@ -90,6 +125,7 @@ mod tests {
             test_util::ephemeral_datastore,
         },
         task::{self, test_util::TaskBuilder},
+        test_util::noop_meter,
     };
     use janus_core::{
         test_util::{
@@ -225,6 +261,7 @@ mod tests {
         let task = Arc::new(task);
         GarbageCollector::new(
             Arc::clone(&ds),
+            &noop_meter(),
             u64::try_from(i64::MAX).unwrap(),
             u64::try_from(i64::MAX).unwrap(),
             u64::try_from(i64::MAX).unwrap(),
@@ -415,6 +452,7 @@ mod tests {
         let task = Arc::new(task);
         GarbageCollector::new(
             Arc::clone(&ds),
+            &noop_meter(),
             u64::try_from(i64::MAX).unwrap(),
             u64::try_from(i64::MAX).unwrap(),
             u64::try_from(i64::MAX).unwrap(),
@@ -596,6 +634,7 @@ mod tests {
         let task = Arc::new(task);
         GarbageCollector::new(
             Arc::clone(&ds),
+            &noop_meter(),
             u64::try_from(i64::MAX).unwrap(),
             u64::try_from(i64::MAX).unwrap(),
             u64::try_from(i64::MAX).unwrap(),
@@ -792,6 +831,7 @@ mod tests {
         let task = Arc::new(task);
         GarbageCollector::new(
             Arc::clone(&ds),
+            &noop_meter(),
             u64::try_from(i64::MAX).unwrap(),
             u64::try_from(i64::MAX).unwrap(),
             u64::try_from(i64::MAX).unwrap(),
