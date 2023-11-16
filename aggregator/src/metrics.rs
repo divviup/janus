@@ -18,8 +18,8 @@ use {
 
 #[cfg(feature = "otlp")]
 use {
-    opentelemetry_sdk::runtime::Tokio,
     opentelemetry_otlp::WithExportConfig,
+    opentelemetry_sdk::runtime::Tokio,
     tonic::metadata::{MetadataKey, MetadataMap, MetadataValue},
 };
 
