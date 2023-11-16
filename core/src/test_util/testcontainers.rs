@@ -29,8 +29,8 @@ pub struct Postgres {
 }
 
 impl Postgres {
-    const NAME: &str = "postgres";
-    const TAG: &str = "14-alpine";
+    const NAME: &'static str = "postgres";
+    const TAG: &'static str = "14-alpine";
 }
 
 impl Default for Postgres {
