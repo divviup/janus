@@ -4,7 +4,7 @@
 use anyhow::anyhow;
 use opentelemetry_sdk::metrics::{reader::AggregationSelector, Aggregation, InstrumentKind};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, net::AddrParseError};
+use std::net::AddrParseError;
 
 #[cfg(feature = "prometheus")]
 use {
@@ -17,11 +17,7 @@ use {
 };
 
 #[cfg(feature = "otlp")]
-use {
-    opentelemetry_otlp::WithExportConfig,
-    opentelemetry_sdk::runtime::Tokio,
-    tonic::metadata::{MetadataKey, MetadataMap, MetadataValue},
-};
+use {opentelemetry_otlp::WithExportConfig, opentelemetry_sdk::runtime::Tokio};
 
 #[cfg(any(feature = "otlp", feature = "prometheus"))]
 use {
@@ -38,12 +34,6 @@ pub enum Error {
     IpAddress(#[from] AddrParseError),
     #[error(transparent)]
     OpenTelemetry(#[from] opentelemetry::metrics::MetricsError),
-    #[cfg(feature = "otlp")]
-    #[error(transparent)]
-    TonicMetadataKey(#[from] tonic::metadata::errors::InvalidMetadataKey),
-    #[cfg(feature = "otlp")]
-    #[error(transparent)]
-    TonicMetadataValue(#[from] tonic::metadata::errors::InvalidMetadataValue),
     #[error("{0}")]
     Other(#[from] anyhow::Error),
 }
@@ -72,9 +62,6 @@ pub enum MetricsExporterConfiguration {
 pub struct OtlpExporterConfiguration {
     /// gRPC endpoint for OTLP exporter.
     pub endpoint: String,
-    /// Additional metadata/HTTP headers to be sent with OTLP requests.
-    #[serde(default)]
-    pub metadata: HashMap<String, String>,
 }
 
 /// Choice of OpenTelemetry metrics exporter implementation.
@@ -173,11 +160,6 @@ pub async fn install_metrics_exporter(
 
         #[cfg(feature = "otlp")]
         Some(MetricsExporterConfiguration::Otlp(otlp_config)) => {
-            let mut map = MetadataMap::with_capacity(otlp_config.metadata.len());
-            for (key, value) in otlp_config.metadata.iter() {
-                map.insert(MetadataKey::from_str(key)?, MetadataValue::try_from(value)?);
-            }
-
             let meter_provider = opentelemetry_otlp::new_pipeline()
                 .metrics(Tokio)
                 .with_aggregation_selector(CustomAggregationSelector)

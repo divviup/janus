@@ -159,7 +159,6 @@ pub mod test_util {
         },
     };
     use reqwest::Url;
-    use std::collections::HashMap;
 
     pub fn generate_db_config() -> DbConfig {
         DbConfig {
@@ -182,10 +181,6 @@ pub mod test_util {
             open_telemetry_config: Some(OpenTelemetryTraceConfiguration::Otlp(
                 OtlpTraceConfiguration {
                     endpoint: "127.0.0.1:6668".to_string(),
-                    metadata: HashMap::from([
-                        ("metadata_key_0".to_string(), "metadata_value_0".to_string()),
-                        ("metadata_key_1".to_string(), "metadata_value_1".to_string()),
-                    ]),
                 },
             )),
             chrome: false,
@@ -260,30 +255,22 @@ mod tests {
             "  open_telemetry_config:\n",
             "    otlp:\n",
             "      endpoint: \"https://example.com/\"\n",
-            "      metadata:\n",
-            "        key: \"value\"\n",
             "metrics_config:\n",
             "  exporter:\n",
             "    otlp:\n",
             "      endpoint: \"https://example.com/\"\n",
-            "      metadata:\n",
-            "        key: \"value\"\n",
         );
         let config: CommonConfig = serde_yaml::from_str(input).unwrap();
         assert_matches!(
             config.logging_config.open_telemetry_config.unwrap(),
             OpenTelemetryTraceConfiguration::Otlp(otlp_config) => {
                 assert_eq!(otlp_config.endpoint, "https://example.com/");
-                assert_eq!(otlp_config.metadata.len(), 1);
-                assert_eq!(otlp_config.metadata.get("key").unwrap(), "value");
             }
         );
         assert_matches!(
             config.metrics_config.exporter.unwrap(),
             MetricsExporterConfiguration::Otlp(otlp_config) => {
                 assert_eq!(otlp_config.endpoint, "https://example.com/");
-                assert_eq!(otlp_config.metadata.len(), 1);
-                assert_eq!(otlp_config.metadata.get("key").unwrap(), "value");
             }
         )
     }

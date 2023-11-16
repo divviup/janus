@@ -4,8 +4,8 @@ pub mod job_driver;
 
 use crate::{
     config::{BinaryConfig, DbConfig},
-    metrics::{install_metrics_exporter, MetricsExporterConfiguration},
-    trace::{install_trace_subscriber, OpenTelemetryTraceConfiguration, TraceReloadHandle},
+    metrics::install_metrics_exporter,
+    trace::{install_trace_subscriber, TraceReloadHandle},
 };
 use anyhow::{anyhow, Context as _, Result};
 use backoff::{future::retry, ExponentialBackoff};
@@ -47,27 +47,8 @@ use trillium_tokio::Stopper;
 pub fn read_config<Config: BinaryConfig>(options: &CommonBinaryOptions) -> Result<Config> {
     let config_content = fs::read_to_string(&options.config_file)
         .with_context(|| format!("couldn't read config file {:?}", options.config_file))?;
-    let mut config: Config = serde_yaml::from_str(&config_content)
-        .with_context(|| format!("couldn't parse config file {:?}", options.config_file))?;
-
-    if let Some(OpenTelemetryTraceConfiguration::Otlp(otlp_config)) = &mut config
-        .common_config_mut()
-        .logging_config
-        .open_telemetry_config
-    {
-        otlp_config
-            .metadata
-            .extend(options.otlp_tracing_metadata.iter().cloned());
-    }
-    if let Some(MetricsExporterConfiguration::Otlp(otlp_config)) =
-        &mut config.common_config_mut().metrics_config.exporter
-    {
-        otlp_config
-            .metadata
-            .extend(options.otlp_metrics_metadata.iter().cloned());
-    }
-
-    Ok(config)
+    serde_yaml::from_str(&config_content)
+        .with_context(|| format!("couldn't parse config file {:?}", options.config_file))
 }
 
 /// Connects to a database, given a config. `db_password` is mutually exclusive with the database
@@ -234,30 +215,6 @@ pub struct CommonBinaryOptions {
         help = "datastore encryption keys, encoded in url-safe unpadded base64 then comma-separated"
     )]
     pub datastore_keys: Vec<String>,
-
-    /// Additional OTLP/gRPC metadata key/value pairs. (concatenated with those in the logging
-    /// configuration sections)
-    #[clap(
-        long,
-        env = "OTLP_TRACING_METADATA",
-        value_parser(parse_metadata_entry),
-        help = "additional OTLP/gRPC metadata key/value pairs for the tracing exporter",
-        value_name = "KEY=value",
-        use_value_delimiter = true
-    )]
-    pub otlp_tracing_metadata: Vec<(String, String)>,
-
-    /// Additional OTLP/gRPC metadata key/value pairs. (concatenated with those in the metrics
-    /// configuration sections)
-    #[clap(
-        long,
-        env = "OTLP_METRICS_METADATA",
-        value_parser(parse_metadata_entry),
-        help = "additional OTLP/gRPC metadata key/value pairs for the metrics exporter",
-        value_name = "KEY=value",
-        use_value_delimiter = true
-    )]
-    pub otlp_metrics_metadata: Vec<(String, String)>,
 }
 
 impl Debug for CommonBinaryOptions {
@@ -265,19 +222,6 @@ impl Debug for CommonBinaryOptions {
         f.debug_struct("Options")
             .field("config_file", &self.config_file)
             .finish()
-    }
-}
-
-fn parse_metadata_entry(input: &str) -> Result<(String, String)> {
-    if let Some(equals) = input.find('=') {
-        let (key, rest) = input.split_at(equals);
-        let value = &rest[1..];
-        Ok((key.to_string(), value.to_string()))
-    } else {
-        Err(anyhow!(
-            "`--otlp-tracing-metadata` and `--otlp-metrics-metadata` must be provided a key and \
-             value, joined with an `=`"
-        ))
     }
 }
 

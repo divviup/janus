@@ -26,7 +26,6 @@ updates:
           - opentelemetry
           - opentelemetry-*
           - opentelemetry_*
-          - tonic
       trillium:
         patterns:
           - trillium
@@ -89,7 +88,6 @@ updates:
         patterns:
           - opentelemetry
           - opentelemetry-*
-          - tonic
       trillium:
         patterns:
           - trillium

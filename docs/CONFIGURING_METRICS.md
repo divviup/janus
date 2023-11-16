@@ -28,19 +28,14 @@ will fall back to the environment variables `OTEL_EXPORTER_PROMETHEUS_HOST` and
 
 Honeycomb also supports OpenTelemetry-formatted metrics, though only on the
 Enterprise and Pro plans. Compile `janus_aggregator` with the `otlp` feature
-enabled, and add the following section to the configuration file. Note that the
-OTLP/gRPC exporter will push metrics at regular intervals.
+enabled, add the following section to the configuration file, and provide your
+Honeycomb API key through an environment variable of the form
+`OTEL_EXPORTER_OTLP_HEADERS=x-honeycomb-team=YOUR_API_KEY,x-honeycomb-dataset=YOUR_METRICS_DATASET`.
+Note that the OTLP/gRPC exporter will push metrics at regular intervals.
 
 ```yaml
 metrics_config:
   exporter:
     otlp:
       endpoint: "https://api.honeycomb.io:443"
-      metadata:
-        x-honeycomb-team: "YOUR_API_KEY"
-        x-honeycomb-dataset: "YOUR_METRICS_DATASET"
 ```
-
-The command line flag `--otlp-metrics-metadata` or environment variable
-`OTLP_METRICS_METADATA` may alternately be used to supply gRPC metadata for the
-metrics exporter.

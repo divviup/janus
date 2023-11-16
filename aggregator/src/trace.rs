@@ -2,7 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
     io::{stdout, IsTerminal},
     net::SocketAddr,
 };
@@ -14,11 +13,7 @@ use tracing_subscriber::{
 };
 
 #[cfg(feature = "otlp")]
-use {
-    opentelemetry_otlp::WithExportConfig,
-    std::str::FromStr,
-    tonic::metadata::{MetadataKey, MetadataMap, MetadataValue},
-};
+use opentelemetry_otlp::WithExportConfig;
 
 /// Errors from initializing trace subscriber.
 #[derive(Debug, thiserror::Error)]
@@ -30,12 +25,6 @@ pub enum Error {
     #[cfg(feature = "otlp")]
     #[error(transparent)]
     OpenTelemetry(#[from] opentelemetry::trace::TraceError),
-    #[cfg(feature = "otlp")]
-    #[error(transparent)]
-    TonicMetadataKey(#[from] tonic::metadata::errors::InvalidMetadataKey),
-    #[cfg(feature = "otlp")]
-    #[error(transparent)]
-    TonicMetadataValue(#[from] tonic::metadata::errors::InvalidMetadataValue),
     #[error("bad log/trace filter: {0}")]
     FromEnv(#[from] FromEnvError),
     #[error("{0}")]
@@ -100,9 +89,6 @@ pub enum OpenTelemetryTraceConfiguration {
 pub struct OtlpTraceConfiguration {
     /// gRPC endpoint for OTLP exporter.
     pub endpoint: String,
-    /// Additional metadata/HTTP headers to be sent with OTLP requests.
-    #[serde(default)]
-    pub metadata: HashMap<String, String>,
 }
 
 /// Create a base tracing layer with configuration used in all subscribers
@@ -198,18 +184,12 @@ pub fn install_trace_subscriber(
     #[cfg(feature = "otlp")]
     if let Some(OpenTelemetryTraceConfiguration::Otlp(otlp_config)) = &config.open_telemetry_config
     {
-        let mut map = MetadataMap::with_capacity(otlp_config.metadata.len());
-        for (key, value) in otlp_config.metadata.iter() {
-            map.insert(MetadataKey::from_str(key)?, MetadataValue::try_from(value)?);
-        }
-
         let tracer = opentelemetry_otlp::new_pipeline()
             .tracing()
             .with_exporter(
                 opentelemetry_otlp::new_exporter()
                     .tonic()
-                    .with_endpoint(otlp_config.endpoint.clone())
-                    .with_metadata(map),
+                    .with_endpoint(otlp_config.endpoint.clone()),
             )
             .install_batch(opentelemetry_sdk::runtime::Tokio)?;
 
