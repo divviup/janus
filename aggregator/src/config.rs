@@ -128,9 +128,8 @@ pub struct TaskprovConfig {
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct JobDriverConfig {
-    /// The maximum delay between checking for jobs ready to be stepped, in seconds. Applies only
-    /// when there are no jobs to be stepped. The actual wait time is randomly chosen in the interval
-    /// `[0, job_discovery_interval)`.
+    /// The delay between checking for jobs ready to be stepped, in seconds. Applies only when
+    /// there are no jobs to be stepped.
     pub job_discovery_interval_secs: u64,
     /// The maximum number of jobs being stepped at once. This parameter determines the amount of
     /// per-process concurrency.
