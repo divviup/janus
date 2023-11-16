@@ -415,32 +415,8 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
             // Write updated aggregation jobs & report aggregations.
             try_join_all(by_aggregation_job.values().map(
                 |(op, aggregation_job, report_aggregations)| async move {
-                    match (op, aggregation_job.state()) {
-                        // We are writing an aggregation job for the first time, and it is already
-                        // in a terminal state. We don't need to do anything: no aggregation job
-                        // exists in the datastore, and our desired state is that no aggregation job
-                        // exist in the datastore.
-                        (
-                            Operation::Put,
-                            AggregationJobState::Finished | AggregationJobState::Abandoned,
-                        ) => (),
-
-                        // We are updating an aggregation job, and it is now in a terminal state. We
-                        // delete the job & report aggregations from the datastore, as we do not
-                        // store completed aggregation jobs.
-                        (
-                            Operation::Update,
-                            AggregationJobState::Finished | AggregationJobState::Abandoned,
-                        ) => {
-                            tx.delete_aggregation_job(
-                                aggregation_job.task_id(),
-                                aggregation_job.id(),
-                            )
-                            .await?;
-                        }
-
-                        // We are writing an aggregation job for the first time.
-                        (Operation::Put, _) => {
+                    match op {
+                        Operation::Put => {
                             // These operations must occur serially since report aggregation rows
                             // have a foreign-key constraint on the related aggregation job
                             // existing. We could speed things up for initial writes by switching to
@@ -454,9 +430,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                             )
                             .await?;
                         }
-
-                        // We are updating an aggregation job that has already been written.
-                        (Operation::Update, _) => {
+                        Operation::Update => {
                             try_join!(
                                 tx.update_aggregation_job(aggregation_job),
                                 try_join_all(
@@ -466,7 +440,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                                 )
                             )?;
                         }
-                    }
+                    };
                     Ok(())
                 }
             )),
@@ -575,9 +549,10 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                             }
                         }
                         if is_collectable {
-                            let collection_job =
-                                collection_job.with_state(CollectionJobState::Collectable);
-                            tx.update_collection_job(&collection_job).await?;
+                            tx.update_collection_job(
+                                &collection_job.with_state(CollectionJobState::Collectable),
+                            )
+                            .await?;
                         }
                         Ok(())
                     }

@@ -51,6 +51,7 @@ use rand::{distributions::Standard, random, thread_rng, Rng};
 use std::{
     collections::{HashMap, HashSet},
     iter,
+    ops::RangeInclusive,
     sync::Arc,
     time::Duration as StdDuration,
 };
@@ -1126,99 +1127,133 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
                 tx.put_aggregator_task(&task).await?;
                 tx.put_aggregator_task(&unrelated_task).await?;
 
-                // Create a batch for the first task containing two reports, which has completed
+                // Create a batch for the first task containing two reports, which has started
                 // aggregation twice with two different aggregation parameters.
                 let batch_id = random();
+                let expired_report = LeaderStoredReport::new_dummy(
+                    *task.id(),
+                    OLDEST_ALLOWED_REPORT_TIMESTAMP
+                        .sub(&Duration::from_seconds(2))
+                        .unwrap(),
+                );
+                let report_0 =
+                    LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
+                let report_1 = LeaderStoredReport::new_dummy(
+                    *task.id(),
+                    OLDEST_ALLOWED_REPORT_TIMESTAMP
+                        .add(&Duration::from_seconds(1))
+                        .unwrap(),
+                );
 
-                tx.put_batch(&Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                let expired_aggregation_job = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                     *task.id(),
-                    batch_id,
+                    random(),
                     AggregationParam(22),
-                    BatchState::Closed,
-                    0,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(2))
-                        .unwrap(),
-                ))
-                .await
-                .unwrap();
-                tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
-                    *task.id(),
                     batch_id,
-                    AggregationParam(22),
-                    5,
-                    BatchAggregationState::Collected,
-                    Some(AggregateShare(15)),
-                    1,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
-                        .unwrap(),
-                    ReportIdChecksum::default(),
-                ))
-                .await
-                .unwrap();
-                tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
-                    *task.id(),
-                    batch_id,
-                    AggregationParam(22),
-                    17,
-                    BatchAggregationState::Collected,
-                    Some(AggregateShare(91)),
-                    1,
                     Interval::new(
                         OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .add(&Duration::from_seconds(1))
+                            .sub(&Duration::from_seconds(2))
                             .unwrap(),
                         Duration::from_seconds(1),
                     )
                     .unwrap(),
-                    ReportIdChecksum::default(),
-                ))
-                .await
-                .unwrap();
-
-                tx.put_batch(&Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                    AggregationJobState::InProgress,
+                    AggregationJobStep::from(0),
+                );
+                let expired_report_aggregation = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                     *task.id(),
-                    batch_id,
-                    AggregationParam(51),
-                    BatchState::Closed,
+                    *expired_aggregation_job.id(),
+                    *expired_report.metadata().id(),
+                    *expired_report.metadata().time(),
                     0,
+                    None,
+                    ReportAggregationState::Start,
+                );
+
+                let aggregation_job_0 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                    *task.id(),
+                    random(),
+                    AggregationParam(22),
+                    batch_id,
                     Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(2))
                         .unwrap(),
-                ))
-                .await
-                .unwrap();
-                tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                    AggregationJobState::InProgress,
+                    AggregationJobStep::from(0),
+                );
+                let aggregation_job_0_report_aggregation_0 =
+                    ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        *aggregation_job_0.id(),
+                        *report_0.metadata().id(),
+                        *report_0.metadata().time(),
+                        1,
+                        None,
+                        ReportAggregationState::Start,
+                    );
+                let aggregation_job_0_report_aggregation_1 =
+                    ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        *aggregation_job_0.id(),
+                        *report_1.metadata().id(),
+                        *report_1.metadata().time(),
+                        2,
+                        None,
+                        ReportAggregationState::Start,
+                    );
+
+                let aggregation_job_1 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                     *task.id(),
+                    random(),
+                    AggregationParam(23),
                     batch_id,
-                    AggregationParam(51),
-                    14,
-                    BatchAggregationState::Collected,
-                    Some(AggregateShare(85)),
-                    1,
-                    Interval::new(
-                        OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .add(&Duration::from_seconds(1))
-                            .unwrap(),
-                        Duration::from_seconds(1),
-                    )
-                    .unwrap(),
-                    ReportIdChecksum::default(),
-                ))
-                .await
-                .unwrap();
-                tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
-                    *task.id(),
-                    batch_id,
-                    AggregationParam(51),
-                    29,
-                    BatchAggregationState::Collected,
-                    Some(AggregateShare(411)),
-                    1,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
-                    ReportIdChecksum::default(),
-                ))
-                .await
-                .unwrap();
+                    AggregationJobState::InProgress,
+                    AggregationJobStep::from(0),
+                );
+                let aggregation_job_1_report_aggregation_0 =
+                    ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        *aggregation_job_1.id(),
+                        *report_0.metadata().id(),
+                        *report_0.metadata().time(),
+                        0,
+                        None,
+                        ReportAggregationState::Start,
+                    );
+                let aggregation_job_1_report_aggregation_1 =
+                    ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        *aggregation_job_1.id(),
+                        *report_1.metadata().id(),
+                        *report_1.metadata().time(),
+                        1,
+                        None,
+                        ReportAggregationState::Start,
+                    );
+
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &expired_report)
+                    .await?;
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report_0)
+                    .await?;
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report_1)
+                    .await?;
+
+                tx.put_aggregation_job(&expired_aggregation_job).await?;
+                tx.put_report_aggregation(&expired_report_aggregation)
+                    .await?;
+
+                tx.put_aggregation_job(&aggregation_job_0).await?;
+                tx.put_report_aggregation(&aggregation_job_0_report_aggregation_0)
+                    .await?;
+                tx.put_report_aggregation(&aggregation_job_0_report_aggregation_1)
+                    .await?;
+
+                tx.put_aggregation_job(&aggregation_job_1).await?;
+                tx.put_report_aggregation(&aggregation_job_1_report_aggregation_0)
+                    .await?;
+                tx.put_report_aggregation(&aggregation_job_1_report_aggregation_1)
+                    .await?;
 
                 Ok(batch_id)
             })
@@ -1578,44 +1613,6 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
         .unwrap();
     assert_eq!(None, got_leader_aggregation_job);
     assert_eq!(None, got_helper_aggregation_job);
-
-    // Reset the clock to "un-expire" the written aggregation jobs. (...don't try this in prod.)
-    clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-
-    // Delete an aggregation job, and verify that it can no longer be read.
-    ds.run_unnamed_tx(|tx| {
-        let new_leader_aggregation_job = new_leader_aggregation_job.clone();
-        Box::pin(async move {
-            assert!(tx
-                .get_aggregation_job::<0, FixedSize, dummy_vdaf::Vdaf>(
-                    new_leader_aggregation_job.task_id(),
-                    new_leader_aggregation_job.id(),
-                )
-                .await
-                .unwrap()
-                .is_some());
-
-            tx.delete_aggregation_job(
-                new_leader_aggregation_job.task_id(),
-                new_leader_aggregation_job.id(),
-            )
-            .await
-            .unwrap();
-
-            assert!(tx
-                .get_aggregation_job::<0, FixedSize, dummy_vdaf::Vdaf>(
-                    new_leader_aggregation_job.task_id(),
-                    new_leader_aggregation_job.id(),
-                )
-                .await
-                .unwrap()
-                .is_none());
-
-            Ok(())
-        })
-    })
-    .await
-    .unwrap();
 }
 
 #[rstest_reuse::apply(schema_versions_template)]
@@ -5065,23 +5062,21 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                 .build()
                 .leader_view()
                 .unwrap();
-                tx.put_aggregator_task(&task_1).await.unwrap();
+                tx.put_aggregator_task(&task_1).await?;
                 let batch_id_1 = random();
 
                 tx.put_batch(&Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                     *task_1.id(),
                     batch_id_1,
                     AggregationParam(0),
-                    BatchState::Closing,
+                    BatchState::Closed,
                     0,
                     Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
                         .unwrap(),
                 ))
-                .await
-                .unwrap();
+                .await?;
                 tx.put_outstanding_batch(task_1.id(), &batch_id_1, &None)
-                    .await
-                    .unwrap();
+                    .await?;
 
                 let task_2 = TaskBuilder::new(
                     task::QueryType::FixedSize {
@@ -5094,34 +5089,32 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                 .build()
                 .leader_view()
                 .unwrap();
-                tx.put_aggregator_task(&task_2).await.unwrap();
+                tx.put_aggregator_task(&task_2).await?;
                 let batch_id_2 = random();
 
                 tx.put_batch(&Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                     *task_2.id(),
                     batch_id_2,
                     AggregationParam(0),
-                    BatchState::Closing,
+                    BatchState::Closed,
                     0,
                     Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
                         .unwrap(),
                 ))
-                .await
-                .unwrap();
+                .await?;
                 tx.put_outstanding_batch(task_2.id(), &batch_id_2, &Some(time_bucket_start))
-                    .await
-                    .unwrap();
+                    .await?;
 
-                // Write a few aggregation jobs & report aggregations to produce useful max-size
-                // values to validate later.
+                // Write a few aggregation jobs & report aggregations to produce useful
+                // min_size/max_size values to validate later.
                 let aggregation_job_0 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                     *task_1.id(),
                     random(),
                     AggregationParam(0),
                     batch_id_1,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
-                    AggregationJobState::InProgress,
+                    AggregationJobState::Finished,
                     AggregationJobStep::from(1),
                 );
                 let report_aggregation_0_0 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -5131,7 +5124,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     clock.now(),
                     0,
                     None,
-                    ReportAggregationState::Start, // Counted for max size.
+                    ReportAggregationState::Start, // Counted among max_size.
                 );
 
                 let report_id_0_1 = random();
@@ -5150,7 +5143,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     clock.now(),
                     1,
                     None,
-                    // Counted for max size.
+                    // Counted among max_size.
                     ReportAggregationState::WaitingLeader(
                         transcript.helper_prepare_transitions[0].transition.clone(),
                     ),
@@ -5162,37 +5155,78 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     clock.now(),
                     2,
                     None,
-                    ReportAggregationState::Failed(PrepareError::VdafPrepError), // Not counted for max size.
+                    ReportAggregationState::Failed(PrepareError::VdafPrepError), // Not counted among min_size or max_size.
                 );
 
                 let aggregation_job_1 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
-                    *task_2.id(),
+                    *task_1.id(),
                     random(),
                     AggregationParam(0),
-                    batch_id_2,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
+                    batch_id_1,
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
-                    AggregationJobState::InProgress,
+                    AggregationJobState::Finished,
                     AggregationJobStep::from(1),
                 );
                 let report_aggregation_1_0 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
-                    *task_2.id(),
+                    *task_1.id(),
                     *aggregation_job_1.id(),
                     random(),
                     clock.now(),
                     0,
                     None,
-                    ReportAggregationState::Start, // Counted for max size.
+                    ReportAggregationState::Finished, // Counted among min_size and max_size.
+                );
+                let report_aggregation_1_1 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                    *task_1.id(),
+                    *aggregation_job_1.id(),
+                    random(),
+                    clock.now(),
+                    1,
+                    None,
+                    ReportAggregationState::Finished, // Counted among min_size and max_size.
+                );
+                let report_aggregation_1_2 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                    *task_1.id(),
+                    *aggregation_job_1.id(),
+                    random(),
+                    clock.now(),
+                    2,
+                    None,
+                    ReportAggregationState::Failed(PrepareError::VdafPrepError), // Not counted among min_size or max_size.
                 );
 
-                for aggregation_job in &[aggregation_job_0, aggregation_job_1] {
-                    tx.put_aggregation_job(aggregation_job).await.unwrap();
+                let aggregation_job_2 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                    *task_2.id(),
+                    random(),
+                    AggregationParam(0),
+                    batch_id_2,
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                        .unwrap(),
+                    AggregationJobState::Finished,
+                    AggregationJobStep::from(1),
+                );
+                let report_aggregation_2_0 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                    *task_2.id(),
+                    *aggregation_job_2.id(),
+                    random(),
+                    clock.now(),
+                    0,
+                    None,
+                    ReportAggregationState::Start,
+                );
+
+                for aggregation_job in &[aggregation_job_0, aggregation_job_1, aggregation_job_2] {
+                    tx.put_aggregation_job(aggregation_job).await?;
                 }
                 for report_aggregation in &[
                     report_aggregation_0_0,
                     report_aggregation_0_1,
                     report_aggregation_0_2,
                     report_aggregation_1_0,
+                    report_aggregation_1_1,
+                    report_aggregation_1_2,
+                    report_aggregation_2_0,
                 ] {
                     tx.put_client_report(
                         &dummy_vdaf::Vdaf::new(),
@@ -5213,9 +5247,8 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                             ),
                         ),
                     )
-                    .await
-                    .unwrap();
-                    tx.put_report_aggregation(report_aggregation).await.unwrap();
+                    .await?;
+                    tx.put_report_aggregation(report_aggregation).await?;
                 }
 
                 tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
@@ -5230,8 +5263,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                         .unwrap(),
                     ReportIdChecksum::default(),
                 ))
-                .await
-                .unwrap();
+                .await?;
                 tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                     *task_1.id(),
                     batch_id_1,
@@ -5244,8 +5276,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                         .unwrap(),
                     ReportIdChecksum::default(),
                 ))
-                .await
-                .unwrap();
+                .await?;
 
                 tx.check_timestamp_columns(
                     "outstanding_batches",
@@ -5274,19 +5305,10 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
                 let outstanding_batches_task_1 =
-                    tx.get_outstanding_batches(&task_id_1, &None).await.unwrap();
-                let outstanding_batch_1 = tx
-                    .get_filled_outstanding_batch(&task_id_1, 1)
-                    .await
-                    .unwrap();
-                let outstanding_batch_2 = tx
-                    .get_filled_outstanding_batch(&task_id_1, 2)
-                    .await
-                    .unwrap();
-                let outstanding_batch_3 = tx
-                    .get_filled_outstanding_batch(&task_id_1, 3)
-                    .await
-                    .unwrap();
+                    tx.get_outstanding_batches(&task_id_1, &None).await?;
+                let outstanding_batch_1 = tx.get_filled_outstanding_batch(&task_id_1, 1).await?;
+                let outstanding_batch_2 = tx.get_filled_outstanding_batch(&task_id_1, 2).await?;
+                let outstanding_batch_3 = tx.get_filled_outstanding_batch(&task_id_1, 3).await?;
                 let outstanding_batches_task_2 = tx
                     .get_outstanding_batches(&task_id_2, &Some(time_bucket_start))
                     .await?;
@@ -5295,8 +5317,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                         &task_id_2,
                         &Some(time_bucket_start.add(&Duration::from_hours(24)?)?),
                     )
-                    .await
-                    .unwrap();
+                    .await?;
                 Ok((
                     outstanding_batches_task_1,
                     outstanding_batch_1,
@@ -5311,14 +5332,22 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
         .unwrap();
     assert_eq!(
         outstanding_batches_task_1,
-        Vec::from([OutstandingBatch::new(task_id_1, batch_id_1, 4)])
+        Vec::from([OutstandingBatch::new(
+            task_id_1,
+            batch_id_1,
+            RangeInclusive::new(2, 4)
+        )])
     );
     assert_eq!(outstanding_batch_1, Some(batch_id_1));
     assert_eq!(outstanding_batch_2, Some(batch_id_1));
     assert_eq!(outstanding_batch_3, None);
     assert_eq!(
         outstanding_batches_task_2,
-        Vec::from([OutstandingBatch::new(task_id_2, batch_id_2, 1)])
+        Vec::from([OutstandingBatch::new(
+            task_id_2,
+            batch_id_2,
+            RangeInclusive::new(0, 1)
+        )])
     );
     assert_eq!(outstanding_batches_empty_time_bucket, Vec::new());
 

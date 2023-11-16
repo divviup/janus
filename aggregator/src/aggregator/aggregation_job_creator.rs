@@ -666,7 +666,7 @@ mod tests {
     use futures::future::try_join_all;
     use janus_aggregator_core::{
         datastore::{
-            models::{AggregationJob, Batch, BatchState, LeaderStoredReport},
+            models::{AggregationJob, AggregationJobState, Batch, BatchState, LeaderStoredReport},
             test_util::ephemeral_datastore,
             Transaction,
         },
@@ -1077,30 +1077,33 @@ mod tests {
             iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
                 .take(2 * MAX_AGGREGATION_JOB_SIZE + MIN_AGGREGATION_JOB_SIZE + 1)
                 .collect();
+        let all_report_ids: HashSet<ReportId> = reports
+            .iter()
+            .map(|report| *report.metadata().id())
+            .collect();
 
-        let want_batch = ds
-            .run_unnamed_tx(|tx| {
-                let (task, reports) = (Arc::clone(&task), reports.clone());
-                Box::pin(async move {
-                    tx.put_aggregator_task(&task).await?;
-                    for report in reports.iter() {
-                        tx.put_client_report(&dummy_vdaf::Vdaf::new(), report)
-                            .await?;
-                    }
-                    let batch = Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
-                        *task.id(),
-                        batch_identifier,
-                        (),
-                        BatchState::Closed,
-                        0,
-                        Interval::from_time(&report_time).unwrap(),
-                    );
-                    tx.put_batch(&batch).await?;
-                    Ok(batch)
-                })
+        ds.run_unnamed_tx(|tx| {
+            let (task, reports) = (Arc::clone(&task), reports.clone());
+            Box::pin(async move {
+                tx.put_aggregator_task(&task).await?;
+                for report in reports.iter() {
+                    tx.put_client_report(&dummy_vdaf::Vdaf::new(), report)
+                        .await?;
+                }
+                tx.put_batch(&Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                    *task.id(),
+                    batch_identifier,
+                    (),
+                    BatchState::Closed,
+                    0,
+                    Interval::from_time(&report_time).unwrap(),
+                ))
+                .await?;
+                Ok(())
             })
-            .await
-            .unwrap();
+        })
+        .await
+        .unwrap();
 
         // Run.
         let job_creator = Arc::new(AggregationJobCreator::new(
@@ -1135,13 +1138,42 @@ mod tests {
             })
             .await
             .unwrap();
+        let mut seen_report_ids = HashSet::new();
+        for (agg_job, report_ids) in &agg_jobs {
+            // Job immediately finished since all reports are in a closed batch.
+            assert_eq!(agg_job.state(), &AggregationJobState::Finished);
 
-        // Every client report was dropped because they are all associated with a closed batch, so
-        // we don't write any aggregation jobs at all.
-        assert!(agg_jobs.is_empty());
+            // Jobs are created in step 0.
+            assert_eq!(agg_job.step(), AggregationJobStep::from(0));
 
-        // The existing batch was left untouched, and no new batches were created.
-        assert_eq!(batches, Vec::from([want_batch]));
+            // The batch is at most MAX_AGGREGATION_JOB_SIZE in size.
+            assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
+
+            // The batch is at least MIN_AGGREGATION_JOB_SIZE in size.
+            assert!(report_ids.len() >= MIN_AGGREGATION_JOB_SIZE);
+
+            // Report IDs are not repeated across or inside aggregation jobs.
+            for report_id in report_ids {
+                assert!(!seen_report_ids.contains(report_id));
+                seen_report_ids.insert(*report_id);
+            }
+        }
+
+        // Every client report was added to some aggregation job.
+        assert_eq!(all_report_ids, seen_report_ids);
+
+        // Batches are created appropriately.
+        assert_eq!(
+            batches,
+            Vec::from([Batch::new(
+                *task.id(),
+                batch_identifier,
+                (),
+                BatchState::Closed,
+                0,
+                Interval::from_time(&report_time).unwrap(),
+            )])
+        );
     }
 
     #[tokio::test]
@@ -1241,14 +1273,15 @@ mod tests {
         let mut min_size_batch_id = None;
         let mut max_size_batch_id = None;
         for outstanding_batch in &outstanding_batches {
-            assert!(MIN_BATCH_SIZE <= outstanding_batch.max_size());
-            assert!(outstanding_batch.max_size() <= MAX_BATCH_SIZE);
-            total_max_size += outstanding_batch.max_size();
+            assert_eq!(outstanding_batch.size().start(), &0);
+            assert!(&MIN_BATCH_SIZE <= outstanding_batch.size().end());
+            assert!(outstanding_batch.size().end() <= &MAX_BATCH_SIZE);
+            total_max_size += *outstanding_batch.size().end();
 
-            if outstanding_batch.max_size() == MIN_BATCH_SIZE {
+            if outstanding_batch.size().end() == &MIN_BATCH_SIZE {
                 min_size_batch_id = Some(*outstanding_batch.id());
             }
-            if outstanding_batch.max_size() == MAX_BATCH_SIZE {
+            if outstanding_batch.size().end() == &MAX_BATCH_SIZE {
                 max_size_batch_id = Some(*outstanding_batch.id());
             }
         }
@@ -1521,7 +1554,7 @@ mod tests {
         // Verify sizes of batches and aggregation jobs.
         let mut outstanding_batch_sizes = outstanding_batches
             .iter()
-            .map(|outstanding_batch| outstanding_batch.max_size())
+            .map(|outstanding_batch| *outstanding_batch.size().end())
             .collect::<Vec<_>>();
         outstanding_batch_sizes.sort();
         assert_eq!(outstanding_batch_sizes, [180, MAX_BATCH_SIZE]);
@@ -1584,7 +1617,7 @@ mod tests {
         // Verify sizes of batches and aggregation jobs.
         let mut outstanding_batch_sizes = outstanding_batches
             .iter()
-            .map(|outstanding_batch| outstanding_batch.max_size())
+            .map(|outstanding_batch| *outstanding_batch.size().end())
             .collect::<Vec<_>>();
         outstanding_batch_sizes.sort();
         assert_eq!(outstanding_batch_sizes, [MIN_BATCH_SIZE, MAX_BATCH_SIZE]);
@@ -1707,7 +1740,7 @@ mod tests {
         // Verify sizes of batches and aggregation jobs.
         let mut outstanding_batch_sizes = outstanding_batches
             .iter()
-            .map(|outstanding_batch| outstanding_batch.max_size())
+            .map(|outstanding_batch| *outstanding_batch.size().end())
             .collect::<Vec<_>>();
         outstanding_batch_sizes.sort();
         assert_eq!(outstanding_batch_sizes, [55, MAX_BATCH_SIZE]);
@@ -1777,7 +1810,7 @@ mod tests {
         // Verify sizes of batches and aggregation jobs.
         let mut outstanding_batch_sizes = outstanding_batches
             .iter()
-            .map(|outstanding_batch| outstanding_batch.max_size())
+            .map(|outstanding_batch| *outstanding_batch.size().end())
             .collect::<Vec<_>>();
         outstanding_batch_sizes.sort();
         assert_eq!(outstanding_batch_sizes, [110, MAX_BATCH_SIZE]);
@@ -1916,26 +1949,27 @@ mod tests {
         for outstanding_batches in [&outstanding_batches_bucket_1, &outstanding_batches_bucket_2] {
             assert_eq!(outstanding_batches.len(), 2);
             for outstanding_batch in outstanding_batches {
-                assert!(outstanding_batch.max_size() >= MIN_BATCH_SIZE);
-                assert!(outstanding_batch.max_size() <= MAX_BATCH_SIZE);
+                assert_eq!(outstanding_batch.size().start(), &0);
+                assert!(outstanding_batch.size().end() >= &MIN_BATCH_SIZE);
+                assert!(outstanding_batch.size().end() <= &MAX_BATCH_SIZE);
             }
             let total_max_size: usize = outstanding_batches
                 .iter()
-                .map(|outstanding_batch| outstanding_batch.max_size())
+                .map(|outstanding_batch| outstanding_batch.size().end())
                 .sum();
             assert_eq!(total_max_size, report_ids.len() / 2);
             let smallest_batch_size = outstanding_batches
                 .iter()
-                .map(|outstanding_batch| outstanding_batch.max_size())
+                .map(|outstanding_batch| outstanding_batch.size().end())
                 .min()
                 .unwrap();
-            assert_eq!(smallest_batch_size, MIN_BATCH_SIZE);
+            assert_eq!(smallest_batch_size, &MIN_BATCH_SIZE);
             let largest_batch_size = outstanding_batches
                 .iter()
-                .map(|outstanding_batch| outstanding_batch.max_size())
+                .map(|outstanding_batch| outstanding_batch.size().end())
                 .max()
                 .unwrap();
-            assert_eq!(largest_batch_size, MAX_BATCH_SIZE);
+            assert_eq!(largest_batch_size, &MAX_BATCH_SIZE);
         }
         let batch_ids: HashSet<_> = [&outstanding_batches_bucket_1, &outstanding_batches_bucket_2]
             .into_iter()
@@ -1970,22 +2004,22 @@ mod tests {
 
         let bucket_1_small_batch_id = *outstanding_batches_bucket_1
             .iter()
-            .find(|outstanding_batch| outstanding_batch.max_size() == MIN_BATCH_SIZE)
+            .find(|outstanding_batch| outstanding_batch.size().end() == &MIN_BATCH_SIZE)
             .unwrap()
             .id();
         let bucket_1_large_batch_id = *outstanding_batches_bucket_1
             .iter()
-            .find(|outstanding_batch| outstanding_batch.max_size() == MAX_BATCH_SIZE)
+            .find(|outstanding_batch| outstanding_batch.size().end() == &MAX_BATCH_SIZE)
             .unwrap()
             .id();
         let bucket_2_small_batch_id = *outstanding_batches_bucket_2
             .iter()
-            .find(|outstanding_batch| outstanding_batch.max_size() == MIN_BATCH_SIZE)
+            .find(|outstanding_batch| outstanding_batch.size().end() == &MIN_BATCH_SIZE)
             .unwrap()
             .id();
         let bucket_2_large_batch_id = *outstanding_batches_bucket_2
             .iter()
-            .find(|outstanding_batch| outstanding_batch.max_size() == MAX_BATCH_SIZE)
+            .find(|outstanding_batch| outstanding_batch.size().end() == &MAX_BATCH_SIZE)
             .unwrap()
             .id();
 

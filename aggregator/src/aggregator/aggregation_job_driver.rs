@@ -962,8 +962,8 @@ mod tests {
         AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
         AggregationJobStep, Duration, Extension, ExtensionType, FixedSizeQuery, HpkeConfig,
         InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare, PrepareContinue,
-        PrepareInit, PrepareResp, PrepareStepResult, Query, ReportIdChecksum, ReportMetadata,
-        ReportShare, Role, TaskId, Time,
+        PrepareError, PrepareInit, PrepareResp, PrepareStepResult, Query, ReportIdChecksum,
+        ReportMetadata, ReportShare, Role, TaskId, Time,
     };
     use prio::{
         codec::Encode,
@@ -1201,6 +1201,27 @@ mod tests {
             mocked_aggregate.assert_async().await;
         }
 
+        let want_aggregation_job =
+            AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>::new(
+                *task.id(),
+                aggregation_job_id,
+                aggregation_param.clone(),
+                (),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
+                AggregationJobState::Finished,
+                AggregationJobStep::from(2),
+            );
+        let want_report_aggregation =
+            ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>::new(
+                *task.id(),
+                aggregation_job_id,
+                *report.metadata().id(),
+                *report.metadata().time(),
+                0,
+                None,
+                ReportAggregationState::Finished,
+            );
         let want_batch = Batch::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>::new(
             *task.id(),
             batch_identifier,
@@ -1215,7 +1236,6 @@ mod tests {
             .run_unnamed_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let task = task.clone();
-                let aggregation_param = aggregation_param.clone();
                 let report_id = *report.metadata().id();
                 let collection_job_id = *want_collection_job.id();
 
@@ -1225,22 +1245,24 @@ mod tests {
                             task.id(),
                             &aggregation_job_id,
                         )
-                        .await?;
+                        .await?
+                        .unwrap();
                     let report_aggregation = tx
                         .get_report_aggregation(
                             vdaf.as_ref(),
                             &Role::Leader,
                             task.id(),
                             &aggregation_job_id,
-                            &aggregation_param,
+                            aggregation_job.aggregation_parameter(),
                             &report_id,
                         )
-                        .await?;
+                        .await?
+                        .unwrap();
                     let batch = tx
                         .get_batch(
                             task.id(),
                             &batch_identifier,
-                            &aggregation_param,
+                            aggregation_job.aggregation_parameter(),
                         )
                         .await?
                         .unwrap();
@@ -1254,8 +1276,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(got_aggregation_job.is_none());
-        assert!(got_report_aggregation.is_none());
+        assert_eq!(want_aggregation_job, got_aggregation_job);
+        assert_eq!(want_report_aggregation, got_report_aggregation);
         assert_eq!(want_batch, got_batch);
         assert_eq!(want_collection_job, got_collection_job);
     }
@@ -1485,6 +1507,46 @@ mod tests {
         mocked_aggregate_failure.assert_async().await;
         mocked_aggregate_success.assert_async().await;
 
+        let want_aggregation_job =
+            AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                *task.id(),
+                aggregation_job_id,
+                (),
+                (),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
+                AggregationJobState::Finished,
+                AggregationJobStep::from(1),
+            );
+        let want_report_aggregation = ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
+            *task.id(),
+            aggregation_job_id,
+            *report.metadata().id(),
+            *report.metadata().time(),
+            0,
+            None,
+            ReportAggregationState::Finished,
+        );
+        let want_repeated_extension_report_aggregation =
+            ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
+                *task.id(),
+                aggregation_job_id,
+                *repeated_extension_report.metadata().id(),
+                *repeated_extension_report.metadata().time(),
+                1,
+                None,
+                ReportAggregationState::Failed(PrepareError::InvalidMessage),
+            );
+        let want_missing_report_report_aggregation =
+            ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
+                *task.id(),
+                aggregation_job_id,
+                missing_report_id,
+                time,
+                2,
+                None,
+                ReportAggregationState::Failed(PrepareError::ReportDropped),
+            );
         let want_batch = Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
             *task.id(),
             batch_identifier,
@@ -1514,37 +1576,41 @@ mod tests {
                             task.id(),
                             &aggregation_job_id,
                         )
-                        .await?;
+                        .await?
+                        .unwrap();
                     let report_aggregation = tx
                         .get_report_aggregation(
                             vdaf.as_ref(),
                             &Role::Leader,
                             task.id(),
                             &aggregation_job_id,
-                            &(),
+                            aggregation_job.aggregation_parameter(),
                             &report_id,
                         )
-                        .await?;
+                        .await?
+                        .unwrap();
                     let repeated_extension_report_aggregation = tx
                         .get_report_aggregation(
                             vdaf.as_ref(),
                             &Role::Leader,
                             task.id(),
                             &aggregation_job_id,
-                            &(),
+                            aggregation_job.aggregation_parameter(),
                             &repeated_extension_report_id,
                         )
-                        .await?;
+                        .await?
+                        .unwrap();
                     let missing_report_report_aggregation = tx
                         .get_report_aggregation(
                             vdaf.as_ref(),
                             &Role::Leader,
                             task.id(),
                             &aggregation_job_id,
-                            &(),
+                            aggregation_job.aggregation_parameter(),
                             &missing_report_id,
                         )
-                        .await?;
+                        .await?
+                        .unwrap();
                     let batch = tx
                         .get_batch(task.id(), &batch_identifier, &())
                         .await?
@@ -1561,10 +1627,16 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(got_aggregation_job.is_none());
-        assert!(got_report_aggregation.is_none());
-        assert!(got_repeated_extension_report_aggregation.is_none());
-        assert!(got_missing_report_report_aggregation.is_none());
+        assert_eq!(want_aggregation_job, got_aggregation_job);
+        assert_eq!(want_report_aggregation, got_report_aggregation);
+        assert_eq!(
+            want_repeated_extension_report_aggregation,
+            got_repeated_extension_report_aggregation
+        );
+        assert_eq!(
+            want_missing_report_report_aggregation,
+            got_missing_report_report_aggregation
+        );
         assert_eq!(want_batch, got_batch);
     }
 
@@ -2007,6 +2079,24 @@ mod tests {
         mocked_aggregate_failure.assert_async().await;
         mocked_aggregate_success.assert_async().await;
 
+        let want_aggregation_job = AggregationJob::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
+            *task.id(),
+            aggregation_job_id,
+            (),
+            batch_id,
+            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+            AggregationJobState::Finished,
+            AggregationJobStep::from(1),
+        );
+        let want_report_aggregation = ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
+            *task.id(),
+            aggregation_job_id,
+            *report.metadata().id(),
+            *report.metadata().time(),
+            0,
+            None,
+            ReportAggregationState::Finished,
+        );
         let want_batch = Batch::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
             *task.id(),
             batch_id,
@@ -2026,17 +2116,19 @@ mod tests {
                             task.id(),
                             &aggregation_job_id,
                         )
-                        .await?;
+                        .await?
+                        .unwrap();
                     let report_aggregation = tx
                         .get_report_aggregation(
                             vdaf.as_ref(),
                             &Role::Leader,
                             task.id(),
                             &aggregation_job_id,
-                            &(),
+                            aggregation_job.aggregation_parameter(),
                             &report_id,
                         )
-                        .await?;
+                        .await?
+                        .unwrap();
                     let batch = tx.get_batch(task.id(), &batch_id, &()).await?.unwrap();
                     Ok((aggregation_job, report_aggregation, batch))
                 })
@@ -2044,8 +2136,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(got_aggregation_job.is_none());
-        assert!(got_report_aggregation.is_none());
+        assert_eq!(want_aggregation_job, got_aggregation_job);
+        assert_eq!(want_report_aggregation, got_report_aggregation);
         assert_eq!(want_batch, got_batch);
     }
 
@@ -2546,6 +2638,28 @@ mod tests {
         mocked_aggregate_failure.assert_async().await;
         mocked_aggregate_success.assert_async().await;
 
+        let want_aggregation_job =
+            AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>::new(
+                *task.id(),
+                aggregation_job_id,
+                aggregation_param.clone(),
+                (),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
+                AggregationJobState::Finished,
+                AggregationJobStep::from(2),
+            );
+        let want_report_aggregation =
+            ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>::new(
+                *task.id(),
+                aggregation_job_id,
+                *report.metadata().id(),
+                *report.metadata().time(),
+                0,
+                None,
+                ReportAggregationState::Finished,
+            );
+
         let batch_interval_start = report
             .metadata()
             .time()
@@ -2607,17 +2721,19 @@ mod tests {
                             task.id(),
                             &aggregation_job_id,
                         )
-                        .await?;
+                        .await?
+                        .unwrap();
                     let report_aggregation = tx
                         .get_report_aggregation(
                             vdaf.as_ref(),
                             &Role::Leader,
                             task.id(),
                             &aggregation_job_id,
-                            &aggregation_param,
+                            aggregation_job.aggregation_parameter(),
                             report_metadata.id(),
                         )
-                        .await?;
+                        .await?
+                        .unwrap();
                     let batch_aggregations =
                         TimeInterval::get_batch_aggregations_for_collection_identifier::<
                             VERIFY_KEY_LENGTH,
@@ -2683,8 +2799,8 @@ mod tests {
             })
             .collect();
 
-        assert!(got_aggregation_job.is_none());
-        assert!(got_report_aggregation.is_none());
+        assert_eq!(want_aggregation_job, got_aggregation_job);
+        assert_eq!(want_report_aggregation, got_report_aggregation);
         assert_eq!(want_batch_aggregations, got_batch_aggregations);
         assert_eq!(want_active_batch, got_active_batch);
         assert_eq!(want_other_batch, got_other_batch);
@@ -2910,6 +3026,27 @@ mod tests {
         mocked_aggregate_failure.assert_async().await;
         mocked_aggregate_success.assert_async().await;
 
+        let want_aggregation_job =
+            AggregationJob::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofShake128, 16>>::new(
+                *task.id(),
+                aggregation_job_id,
+                aggregation_param.clone(),
+                batch_id,
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
+                AggregationJobState::Finished,
+                AggregationJobStep::from(2),
+            );
+        let want_report_aggregation =
+            ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>::new(
+                *task.id(),
+                aggregation_job_id,
+                *report.metadata().id(),
+                *report.metadata().time(),
+                0,
+                None,
+                ReportAggregationState::Finished,
+            );
         let want_batch_aggregations = Vec::from([BatchAggregation::<
             VERIFY_KEY_LENGTH,
             FixedSize,
@@ -2956,17 +3093,19 @@ mod tests {
                             task.id(),
                             &aggregation_job_id,
                         )
-                        .await?;
+                        .await?
+                        .unwrap();
                     let report_aggregation = tx
                         .get_report_aggregation(
                             vdaf.as_ref(),
                             &Role::Leader,
                             task.id(),
                             &aggregation_job_id,
-                            &aggregation_param,
+                            aggregation_job.aggregation_parameter(),
                             report_metadata.id(),
                         )
-                        .await?;
+                        .await?
+                        .unwrap();
                     let batch_aggregations =
                         FixedSize::get_batch_aggregations_for_collection_identifier::<
                             VERIFY_KEY_LENGTH,
@@ -3012,8 +3151,8 @@ mod tests {
             })
             .collect();
 
-        assert!(got_aggregation_job.is_none());
-        assert!(got_report_aggregation.is_none());
+        assert_eq!(want_aggregation_job, got_aggregation_job);
+        assert_eq!(want_report_aggregation, got_report_aggregation);
         assert_eq!(want_batch_aggregations, got_batch_aggregations);
         assert_eq!(want_batch, got_batch);
         assert_eq!(want_collection_job, got_collection_job);
@@ -3127,7 +3266,10 @@ mod tests {
             .unwrap();
 
         // Verify: check that the datastore state is updated as expected (the aggregation job is
-        // deleted) and sanity-check that the job can no longer be acquired.
+        // abandoned, the report aggregation is untouched) and sanity-check that the job can no
+        // longer be acquired.
+        let want_aggregation_job = aggregation_job.with_state(AggregationJobState::Abandoned);
+        let want_report_aggregation = report_aggregation;
         let want_batch = Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
             *task.id(),
             batch_identifier,
@@ -3147,7 +3289,7 @@ mod tests {
                             task.id(),
                             &aggregation_job_id,
                         )
-                        .await
+                        .await?
                         .unwrap();
                     let report_aggregation = tx
                         .get_report_aggregation(
@@ -3155,27 +3297,25 @@ mod tests {
                             &Role::Leader,
                             task.id(),
                             &aggregation_job_id,
-                            &(),
+                            aggregation_job.aggregation_parameter(),
                             &report_id,
                         )
-                        .await
+                        .await?
                         .unwrap();
                     let batch = tx
                         .get_batch(task.id(), &batch_identifier, &())
-                        .await
-                        .unwrap()
+                        .await?
                         .unwrap();
                     let leases = tx
                         .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
-                        .await
-                        .unwrap();
+                        .await?;
                     Ok((aggregation_job, report_aggregation, batch, leases))
                 })
             })
             .await
             .unwrap();
-        assert!(got_aggregation_job.is_none());
-        assert!(got_report_aggregation.is_none());
+        assert_eq!(want_aggregation_job, got_aggregation_job);
+        assert_eq!(want_report_aggregation, got_report_aggregation);
         assert_eq!(want_batch, got_batch);
         assert!(got_leases.is_empty());
     }
@@ -3395,30 +3535,37 @@ mod tests {
         failure_mock.assert_async().await;
         assert!(!no_more_requests_mock.matched_async().await);
 
-        // Confirm in the database that the job was abandoned, i.e. it has been deleted & the batch
-        // state has been updated appropriately.
+        // Confirm in the database that the job was abandoned.
         let (got_aggregation_job, got_batch) = ds
             .run_unnamed_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
                     let got_aggregation_job = tx
-                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>(
-                            task.id(),
-                            &aggregation_job_id,
-                        )
-                        .await
+                        .get_aggregation_job(task.id(), &aggregation_job_id)
+                        .await?
                         .unwrap();
                     let got_batch = tx
                         .get_batch(task.id(), &batch_identifier, &())
-                        .await
-                        .unwrap()
+                        .await?
                         .unwrap();
                     Ok((got_aggregation_job, got_batch))
                 })
             })
             .await
             .unwrap();
-        assert!(got_aggregation_job.is_none());
+        assert_eq!(
+            got_aggregation_job,
+            AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                *task.id(),
+                aggregation_job_id,
+                (),
+                (),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
+                AggregationJobState::Abandoned,
+                AggregationJobStep::from(0),
+            ),
+        );
         assert_eq!(
             got_batch,
             Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
