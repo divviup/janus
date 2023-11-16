@@ -1875,10 +1875,11 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "mockito",
- "opentelemetry 0.20.0",
+ "opentelemetry 0.21.0",
  "opentelemetry-otlp",
  "opentelemetry-prometheus",
  "opentelemetry-semantic-conventions",
+ "opentelemetry_sdk 0.21.0",
  "postgres-protocol",
  "postgres-types",
  "prio",
@@ -1939,7 +1940,7 @@ dependencies = [
  "janus_aggregator_core",
  "janus_core",
  "janus_messages 0.6.3",
- "opentelemetry 0.20.0",
+ "opentelemetry 0.21.0",
  "querystring",
  "rand",
  "ring 0.17.5",
@@ -1982,7 +1983,7 @@ dependencies = [
  "janus_messages 0.6.3",
  "k8s-openapi",
  "kube",
- "opentelemetry 0.20.0",
+ "opentelemetry 0.21.0",
  "postgres-protocol",
  "postgres-types",
  "prio",
@@ -2157,7 +2158,7 @@ dependencies = [
  "janus_core",
  "janus_interop_binaries",
  "janus_messages 0.6.3",
- "opentelemetry 0.20.0",
+ "opentelemetry 0.21.0",
  "prio",
  "rand",
  "regex",
@@ -2784,8 +2785,6 @@ dependencies = [
  "rand",
  "regex",
  "thiserror",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]
@@ -2806,6 +2805,8 @@ dependencies = [
  "percent-encoding",
  "rand",
  "thiserror",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -4839,18 +4840,20 @@ dependencies = [
 
 [[package]]
 name = "tracing-opentelemetry"
-version = "0.21.0"
+version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75327c6b667828ddc28f5e3f169036cb793c3f588d83bf0f262a7f062ffed3c8"
+checksum = "c67ac25c5407e7b961fafc6f7e9aa5958fd297aada2d20fa2ae1737357e55596"
 dependencies = [
+ "js-sys",
  "once_cell",
- "opentelemetry 0.20.0",
- "opentelemetry_sdk 0.20.0",
+ "opentelemetry 0.21.0",
+ "opentelemetry_sdk 0.21.0",
  "smallvec",
  "tracing",
  "tracing-core",
- "tracing-log 0.1.4",
+ "tracing-log 0.2.0",
  "tracing-subscriber",
+ "web-time",
 ]
 
 [[package]]
@@ -5369,6 +5372,16 @@ name = "web-sys"
 version = "0.3.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b85cbef8c220a6abc02aefd892dfc0fc23afb1c6a426316ec33253a3877249b"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "web-time"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57099a701fb3a8043f993e8228dc24229c7b942e2b009a1b962e54489ba1d3bf"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
