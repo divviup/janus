@@ -32,8 +32,8 @@ pub struct Postgres {
 }
 
 impl Postgres {
-    const NAME: &str = "postgres";
-    const TAG: &str = "15-alpine";
+    const NAME: &'static str = "postgres";
+    const TAG: &'static str = "15-alpine";
 
     fn build_environment() -> HashMap<String, String> {
         HashMap::from([

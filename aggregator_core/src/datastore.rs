@@ -46,7 +46,6 @@ use std::{
     future::Future,
     io::Cursor,
     mem::size_of,
-    ops::RangeInclusive,
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -682,8 +681,7 @@ impl<C: Clock> Transaction<'_, C> {
         check_single_row_mutation(
             self.execute(&stmt, &[/* task_id */ &task_id.as_ref()])
                 .await?,
-        )?;
-        Ok(())
+        )
     }
 
     /// Fetch the task parameters corresponing to the provided `task_id`.
@@ -1343,8 +1341,8 @@ impl<C: Clock> Transaction<'_, C> {
             .try_into()?)
     }
 
-    /// Return the number of reports in the provided task & batch, regardless of whether the reports
-    /// have been aggregated or collected. Applies only to fixed-size queries.
+    /// Return the number of reports in the provided task & batch, counting only reports which have
+    /// completed aggregation. Applies only to fixed-size queries.
     #[tracing::instrument(skip(self), err)]
     pub async fn count_client_reports_for_batch_id(
         &self,
@@ -1353,13 +1351,18 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<u64, Error> {
         let stmt = self
             .prepare_cached(
-                "SELECT COUNT(DISTINCT report_aggregations.client_report_id) AS count
-                FROM report_aggregations
-                JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
-                JOIN tasks ON tasks.id = aggregation_jobs.task_id AND tasks.id = report_aggregations.task_id
-                WHERE tasks.task_id = $1
-                  AND aggregation_jobs.batch_id = $2
-                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                "WITH aggregated_report_count AS (
+                    SELECT
+                      SUM(batch_aggregations.report_count) AS count
+                    FROM batch_aggregations
+                    JOIN tasks ON tasks.id = batch_aggregations.task_id
+                    JOIN batches ON batches.task_id = batch_aggregations.task_id AND batches.batch_identifier = batch_aggregations.batch_identifier AND batches.aggregation_param = batch_aggregations.aggregation_param
+                    WHERE tasks.task_id = $1
+                      AND batch_aggregations.batch_identifier = $2
+                      AND UPPER(COALESCE(batches.batch_interval, batches.client_timestamp_interval)) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                    GROUP BY batch_aggregations.aggregation_param
+                )
+                SELECT MAX(aggregated_report_count.count)::BIGINT AS count FROM aggregated_report_count",
             )
             .await?;
         let row = self
@@ -1910,6 +1913,37 @@ impl<C: Clock> Transaction<'_, C> {
                     /* updated_by */ &self.name,
                     /* task_id */ &aggregation_job.task_id().as_ref(),
                     /* aggregation_job_id */ &aggregation_job.id().as_ref(),
+                    /* now */ &self.clock.now().as_naive_date_time()?,
+                ],
+            )
+            .await?,
+        )
+    }
+
+    /// Deletes an aggregation job, including any contained report_aggregations.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn delete_aggregation_job(
+        &self,
+        task_id: &TaskId,
+        aggregation_job_id: &AggregationJobId,
+    ) -> Result<(), Error> {
+        // Deleting report_aggregations is achieved through ON DELETE CASCADE.
+        let stmt = self.prepare_cached(
+            "DELETE FROM aggregation_jobs
+            USING tasks
+            WHERE tasks.id = aggregation_jobs.task_id
+              AND tasks.task_id = $1
+              AND aggregation_jobs.aggregation_job_id = $2
+              AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)"
+        )
+        .await?;
+
+        check_single_row_mutation(
+            self.execute(
+                &stmt,
+                &[
+                    /* task_id */ &task_id.as_ref(),
+                    /* aggregation_job_id */ &aggregation_job_id.as_ref(),
                     /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
             )
@@ -3732,38 +3766,50 @@ impl<C: Clock> Transaction<'_, C> {
 
         try_join_all(rows.into_iter().map(|row| async move {
             let batch_id = BatchId::get_decoded(row.get("batch_id"))?;
-            let size = self.read_batch_size(task_id, &batch_id).await?;
+            let size = self.read_max_batch_size(task_id, &batch_id).await?;
             Ok(OutstandingBatch::new(*task_id, batch_id, size))
         }))
         .await
     }
 
-    // Return value is an inclusive range [min_size, max_size], where:
-    //  * min_size is the minimum possible number of reports included in the batch, i.e. all report
-    //    aggregations in the batch which have reached the FINISHED state.
-    //  * max_size is the maximum possible number of reports included in the batch, i.e. all report
-    //    aggregations in the batch which are in a non-failure state (START/WAITING/FINISHED).
-    async fn read_batch_size(
+    // Returns the maximum possible size of the batch, by counting both aggregated reports & reports
+    // in-process of being aggregated. Note that this number may shrink over time if a given report
+    // fails to complete aggregation.
+    async fn read_max_batch_size(
         &self,
         task_id: &TaskId,
         batch_id: &BatchId,
-    ) -> Result<RangeInclusive<usize>, Error> {
-        // TODO(#1467): fix this to work in presence of GC.
+    ) -> Result<usize, Error> {
         let stmt = self
             .prepare_cached(
-                "WITH batch_report_aggregation_statuses AS
-                    (SELECT report_aggregations.state, COUNT(*) AS count FROM report_aggregations
-                     JOIN aggregation_jobs
-                        ON report_aggregations.aggregation_job_id = aggregation_jobs.id
-                     WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                     AND report_aggregations.task_id = aggregation_jobs.task_id
-                     AND aggregation_jobs.batch_id = $2
-                     GROUP BY report_aggregations.state)
+                "WITH aggregated_report_count AS (
+                    SELECT
+                      batch_aggregations.aggregation_param,
+                      SUM(batch_aggregations.report_count) AS count
+                    FROM batch_aggregations
+                    JOIN tasks ON tasks.id = batch_aggregations.task_id
+                    JOIN batches ON batches.task_id = batch_aggregations.task_id AND batches.batch_identifier = batch_aggregations.batch_identifier AND batches.aggregation_param = batch_aggregations.aggregation_param
+                    WHERE tasks.task_id = $1
+                      AND batch_aggregations.batch_identifier = $2
+                      AND UPPER(COALESCE(batches.batch_interval, batches.client_timestamp_interval)) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                    GROUP BY batch_aggregations.aggregation_param
+                ), unaggregated_report_count AS (
+                    SELECT
+                      aggregation_jobs.aggregation_param,
+                      COUNT(DISTINCT report_aggregations.client_report_id) AS count
+                    FROM report_aggregations
+                    JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                    JOIN tasks ON tasks.id = report_aggregations.task_id
+                    WHERE tasks.task_id = $1
+                      AND aggregation_jobs.batch_id = $2
+                      AND report_aggregations.state IN ('START', 'WAITING')
+                      AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                    GROUP BY aggregation_jobs.aggregation_param
+                )
                 SELECT
-                    (SELECT SUM(count)::BIGINT FROM batch_report_aggregation_statuses
-                     WHERE state IN ('FINISHED')) AS min_size,
-                    (SELECT SUM(count)::BIGINT FROM batch_report_aggregation_statuses
-                     WHERE state IN ('START', 'WAITING', 'FINISHED')) AS max_size",
+                  MAX(COALESCE(aggregated_report_count.count, 0) + COALESCE(unaggregated_report_count.count, 0))::BIGINT AS count
+                FROM aggregated_report_count
+                FULL OUTER JOIN unaggregated_report_count ON unaggregated_report_count.aggregation_param = aggregated_report_count.aggregation_param"
             )
             .await?;
 
@@ -3773,18 +3819,15 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* task_id */ task_id.as_ref(),
                     /* batch_id */ batch_id.as_ref(),
+                    /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
             )
             .await?;
 
-        Ok(RangeInclusive::new(
-            row.get::<_, Option<i64>>("min_size")
-                .unwrap_or_default()
-                .try_into()?,
-            row.get::<_, Option<i64>>("max_size")
-                .unwrap_or_default()
-                .try_into()?,
-        ))
+        Ok(row
+            .get::<_, Option<i64>>("count")
+            .unwrap_or_default()
+            .try_into()?)
     }
 
     /// Deletes an outstanding batch.

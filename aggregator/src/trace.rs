@@ -211,7 +211,7 @@ pub fn install_trace_subscriber(
                     .with_endpoint(otlp_config.endpoint.clone())
                     .with_metadata(map),
             )
-            .install_batch(opentelemetry::runtime::Tokio)?;
+            .install_batch(opentelemetry_sdk::runtime::Tokio)?;
 
         let telemetry = tracing_opentelemetry::layer()
             .with_threads(true)
