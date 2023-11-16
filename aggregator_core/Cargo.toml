@@ -26,13 +26,13 @@ futures = "0.3.29"
 hex = { version = "0.4.3", features = ["serde"], optional = true }
 http = "0.2.11"
 http-api-problem = "0.57.0"
-hyper = "0.14.27"
+hyper = "1.0.0"
 janus_core.workspace = true
 janus_messages.workspace = true
 k8s-openapi.workspace = true
 kube.workspace = true
 lazy_static = { version = "1" }
-opentelemetry = { workspace = true, features = ["rt-tokio"] }
+opentelemetry.workspace = true
 postgres-protocol = "0.6.6"
 postgres-types = { version = "0.2.6", features = ["derive", "array-impls"] }
 prio = { workspace = true, features = ["experimental"] }
@@ -58,7 +58,7 @@ uuid = { version = "1.5.0", features = ["v4"] }
 
 [dev-dependencies]
 assert_matches = "1"
-hyper = "0.14.27"
+hyper = "1.0.0"
 janus_aggregator_core = { path = ".", features = ["test-util"] }
 janus_core = { workspace = true, features = ["test-util"] }
 rstest.workspace = true
