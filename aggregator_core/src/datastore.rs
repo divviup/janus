@@ -2381,7 +2381,6 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "SELECT
-                    tasks.task_id,
                     collection_jobs.query,
                     collection_jobs.aggregation_param,
                     collection_jobs.batch_identifier,
@@ -2800,8 +2799,8 @@ impl<C: Clock> Transaction<'_, C> {
                 FROM incomplete_jobs
                 WHERE collection_jobs.id = incomplete_jobs.id
                 RETURNING incomplete_jobs.task_id, incomplete_jobs.query_type, incomplete_jobs.vdaf,
-                          collection_jobs.collection_job_id, collection_jobs.id,
-                          collection_jobs.lease_token, collection_jobs.lease_attempts",
+                          collection_jobs.collection_job_id, collection_jobs.lease_token,
+                          collection_jobs.lease_attempts",
             )
             .await?;
 
@@ -4494,7 +4493,7 @@ impl<C: Clock> Transaction<'_, C> {
 
         let stmt = self
             .prepare_cached(
-                "SELECT id, endpoint, role, verify_key_init, collector_hpke_config,
+                "SELECT endpoint, role, verify_key_init, collector_hpke_config,
                         report_expiry_age, tolerable_clock_skew
                     FROM taskprov_peer_aggregators WHERE endpoint = $1 AND role = $2",
             )
