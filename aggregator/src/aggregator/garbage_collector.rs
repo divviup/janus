@@ -55,6 +55,7 @@ impl<C: Clock> GarbageCollector<C> {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     async fn gc_task(&self, task: Arc<AggregatorTask>) -> Result<()> {
         self.datastore
             .run_tx("garbage_collector", |tx| {
