@@ -1700,9 +1700,9 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "1.0.0"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24590385be94998c5def4cf53d34edc5381144c805126f00efb954d986f9a7b2"
+checksum = "403f9214f3e703236b221f1a9cd88ec8b4adfa5296de01ab96216361f4692f56"
 dependencies = [
  "bytes",
  "futures-channel",
@@ -1882,7 +1882,7 @@ dependencies = [
  "hex",
  "http 0.2.11",
  "http-api-problem",
- "hyper 1.0.0",
+ "hyper 1.0.1",
  "itertools 0.11.0",
  "janus_aggregator",
  "janus_aggregator_api",
@@ -1991,7 +1991,7 @@ dependencies = [
  "hex",
  "http 0.2.11",
  "http-api-problem",
- "hyper 1.0.0",
+ "hyper 1.0.1",
  "janus_aggregator_core",
  "janus_core",
  "janus_messages",
