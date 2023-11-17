@@ -71,6 +71,7 @@ jobs:
     - name: Test
       id: test
       env:
+        RUST_LOG: info
         JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
         DIVVIUP_TS_INTEROP_CONTAINER: ${{ steps.default-input-values.outputs.divviup_ts_interop_container }}
       run: cargo test --profile ci --locked --all-targets
@@ -82,6 +83,7 @@ jobs:
     - name: Test (Docker)
       id: test-docker
       env:
+        RUST_LOG: info
         JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
         DIVVIUP_TS_INTEROP_CONTAINER: ${{ steps.default-input-values.outputs.divviup_ts_interop_container }}
       run: cargo xtask test-docker --profile=ci --locked
