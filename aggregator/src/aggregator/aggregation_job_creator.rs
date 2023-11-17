@@ -14,12 +14,12 @@ use janus_aggregator_core::{
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
-    time::{Clock, DurationExt as _, TimeExt as _},
+    time::Clock,
     vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
 };
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
-    AggregationJobStep, Duration as DurationMsg, Interval, Role, TaskId,
+    AggregationJobStep, Role, TaskId,
 };
 use opentelemetry::{
     metrics::{Histogram, Meter, Unit},
@@ -551,23 +551,15 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             "Creating aggregation job"
                         );
 
-                        let min_client_timestamp =
-                            agg_job_reports.iter().map(|(_, time)| time).min().unwrap(); // unwrap safety: agg_job_reports is non-empty
                         let max_client_timestamp =
                             agg_job_reports.iter().map(|(_, time)| time).max().unwrap(); // unwrap safety: agg_job_reports is non-empty
-                        let client_timestamp_interval = Interval::new(
-                            *min_client_timestamp,
-                            max_client_timestamp
-                                .difference(min_client_timestamp)?
-                                .add(&DurationMsg::from_seconds(1))?,
-                        )?;
 
                         let aggregation_job = AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
                             *task.id(),
                             aggregation_job_id,
                             (),
                             (),
-                            client_timestamp_interval,
+                            *max_client_timestamp,
                             AggregationJobState::InProgress,
                             AggregationJobStep::from(0),
                         );

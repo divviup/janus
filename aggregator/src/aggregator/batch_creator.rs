@@ -8,9 +8,9 @@ use janus_aggregator_core::datastore::{
     },
     Error, Transaction,
 };
-use janus_core::time::{Clock, DurationExt, TimeExt};
+use janus_core::time::{Clock, TimeExt};
 use janus_messages::{
-    query_type::FixedSize, AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskId, Time,
+    query_type::FixedSize, AggregationJobStep, BatchId, Duration, ReportId, TaskId, Time,
 };
 use prio::{codec::Encode, vdaf::Aggregator};
 use rand::random;
@@ -303,20 +303,13 @@ where
             })
             .collect();
 
-        let min_client_timestamp = min_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
         let max_client_timestamp = max_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
-        let client_timestamp_interval = Interval::new(
-            min_client_timestamp,
-            max_client_timestamp
-                .difference(&min_client_timestamp)?
-                .add(&Duration::from_seconds(1))?,
-        )?;
         let aggregation_job = AggregationJob::<SEED_SIZE, FixedSize, A>::new(
             task_id,
             aggregation_job_id,
             (),
             batch_id,
-            client_timestamp_interval,
+            max_client_timestamp,
             AggregationJobState::InProgress,
             AggregationJobStep::from(0),
         );

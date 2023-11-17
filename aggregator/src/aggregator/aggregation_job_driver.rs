@@ -1059,8 +1059,7 @@ mod tests {
                         aggregation_job_id,
                         aggregation_param.clone(),
                         (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
+                        Time::from_seconds_since_epoch(0),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
@@ -1207,8 +1206,7 @@ mod tests {
                 aggregation_job_id,
                 aggregation_param.clone(),
                 (),
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                    .unwrap(),
+                Time::from_seconds_since_epoch(0),
                 AggregationJobState::Finished,
                 AggregationJobStep::from(2),
             );
@@ -1363,8 +1361,7 @@ mod tests {
                         aggregation_job_id,
                         (),
                         (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
+                        Time::from_seconds_since_epoch(0),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
@@ -1513,8 +1510,7 @@ mod tests {
                 aggregation_job_id,
                 (),
                 (),
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                    .unwrap(),
+                Time::from_seconds_since_epoch(0),
                 AggregationJobState::Finished,
                 AggregationJobStep::from(1),
             );
@@ -1710,8 +1706,7 @@ mod tests {
                         aggregation_job_id,
                         aggregation_param.clone(),
                         (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
+                        Time::from_seconds_since_epoch(0),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
@@ -1818,8 +1813,7 @@ mod tests {
                 aggregation_job_id,
                 aggregation_param.clone(),
                 (),
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                    .unwrap(),
+                Time::from_seconds_since_epoch(0),
                 AggregationJobState::InProgress,
                 AggregationJobStep::from(1),
             );
@@ -1958,8 +1952,7 @@ mod tests {
                         aggregation_job_id,
                         (),
                         batch_id,
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
+                        Time::from_seconds_since_epoch(0),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
@@ -2084,7 +2077,7 @@ mod tests {
             aggregation_job_id,
             (),
             batch_id,
-            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+            Time::from_seconds_since_epoch(0),
             AggregationJobState::Finished,
             AggregationJobStep::from(1),
         );
@@ -2219,8 +2212,7 @@ mod tests {
                         aggregation_job_id,
                         aggregation_param.clone(),
                         batch_id,
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
+                        Time::from_seconds_since_epoch(0),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
@@ -2327,8 +2319,7 @@ mod tests {
                 aggregation_job_id,
                 aggregation_param.clone(),
                 batch_id,
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                    .unwrap(),
+                Time::from_seconds_since_epoch(0),
                 AggregationJobState::InProgress,
                 AggregationJobStep::from(1),
             );
@@ -2488,8 +2479,7 @@ mod tests {
                         aggregation_job_id,
                         aggregation_param.clone(),
                         (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
+                        Time::from_seconds_since_epoch(0),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(1),
                     ))
@@ -2644,8 +2634,7 @@ mod tests {
                 aggregation_job_id,
                 aggregation_param.clone(),
                 (),
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                    .unwrap(),
+                Time::from_seconds_since_epoch(0),
                 AggregationJobState::Finished,
                 AggregationJobStep::from(2),
             );
@@ -2677,7 +2666,6 @@ mod tests {
             BatchAggregationState::Aggregating,
             Some(leader_aggregate_share),
             1,
-            Interval::from_time(report.metadata().time()).unwrap(),
             ReportIdChecksum::for_report_id(report.metadata().id()),
         )]);
         let want_active_batch =
@@ -2793,7 +2781,6 @@ mod tests {
                     *agg.state(),
                     agg.aggregate_share().cloned(),
                     agg.report_count(),
-                    *agg.client_timestamp_interval(),
                     *agg.checksum(),
                 )
             })
@@ -2889,8 +2876,7 @@ mod tests {
                         aggregation_job_id,
                         aggregation_param.clone(),
                         batch_id,
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
+                        Time::from_seconds_since_epoch(0),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(1),
                     ))
@@ -3032,8 +3018,7 @@ mod tests {
                 aggregation_job_id,
                 aggregation_param.clone(),
                 batch_id,
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                    .unwrap(),
+                Time::from_seconds_since_epoch(0),
                 AggregationJobState::Finished,
                 AggregationJobStep::from(2),
             );
@@ -3059,7 +3044,6 @@ mod tests {
             BatchAggregationState::Aggregating,
             Some(leader_aggregate_share),
             1,
-            Interval::from_time(report.metadata().time()).unwrap(),
             ReportIdChecksum::for_report_id(report.metadata().id()),
         )]);
         let want_batch = Batch::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofShake128, 16>>::new(
@@ -3145,7 +3129,6 @@ mod tests {
                     *agg.state(),
                     agg.aggregate_share().cloned(),
                     agg.report_count(),
-                    *agg.client_timestamp_interval(),
                     *agg.checksum(),
                 )
             })
@@ -3204,7 +3187,7 @@ mod tests {
             aggregation_job_id,
             (),
             (),
-            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+            Time::from_seconds_since_epoch(0),
             AggregationJobState::InProgress,
             AggregationJobStep::from(0),
         );
@@ -3415,8 +3398,7 @@ mod tests {
                     aggregation_job_id,
                     (),
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
+                    Time::from_seconds_since_epoch(0),
                     AggregationJobState::InProgress,
                     AggregationJobStep::from(0),
                 ))
@@ -3560,8 +3542,7 @@ mod tests {
                 aggregation_job_id,
                 (),
                 (),
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                    .unwrap(),
+                Time::from_seconds_since_epoch(0),
                 AggregationJobState::Abandoned,
                 AggregationJobStep::from(0),
             ),

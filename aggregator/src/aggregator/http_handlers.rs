@@ -690,7 +690,7 @@ mod tests {
         },
         report_id::ReportIdChecksumExt,
         test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf},
-        time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
+        time::{Clock, DurationExt, MockClock, TimeExt},
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
     };
     use janus_messages::{
@@ -1667,8 +1667,7 @@ mod tests {
                         random(),
                         dummy_vdaf::AggregationParam(0),
                         (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
+                        Time::from_seconds_since_epoch(0),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     );
@@ -1698,8 +1697,7 @@ mod tests {
                         random(),
                         dummy_vdaf::AggregationParam(1),
                         (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
+                        Time::from_seconds_since_epoch(0),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     );
@@ -2483,8 +2481,7 @@ mod tests {
                         aggregation_job_id,
                         aggregation_param.clone(),
                         (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
+                        Time::from_seconds_since_epoch(0),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
@@ -2606,8 +2603,7 @@ mod tests {
                 aggregation_job_id,
                 aggregation_param,
                 (),
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                    .unwrap(),
+                Time::from_seconds_since_epoch(0),
                 AggregationJobState::Finished,
                 AggregationJobStep::from(1),
             )
@@ -2820,8 +2816,7 @@ mod tests {
                         aggregation_job_id_0,
                         aggregation_param.clone(),
                         (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
+                        Time::from_seconds_since_epoch(0),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
@@ -2954,7 +2949,6 @@ mod tests {
                     BatchAggregationState::Aggregating,
                     agg.aggregate_share().cloned(),
                     agg.report_count(),
-                    *agg.client_timestamp_interval(),
                     *agg.checksum(),
                 )
             })
@@ -2989,7 +2983,6 @@ mod tests {
                 BatchAggregationState::Aggregating,
                 Some(aggregate_share),
                 2,
-                Interval::from_time(report_metadata_0.time()).unwrap(),
                 checksum,
             ),])
         );
@@ -3147,8 +3140,7 @@ mod tests {
                         aggregation_job_id_1,
                         aggregation_param,
                         (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
+                        Time::from_seconds_since_epoch(0),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
@@ -3257,7 +3249,6 @@ mod tests {
                     BatchAggregationState::Aggregating,
                     agg.aggregate_share().cloned(),
                     agg.report_count(),
-                    *agg.client_timestamp_interval(),
                     *agg.checksum(),
                 )
             })
@@ -3297,7 +3288,6 @@ mod tests {
                 BatchAggregationState::Aggregating,
                 Some(first_aggregate_share),
                 3,
-                Interval::from_time(report_metadata_0.time()).unwrap(),
                 first_checksum,
             ),
         );
@@ -3400,8 +3390,7 @@ mod tests {
                         aggregation_job_id,
                         aggregation_param,
                         (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
+                        Time::from_seconds_since_epoch(0),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
@@ -3506,8 +3495,7 @@ mod tests {
                         aggregation_job_id,
                         aggregation_param,
                         (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
+                        Time::from_seconds_since_epoch(0),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
@@ -3594,8 +3582,7 @@ mod tests {
                 aggregation_job_id,
                 aggregation_param,
                 (),
-                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                    .unwrap(),
+                Time::from_seconds_since_epoch(0),
                 AggregationJobState::Finished,
                 AggregationJobStep::from(1),
             )
@@ -3675,8 +3662,7 @@ mod tests {
                         aggregation_job_id,
                         aggregation_param,
                         (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
+                        Time::from_seconds_since_epoch(0),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
@@ -3820,8 +3806,7 @@ mod tests {
                         aggregation_job_id,
                         aggregation_param.clone(),
                         (),
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
+                        Time::from_seconds_since_epoch(0),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
@@ -3935,11 +3920,7 @@ mod tests {
                             aggregation_job_id,
                             dummy_vdaf::AggregationParam(0),
                             (),
-                            Interval::new(
-                                Time::from_seconds_since_epoch(0),
-                                Duration::from_seconds(1),
-                            )
-                            .unwrap(),
+                            Time::from_seconds_since_epoch(0),
                             AggregationJobState::InProgress,
                             AggregationJobStep::from(0),
                         ),
@@ -4510,7 +4491,6 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(0)),
                             10,
-                            interval,
                             ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                         ),
                     )
@@ -4574,7 +4554,6 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(0)),
                             10,
-                            interval,
                             ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                         ),
                     )
@@ -4881,7 +4860,6 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(64)),
                             5,
-                            interval_1,
                             ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                         ))
                         .await
@@ -4914,7 +4892,6 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(128)),
                             5,
-                            interval_2,
                             ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                         ))
                         .await
@@ -4947,7 +4924,6 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(256)),
                             5,
-                            interval_3,
                             ReportIdChecksum::get_decoded(&[4; 32]).unwrap(),
                         ))
                         .await
@@ -4980,7 +4956,6 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(512)),
                             5,
-                            interval_4,
                             ReportIdChecksum::get_decoded(&[8; 32]).unwrap(),
                         ))
                         .await

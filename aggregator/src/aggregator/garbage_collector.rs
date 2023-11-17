@@ -187,7 +187,7 @@ mod tests {
                             aggregation_job_id,
                             AggregationParam(0),
                             (),
-                            Interval::from_time(&client_timestamp).unwrap(),
+                            client_timestamp,
                             AggregationJobState::InProgress,
                             AggregationJobStep::from(0),
                         ),
@@ -228,7 +228,6 @@ mod tests {
                             BatchAggregationState::Collected,
                             Some(AggregateShare(11)),
                             1,
-                            Interval::from_time(&client_timestamp).unwrap(),
                             random(),
                         ),
                     )
@@ -376,7 +375,7 @@ mod tests {
                             aggregation_job_id,
                             AggregationParam(0),
                             (),
-                            Interval::from_time(&client_timestamp).unwrap(),
+                            client_timestamp,
                             AggregationJobState::InProgress,
                             AggregationJobStep::from(0),
                         ),
@@ -417,7 +416,6 @@ mod tests {
                             BatchAggregationState::Collected,
                             Some(AggregateShare(11)),
                             1,
-                            Interval::from_time(&client_timestamp).unwrap(),
                             random(),
                         ),
                     )
@@ -559,7 +557,7 @@ mod tests {
                         random(),
                         AggregationParam(0),
                         batch_id,
-                        Interval::from_time(&client_timestamp).unwrap(),
+                        client_timestamp,
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     );
@@ -603,7 +601,6 @@ mod tests {
                             BatchAggregationState::Collected,
                             Some(AggregateShare(11)),
                             1,
-                            Interval::from_time(&client_timestamp).unwrap(),
                             random(),
                         ),
                     )
@@ -754,7 +751,7 @@ mod tests {
                         random(),
                         AggregationParam(0),
                         batch_id,
-                        Interval::from_time(&client_timestamp).unwrap(),
+                        client_timestamp,
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     );
@@ -798,7 +795,6 @@ mod tests {
                             BatchAggregationState::Collected,
                             Some(AggregateShare(11)),
                             1,
-                            Interval::from_time(&client_timestamp).unwrap(),
                             random(),
                         ),
                     )

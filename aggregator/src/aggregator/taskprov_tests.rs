@@ -779,8 +779,7 @@ async fn taskprov_aggregate_continue() {
                         aggregation_job_id,
                         aggregation_param.clone(),
                         batch_id,
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
+                        Time::from_seconds_since_epoch(0),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ),
@@ -933,7 +932,6 @@ async fn taskprov_aggregate_share() {
                     BatchAggregationState::Aggregating,
                     Some(transcript.helper_aggregate_share),
                     1,
-                    interval,
                     ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                 ))
                 .await

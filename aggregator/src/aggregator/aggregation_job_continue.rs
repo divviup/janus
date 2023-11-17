@@ -400,12 +400,12 @@ mod tests {
     };
     use janus_core::{
         test_util::install_test_trace_subscriber,
-        time::{IntervalExt, MockClock},
+        time::MockClock,
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
     };
     use janus_messages::{
         query_type::TimeInterval, AggregationJobContinueReq, AggregationJobId, AggregationJobResp,
-        AggregationJobStep, Interval, PrepareContinue, PrepareResp, PrepareStepResult, Role,
+        AggregationJobStep, PrepareContinue, PrepareResp, PrepareStepResult, Role,
     };
     use prio::{
         idpf::IdpfInput,
@@ -487,7 +487,7 @@ mod tests {
                         aggregation_job_id,
                         aggregation_param,
                         (),
-                        Interval::from_time(prepare_init.report_share().metadata().time()).unwrap(),
+                        *prepare_init.report_share().metadata().time(),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))

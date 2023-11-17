@@ -5,7 +5,7 @@ use self::models::{
     AggregatorRole, AuthenticationTokenType, Batch, BatchAggregation, CollectionJob,
     CollectionJobState, CollectionJobStateCode, GlobalHpkeKeypair, HpkeKeyState,
     LeaderStoredReport, Lease, LeaseToken, OutstandingBatch, ReportAggregation,
-    ReportAggregationState, ReportAggregationStateCode, SqlInterval,
+    ReportAggregationState, ReportAggregationStateCode,
 };
 use crate::{
     query_type::{AccumulableQueryType, CollectableQueryType},
@@ -18,7 +18,7 @@ use futures::future::try_join_all;
 use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::{HpkeKeypair, HpkePrivateKey},
-    time::{Clock, TimeExt},
+    time::{Clock, DurationExt as _, IntervalExt, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -55,7 +55,7 @@ use std::{
     time::{Duration as StdDuration, Instant},
 };
 use tokio::{sync::Barrier, try_join};
-use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row, Statement, ToStatement};
+use tokio_postgres::{error::SqlState, row::RowIndex, Row, Statement, ToStatement};
 use tracing::error;
 use url::Url;
 
@@ -245,7 +245,7 @@ impl<C: Clock> Datastore<C> {
         };
         let raw_tx = match client
             .build_transaction()
-            .isolation_level(IsolationLevel::RepeatableRead)
+            // .isolation_level(IsolationLevel::RepeatableRead) // XXX: consider going to ReadCommitted based on performance testing, once we're on v23.2 where it is supported
             .start()
             .await
         {
@@ -517,18 +517,22 @@ impl<C: Clock> Transaction<'_, C> {
     /// Returns the current schema version of the datastore and the description of the migration
     /// script that applied it.
     async fn get_current_schema_migration_version(&self) -> Result<(i64, String), Error> {
-        let stmt = self
-            .prepare_cached(
-                "SELECT version, description FROM _sqlx_migrations
-                WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
-            )
-            .await?;
-        let row = self.query_one(&stmt, &[]).await?;
+        // HACK: SQLx is not used, _sqlx_migrations does not exist.
+        // let stmt = self
+        //     .prepare_cached(
+        //         "SELECT version, description FROM _sqlx_migrations
+        //         WHERE success = TRUE ORDER BY version DESC LIMIT(1)",
+        //     )
+        //     .await?;
+        // let row = self.query_one(&stmt, &[]).await?;
 
-        let version = row.try_get("version")?;
-        let description = row.try_get("description")?;
+        // let version = row.try_get("version")?;
+        // let description = row.try_get("description")?;
 
-        Ok((version, description))
+        // Ok((version, description))
+
+        Ok((1, "initial schema".to_owned()))
+        // END HACK
     }
 
     /// Writes a task into the datastore.
@@ -933,7 +937,7 @@ impl<C: Clock> Transaction<'_, C> {
                      JOIN tasks ON tasks.id = aggregation_jobs.task_id
                      RIGHT JOIN report_aggregations ON report_aggregations.aggregation_job_id = aggregation_jobs.id AND report_aggregations.task_id = tasks.id
                      WHERE tasks.task_id = $1
-                       AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)) AS report_aggregation_count",
+                       AND aggregation_jobs.max_client_timestamp >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)) AS report_aggregation_count",
             )
             .await?;
         let row = self
@@ -1162,6 +1166,7 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         task_id: &TaskId,
     ) -> Result<Vec<(ReportId, Time)>, Error> {
+        // XXX: go back to using FOR UPDATE SKIP LOCKED once it works properly(?)
         // TODO(#269): allow the number of returned results to be controlled?
         let stmt = self
             .prepare_cached(
@@ -1172,7 +1177,7 @@ impl<C: Clock> Transaction<'_, C> {
                       AND client_reports.aggregation_started = FALSE
                       AND client_reports.client_timestamp >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
                     ORDER BY client_timestamp DESC
-                    FOR UPDATE OF client_reports SKIP LOCKED
+                    -- FOR UPDATE OF client_reports SKIP LOCKED
                     LIMIT 5000
                 )
                 UPDATE client_reports SET
@@ -1282,15 +1287,18 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         batch_interval: &Interval,
     ) -> Result<bool, Error> {
+        let (min_timestamp, max_timestamp) = (batch_interval.start(), batch_interval.end());
+
         let stmt = self
             .prepare_cached(
                 "SELECT EXISTS(
                     SELECT 1 FROM client_reports
                     JOIN tasks ON tasks.id = client_reports.task_id
                     WHERE tasks.task_id = $1
-                    AND client_reports.client_timestamp <@ $2::TSRANGE
-                    AND client_reports.client_timestamp >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
-                    AND client_reports.aggregation_started = FALSE
+                      AND client_reports.client_timestamp >= $2
+                      AND client_reports.client_timestamp < $3
+                      AND client_reports.client_timestamp >= COALESCE($4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                      AND client_reports.aggregation_started = FALSE
                 ) AS unaggregated_report_exists",
             )
             .await?;
@@ -1299,7 +1307,8 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* task_id */ task_id.as_ref(),
-                    /* batch_interval */ &SqlInterval::from(batch_interval),
+                    /* min_timestamp */ &min_timestamp.as_naive_date_time()?,
+                    /* max_timestamp */ &max_timestamp.as_naive_date_time()?,
                     /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
             )
@@ -1316,15 +1325,17 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         batch_interval: &Interval,
     ) -> Result<u64, Error> {
+        let (min_timestamp, max_timestamp) = (batch_interval.start(), batch_interval.end());
+
         let stmt = self
             .prepare_cached(
                 "SELECT COUNT(1) AS count
                 FROM client_reports
                 JOIN tasks ON tasks.id = client_reports.task_id
                 WHERE tasks.task_id = $1
-                  AND client_reports.client_timestamp >= lower($2::TSRANGE)
-                  AND client_reports.client_timestamp < upper($2::TSRANGE)
-                  AND client_reports.client_timestamp >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND client_reports.client_timestamp >= $2
+                  AND client_reports.client_timestamp < $3
+                  AND client_reports.client_timestamp >= COALESCE($4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         let row = self
@@ -1332,7 +1343,8 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* task_id */ task_id.as_ref(),
-                    /* batch_interval */ &SqlInterval::from(batch_interval),
+                    /* min_timestamp */ &min_timestamp.as_naive_date_time()?,
+                    /* max_timestamp */ &max_timestamp.as_naive_date_time()?,
                     /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
             )
@@ -1359,7 +1371,7 @@ impl<C: Clock> Transaction<'_, C> {
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id AND tasks.id = report_aggregations.task_id
                 WHERE tasks.task_id = $1
                   AND aggregation_jobs.batch_id = $2
-                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND aggregation_jobs.max_client_timestamp >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         let row = self
@@ -1585,13 +1597,13 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "SELECT
-                    aggregation_param, batch_id, client_timestamp_interval, state, step,
+                    aggregation_param, batch_id, max_client_timestamp, state, step,
                     last_request_hash
                 FROM aggregation_jobs
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id
                 WHERE tasks.task_id = $1
                   AND aggregation_jobs.aggregation_job_id = $2
-                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND aggregation_jobs.max_client_timestamp >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query_opt(
@@ -1622,12 +1634,12 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "SELECT
-                    aggregation_job_id, aggregation_param, batch_id, client_timestamp_interval,
+                    aggregation_job_id, aggregation_param, batch_id, max_client_timestamp,
                     state, step, last_request_hash
                 FROM aggregation_jobs
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id
                 WHERE tasks.task_id = $1
-                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND aggregation_jobs.max_client_timestamp >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query(
@@ -1663,10 +1675,9 @@ impl<C: Clock> Transaction<'_, C> {
             *aggregation_job_id,
             A::AggregationParam::get_decoded(row.get("aggregation_param"))?,
             Q::PartialBatchIdentifier::get_decoded(row.get::<_, &[u8]>("batch_id"))?,
-            row.get::<_, SqlInterval>("client_timestamp_interval")
-                .as_interval(),
+            Time::from_naive_date_time(&row.get("max_client_timestamp")),
             row.get("state"),
-            row.get_postgres_integer_and_convert::<i32, _, _>("step")?,
+            u16::try_from(row.get::<_, i64>("step"))?.into(),
         );
 
         if let Some(hash) = row.try_get::<_, Option<Vec<u8>>>("last_request_hash")? {
@@ -1700,6 +1711,11 @@ impl<C: Clock> Transaction<'_, C> {
         // We generate the token on the DB to allow each acquired job to receive its own distinct
         // token. This is not strictly necessary as we only care about token collisions on a
         // per-row basis.
+
+        // XXX: go back to using FOR UPDATE SKIP LOCKED once it works properly(?)
+        // XXX: once we are on CockroachDB v23.2, go back to using gen_random_bytes.
+        let lease_token = random::<[u8; 16]>();
+
         let stmt = self
             .prepare_cached(
                 "WITH incomplete_jobs AS (
@@ -1707,16 +1723,17 @@ impl<C: Clock> Transaction<'_, C> {
                     JOIN tasks ON tasks.id = aggregation_jobs.task_id
                     WHERE tasks.aggregator_role = 'LEADER'
                     AND aggregation_jobs.state = 'IN_PROGRESS'
-                    AND aggregation_jobs.lease_expiry <= $2
-                    AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
-                    FOR UPDATE OF aggregation_jobs SKIP LOCKED LIMIT $3
+                    AND aggregation_jobs.lease_expiry <= $3
+                    AND aggregation_jobs.max_client_timestamp >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                    -- FOR UPDATE OF aggregation_jobs SKIP LOCKED
+                    LIMIT $4
                 )
                 UPDATE aggregation_jobs SET
                     lease_expiry = $1,
-                    lease_token = gen_random_bytes(16),
+                    lease_token = $2,
                     lease_attempts = lease_attempts + 1,
-                    updated_at = $4,
-                    updated_by = $5
+                    updated_at = $5,
+                    updated_by = $6
                 FROM tasks
                 WHERE tasks.id = aggregation_jobs.task_id
                 AND aggregation_jobs.id IN (SELECT id FROM incomplete_jobs)
@@ -1729,6 +1746,7 @@ impl<C: Clock> Transaction<'_, C> {
             &stmt,
             &[
                 /* lease_expiry */ &lease_expiry_time,
+                /* lease_token */ &lease_token,
                 /* now */ &now,
                 /* limit */ &maximum_acquire_count,
                 /* updated_at */ &self.clock.now().as_naive_date_time()?,
@@ -1776,7 +1794,7 @@ impl<C: Clock> Transaction<'_, C> {
                   AND aggregation_jobs.aggregation_job_id = $4
                   AND aggregation_jobs.lease_expiry = $5
                   AND aggregation_jobs.lease_token = $6
-                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($7::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND aggregation_jobs.max_client_timestamp >= COALESCE($7::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         check_single_row_mutation(
@@ -1811,14 +1829,14 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "INSERT INTO aggregation_jobs
                     (task_id, aggregation_job_id, aggregation_param, batch_id,
-                    client_timestamp_interval, state, step, last_request_hash,
+                    max_client_timestamp, state, step, last_request_hash,
                     created_at, updated_at, updated_by)
                 VALUES (
                     (SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8, $9, $10,
                     $11
                 )
                 ON CONFLICT DO NOTHING
-                RETURNING COALESCE(UPPER(client_timestamp_interval) < COALESCE($12::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
+                RETURNING COALESCE(max_client_timestamp < COALESCE($12::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
             )
             .await?;
         let rows = self
@@ -1831,10 +1849,12 @@ impl<C: Clock> Transaction<'_, C> {
                     &aggregation_job.aggregation_parameter().get_encoded(),
                     /* batch_id */
                     &aggregation_job.partial_batch_identifier().get_encoded(),
-                    /* client_timestamp_interval */
-                    &SqlInterval::from(aggregation_job.client_timestamp_interval()),
+                    /* max_client_timestamp */
+                    &aggregation_job
+                        .max_client_timestamp()
+                        .as_naive_date_time()?,
                     /* state */ &aggregation_job.state(),
-                    /* step */ &(u16::from(aggregation_job.step()) as i32),
+                    /* step */ &(u16::from(aggregation_job.step()) as i64),
                     /* last_request_hash */
                     &aggregation_job.last_request_hash(),
                     /* created_at */ &self.clock.now().as_naive_date_time()?,
@@ -1895,7 +1915,7 @@ impl<C: Clock> Transaction<'_, C> {
                 FROM tasks
                 WHERE tasks.task_id = $6
                   AND aggregation_jobs.aggregation_job_id = $7
-                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($8::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND aggregation_jobs.max_client_timestamp >= COALESCE($8::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         check_single_row_mutation(
@@ -1903,7 +1923,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* state */ &aggregation_job.state(),
-                    /* step */ &(u16::from(aggregation_job.step()) as i32),
+                    /* step */ &(u16::from(aggregation_job.step()) as i64),
                     /* last_request_hash */
                     &aggregation_job.last_request_hash(),
                     /* updated_at */ &self.clock.now().as_naive_date_time()?,
@@ -1940,7 +1960,7 @@ impl<C: Clock> Transaction<'_, C> {
                   AND report_aggregations.client_report_id = $2
                   AND aggregation_jobs.aggregation_param = $3
                   AND aggregation_jobs.aggregation_job_id != $4
-                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($5::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND aggregation_jobs.max_client_timestamp >= COALESCE($5::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         Ok(self
@@ -1988,7 +2008,7 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE tasks.task_id = $1
                   AND aggregation_jobs.aggregation_job_id = $2
                   AND report_aggregations.client_report_id = $3
-                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND aggregation_jobs.max_client_timestamp >= COALESCE($4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query_opt(
@@ -2042,7 +2062,7 @@ impl<C: Clock> Transaction<'_, C> {
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id AND tasks.id = report_aggregations.task_id
                 WHERE tasks.task_id = $1
                   AND aggregation_jobs.aggregation_job_id = $2
-                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                  AND aggregation_jobs.max_client_timestamp >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
                 ORDER BY report_aggregations.ord ASC",
             )
             .await?;
@@ -2096,7 +2116,7 @@ impl<C: Clock> Transaction<'_, C> {
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id AND tasks.id = report_aggregations.task_id
                 WHERE tasks.task_id = $1
-                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND aggregation_jobs.max_client_timestamp >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query(
@@ -2245,7 +2265,7 @@ impl<C: Clock> Transaction<'_, C> {
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id
                 WHERE tasks.task_id = $1
                   AND aggregation_job_id = $2
-                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($14::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                  AND aggregation_jobs.max_client_timestamp >= COALESCE($14::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
                 ON CONFLICT DO NOTHING",
             )
             .await?;
@@ -2303,7 +2323,7 @@ impl<C: Clock> Transaction<'_, C> {
                   AND report_aggregations.client_report_id = $10
                   AND report_aggregations.client_timestamp = $11
                   AND report_aggregations.ord = $12
-                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($13::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND aggregation_jobs.max_client_timestamp >= COALESCE($13::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         check_single_row_mutation(
@@ -2358,7 +2378,7 @@ impl<C: Clock> Transaction<'_, C> {
                 JOIN tasks ON tasks.id = collection_jobs.task_id
                 WHERE tasks.task_id = $1
                   AND collection_jobs.collection_job_id = $2
-                  AND COALESCE(LOWER(collection_jobs.batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier AND batches.aggregation_param = collection_jobs.aggregation_param))) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND COALESCE(collection_jobs.min_batch_timestamp, (SELECT max_client_timestamp FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier AND batches.aggregation_param = collection_jobs.aggregation_param)) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query_opt(
@@ -2409,8 +2429,9 @@ impl<C: Clock> Transaction<'_, C> {
                     collection_jobs.leader_aggregate_share
                 FROM collection_jobs JOIN tasks ON tasks.id = collection_jobs.task_id
                 WHERE tasks.task_id = $1
-                  AND collection_jobs.batch_interval @> $2::TIMESTAMP
-                  AND LOWER(collection_jobs.batch_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND collection_jobs.min_batch_timestamp <= $2::TIMESTAMP
+                  AND collection_jobs.max_batch_timestamp >= $3::TIMESTAMP
+                  AND collection_jobs.min_batch_timestamp >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query(
@@ -2445,6 +2466,8 @@ impl<C: Clock> Transaction<'_, C> {
         batch_interval: &Interval,
     ) -> Result<Vec<CollectionJob<SEED_SIZE, TimeInterval, A>>, Error> {
         // TODO(#1553): write unit test
+        let (min_timestamp, max_timestamp) = (batch_interval.start(), batch_interval.end());
+
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -2458,15 +2481,17 @@ impl<C: Clock> Transaction<'_, C> {
                     collection_jobs.leader_aggregate_share
                 FROM collection_jobs JOIN tasks ON tasks.id = collection_jobs.task_id
                 WHERE tasks.task_id = $1
-                  AND collection_jobs.batch_interval && $2
-                  AND LOWER(collection_jobs.batch_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND collection_jobs.min_batch_timestamp < $3
+                  AND collection_jobs.max_batch_timestamp >= $2
+                  AND collection_jobs.min_batch_timestamp >= COALESCE($4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query(
             &stmt,
             &[
                 /* task_id */ task_id.as_ref(),
-                /* batch_interval */ &SqlInterval::from(batch_interval),
+                /* min_batch_timestamp */ &min_timestamp.as_naive_date_time()?,
+                /* max_batch_timestamp */ &max_timestamp.as_naive_date_time()?,
                 /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
@@ -2516,7 +2541,7 @@ impl<C: Clock> Transaction<'_, C> {
                             AND batches.batch_identifier = collection_jobs.batch_identifier
                 WHERE tasks.task_id = $1
                   AND collection_jobs.batch_identifier = $2
-                  AND UPPER(batches.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND batches.max_client_timestamp >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query(
@@ -2561,7 +2586,7 @@ impl<C: Clock> Transaction<'_, C> {
                 FROM collection_jobs
                 JOIN tasks ON tasks.id = collection_jobs.task_id
                 WHERE tasks.task_id = $1
-                  AND COALESCE(LOWER(collection_jobs.batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier AND batches.aggregation_param = collection_jobs.aggregation_param))) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND COALESCE(collection_jobs.min_batch_timestamp, (SELECT max_client_timestamp FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier AND batches.aggregation_param = collection_jobs.aggregation_param)) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query(
@@ -2664,19 +2689,26 @@ impl<C: Clock> Transaction<'_, C> {
     where
         A::AggregationParam: std::fmt::Debug,
     {
-        let batch_interval =
-            Q::to_batch_interval(collection_job.batch_identifier()).map(SqlInterval::from);
+        let batch_interval = Q::to_batch_interval(collection_job.batch_identifier());
+        let (min_batch_timestamp, max_batch_timestamp) = (
+            batch_interval.map(Interval::start),
+            batch_interval
+                .map(|i| i.end().sub(&Duration::from_seconds(1)))
+                .transpose()?,
+        );
 
         let stmt = self
             .prepare_cached(
                 "INSERT INTO collection_jobs
                     (collection_job_id, task_id, query, aggregation_param, batch_identifier,
-                    batch_interval, state, created_at, updated_at, updated_by)
+                    min_batch_timestamp, max_batch_timestamp, state, created_at, updated_at,
+                    updated_by)
                 VALUES (
-                    $1, (SELECT id FROM tasks WHERE task_id = $2), $3, $4, $5, $6, $7, $8, $9, $10
+                    $1, (SELECT id FROM tasks WHERE task_id = $2), $3, $4, $5, $6, $7, $8, $9, $10,
+                    $11
                 )
                 ON CONFLICT DO NOTHING
-                RETURNING COALESCE(COALESCE(LOWER(batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier AND batches.aggregation_param = collection_jobs.aggregation_param))) < COALESCE($11::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $2) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
+                RETURNING COALESCE(COALESCE(min_batch_timestamp, (SELECT max_client_timestamp FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier AND batches.aggregation_param = collection_jobs.aggregation_param)) < COALESCE($12::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $2) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
             )
             .await?;
 
@@ -2690,7 +2722,15 @@ impl<C: Clock> Transaction<'_, C> {
                     /* aggregation_param */
                     &collection_job.aggregation_parameter().get_encoded(),
                     /* batch_identifier */ &collection_job.batch_identifier().get_encoded(),
-                    /* batch_interval */ &batch_interval,
+                    /* min_batch_timestamp */
+                    &min_batch_timestamp
+                        .map(Time::as_naive_date_time)
+                        .transpose()?,
+                    /* max_batch_timestamp */
+                    &max_batch_timestamp
+                        .as_ref()
+                        .map(Time::as_naive_date_time)
+                        .transpose()?,
                     /* state */
                     &collection_job.state().collection_job_state_code(),
                     /* created_at */ &self.clock.now().as_naive_date_time()?,
@@ -2744,6 +2784,10 @@ impl<C: Clock> Transaction<'_, C> {
         let lease_expiry_time = add_naive_date_time_duration(&now, lease_duration)?;
         let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
 
+        // XXX: go back to using FOR UPDATE SKIP LOCKED once it works properly(?)
+        // XXX: once we are on CockroachDB v23.2, go back to using gen_random_bytes.
+        let lease_token = random::<[u8; 16]>();
+
         let stmt = self
             .prepare_cached(
                 "WITH incomplete_jobs AS (
@@ -2752,16 +2796,17 @@ impl<C: Clock> Transaction<'_, C> {
                     JOIN tasks ON tasks.id = collection_jobs.task_id
                     WHERE tasks.aggregator_role = 'LEADER'
                       AND collection_jobs.state = 'COLLECTABLE'
-                      AND collection_jobs.lease_expiry <= $4
-                      AND COALESCE(LOWER(collection_jobs.batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier AND batches.aggregation_param = collection_jobs.aggregation_param))) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
-                    FOR UPDATE OF collection_jobs SKIP LOCKED LIMIT $5
+                      AND collection_jobs.lease_expiry <= $5
+                      AND COALESCE(collection_jobs.min_batch_timestamp, (SELECT max_client_timestamp FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier AND batches.aggregation_param = collection_jobs.aggregation_param)) >= COALESCE($5::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                    -- FOR UPDATE OF collection_jobs SKIP LOCKED
+                    LIMIT $6
                 )
                 UPDATE collection_jobs SET
                     lease_expiry = $1,
-                    lease_token = gen_random_bytes(16),
+                    lease_token = $2,
                     lease_attempts = lease_attempts + 1,
-                    updated_at = $2,
-                    updated_by = $3
+                    updated_at = $3,
+                    updated_by = $4
                 FROM incomplete_jobs
                 WHERE collection_jobs.id = incomplete_jobs.id
                 RETURNING incomplete_jobs.task_id, incomplete_jobs.query_type, incomplete_jobs.vdaf,
@@ -2774,6 +2819,7 @@ impl<C: Clock> Transaction<'_, C> {
             &stmt,
             &[
                 /* lease_expiry */ &lease_expiry_time,
+                /* lease_token */ &lease_token,
                 /* updated_at */ &self.clock.now().as_naive_date_time()?,
                 /* updated_by */ &self.name,
                 /* now */ &now,
@@ -2821,7 +2867,7 @@ impl<C: Clock> Transaction<'_, C> {
                   AND collection_jobs.collection_job_id = $4
                   AND collection_jobs.lease_expiry = $5
                   AND collection_jobs.lease_token = $6
-                  AND COALESCE(LOWER(collection_jobs.batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier AND batches.aggregation_param = collection_jobs.aggregation_param))) >= COALESCE($7::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND COALESCE(collection_jobs.min_batch_timestamp, (SELECT max_client_timestamp FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier AND batches.aggregation_param = collection_jobs.aggregation_param)) >= COALESCE($7::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         check_single_row_mutation(
@@ -2889,7 +2935,7 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE tasks.id = collection_jobs.task_id
                   AND tasks.task_id = $7
                   AND collection_job_id = $8
-                  AND COALESCE(LOWER(collection_jobs.batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier AND batches.aggregation_param = collection_jobs.aggregation_param))) >= COALESCE($9::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND COALESCE(collection_jobs.min_batch_timestamp, (SELECT max_client_timestamp FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier AND batches.aggregation_param = collection_jobs.aggregation_param)) >= COALESCE($9::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
 
@@ -2928,9 +2974,7 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<Option<BatchAggregation<SEED_SIZE, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
-                "SELECT
-                    batch_aggregations.state, aggregate_share, report_count,
-                    batch_aggregations.client_timestamp_interval, checksum
+                "SELECT batch_aggregations.state, aggregate_share, report_count, checksum
                 FROM batch_aggregations
                 JOIN tasks ON tasks.id = batch_aggregations.task_id
                 JOIN batches ON batches.task_id = batch_aggregations.task_id
@@ -2940,7 +2984,7 @@ impl<C: Clock> Transaction<'_, C> {
                   AND batch_aggregations.batch_identifier = $2
                   AND batch_aggregations.aggregation_param = $3
                   AND ord = $4
-                  AND UPPER(COALESCE(batches.batch_interval, batches.client_timestamp_interval)) >= COALESCE($5::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND COALESCE(batches.max_batch_timestamp, batches.max_client_timestamp) >= COALESCE($5::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
 
@@ -2984,9 +3028,7 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<Vec<BatchAggregation<SEED_SIZE, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
-                "SELECT
-                    ord, batch_aggregations.state, aggregate_share, report_count,
-                    batch_aggregations.client_timestamp_interval, checksum
+                "SELECT ord, batch_aggregations.state, aggregate_share, report_count, checksum
                 FROM batch_aggregations
                 JOIN tasks ON tasks.id = batch_aggregations.task_id
                 JOIN batches ON batches.task_id = batch_aggregations.task_id
@@ -2995,7 +3037,7 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE tasks.task_id = $1
                   AND batch_aggregations.batch_identifier = $2
                   AND batch_aggregations.aggregation_param = $3
-                  AND UPPER(COALESCE(batches.batch_interval, batches.client_timestamp_interval)) >= COALESCE($4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND COALESCE(batches.max_batch_timestamp, batches.max_client_timestamp) >= COALESCE($4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
 
@@ -3037,15 +3079,14 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT
                     batch_aggregations.batch_identifier, batch_aggregations.aggregation_param, ord,
-                    batch_aggregations.state, aggregate_share, report_count,
-                    batch_aggregations.client_timestamp_interval, checksum
+                    batch_aggregations.state, aggregate_share, report_count, checksum
                 FROM batch_aggregations
                 JOIN tasks ON tasks.id = batch_aggregations.task_id
                 JOIN batches ON batches.task_id = batch_aggregations.task_id
                             AND batches.batch_identifier = batch_aggregations.batch_identifier
                             AND batches.aggregation_param = batch_aggregations.aggregation_param
                 WHERE tasks.task_id = $1
-                  AND UPPER(COALESCE(batches.batch_interval, batches.client_timestamp_interval)) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND COALESCE(batches.max_batch_timestamp, batches.max_client_timestamp) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
 
@@ -3096,9 +3137,6 @@ impl<C: Clock> Transaction<'_, C> {
             .transpose()
             .map_err(|_| Error::DbState("aggregate_share couldn't be parsed".to_string()))?;
         let report_count = row.get_bigint_and_convert("report_count")?;
-        let client_timestamp_interval = row
-            .get::<_, SqlInterval>("client_timestamp_interval")
-            .as_interval();
         let checksum = ReportIdChecksum::get_decoded(row.get("checksum"))?;
         Ok(BatchAggregation::new(
             task_id,
@@ -3108,7 +3146,6 @@ impl<C: Clock> Transaction<'_, C> {
             state,
             aggregate_share,
             report_count,
-            client_timestamp_interval,
             checksum,
         ))
     }
@@ -3127,22 +3164,18 @@ impl<C: Clock> Transaction<'_, C> {
         A::AggregationParam: std::fmt::Debug,
         A::AggregateShare: std::fmt::Debug,
     {
-        let batch_interval =
-            Q::to_batch_interval(batch_aggregation.batch_identifier()).map(SqlInterval::from);
-
         let stmt = self
             .prepare_cached(
                 "INSERT INTO batch_aggregations (
-                    task_id, batch_identifier, batch_interval, aggregation_param, ord, state,
-                    aggregate_share, report_count, client_timestamp_interval, checksum, created_at,
-                    updated_at, updated_by
+                    task_id, batch_identifier, aggregation_param, ord, state, aggregate_share,
+                    report_count, checksum, created_at, updated_at, updated_by
                 )
                 VALUES (
                     (SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                    $11, $12, $13
+                    $11
                 )
                 ON CONFLICT DO NOTHING
-                RETURNING COALESCE(UPPER((SELECT COALESCE(batch_interval, client_timestamp_interval) FROM batches WHERE task_id = batch_aggregations.task_id AND batch_identifier = batch_aggregations.batch_identifier AND aggregation_param = batch_aggregations.aggregation_param)) < COALESCE($14::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
+                RETURNING COALESCE((SELECT COALESCE(max_batch_timestamp, max_client_timestamp) FROM batches WHERE task_id = batch_aggregations.task_id AND batch_identifier = batch_aggregations.batch_identifier AND aggregation_param = batch_aggregations.aggregation_param) < COALESCE($12::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
             )
             .await?;
         let rows = self
@@ -3152,7 +3185,6 @@ impl<C: Clock> Transaction<'_, C> {
                     /* task_id */ &batch_aggregation.task_id().as_ref(),
                     /* batch_identifier */
                     &batch_aggregation.batch_identifier().get_encoded(),
-                    /* batch_interval */ &batch_interval,
                     /* aggregation_param */
                     &batch_aggregation.aggregation_parameter().get_encoded(),
                     /* ord */ &i64::try_from(batch_aggregation.ord())?,
@@ -3161,8 +3193,6 @@ impl<C: Clock> Transaction<'_, C> {
                     &batch_aggregation.aggregate_share().map(Encode::get_encoded),
                     /* report_count */
                     &i64::try_from(batch_aggregation.report_count())?,
-                    /* client_timestamp_interval */
-                    &SqlInterval::from(batch_aggregation.client_timestamp_interval()),
                     /* checksum */ &batch_aggregation.checksum().get_encoded(),
                     /* created_at */ &self.clock.now().as_naive_date_time()?,
                     /* updated_at */ &self.clock.now().as_naive_date_time()?,
@@ -3229,20 +3259,19 @@ impl<C: Clock> Transaction<'_, C> {
                     state = $1,
                     aggregate_share = $2,
                     report_count = $3,
-                    client_timestamp_interval = $4,
-                    checksum = $5,
-                    updated_at = $6,
-                    updated_by = $7
+                    checksum = $4,
+                    updated_at = $5,
+                    updated_by = $6
                 FROM tasks, batches
                 WHERE tasks.id = batch_aggregations.task_id
                   AND batches.task_id = batch_aggregations.task_id
                   AND batches.batch_identifier = batch_aggregations.batch_identifier
                   AND batches.aggregation_param = batch_aggregations.aggregation_param
-                  AND tasks.task_id = $8
-                  AND batch_aggregations.batch_identifier = $9
-                  AND batch_aggregations.aggregation_param = $10
-                  AND ord = $11
-                  AND UPPER(COALESCE(batches.batch_interval, batches.client_timestamp_interval)) >= COALESCE($12::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND tasks.task_id = $7
+                  AND batch_aggregations.batch_identifier = $8
+                  AND batch_aggregations.aggregation_param = $9
+                  AND ord = $10
+                  AND COALESCE(batches.max_batch_timestamp, batches.max_client_timestamp) >= COALESCE($11::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         check_single_row_mutation(
@@ -3253,8 +3282,6 @@ impl<C: Clock> Transaction<'_, C> {
                     /* aggregate_share */
                     &batch_aggregation.aggregate_share().map(Encode::get_encoded),
                     /* report_count */ &i64::try_from(batch_aggregation.report_count())?,
-                    /* client_timestamp_interval */
-                    &SqlInterval::from(batch_aggregation.client_timestamp_interval()),
                     /* checksum */ &batch_aggregation.checksum().get_encoded(),
                     /* updated_at */ &self.clock.now().as_naive_date_time()?,
                     /* updated_by */ &self.name,
@@ -3295,7 +3322,7 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE tasks.task_id = $1
                   AND batch_identifier = $2
                   AND aggregation_param = $3
-                  AND COALESCE(LOWER(aggregate_share_jobs.batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = aggregate_share_jobs.task_id AND batches.batch_identifier = aggregate_share_jobs.batch_identifier AND batches.aggregation_param = aggregate_share_jobs.aggregation_param))) >= COALESCE($4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND COALESCE(aggregate_share_jobs.min_batch_timestamp, (SELECT max_client_timestamp FROM batches WHERE batches.task_id = aggregate_share_jobs.task_id AND batches.batch_identifier = aggregate_share_jobs.batch_identifier AND batches.aggregation_param = aggregate_share_jobs.aggregation_param)) >= COALESCE($4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query_opt(
@@ -3343,8 +3370,9 @@ impl<C: Clock> Transaction<'_, C> {
                 FROM aggregate_share_jobs
                 JOIN tasks ON tasks.id = aggregate_share_jobs.task_id
                 WHERE tasks.task_id = $1
-                  AND aggregate_share_jobs.batch_interval @> $2::TIMESTAMP
-                  AND LOWER(aggregate_share_jobs.batch_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND aggregate_share_jobs.min_batch_timestamp <= $2::TIMESTAMP
+                  AND aggregate_share_jobs.max_batch_timestamp >= $2::TIMESTAMP
+                  AND aggregate_share_jobs.min_batch_timestamp >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query(
@@ -3383,6 +3411,8 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         interval: &Interval,
     ) -> Result<Vec<AggregateShareJob<SEED_SIZE, TimeInterval, A>>, Error> {
+        let (min_timestamp, max_timestamp) = (interval.start(), interval.end());
+
         let stmt = self
             .prepare_cached(
                 "SELECT
@@ -3394,15 +3424,17 @@ impl<C: Clock> Transaction<'_, C> {
                 FROM aggregate_share_jobs
                 JOIN tasks ON tasks.id = aggregate_share_jobs.task_id
                 WHERE tasks.task_id = $1
-                  AND aggregate_share_jobs.batch_interval && $2
-                  AND LOWER(aggregate_share_jobs.batch_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND aggregate_share_jobs.min_batch_timestamp < $3
+                  AND aggregate_share_jobs.max_batch_timestamp >= $2
+                  AND aggregate_share_jobs.min_batch_timestamp >= COALESCE($4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query(
             &stmt,
             &[
                 /* task_id */ &task_id.as_ref(),
-                /* interval */ &SqlInterval::from(interval),
+                /* min_timestamp */ &min_timestamp.as_naive_date_time()?,
+                /* max_timestamp */ &max_timestamp.as_naive_date_time()?,
                 /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
@@ -3445,7 +3477,7 @@ impl<C: Clock> Transaction<'_, C> {
                 FROM aggregate_share_jobs JOIN tasks ON tasks.id = aggregate_share_jobs.task_id
                 WHERE tasks.task_id = $1
                   AND aggregate_share_jobs.batch_identifier = $2
-                  AND UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = aggregate_share_jobs.task_id AND batches.batch_identifier = aggregate_share_jobs.batch_identifier AND batches.aggregation_param = aggregate_share_jobs.aggregation_param)) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND (SELECT max_client_timestamp FROM batches WHERE batches.task_id = aggregate_share_jobs.task_id AND batches.batch_identifier = aggregate_share_jobs.batch_identifier AND batches.aggregation_param = aggregate_share_jobs.aggregation_param) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query(
@@ -3486,7 +3518,7 @@ impl<C: Clock> Transaction<'_, C> {
                 FROM aggregate_share_jobs
                 JOIN tasks ON tasks.id = aggregate_share_jobs.task_id
                 WHERE tasks.task_id = $1
-                  AND COALESCE(LOWER(aggregate_share_jobs.batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = aggregate_share_jobs.task_id AND batches.batch_identifier = aggregate_share_jobs.batch_identifier AND batches.aggregation_param = aggregate_share_jobs.aggregation_param))) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND COALESCE(aggregate_share_jobs.min_batch_timestamp, (SELECT max_client_timestamp FROM batches WHERE batches.task_id = aggregate_share_jobs.task_id AND batches.batch_identifier = aggregate_share_jobs.batch_identifier AND batches.aggregation_param = aggregate_share_jobs.aggregation_param)) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query(
@@ -3545,18 +3577,24 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         aggregate_share_job: &AggregateShareJob<SEED_SIZE, Q, A>,
     ) -> Result<(), Error> {
-        let batch_interval =
-            Q::to_batch_interval(aggregate_share_job.batch_identifier()).map(SqlInterval::from);
+        let batch_interval = Q::to_batch_interval(aggregate_share_job.batch_identifier());
+        let (min_batch_timestamp, max_batch_timestamp) = (
+            batch_interval.map(Interval::start),
+            batch_interval
+                .map(|i| i.end().sub(&Duration::from_seconds(1)))
+                .transpose()?,
+        );
 
         let stmt = self
             .prepare_cached(
                 "INSERT INTO aggregate_share_jobs (
-                    task_id, batch_identifier, batch_interval, aggregation_param,
-                    helper_aggregate_share, report_count, checksum, created_at, updated_by
+                    task_id, batch_identifier, min_batch_timestamp, max_batch_timestamp,
+                    aggregation_param, helper_aggregate_share, report_count, checksum, created_at,
+                    updated_by
                 )
-                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8, $9)
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8, $9, $10)
                 ON CONFLICT DO NOTHING
-                RETURNING COALESCE(COALESCE(LOWER(batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = aggregate_share_jobs.task_id AND batches.batch_identifier = aggregate_share_jobs.batch_identifier AND batches.aggregation_param = aggregate_share_jobs.aggregation_param))) < COALESCE($10::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
+                RETURNING COALESCE(COALESCE(min_batch_timestamp, (SELECT max_client_timestamp FROM batches WHERE batches.task_id = aggregate_share_jobs.task_id AND batches.batch_identifier = aggregate_share_jobs.batch_identifier AND batches.aggregation_param = aggregate_share_jobs.aggregation_param)) < COALESCE($11::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
             )
             .await?;
         let rows = self
@@ -3566,7 +3604,15 @@ impl<C: Clock> Transaction<'_, C> {
                     /* task_id */ &aggregate_share_job.task_id().as_ref(),
                     /* batch_identifier */
                     &aggregate_share_job.batch_identifier().get_encoded(),
-                    /* batch_interval */ &batch_interval,
+                    /* min_batch_timestamp */
+                    &min_batch_timestamp
+                        .map(Time::as_naive_date_time)
+                        .transpose()?,
+                    /* max_batch_timestamp */
+                    &max_batch_timestamp
+                        .as_ref()
+                        .map(Time::as_naive_date_time)
+                        .transpose()?,
                     /* aggregation_param */
                     &aggregate_share_job.aggregation_parameter().get_encoded(),
                     /* helper_aggregate_share */
@@ -3629,7 +3675,7 @@ impl<C: Clock> Transaction<'_, C> {
                 )
                 VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5)
                 ON CONFLICT DO NOTHING
-                RETURNING COALESCE(UPPER((SELECT client_timestamp_interval FROM batches WHERE task_id = outstanding_batches.task_id AND batch_identifier = outstanding_batches.batch_id)) < COALESCE($6::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
+                RETURNING COALESCE((SELECT max_client_timestamp FROM batches WHERE task_id = outstanding_batches.task_id AND batch_identifier = outstanding_batches.batch_id) < COALESCE($6::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
             )
             .await?;
         let rows = self
@@ -3695,7 +3741,7 @@ impl<C: Clock> Transaction<'_, C> {
                                 AND batches.batch_identifier = outstanding_batches.batch_id
                     WHERE tasks.task_id = $1
                     AND time_bucket_start = $2
-                    AND UPPER(batches.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                    AND batches.max_client_timestamp >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
                 )
                 .await?;
             self.query(
@@ -3716,7 +3762,7 @@ impl<C: Clock> Transaction<'_, C> {
                                 AND batches.batch_identifier = outstanding_batches.batch_id
                     WHERE tasks.task_id = $1
                     AND time_bucket_start IS NULL
-                    AND UPPER(batches.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                    AND batches.max_client_timestamp >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
                 )
                 .await?;
             self.query(
@@ -3836,7 +3882,7 @@ impl<C: Clock> Transaction<'_, C> {
                       ON batches.task_id = outstanding_batches.task_id
                      AND batches.batch_identifier = outstanding_batches.batch_id
                     WHERE tasks.task_id = $1
-                      AND UPPER(batches.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                      AND batches.max_client_timestamp >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
                     GROUP BY outstanding_batches.batch_id
                 )
                 SELECT batch_id FROM batches WHERE count >= $2::BIGINT LIMIT 1",
@@ -3855,6 +3901,39 @@ impl<C: Clock> Transaction<'_, C> {
         .transpose()
     }
 
+    // returns (min_timestamp, max_timestamp) -- both inclusive
+    // XXX: find a better place for this function
+    fn timestamps_from_interval(interval: &Interval) -> (Option<Time>, Option<Time>) {
+        if interval.start() >= &interval.end() {
+            return (None, None); // interval is empty
+        }
+
+        (
+            Some(*interval.start()),
+            Some(interval.end().sub(&Duration::from_seconds(1)).unwrap()), // unwrap safety: guaranteed start < end, so we can subtract 1 safely without underflow.
+        )
+    }
+
+    // XXX: find a better place for this function, and improve error handling
+    fn interval_from_timestamps(
+        min_timestamp: Option<Time>,
+        max_timestamp: Option<Time>,
+    ) -> Interval {
+        match (min_timestamp, max_timestamp) {
+            (Some(min_timestamp), Some(max_timestamp)) => Interval::new(
+                min_timestamp,
+                max_timestamp
+                    .difference(&min_timestamp)
+                    .unwrap()
+                    .add(&Duration::from_seconds(1))
+                    .unwrap(),
+            )
+            .unwrap(),
+            (None, None) => Interval::EMPTY,
+            (_, _) => panic!("unexpected DB state"),
+        }
+    }
+
     /// Puts a `batch` into the datastore. Returns `MutationTargetAlreadyExists` if the batch is
     /// already stored.
     #[tracing::instrument(skip(self), err)]
@@ -3866,17 +3945,27 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         batch: &Batch<SEED_SIZE, Q, A>,
     ) -> Result<(), Error> {
+        let max_batch_timestamp = Q::to_batch_interval(batch.batch_identifier())
+            .map(|i| {
+                i.end()
+                    .sub(&Duration::from_seconds(1))?
+                    .as_naive_date_time()
+            })
+            .transpose()?;
+        let (min_client_timestamp, max_client_timestamp) =
+            Self::timestamps_from_interval(batch.client_timestamp_interval());
+
         let stmt = self
             .prepare_cached(
                 "INSERT INTO batches
-                    (task_id, batch_identifier, batch_interval, aggregation_param, state,
-                    outstanding_aggregation_jobs, client_timestamp_interval, created_at, updated_at,
-                    updated_by)
+                    (task_id, batch_identifier, max_batch_timestamp, aggregation_param, state,
+                    outstanding_aggregation_jobs, min_client_timestamp, max_client_timestamp,
+                    created_at, updated_at, updated_by)
                 VALUES (
-                    (SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8, $9, $10
+                    (SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
                 )
                 ON CONFLICT DO NOTHING
-                RETURNING COALESCE(UPPER(COALESCE(batch_interval, client_timestamp_interval)) < COALESCE($11::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
+                RETURNING COALESCE(COALESCE(max_batch_timestamp, max_client_timestamp) < COALESCE($12::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE task_id = $1) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE) AS is_expired",
             )
             .await?;
         let rows = self
@@ -3885,14 +3974,21 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* task_id */ &batch.task_id().as_ref(),
                     /* batch_identifier */ &batch.batch_identifier().get_encoded(),
-                    /* batch_interval */
-                    &Q::to_batch_interval(batch.batch_identifier()).map(SqlInterval::from),
+                    /* max_batch_timestamp */ &max_batch_timestamp,
                     /* aggregation_param */ &batch.aggregation_parameter().get_encoded(),
                     /* state */ &batch.state(),
                     /* outstanding_aggregation_jobs */
                     &i64::try_from(batch.outstanding_aggregation_jobs())?,
-                    /* client_timestamp_interval */
-                    &SqlInterval::from(batch.client_timestamp_interval()),
+                    /* min_client_timestamp */
+                    &min_client_timestamp
+                        .as_ref()
+                        .map(Time::as_naive_date_time)
+                        .transpose()?,
+                    /* max_client_timestamp */
+                    &max_client_timestamp
+                        .as_ref()
+                        .map(Time::as_naive_date_time)
+                        .transpose()?,
                     /* created_at */ &self.clock.now().as_naive_date_time()?,
                     /* updated_at */ &self.clock.now().as_naive_date_time()?,
                     /* updated_by */ &self.name,
@@ -3943,18 +4039,21 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         batch: &Batch<SEED_SIZE, Q, A>,
     ) -> Result<(), Error> {
+        let (min_client_timestamp, max_client_timestamp) =
+            Self::timestamps_from_interval(batch.client_timestamp_interval());
+
         let stmt = self
             .prepare_cached(
                 "UPDATE batches
                 SET
-                    state = $1, outstanding_aggregation_jobs = $2, client_timestamp_interval = $3,
-                    updated_at = $4, updated_by = $5
+                    state = $1, outstanding_aggregation_jobs = $2, min_client_timestamp = $3,
+                    max_client_timestamp = $4, updated_at = $5, updated_by = $6
                 FROM tasks
                 WHERE batches.task_id = tasks.id
-                  AND tasks.task_id = $6
-                  AND batch_identifier = $7
-                  AND aggregation_param = $8
-                  AND UPPER(COALESCE(batch_interval, client_timestamp_interval)) >= COALESCE($9::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND tasks.task_id = $7
+                  AND batch_identifier = $8
+                  AND aggregation_param = $9
+                  AND COALESCE(max_batch_timestamp, max_client_timestamp) >= COALESCE($10::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         check_single_row_mutation(
@@ -3964,8 +4063,16 @@ impl<C: Clock> Transaction<'_, C> {
                     /* state */ &batch.state(),
                     /* outstanding_aggregation_jobs */
                     &i64::try_from(batch.outstanding_aggregation_jobs())?,
-                    /* client_timestamp_interval */
-                    &SqlInterval::from(batch.client_timestamp_interval()),
+                    /* min_client_timestamp */
+                    &min_client_timestamp
+                        .as_ref()
+                        .map(Time::as_naive_date_time)
+                        .transpose()?,
+                    /* max_client_timestamp */
+                    &max_client_timestamp
+                        .as_ref()
+                        .map(Time::as_naive_date_time)
+                        .transpose()?,
                     /* updated_at */ &self.clock.now().as_naive_date_time()?,
                     /* updated_by */ &self.name,
                     /* task_id */ &batch.task_id().as_ref(),
@@ -3993,12 +4100,14 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<Option<Batch<SEED_SIZE, Q, A>>, Error> {
         let stmt = self
             .prepare_cached(
-                "SELECT state, outstanding_aggregation_jobs, client_timestamp_interval FROM batches
+                "SELECT
+                    state, outstanding_aggregation_jobs, min_client_timestamp, max_client_timestamp
+                FROM batches
                 JOIN tasks ON tasks.id = batches.task_id
                 WHERE tasks.task_id = $1
                   AND batch_identifier = $2
                   AND aggregation_param = $3
-                  AND UPPER(COALESCE(batch_interval, client_timestamp_interval)) >= COALESCE($4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND COALESCE(max_batch_timestamp, max_client_timestamp) >= COALESCE($4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query_opt(
@@ -4035,11 +4144,11 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT
                     batch_identifier, aggregation_param, state, outstanding_aggregation_jobs,
-                    client_timestamp_interval
+                    min_client_timestamp, max_client_timestamp
                 FROM batches
                 JOIN tasks ON tasks.id = batches.task_id
                 WHERE tasks.task_id = $1
-                  AND UPPER(COALESCE(batch_interval, client_timestamp_interval)) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND COALESCE(max_batch_timestamp, max_client_timestamp) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         self.query(
@@ -4070,9 +4179,16 @@ impl<C: Clock> Transaction<'_, C> {
         let outstanding_aggregation_jobs = row
             .get::<_, i64>("outstanding_aggregation_jobs")
             .try_into()?;
-        let client_timestamp_interval = row
-            .get::<_, SqlInterval>("client_timestamp_interval")
-            .as_interval();
+        let min_client_timestamp = row
+            .get::<_, Option<NaiveDateTime>>("min_client_timestamp")
+            .as_ref()
+            .map(Time::from_naive_date_time);
+        let max_client_timestamp = row
+            .get::<_, Option<NaiveDateTime>>("max_client_timestamp")
+            .as_ref()
+            .map(Time::from_naive_date_time);
+        let client_timestamp_interval =
+            Self::interval_from_timestamps(min_client_timestamp, max_client_timestamp);
         Ok(Batch::new(
             task_id,
             batch_identifier,
@@ -4136,13 +4252,14 @@ impl<C: Clock> Transaction<'_, C> {
                     SELECT aggregation_jobs.id FROM aggregation_jobs
                     JOIN tasks ON tasks.id = aggregation_jobs.task_id
                     WHERE tasks.task_id = $1
-                      AND UPPER(aggregation_jobs.client_timestamp_interval) < COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                      AND aggregation_jobs.max_client_timestamp < COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
                     LIMIT $3
                 ),
                 deleted_report_aggregations AS (
                     DELETE FROM report_aggregations
                     WHERE aggregation_job_id IN (SELECT id FROM aggregation_jobs_to_delete)
                     AND task_id IN (SELECT id FROM task_id)
+                    RETURNING 1 -- XXX: CockroachDB requires WITH clause to return something. Can we do better than returning a bogus value?
                 )
                 DELETE FROM aggregation_jobs
                 WHERE id IN (SELECT id FROM aggregation_jobs_to_delete)",
@@ -4164,8 +4281,8 @@ impl<C: Clock> Transaction<'_, C> {
     /// jobs/aggregate share jobs) for a given task per the following policy:
     ///
     /// * batches, batch_aggregations, and outstanding_batches will be considered part of the same
-    ///   entity for purposes of GC, and will be considered eligible for GC once the maximum of the
-    ///   batch interval (for time-interval) or client_timestamp_interval (for fixed-size) of the
+    ///   entity for purposes of GC, and will be considered eligible for GC once the
+    ///   max_batch_timestamp (for time-interval) or max_client_timestamp (for fixed-size) of the
     ///   batches row is older than report_expiry_age.
     /// * collection_jobs and aggregate_share_jobs use the same rule to determine GC-eligiblity, but
     ///   this rule is query type-specific.
@@ -4193,7 +4310,7 @@ impl<C: Clock> Transaction<'_, C> {
                     FROM batches
                     JOIN tasks ON tasks.id = batches.task_id
                     WHERE tasks.task_id = $1
-                      AND UPPER(COALESCE(batch_interval, client_timestamp_interval)) < COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                      AND COALESCE(max_batch_timestamp, max_client_timestamp) < COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
                     LIMIT $3
                 ),
                 deleted_batch_aggregations AS (
@@ -4202,28 +4319,32 @@ impl<C: Clock> Transaction<'_, C> {
                     WHERE batch_aggregations.task_id = batches_to_delete.task_id
                       AND batch_aggregations.batch_identifier = batches_to_delete.batch_identifier
                       AND batch_aggregations.aggregation_param = batches_to_delete.aggregation_param
+                    RETURNING 1 -- XXX: CockroachDB requires WITH clause to return something. Can we do better than returning a bogus value?
                 ),
                 deleted_outstanding_batches AS (
                     DELETE FROM outstanding_batches
                     USING batches_to_delete
                     WHERE outstanding_batches.task_id = batches_to_delete.task_id
                       AND outstanding_batches.batch_id = batches_to_delete.batch_identifier
+                    RETURNING 1 -- XXX: CockroachDB requires WITH clause to return something. Can we do better than returning a bogus value?
                 ),
                 deleted_collection_jobs AS (
                     DELETE FROM collection_jobs
                     USING batches_to_delete, tasks
                     WHERE tasks.id = collection_jobs.task_id
                       AND tasks.task_id = $1
-                      AND (LOWER(batch_interval) < COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                      AND (min_batch_timestamp < COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
                         OR (collection_jobs.task_id = batches_to_delete.task_id AND collection_jobs.batch_identifier = batches_to_delete.batch_identifier AND collection_jobs.aggregation_param = batches_to_delete.aggregation_param))
+                    RETURNING 1 -- XXX: CockroachDB requires WITH clause to return something. Can we do better than returning a bogus value?
                 ),
                 deleted_aggregate_share_jobs AS (
                     DELETE FROM aggregate_share_jobs
                     USING batches_to_delete,tasks
                     WHERE tasks.id = aggregate_share_jobs.task_id
                       AND tasks.task_id = $1
-                      AND (LOWER(batch_interval) < COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                      AND (min_batch_timestamp < COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
                         OR (aggregate_share_jobs.task_id = batches_to_delete.task_id AND aggregate_share_jobs.batch_identifier = batches_to_delete.batch_identifier AND aggregate_share_jobs.aggregation_param = batches_to_delete.aggregation_param))
+                    RETURNING 1 -- XXX: CockroachDB requires WITH clause to return something. Can we do better than returning a bogus value?
                 )
                 DELETE FROM batches
                 USING batches_to_delete
@@ -4351,9 +4472,9 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "INSERT INTO global_hpke_keys (
-                    config_id, config, private_key, created_at, updated_at, updated_by
+                    config_id, config, private_key, state, created_at, updated_at, updated_by
                 )
-                    VALUES ($1, $2, $3, $4, $5, $6);",
+                    VALUES ($1, $2, $3, 'PENDING', $4, $5, $6);",
             )
             .await?;
         check_insert(

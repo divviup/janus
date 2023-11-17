@@ -44,7 +44,7 @@ use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     http::HttpErrorResponse,
-    time::{Clock, DurationExt, IntervalExt, TimeExt},
+    time::{Clock, IntervalExt, TimeExt},
     vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
 };
 use janus_messages::{
@@ -52,10 +52,9 @@ use janus_messages::{
     taskprov::TaskConfig,
     AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
-    BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, HpkeConfig,
-    HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
-    PrepareError, PrepareResp, PrepareStepResult, Report, ReportIdChecksum, ReportShare, Role,
-    TaskId,
+    BatchSelector, Collection, CollectionJobId, CollectionReq, HpkeConfig, HpkeConfigList,
+    InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare, PrepareError, PrepareResp,
+    PrepareStepResult, Report, ReportIdChecksum, ReportShare, Role, TaskId,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -1893,31 +1892,19 @@ impl VdafOps {
 
         // Store data to datastore.
         let req = Arc::new(req);
-        let min_client_timestamp = req
-            .prepare_inits()
-            .iter()
-            .map(|prepare_init| *prepare_init.report_share().metadata().time())
-            .min()
-            .ok_or_else(|| Error::EmptyAggregation(*task.id()))?;
         let max_client_timestamp = req
             .prepare_inits()
             .iter()
             .map(|prepare_init| *prepare_init.report_share().metadata().time())
             .max()
             .ok_or_else(|| Error::EmptyAggregation(*task.id()))?;
-        let client_timestamp_interval = Interval::new(
-            min_client_timestamp,
-            max_client_timestamp
-                .difference(&min_client_timestamp)?
-                .add(&Duration::from_seconds(1))?,
-        )?;
         let aggregation_job = Arc::new(
             AggregationJob::<SEED_SIZE, Q, A>::new(
                 *task.id(),
                 *aggregation_job_id,
                 agg_param,
                 req.batch_selector().batch_identifier().clone(),
-                client_timestamp_interval,
+                max_client_timestamp,
                 if saw_continue {
                     AggregationJobState::InProgress
                 } else {
@@ -2599,8 +2586,8 @@ impl VdafOps {
                         Q::acknowledge_collection(tx, task.id(), collection_job.batch_identifier()),
                     )?;
 
-                    // Merge the intervals spanned by the constituent batch aggregations into the
-                    // interval spanned by the collection.
+                    // Merge the intervals spanned by the constituent batches into the interval
+                    // spanned by the collection.
                     let mut spanned_interval: Option<Interval> = None;
                     for interval in batches
                         .iter()
@@ -3063,7 +3050,6 @@ fn empty_batch_aggregations<
                 BatchAggregationState::Collected,
                 None,
                 0,
-                Interval::EMPTY,
                 ReportIdChecksum::default(),
             ))
         } else {

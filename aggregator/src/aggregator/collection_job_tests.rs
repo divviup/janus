@@ -29,7 +29,7 @@ use janus_core::{
         dummy_vdaf::{self, AggregationParam},
         install_test_trace_subscriber,
     },
-    time::{Clock, IntervalExt, MockClock},
+    time::{Clock, IntervalExt, MockClock, TimeExt as _},
     vdaf::VdafInstance,
 };
 use janus_messages::{
@@ -195,7 +195,7 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
                         aggregation_job_id,
                         AggregationParam::default(),
                         batch_id,
-                        interval,
+                        interval.end().sub(&Duration::from_seconds(1)).unwrap(),
                         AggregationJobState::Finished,
                         AggregationJobStep::from(1),
                     ))
@@ -230,7 +230,6 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(0)),
                             task.min_batch_size() + 1,
-                            interval,
                             ReportIdChecksum::default(),
                         ),
                     )

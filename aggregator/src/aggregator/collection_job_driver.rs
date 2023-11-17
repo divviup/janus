@@ -633,7 +633,7 @@ mod tests {
                             aggregation_job_id,
                             aggregation_param,
                             (),
-                            Interval::from_time(&report_timestamp).unwrap(),
+                            report_timestamp,
                             AggregationJobState::Finished,
                             AggregationJobStep::from(1),
                         ),
@@ -682,7 +682,6 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(0)),
                             5,
-                            Interval::from_time(&report_timestamp).unwrap(),
                             ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                         ),
                     )
@@ -700,7 +699,6 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(0)),
                             5,
-                            Interval::from_time(&report_timestamp).unwrap(),
                             ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                         ),
                     )
@@ -793,7 +791,7 @@ mod tests {
                             aggregation_job_id,
                             aggregation_param,
                             (),
-                            Interval::from_time(&report_timestamp).unwrap(),
+                            report_timestamp,
                             AggregationJobState::Finished,
                             AggregationJobStep::from(1),
                         ),
@@ -858,7 +856,6 @@ mod tests {
                         BatchAggregationState::Aggregating,
                         Some(dummy_vdaf::AggregateShare(0)),
                         5,
-                        Interval::from_time(&report_timestamp).unwrap(),
                         ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                     ),
                 )
@@ -878,7 +875,6 @@ mod tests {
                         BatchAggregationState::Aggregating,
                         Some(dummy_vdaf::AggregateShare(0)),
                         5,
-                        Interval::from_time(&report_timestamp).unwrap(),
                         ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                     ),
                 )

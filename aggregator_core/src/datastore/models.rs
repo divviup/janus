@@ -8,19 +8,15 @@ use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     hpke::HpkeKeypair,
     report_id::ReportIdChecksumExt,
-    time::{DurationExt, IntervalExt, TimeExt},
     vdaf::VdafInstance,
 };
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
-    AggregationJobId, AggregationJobStep, BatchId, CollectionJobId, Duration, Extension,
-    HpkeCiphertext, Interval, PrepareError, PrepareResp, Query, ReportId, ReportIdChecksum,
-    ReportMetadata, Role, TaskId, Time,
+    AggregationJobId, AggregationJobStep, BatchId, CollectionJobId, Extension, HpkeCiphertext,
+    Interval, PrepareError, PrepareResp, Query, ReportId, ReportIdChecksum, ReportMetadata, Role,
+    TaskId, Time,
 };
-use postgres_protocol::types::{
-    range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql, Range, RangeBound,
-};
-use postgres_types::{accepts, to_sql_checked, FromSql, ToSql};
+use postgres_types::{FromSql, ToSql};
 use prio::{
     codec::Encode,
     topology::ping_pong::PingPongTransition,
@@ -301,8 +297,8 @@ pub struct AggregationJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggrega
     /// The partial identifier for the batch this aggregation job contributes to (fixed size
     /// tasks only; for time interval tasks, aggregation jobs may span multiple batches).
     batch_id: Q::PartialBatchIdentifier,
-    /// The minimal interval of time spanned by the reports included in this aggregation job.
-    client_timestamp_interval: Interval,
+    /// The maximal client timestamp over all reports included in this aggregation job.
+    max_client_timestamp: Time,
     /// The overall state of this aggregation job.
     state: AggregationJobState,
     /// The step of VDAF preparation that this aggregation job is currently on.
@@ -322,7 +318,7 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         aggregation_job_id: AggregationJobId,
         aggregation_parameter: A::AggregationParam,
         batch_id: Q::PartialBatchIdentifier,
-        client_timestamp_interval: Interval,
+        max_client_timestamp: Time,
         state: AggregationJobState,
         step: AggregationJobStep,
     ) -> Self {
@@ -331,7 +327,7 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
             aggregation_job_id,
             aggregation_parameter,
             batch_id,
-            client_timestamp_interval,
+            max_client_timestamp,
             state,
             step,
             last_request_hash: None,
@@ -361,10 +357,9 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         &self.batch_id
     }
 
-    /// Returns the minimal interval containing all of the client timestamps associated with
-    /// this aggregation job.
-    pub fn client_timestamp_interval(&self) -> &Interval {
-        &self.client_timestamp_interval
+    /// Returns the maximal client timestamp over all reports associated with this aggregation job.
+    pub fn max_client_timestamp(&self) -> &Time {
+        &self.max_client_timestamp
     }
 
     /// Returns the state of the aggregation job.
@@ -425,7 +420,7 @@ where
             && self.aggregation_job_id == other.aggregation_job_id
             && self.aggregation_parameter == other.aggregation_parameter
             && self.batch_id == other.batch_id
-            && self.client_timestamp_interval == other.client_timestamp_interval
+            && self.max_client_timestamp == other.max_client_timestamp
             && self.state == other.state
             && self.step == other.step
             && self.last_request_hash == other.last_request_hash
@@ -935,9 +930,6 @@ pub struct BatchAggregation<
     aggregate_share: Option<A::AggregateShare>,
     /// The number of reports currently included in this aggregate sahre.
     report_count: u64,
-    /// The minimal interval of time spanned by the reports included in this batch aggregation,
-    /// which may be smaller than the batch interval (for time interval tasks).
-    client_timestamp_interval: Interval,
     /// Checksum over the aggregated report shares, as described in §4.4.4.3.
     #[derivative(Debug = "ignore")]
     checksum: ReportIdChecksum,
@@ -956,7 +948,6 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         state: BatchAggregationState,
         aggregate_share: Option<A::AggregateShare>,
         report_count: u64,
-        client_timestamp_interval: Interval,
         checksum: ReportIdChecksum,
     ) -> Self {
         Self {
@@ -967,7 +958,6 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
             state,
             aggregate_share,
             report_count,
-            client_timestamp_interval,
             checksum,
         }
     }
@@ -1018,12 +1008,6 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         self.report_count
     }
 
-    /// Returns the minimal interval of time spanned by the reports included in this batch
-    /// aggregation, which may be smaller than the batch interval (for time interval tasks).
-    pub fn client_timestamp_interval(&self) -> &Interval {
-        &self.client_timestamp_interval
-    }
-
     /// Returns the checksum associated with this batch aggregation.
     pub fn checksum(&self) -> &ReportIdChecksum {
         &self.checksum
@@ -1053,10 +1037,6 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         Ok(Self {
             aggregate_share: merged_aggregate_share,
             report_count: self.report_count + other.report_count(),
-            client_timestamp_interval: self
-                .client_timestamp_interval
-                .merge(&other.client_timestamp_interval)
-                .map_err(|err| Error::User(err.into()))?,
             checksum: self.checksum.combined_with(other.checksum()),
             ..self
         })
@@ -1095,7 +1075,6 @@ where
             && self.state == other.state
             && self.aggregate_share == other.aggregate_share
             && self.report_count == other.report_count
-            && self.client_timestamp_interval == other.client_timestamp_interval
             && self.checksum == other.checksum
     }
 }
@@ -1665,137 +1644,6 @@ where
         self.outstanding_aggregation_jobs.hash(state);
         self.client_timestamp_interval.hash(state);
     }
-}
-
-/// The SQL timestamp epoch, midnight UTC on 2000-01-01.
-const SQL_EPOCH_TIME: Time = Time::from_seconds_since_epoch(946_684_800);
-
-/// Wrapper around [`janus_messages::Interval`] that supports conversions to/from SQL.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub struct SqlInterval(Interval);
-
-impl SqlInterval {
-    pub fn as_interval(&self) -> Interval {
-        self.0
-    }
-}
-
-impl From<Interval> for SqlInterval {
-    fn from(interval: Interval) -> Self {
-        Self(interval)
-    }
-}
-
-impl From<&Interval> for SqlInterval {
-    fn from(interval: &Interval) -> Self {
-        Self::from(*interval)
-    }
-}
-
-impl<'a> FromSql<'a> for SqlInterval {
-    fn from_sql(
-        _: &postgres_types::Type,
-        raw: &'a [u8],
-    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
-        match range_from_sql(raw)? {
-            Range::Empty => Ok(SqlInterval(Interval::EMPTY)),
-            Range::Nonempty(RangeBound::Inclusive(None), _)
-            | Range::Nonempty(RangeBound::Exclusive(None), _)
-            | Range::Nonempty(_, RangeBound::Inclusive(None))
-            | Range::Nonempty(_, RangeBound::Exclusive(None)) => {
-                Err("Interval cannot represent a timestamp range with a null bound".into())
-            }
-            Range::Nonempty(RangeBound::Unbounded, _)
-            | Range::Nonempty(_, RangeBound::Unbounded) => {
-                Err("Interval cannot represent an unbounded timestamp range".into())
-            }
-            Range::Nonempty(RangeBound::Exclusive(_), _)
-            | Range::Nonempty(_, RangeBound::Inclusive(_)) => Err(Into::into(
-                "Interval can only represent timestamp ranges that are closed at the start \
-                     and open at the end",
-            )),
-            Range::Nonempty(
-                RangeBound::Inclusive(Some(start_raw)),
-                RangeBound::Exclusive(Some(end_raw)),
-            ) => {
-                // These timestamps represent the number of microseconds before (if negative) or
-                // after (if positive) midnight, 1/1/2000.
-                let start_timestamp = timestamp_from_sql(start_raw)?;
-                let end_timestamp = timestamp_from_sql(end_raw)?;
-
-                // Convert from SQL timestamp representation to the internal representation.
-                let negative = start_timestamp < 0;
-                let abs_start_us = start_timestamp.unsigned_abs();
-                let abs_start_duration = Duration::from_microseconds(abs_start_us);
-                let time = if negative {
-                    SQL_EPOCH_TIME.sub(&abs_start_duration).map_err(|_| {
-                        "Interval cannot represent timestamp ranges starting before the Unix \
-                             epoch"
-                    })?
-                } else {
-                    SQL_EPOCH_TIME
-                        .add(&abs_start_duration)
-                        .map_err(|_| "overflow when converting to Interval")?
-                };
-
-                if end_timestamp < start_timestamp {
-                    return Err("timestamp range ends before it starts".into());
-                }
-                let duration_us = end_timestamp.abs_diff(start_timestamp);
-                let duration = Duration::from_microseconds(duration_us);
-
-                Ok(SqlInterval(Interval::new(time, duration)?))
-            }
-        }
-    }
-
-    accepts!(TS_RANGE);
-}
-
-fn time_to_sql_timestamp(time: Time) -> Result<i64, Error> {
-    if time.is_after(&SQL_EPOCH_TIME) {
-        let absolute_difference_us = time.difference(&SQL_EPOCH_TIME)?.as_microseconds()?;
-        Ok(absolute_difference_us.try_into()?)
-    } else {
-        let absolute_difference_us = SQL_EPOCH_TIME.difference(&time)?.as_microseconds()?;
-        Ok(-i64::try_from(absolute_difference_us)?)
-    }
-}
-
-impl ToSql for SqlInterval {
-    fn to_sql(
-        &self,
-        _: &postgres_types::Type,
-        out: &mut bytes::BytesMut,
-    ) -> Result<postgres_types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
-        // Convert the interval start and end to SQL timestamps.
-        let start_sql_usec = time_to_sql_timestamp(*self.0.start())
-            .map_err(|_| "millisecond timestamp of Interval start overflowed")?;
-        let end_sql_usec = time_to_sql_timestamp(self.0.end())
-            .map_err(|_| "millisecond timestamp of Interval end overflowed")?;
-
-        range_to_sql(
-            |out| {
-                timestamp_to_sql(start_sql_usec, out);
-                Ok(postgres_protocol::types::RangeBound::Inclusive(
-                    postgres_protocol::IsNull::No,
-                ))
-            },
-            |out| {
-                timestamp_to_sql(end_sql_usec, out);
-                Ok(postgres_protocol::types::RangeBound::Exclusive(
-                    postgres_protocol::IsNull::No,
-                ))
-            },
-            out,
-        )?;
-
-        Ok(postgres_types::IsNull::No)
-    }
-
-    accepts!(TS_RANGE);
-
-    to_sql_checked!();
 }
 
 /// The state of an HPKE key pair, corresponding to the HPKE_KEY_STATE enum in the schema.

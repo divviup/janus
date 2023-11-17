@@ -4,10 +4,7 @@ use crate::{
 };
 use chrono::NaiveDateTime;
 use deadpool_postgres::{Manager, Pool};
-use janus_core::{
-    test_util::testcontainers::Postgres,
-    time::{Clock, MockClock, TimeExt},
-};
+use janus_core::time::{Clock, MockClock, TimeExt};
 use janus_messages::Time;
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
@@ -21,7 +18,7 @@ use std::{
     sync::{Arc, Barrier, OnceLock, Weak},
     thread::{self, JoinHandle},
 };
-use testcontainers::RunnableImage;
+use testcontainers::{core::WaitFor, GenericImage, RunnableImage};
 use tokio::sync::{oneshot, Mutex};
 use tokio_postgres::{connect, Config, NoTls};
 use tracing::trace;
@@ -58,17 +55,29 @@ impl EphemeralDatabase {
         let join_handle = thread::spawn({
             let shutdown_barrier = Arc::clone(&shutdown_barrier);
             move || {
-                // Start an instance of Postgres running in a container.
+                // Start an instance of CockroachDB running in a container.
                 let container_client = testcontainers::clients::Cli::default();
-                let db_container = container_client.run(RunnableImage::from(Postgres::default()));
-                const POSTGRES_DEFAULT_PORT: u16 = 5432;
-                let port_number = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT);
-                trace!("Postgres container is up with port {port_number}");
+                let cockroachdb_image = GenericImage::new("cockroachdb/cockroach", "v23.1.12")
+                    .with_wait_for(WaitFor::message_on_stderr(
+                        "database \"defaultdb\" already exists",
+                    ));
+                let runnable_image = RunnableImage::from((
+                    cockroachdb_image,
+                    Vec::from([
+                        "start-single-node".to_owned(),
+                        "--insecure".to_owned(),
+                        "--http-addr=localhost:8080".to_owned(),
+                    ]),
+                ));
+                let db_container = container_client.run(runnable_image);
+                const COCKROACHDB_DEFAULT_PORT: u16 = 26257;
+                let port_number = db_container.get_host_port_ipv4(COCKROACHDB_DEFAULT_PORT);
+                trace!("CockroachDB container is up with port {port_number}");
                 port_tx.send(port_number).unwrap();
 
                 // Wait for the barrier as a shutdown signal.
                 shutdown_barrier.wait();
-                trace!("Shutting down Postgres container with port {port_number}");
+                trace!("Shutting down CockroachDB container with port {port_number}");
             }
         });
         let port_number = port_rx.await.unwrap();
@@ -81,10 +90,7 @@ impl EphemeralDatabase {
     }
 
     fn connection_string(&self, db_name: &str) -> String {
-        format!(
-            "postgres://postgres:postgres@127.0.0.1:{}/{db_name}",
-            self.port_number
-        )
+        format!("postgres://root@127.0.0.1:{}/{db_name}", self.port_number)
     }
 }
 
@@ -179,10 +185,10 @@ impl EphemeralDatastore {
 pub async fn ephemeral_datastore_schema_version(schema_version: i64) -> EphemeralDatastore {
     let db = EphemeralDatabase::shared().await;
     let db_name = format!("janus_test_{}", hex::encode(random::<[u8; 16]>()));
-    trace!("Creating ephemeral postgres datastore {db_name}");
+    trace!("Creating ephemeral datastore {db_name}");
 
-    // Create Postgres DB.
-    let (client, conn) = connect(&db.connection_string("postgres"), NoTls)
+    // Create DB.
+    let (client, conn) = connect(&db.connection_string("defaultdb"), NoTls)
         .await
         .unwrap();
     tokio::spawn(async move { conn.await.unwrap() }); // automatically stops after Client is dropped
@@ -193,7 +199,7 @@ pub async fn ephemeral_datastore_schema_version(schema_version: i64) -> Ephemera
 
     let connection_string = db.connection_string(&db_name);
 
-    let mut connection = PgConnection::connect(&connection_string).await.unwrap();
+    // let mut connection = PgConnection::connect(&connection_string).await.unwrap();
 
     // We deliberately avoid using sqlx::migrate! or other compile-time macros to ensure that
     // changes to the migration scripts will be picked up by every run of the tests.
@@ -209,7 +215,16 @@ pub async fn ephemeral_datastore_schema_version(schema_version: i64) -> Ephemera
         .cloned()
         .collect();
 
-    migrator.run(&mut connection).await.unwrap();
+    // XXX: we do not run the SQLx migrator as this calls the unsupported pg_advisory_lock() function.
+    // For now, we just apply the schema directly.
+    // migrator.run(&mut connection).await.unwrap();
+    const SCHEMA: &'static str = include_str!("../../../db/00000000000001_initial_schema.up.sql");
+    client
+        .batch_execute(&format!("SET DATABASE = {db_name}"))
+        .await
+        .unwrap();
+    client.batch_execute(SCHEMA).await.unwrap();
+    // END HACK
 
     // Create a connection pool for the newly-created database.
     let cfg = Config::from_str(&connection_string).unwrap();

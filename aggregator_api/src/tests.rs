@@ -42,7 +42,7 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::TimeInterval, AggregationJobStep, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId,
-    HpkeKdfId, HpkeKemId, HpkePublicKey, Interval, Role, TaskId, Time,
+    HpkeKdfId, HpkeKemId, HpkePublicKey, Role, TaskId, Time,
 };
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use serde_test::{assert_ser_tokens, assert_tokens, Token};
@@ -791,8 +791,7 @@ async fn get_task_metrics() {
                     aggregation_job_id,
                     AggregationParam(0),
                     (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
+                    Time::from_seconds_since_epoch(0),
                     AggregationJobState::InProgress,
                     AggregationJobStep::from(0),
                 ))
