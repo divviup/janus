@@ -28,7 +28,7 @@ jobs:
       id: get_version
       run: echo VERSION=${GITHUB_REF/refs\/tags\//} | tee -a $GITHUB_OUTPUT | tee -a $GITHUB_ENV
     - name: Build
-      uses: docker/bake-action@v4.0.0
+      uses: docker/bake-action@v4.1.0
       with:
         files: docker-bake.hcl
         workdir: .
