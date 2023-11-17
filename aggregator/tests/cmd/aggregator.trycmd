@@ -11,10 +11,6 @@ Options:
           PostgreSQL password [env: PGPASSWORD]
       --datastore-keys <DATASTORE_KEYS>
           datastore encryption keys, encoded in url-safe unpadded base64 then comma-separated [env: DATASTORE_KEYS]
-      --otlp-tracing-metadata <KEY=value>
-          additional OTLP/gRPC metadata key/value pairs for the tracing exporter [env: OTLP_TRACING_METADATA=]
-      --otlp-metrics-metadata <KEY=value>
-          additional OTLP/gRPC metadata key/value pairs for the metrics exporter [env: OTLP_METRICS_METADATA=]
       --aggregator-api-auth-tokens [<AGGREGATOR_API_AUTH_TOKENS>]
           aggregator API auth tokens, encoded in base64 then comma-separated [env: AGGREGATOR_API_AUTH_TOKENS]
   -h, --help

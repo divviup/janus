@@ -34,18 +34,14 @@ logging_config:
 offers an integrated observability tool. To use it, sign up for an account,
 create a team and environment, and retrieve the corresponding API key. Compile
 `janus_aggregator` with the `otlp` feature enabled, to pull in the OTLP
-exporter. Add the following section to the configuration file, subtituting in
-the Honeycomb API key. Traces will be sent to Honeycomb via OTLP/gRPC.
+exporter. Add the following section to the configuration file, and provide your
+Honeycomb API key through an environment variable of the form
+`OTEL_EXPORTER_OTLP_HEADERS=x-honeycomb-team=YOUR_API_KEY`. Traces will be sent
+to Honeycomb via OTLP/gRPC.
 
 ```yaml
 logging_config:
   open_telemetry_config:
     otlp:
       endpoint: "https://api.honeycomb.io:443"
-      metadata:
-        x-honeycomb-team: "YOUR_API_KEY"
 ```
-
-The gRPC metadata can also be specified on the command line, with
-`--otlp-tracing-metadata x-honeycomb-team=YOUR_API_KEY`, or through the
-environment variable `OTLP_TRACING_METADATA`.

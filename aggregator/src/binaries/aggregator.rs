@@ -435,7 +435,6 @@ mod tests {
     use clap::CommandFactory;
     use janus_core::test_util::roundtrip_encoding;
     use std::{
-        collections::HashMap,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         time::Duration,
     };
@@ -739,7 +738,6 @@ mod tests {
             Some(OpenTelemetryTraceConfiguration::Otlp(
                 OtlpTraceConfiguration {
                     endpoint: "http://localhost:4317".to_string(),
-                    metadata: HashMap::new()
                 }
             )),
         );
@@ -756,8 +754,6 @@ mod tests {
         open_telemetry_config:
             otlp:
                 endpoint: "https://api.honeycomb.io:443"
-                metadata:
-                    x-honeycomb-team: "YOUR_API_KEY"
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
@@ -770,10 +766,6 @@ mod tests {
             Some(OpenTelemetryTraceConfiguration::Otlp(
                 OtlpTraceConfiguration {
                     endpoint: "https://api.honeycomb.io:443".to_string(),
-                    metadata: HashMap::from([(
-                        "x-honeycomb-team".to_string(),
-                        "YOUR_API_KEY".to_string(),
-                    )]),
                 },
             )),
         );
@@ -818,9 +810,6 @@ mod tests {
         exporter:
             otlp:
                 endpoint: "https://api.honeycomb.io:443"
-                metadata:
-                    x-honeycomb-team: "YOUR_API_KEY"
-                    x-honeycomb-dataset: "YOUR_METRICS_DATASET"
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
@@ -833,13 +822,6 @@ mod tests {
             Some(MetricsExporterConfiguration::Otlp(
                 OtlpExporterConfiguration {
                     endpoint: "https://api.honeycomb.io:443".to_string(),
-                    metadata: HashMap::from([
-                        ("x-honeycomb-team".to_string(), "YOUR_API_KEY".to_string()),
-                        (
-                            "x-honeycomb-dataset".to_string(),
-                            "YOUR_METRICS_DATASET".to_string(),
-                        ),
-                    ]),
                 },
             )),
         );
