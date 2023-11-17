@@ -525,8 +525,8 @@ impl<C: Clock> Transaction<'_, C> {
             .await?;
         let row = self.query_one(&stmt, &[]).await?;
 
-        let version = row.try_get("version")?;
-        let description = row.try_get("description")?;
+        let version = row.get("version");
+        let description = row.get("description");
 
         Ok((version, description))
     }
@@ -802,7 +802,7 @@ impl<C: Clock> Transaction<'_, C> {
             .get::<_, Option<Vec<u8>>>("collector_hpke_config")
             .map(|config| HpkeConfig::get_decoded(&config))
             .transpose()?;
-        let encrypted_vdaf_verify_key: Vec<u8> = row.try_get::<_, Vec<u8>>("vdaf_verify_key")?;
+        let encrypted_vdaf_verify_key: Vec<u8> = row.get::<_, Vec<u8>>("vdaf_verify_key");
         let vdaf_verify_key = self
             .crypter
             .decrypt(
@@ -814,10 +814,10 @@ impl<C: Clock> Transaction<'_, C> {
             .map(SecretBytes::new)?;
 
         let aggregator_auth_token_type: Option<AuthenticationTokenType> =
-            row.try_get("aggregator_auth_token_type")?;
+            row.get("aggregator_auth_token_type");
 
         let aggregator_auth_token = row
-            .try_get::<_, Option<Vec<u8>>>("aggregator_auth_token")?
+            .get::<_, Option<Vec<u8>>>("aggregator_auth_token")
             .zip(aggregator_auth_token_type)
             .map(|(encrypted_token, token_type)| {
                 token_type.as_authentication(&self.crypter.decrypt(
@@ -830,14 +830,14 @@ impl<C: Clock> Transaction<'_, C> {
             .transpose()?;
 
         let aggregator_auth_token_hash = row
-            .try_get::<_, Option<Vec<u8>>>("aggregator_auth_token_hash")?
+            .get::<_, Option<Vec<u8>>>("aggregator_auth_token_hash")
             .zip(aggregator_auth_token_type)
             .map(|(token_hash, token_type)| token_type.as_authentication_token_hash(&token_hash))
             .transpose()?;
 
         let collector_auth_token_hash = row
-            .try_get::<_, Option<Vec<u8>>>("collector_auth_token_hash")?
-            .zip(row.try_get::<_, Option<AuthenticationTokenType>>("collector_auth_token_type")?)
+            .get::<_, Option<Vec<u8>>>("collector_auth_token_hash")
+            .zip(row.get::<_, Option<AuthenticationTokenType>>("collector_auth_token_type"))
             .map(|(token_hash, token_type)| token_type.as_authentication_token_hash(&token_hash))
             .transpose()?;
 
@@ -1669,7 +1669,7 @@ impl<C: Clock> Transaction<'_, C> {
             row.get_postgres_integer_and_convert::<i32, _, _>("step")?,
         );
 
-        if let Some(hash) = row.try_get::<_, Option<Vec<u8>>>("last_request_hash")? {
+        if let Some(hash) = row.get::<_, Option<Vec<u8>>>("last_request_hash") {
             job = job.with_last_request_hash(hash.try_into().map_err(|h| {
                 Error::DbState(format!(
                     "last_request_hash value {h:?} cannot be converted to 32 byte array"
@@ -4797,7 +4797,7 @@ impl RowExt for Row {
         I: RowIndex + Display,
         T: TryFrom<P, Error = std::num::TryFromIntError>,
     {
-        let postgres_integer: P = self.try_get(idx)?;
+        let postgres_integer: P = self.get(idx);
         Ok(T::try_from(postgres_integer)?)
     }
 
@@ -4806,7 +4806,7 @@ impl RowExt for Row {
         I: RowIndex + Display,
         T: TryFrom<i64, Error = std::num::TryFromIntError>,
     {
-        let bigint: Option<i64> = self.try_get(idx)?;
+        let bigint: Option<i64> = self.get(idx);
         Ok(bigint.map(|bigint| T::try_from(bigint)).transpose()?)
     }
 
@@ -4815,7 +4815,7 @@ impl RowExt for Row {
         for<'a> T: TryFrom<&'a [u8]>,
         for<'a> <T as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
     {
-        let encoded: Vec<u8> = self.try_get(idx)?;
+        let encoded: Vec<u8> = self.get(idx);
         T::try_from(&encoded)
             .map_err(|err| Error::DbState(format!("{idx} stored in database is invalid: {err:?}")))
     }
@@ -4828,7 +4828,7 @@ impl RowExt for Row {
     where
         T: ParameterizedDecode<P>,
     {
-        let encoded: Vec<u8> = self.try_get(idx)?;
+        let encoded: Vec<u8> = self.get(idx);
         T::get_decoded_with_param(decoding_parameter, &encoded)
             .map_err(|err| Error::DbState(format!("{idx} stored in database is invalid: {err:?}")))
     }

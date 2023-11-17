@@ -65,3 +65,11 @@ To create a new migration:
 * Follow documented best practices of the crates Janus depends on. For example,
   the `rand` crate suggests using `random()` to generate random data, falling
   back to `thread_rng()` to gain more control as-needed.
+
+* Prefer `tokio_postgres::Row::get()` over `tokio_postgres::Row::try_get()`.
+  The former panics if the column is not found in the row, or if the `FromSql`
+  conversion fails. In cases where a column is not present in a query, or when
+  it is not of the right Postgres data type, this represents a programmer error,
+  so a panic is appropriate. (Note that some `FromSql` implementations may
+  return errors for other reasons, such as out-of-range values or serde
+  deserialization falures)
