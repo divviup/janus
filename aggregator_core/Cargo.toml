@@ -26,7 +26,7 @@ futures = "0.3.29"
 hex = { version = "0.4.3", features = ["serde"], optional = true }
 http = "0.2.11"
 http-api-problem = "0.57.0"
-hyper = "1.0.0"
+hyper = "1.0.1"
 janus_core.workspace = true
 janus_messages.workspace = true
 k8s-openapi.workspace = true
@@ -57,7 +57,7 @@ uuid = { version = "1.5.0", features = ["v4"] }
 
 [dev-dependencies]
 assert_matches.workspace = true
-hyper = "1.0.0"
+hyper = "1.0.1"
 janus_aggregator_core = { path = ".", features = ["test-util"] }
 janus_core = { workspace = true, features = ["test-util"] }
 rstest.workspace = true

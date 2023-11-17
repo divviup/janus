@@ -48,7 +48,7 @@ git-version = "0.3.8"
 hex = { version = "0.4.3", features = ["serde"], optional = true }
 http = "0.2.11"
 http-api-problem = "0.57.0"
-hyper = "1.0.0"
+hyper = "1.0.1"
 itertools.workspace = true
 janus_aggregator_api.workspace = true
 janus_aggregator_core.workspace = true
@@ -103,7 +103,7 @@ uuid = { version = "1.5.0", features = ["v4"] }
 
 [dev-dependencies]
 assert_matches.workspace = true
-hyper = "1.0.0"
+hyper = "1.0.1"
 janus_aggregator = { path = ".", features = ["fpvec_bounded_l2", "test-util"] }
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
 mockito = "1.2.0"
