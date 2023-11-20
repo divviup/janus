@@ -311,8 +311,7 @@ async fn aggregation_job_driver_shutdown() {
             health_check_listen_address: "127.0.0.1:9001".parse().unwrap(),
         },
         job_driver_config: JobDriverConfig {
-            min_job_discovery_delay_secs: 10,
-            max_job_discovery_delay_secs: 60,
+            job_discovery_interval_secs: 10,
             max_concurrent_job_workers: 10,
             worker_lease_duration_secs: 600,
             worker_lease_clock_skew_allowance_secs: 60,
@@ -341,8 +340,7 @@ async fn collection_job_driver_shutdown() {
             health_check_listen_address: "127.0.0.1:9001".parse().unwrap(),
         },
         job_driver_config: JobDriverConfig {
-            min_job_discovery_delay_secs: 10,
-            max_job_discovery_delay_secs: 60,
+            job_discovery_interval_secs: 10,
             max_concurrent_job_workers: 10,
             worker_lease_duration_secs: 600,
             worker_lease_clock_skew_allowance_secs: 60,

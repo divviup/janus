@@ -177,8 +177,7 @@ impl JanusInProcess {
         let aggregation_job_driver_config = AggregationJobDriverConfig {
             common_config: common_config.clone(),
             job_driver_config: JobDriverConfig {
-                min_job_discovery_delay_secs: 1,
-                max_job_discovery_delay_secs: 2,
+                job_discovery_interval_secs: 1,
                 max_concurrent_job_workers: 10,
                 worker_lease_duration_secs: 10,
                 worker_lease_clock_skew_allowance_secs: 1,
@@ -193,8 +192,7 @@ impl JanusInProcess {
         let collection_job_driver_config = CollectionJobDriverConfig {
             common_config,
             job_driver_config: JobDriverConfig {
-                min_job_discovery_delay_secs: 1,
-                max_job_discovery_delay_secs: 2,
+                job_discovery_interval_secs: 1,
                 max_concurrent_job_workers: 10,
                 worker_lease_duration_secs: 10,
                 worker_lease_clock_skew_allowance_secs: 1,
