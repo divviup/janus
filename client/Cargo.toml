@@ -12,7 +12,7 @@ version.workspace = true
 [dependencies]
 backoff = { version = "0.4.0", features = ["tokio"] }
 derivative.workspace = true
-http = "0.2.11"
+http = "1.0.0"
 itertools.workspace = true
 janus_core.workspace = true
 janus_messages.workspace = true

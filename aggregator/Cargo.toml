@@ -46,7 +46,7 @@ fixed = { version = "1.24", optional = true }
 futures = "0.3.29"
 git-version = "0.3.8"
 hex = { version = "0.4.3", features = ["serde"], optional = true }
-http = "0.2.11"
+http = "1.0.0"
 http-api-problem = "0.57.0"
 hyper = "1.0.1"
 itertools.workspace = true
