@@ -43,8 +43,7 @@ async fn main() -> anyhow::Result<()> {
             TokioRuntime,
             ctx.meter,
             stopper,
-            Duration::from_secs(ctx.config.job_driver_config.min_job_discovery_delay_secs),
-            Duration::from_secs(ctx.config.job_driver_config.max_job_discovery_delay_secs),
+            Duration::from_secs(ctx.config.job_driver_config.job_discovery_interval_secs),
             ctx.config.job_driver_config.max_concurrent_job_workers,
             Duration::from_secs(
                 ctx.config
@@ -158,8 +157,7 @@ mod tests {
                 health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
             },
             job_driver_config: JobDriverConfig {
-                min_job_discovery_delay_secs: 10,
-                max_job_discovery_delay_secs: 60,
+                job_discovery_interval_secs: 10,
                 max_concurrent_job_workers: 10,
                 worker_lease_duration_secs: 600,
                 worker_lease_clock_skew_allowance_secs: 60,

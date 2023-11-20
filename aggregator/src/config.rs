@@ -2,11 +2,15 @@
 
 use crate::{metrics::MetricsConfiguration, trace::TraceConfiguration};
 use derivative::Derivative;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{
+    de::{DeserializeOwned, Error as _},
+    Deserialize, Deserializer, Serialize,
+};
 use std::{
     fmt::Debug,
     net::{IpAddr, Ipv4Addr, SocketAddr},
 };
+use tracing::warn;
 use url::Url;
 
 /// Configuration options common to all Janus binaries.
@@ -107,8 +111,7 @@ pub struct TaskprovConfig {
 ///
 /// let yaml_config = r#"
 /// ---
-/// min_job_discovery_delay_secs: 10
-/// max_job_discovery_delay_secs: 60
+/// job_discovery_interval_secs: 10
 /// max_concurrent_job_workers: 10
 /// worker_lease_duration_secs: 600
 /// worker_lease_clock_skew_allowance_secs: 60
@@ -117,14 +120,11 @@ pub struct TaskprovConfig {
 ///
 /// let _decoded: JobDriverConfig = serde_yaml::from_str(yaml_config).unwrap();
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct JobDriverConfig {
-    /// The minimum delay between checking for jobs ready to be stepped, in seconds. Applies only
-    /// when there are no jobs to be stepped.
-    pub min_job_discovery_delay_secs: u64,
-    /// The maximum delay between checking for jobs ready to be stepped, in seconds. Applies only
-    /// when there are no jobs to be stepped.
-    pub max_job_discovery_delay_secs: u64,
+    /// The delay between checking for jobs ready to be stepped, in seconds. Applies only when
+    /// there are no jobs to be stepped.
+    pub job_discovery_interval_secs: u64,
     /// The maximum number of jobs being stepped at once. This parameter determines the amount of
     /// per-process concurrency.
     pub max_concurrent_job_workers: usize,
@@ -139,6 +139,38 @@ pub struct JobDriverConfig {
     /// The number of attempts to drive a work item before it is placed in a permanent failure
     /// state.
     pub maximum_attempts_before_failure: usize,
+}
+
+// TODO(#2252): This custom deserializer is for backwards-compatibility with Janus 0.6.3 and below.
+// Remove it for the next major version of Janus.
+impl<'de> Deserialize<'de> for JobDriverConfig {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct JobDriverConfigInner {
+            max_job_discovery_delay_secs: Option<u64>,
+            job_discovery_interval_secs: Option<u64>,
+            max_concurrent_job_workers: usize,
+            worker_lease_duration_secs: u64,
+            worker_lease_clock_skew_allowance_secs: u64,
+            maximum_attempts_before_failure: usize,
+        }
+        let inner = JobDriverConfigInner::deserialize(deserializer)?;
+        let job_discovery_interval_secs = inner
+            .job_discovery_interval_secs
+            .or_else(||{
+                warn!("job_discovery_interval_secs is missing, falling back to deprecated field max_job_discovery_delay_secs");
+                inner.max_job_discovery_delay_secs
+            })
+            .ok_or(D::Error::custom("required field job_discovery_interval_secs is missing"))?;
+
+        Ok(Self {
+            job_discovery_interval_secs,
+            max_concurrent_job_workers: inner.max_concurrent_job_workers,
+            worker_lease_duration_secs: inner.worker_lease_duration_secs,
+            worker_lease_clock_skew_allowance_secs: inner.worker_lease_clock_skew_allowance_secs,
+            maximum_attempts_before_failure: inner.maximum_attempts_before_failure,
+        })
+    }
 }
 
 #[cfg(feature = "test-util")]
@@ -235,13 +267,26 @@ mod tests {
     #[test]
     fn roundtrip_job_driver_config() {
         roundtrip_encoding(JobDriverConfig {
-            min_job_discovery_delay_secs: 10,
-            max_job_discovery_delay_secs: 60,
+            job_discovery_interval_secs: 10,
             max_concurrent_job_workers: 10,
             worker_lease_duration_secs: 600,
             worker_lease_clock_skew_allowance_secs: 60,
             maximum_attempts_before_failure: 5,
         })
+    }
+
+    #[test]
+    fn job_driver_config_backcompat() {
+        let input = concat!(
+            "min_job_discovery_delay_secs: 10\n",
+            "max_job_discovery_delay_secs: 60\n",
+            "max_concurrent_job_workers: 10\n",
+            "worker_lease_duration_secs: 600\n",
+            "worker_lease_clock_skew_allowance_secs: 60\n",
+            "maximum_attempts_before_failure: 5\n",
+        );
+        let config: JobDriverConfig = serde_yaml::from_str(input).unwrap();
+        assert_eq!(config.job_discovery_interval_secs, 60);
     }
 
     #[test]

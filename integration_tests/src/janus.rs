@@ -54,7 +54,6 @@ impl<'a> Drop for Janus<'a> {
     fn drop(&mut self) {
         // We assume that if a Janus value is dropped during a panic, we are in the middle of
         // test failure. In this case, export logs if log_export_path() suggests doing so.
-
         if !panicking() {
             return;
         }
