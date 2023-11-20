@@ -41,7 +41,7 @@ derivative.workspace = true
 futures = "0.3.29"
 hex = "0.4"
 hpke-dispatch = { version = "0.5.1", features = ["serde"] }
-http = "0.2.11"
+http = "1.0.0"
 http-api-problem = "0.57.0"
 janus_messages.workspace = true
 kube = { workspace = true, optional = true, features = ["rustls-tls"] }
