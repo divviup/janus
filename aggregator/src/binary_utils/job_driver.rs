@@ -157,7 +157,7 @@ where
             // concurrently with us acquiring jobs; but that's OK, since this can only make us
             // underestimate the number of jobs we can acquire, and underestimation is acceptable
             // (we'll pick up any additional jobs on the next iteration of this loop). We can't
-            // overestimate since this task is the only place that permits are acquired.
+            // overestimate since this task is the only place that leases are acquired.
             let max_acquire_count = sem.available_permits();
             let start = Instant::now();
             debug!(%max_acquire_count, "Acquiring jobs");
