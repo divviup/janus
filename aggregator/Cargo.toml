@@ -13,7 +13,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["otlp", "prometheus"] # XXX go back to nothing
+default = []
 fpvec_bounded_l2 = ["dep:fixed", "janus_core/fpvec_bounded_l2"]
 tokio-console = ["dep:console-subscriber"]
 otlp = [
