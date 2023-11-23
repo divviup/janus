@@ -33,7 +33,7 @@ retry-after = "0.3.1"
 thiserror.workspace = true
 tokio.workspace = true
 tracing = "0.1.40"
-url = "2.4.1"
+url = "2.5.0"
 
 [dev-dependencies]
 assert_matches = "1"
