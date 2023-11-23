@@ -45,7 +45,7 @@ kube = { version = "0.87.1", default-features = false, features = ["client", "ru
 opentelemetry = { version = "0.21", features = ["metrics"] }
 opentelemetry_sdk = { version = "0.21", features = ["metrics"] }
 prio = { version = "0.12.4", features = ["multithreaded"] }
-serde = { version = "1.0.192", features = ["derive"] }
+serde = { version = "1.0.193", features = ["derive"] }
 serde_json = "1.0.108"
 serde_test = "1.0.175"
 serde_yaml = "0.9.27"
