@@ -1073,6 +1073,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "event-listener"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "770d968249b5d99410d61f5bf89057f3199a077a04d087092f58e7d10692baae"
+dependencies = [
+ "concurrent-queue",
+ "parking",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1286,9 +1297,9 @@ dependencies = [
 
 [[package]]
 name = "futures-lite"
-version = "2.0.0"
+version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c1155db57329dca6d018b61e76b1488ce9a2e5e44028cac420a5898f4fcef63"
+checksum = "d3831c2651acb5177cbd83943f3d9c8912c5ad03c76afcc0e9511ba568ec5ebb"
 dependencies = [
  "fastrand 2.0.0",
  "futures-core",
@@ -1296,7 +1307,6 @@ dependencies = [
  "memchr",
  "parking",
  "pin-project-lite",
- "waker-fn",
 ]
 
 [[package]]
@@ -2878,9 +2888,9 @@ checksum = "56d80efc4b6721e8be2a10a5df21a30fa0b470f1539e53d8b4e6e75faf938b63"
 
 [[package]]
 name = "parking"
-version = "2.1.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14f2252c834a40ed9bb5422029649578e63aa341ac401f74e719dd1afda8394e"
+checksum = "bb813b8af86854136c6922af0598d719255ecb2179515e6e7730d468f05c9cae"
 
 [[package]]
 name = "parking_lot"
@@ -4295,12 +4305,12 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stopper"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3cbaa496909aa4ff7ff606b9d7fe90bc8b619a1ece49c25bd5fb4c93bb466fb"
+checksum = "810ecf6a47020ea27b2cc949d2f1292b9759e8f2c4cebf71376520124417d9e6"
 dependencies = [
- "event-listener 3.0.0",
- "futures-lite 2.0.0",
+ "event-listener 4.0.0",
+ "futures-lite 2.0.1",
  "pin-project-lite",
 ]
 
@@ -4886,7 +4896,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a924e0aeb1b4e0cb844cd57d9a8b81bea9cba1a0bdb323bd753920149089fe2"
 dependencies = [
  "async-trait",
- "futures-lite 2.0.0",
+ "futures-lite 2.0.1",
  "log",
  "trillium-http",
 ]
@@ -4957,7 +4967,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29d26d4a07ecbc874a465d9f0c97a795ca7170160a4c78d9b3442c25238b92f0"
 dependencies = [
  "encoding_rs",
- "futures-lite 2.0.0",
+ "futures-lite 2.0.1",
  "hashbrown 0.14.0",
  "httparse",
  "httpdate",
@@ -5025,7 +5035,7 @@ dependencies = [
  "async-trait",
  "async_cell",
  "event-listener 3.0.0",
- "futures-lite 2.0.0",
+ "futures-lite 2.0.1",
  "log",
  "pin-project-lite",
  "rlimit",
