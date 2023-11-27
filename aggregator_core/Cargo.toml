@@ -42,7 +42,7 @@ ring = "0.17.5"
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
-sqlx = { version = "0.7.2", optional = true, features = ["runtime-tokio-rustls", "migrate", "postgres"] }
+sqlx = { version = "0.7.3", optional = true, features = ["runtime-tokio-rustls", "migrate", "postgres"] }
 testcontainers = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio.workspace = true
