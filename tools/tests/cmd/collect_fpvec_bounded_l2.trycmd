@@ -2,7 +2,7 @@
 $ collect --help
 Command-line DAP-PPM collector from ISRG's Divvi Up
 
-Usage: collect [OPTIONS] --task-id <TASK_ID> --leader <LEADER> --vdaf <VDAF> <--dap-auth-token <DAP_AUTH_TOKEN>|--authorization-bearer-token <AUTHORIZATION_BEARER_TOKEN>> <--hpke-config <HPKE_CONFIG>|--hpke-private-key <HPKE_PRIVATE_KEY>|--hpke-config-json <HPKE_CONFIG_JSON>> <--batch-interval-start <BATCH_INTERVAL_START>|--batch-interval-duration <BATCH_INTERVAL_DURATION>|--batch-id <BATCH_ID>|--current-batch>
+Usage: collect [OPTIONS] --task-id <TASK_ID> --leader <LEADER> --vdaf <VDAF> <--dap-auth-token <DAP_AUTH_TOKEN>|--authorization-bearer-token <AUTHORIZATION_BEARER_TOKEN>> <--hpke-config <HPKE_CONFIG>|--hpke-private-key <HPKE_PRIVATE_KEY>|--hpke-config-json <HPKE_CONFIG_JSON>|--hpke-config-json-contents <HPKE_CONFIG_JSON_CONTENTS>> <--batch-interval-start <BATCH_INTERVAL_START>|--batch-interval-duration <BATCH_INTERVAL_DURATION>|--batch-id <BATCH_ID>|--current-batch>
 
 Options:
   -h, --help
@@ -18,6 +18,18 @@ DAP Task Parameters:
       --leader <LEADER>
           The leader aggregator's endpoint URL
 
+Authorization:
+      --dap-auth-token <DAP_AUTH_TOKEN>
+          Authentication token for the DAP-Auth-Token HTTP header
+          
+          [env: DAP_AUTH_TOKEN]
+
+      --authorization-bearer-token <AUTHORIZATION_BEARER_TOKEN>
+          Authentication token for the "Authorization: Bearer ..." HTTP header
+          
+          [env: AUTHORIZATION_BEARER_TOKEN]
+
+HPKE Configuration:
       --hpke-config <HPKE_CONFIG>
           DAP message for the collector's HPKE configuration, encoded with base64url
 
@@ -29,16 +41,10 @@ DAP Task Parameters:
       --hpke-config-json <HPKE_CONFIG_JSON>
           Path to a JSON document containing the collector's HPKE configuration and private key, in the format output by `divviup collector-credential generate`
 
-Authorization:
-      --dap-auth-token <DAP_AUTH_TOKEN>
-          Authentication token for the DAP-Auth-Token HTTP header
+      --hpke-config-json-contents <HPKE_CONFIG_JSON_CONTENTS>
+          Contents of a JSON document containing the collector's HPKE configuration and private key, in the format output by `divviup collector-credential generate`
           
-          [env: DAP_AUTH_TOKEN]
-
-      --authorization-bearer-token <AUTHORIZATION_BEARER_TOKEN>
-          Authentication token for the "Authorization: Bearer ..." HTTP header
-          
-          [env: AUTHORIZATION_BEARER_TOKEN]
+          [env: HPKE_CONFIG_JSON_CONTENTS]
 
 VDAF Algorithm and Parameters:
       --vdaf <VDAF>
