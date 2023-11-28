@@ -5,7 +5,6 @@ use clap::{
     error::ErrorKind,
     ArgAction, Args, CommandFactory, FromArgMatches, Parser, ValueEnum,
 };
-use derivative::Derivative;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::types::extra::{U15, U31};
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -208,8 +207,7 @@ fn divviup_hpke_config_parser(s: &str) -> Result<DivviUpHpkeConfig, serde_json::
     serde_json::from_str(s)
 }
 
-#[derive(Derivative, Args, PartialEq, Eq)]
-#[derivative(Debug)]
+#[derive(Debug, Args, PartialEq, Eq)]
 #[group(required = true)]
 struct AuthenticationOptions {
     /// Authentication token for the DAP-Auth-Token HTTP header
@@ -223,7 +221,6 @@ struct AuthenticationOptions {
         display_order = 0,
         conflicts_with = "authorization_bearer_token"
     )]
-    #[derivative(Debug = "ignore")]
     dap_auth_token: Option<AuthenticationToken>,
 
     /// Authentication token for the "Authorization: Bearer ..." HTTP header
@@ -237,7 +234,6 @@ struct AuthenticationOptions {
         display_order = 1,
         conflicts_with = "dap_auth_token"
     )]
-    #[derivative(Debug = "ignore")]
     authorization_bearer_token: Option<AuthenticationToken>,
 }
 
