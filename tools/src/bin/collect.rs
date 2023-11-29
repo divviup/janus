@@ -273,26 +273,10 @@ struct QueryOptions {
     current_batch: bool,
 }
 
-#[derive(Derivative, Parser, PartialEq, Eq)]
+#[derive(Derivative, Args, PartialEq, Eq)]
 #[derivative(Debug)]
-#[clap(
-    name = "collect",
-    version,
-    about = "Command-line DAP-PPM collector from ISRG's Divvi Up",
-    long_about = None,
-)]
-struct Options {
-    /// DAP task identifier, encoded with base64url
-    #[clap(
-        long,
-        value_parser = TaskIdValueParser::new(),
-        help_heading = "DAP Task Parameters",
-        display_order = 0
-    )]
-    task_id: TaskId,
-    /// The leader aggregator's endpoint URL
-    #[clap(long, help_heading = "DAP Task Parameters", display_order = 1)]
-    leader: Url,
+#[group(required = true, multiple = true)]
+struct HpkeConfigOptions {
     /// DAP message for the collector's HPKE configuration, encoded with base64url
     #[clap(
         long,
@@ -325,9 +309,33 @@ struct Options {
         conflicts_with_all = ["hpke_config", "hpke_private_key"]
     )]
     hpke_config_json: Option<PathBuf>,
+}
+
+#[derive(Debug, Parser, PartialEq, Eq)]
+#[clap(
+    name = "collect",
+    version,
+    about = "Command-line DAP-PPM collector from ISRG's Divvi Up",
+    long_about = None,
+)]
+struct Options {
+    /// DAP task identifier, encoded with base64url
+    #[clap(
+        long,
+        value_parser = TaskIdValueParser::new(),
+        help_heading = "DAP Task Parameters",
+        display_order = 0
+    )]
+    task_id: TaskId,
+    /// The leader aggregator's endpoint URL
+    #[clap(long, help_heading = "DAP Task Parameters", display_order = 1)]
+    leader: Url,
 
     #[clap(flatten)]
     authentication: AuthenticationOptions,
+
+    #[clap(flatten)]
+    hpke_config: HpkeConfigOptions,
 
     /// VDAF algorithm
     #[clap(
@@ -352,9 +360,9 @@ struct Options {
 impl Options {
     fn hpke_keypair(&self) -> Result<HpkeKeypair, anyhow::Error> {
         match (
-            &self.hpke_config,
-            &self.hpke_private_key,
-            &self.hpke_config_json,
+            &self.hpke_config.hpke_config,
+            &self.hpke_config.hpke_private_key,
+            &self.hpke_config.hpke_config_json,
         ) {
             (Some(config), Some(private), _) => {
                 Ok(HpkeKeypair::new(config.clone(), private.clone()))
@@ -589,7 +597,8 @@ impl QueryTypeExt for FixedSize {
 #[cfg(test)]
 mod tests {
     use crate::{
-        run, AuthenticationOptions, AuthenticationToken, Error, Options, QueryOptions, VdafType,
+        run, AuthenticationOptions, AuthenticationToken, Error, HpkeConfigOptions, Options,
+        QueryOptions, VdafType,
     };
     use assert_matches::assert_matches;
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -630,9 +639,11 @@ mod tests {
                 dap_auth_token: Some(auth_token.clone()),
                 authorization_bearer_token: None,
             },
-            hpke_config: Some(hpke_keypair.config().clone()),
-            hpke_private_key: Some(hpke_keypair.private_key().clone()),
-            hpke_config_json: None,
+            hpke_config: HpkeConfigOptions {
+                hpke_config: Some(hpke_keypair.config().clone()),
+                hpke_private_key: Some(hpke_keypair.private_key().clone()),
+                hpke_config_json: None,
+            },
             vdaf: VdafType::Count,
             length: None,
             bits: None,
@@ -666,6 +677,26 @@ mod tests {
 
         assert_eq!(
             Options::try_parse_from(["collect"]).unwrap_err().kind(),
+            ErrorKind::MissingRequiredArgument,
+        );
+
+        // Missing HPKE configuration entirely.
+        assert_eq!(
+            Options::try_parse_from([
+                "collect",
+                &format!("--task-id={task_id_encoded}"),
+                "--leader",
+                leader.as_str(),
+                &format!("--dap-auth-token={}", auth_token.as_str()),
+                "--vdaf",
+                "count",
+                "--batch-interval-start",
+                "1000000",
+                "--batch-interval-duration",
+                "1000",
+            ])
+            .unwrap_err()
+            .kind(),
             ErrorKind::MissingRequiredArgument,
         );
 
@@ -852,9 +883,11 @@ mod tests {
                 dap_auth_token: Some(auth_token.clone()),
                 authorization_bearer_token: None,
             },
-            hpke_config: Some(hpke_keypair.config().clone()),
-            hpke_private_key: Some(hpke_keypair.private_key().clone()),
-            hpke_config_json: None,
+            hpke_config: HpkeConfigOptions {
+                hpke_config: Some(hpke_keypair.config().clone()),
+                hpke_private_key: Some(hpke_keypair.private_key().clone()),
+                hpke_config_json: None,
+            },
             vdaf: VdafType::Count,
             length: None,
             bits: None,
@@ -892,9 +925,11 @@ mod tests {
                 dap_auth_token: Some(auth_token.clone()),
                 authorization_bearer_token: None,
             },
-            hpke_config: Some(hpke_keypair.config().clone()),
-            hpke_private_key: Some(hpke_keypair.private_key().clone()),
-            hpke_config_json: None,
+            hpke_config: HpkeConfigOptions {
+                hpke_config: Some(hpke_keypair.config().clone()),
+                hpke_private_key: Some(hpke_keypair.private_key().clone()),
+                hpke_config_json: None,
+            },
             vdaf: VdafType::Count,
             length: None,
             bits: None,
@@ -1126,9 +1161,11 @@ mod tests {
                 dap_auth_token: Some(random()),
                 authorization_bearer_token: None,
             },
-            hpke_config: None,
-            hpke_private_key: None,
-            hpke_config_json: Some(hpke_config_file_path.to_path_buf()),
+            hpke_config: HpkeConfigOptions {
+                hpke_config: None,
+                hpke_private_key: None,
+                hpke_config_json: Some(hpke_config_file_path.to_path_buf()),
+            },
             vdaf: VdafType::Count,
             length: None,
             bits: None,
