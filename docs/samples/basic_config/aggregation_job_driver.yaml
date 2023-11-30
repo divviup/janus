@@ -9,11 +9,8 @@ health_check_listen_address: "0.0.0.0:8000"
 
 # Aggregation job driver-related parameters:
 
-# Minimum interval on which to acquire incomplete aggregation jobs. (required)
-min_job_discovery_delay_secs: 10
-
 # Maximum interval on which to acquire incomplete aggregation jobs. (required)
-max_job_discovery_delay_secs: 60
+job_discovery_interval_secs: 10
 
 # Maximum number of aggregation jobs to step concurrently. (required)
 max_concurrent_job_workers: 10

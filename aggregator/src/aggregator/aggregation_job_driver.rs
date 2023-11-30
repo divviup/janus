@@ -1098,7 +1098,6 @@ mod tests {
                 noop_meter(),
                 stopper.clone(),
                 StdDuration::from_secs(1),
-                StdDuration::from_secs(1),
                 10,
                 StdDuration::from_secs(60),
                 aggregation_job_driver.make_incomplete_job_acquirer_callback(
@@ -2879,7 +2878,6 @@ mod tests {
                 runtime_manager.with_label("stepper"),
                 noop_meter(),
                 stopper.clone(),
-                StdDuration::from_secs(1),
                 StdDuration::from_secs(1),
                 10,
                 StdDuration::from_secs(60),
