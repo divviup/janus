@@ -21,6 +21,7 @@ janus_collector.workspace = true
 janus_core.workspace = true
 janus_messages.workspace = true
 prio.workspace = true
+rand.workspace = true
 reqwest = { version = "0.11.22", default-features = false, features = ["rustls-tls", "json"] }
 serde_json.workspace = true
 serde_yaml.workspace = true
@@ -34,6 +35,5 @@ url = "2.5.0"
 assert_matches.workspace = true
 cfg-if = "1.0.0"
 janus_core = { workspace = true, features = ["test-util"] }
-rand = "0.8"
 tempfile = "3.8.1"
 trycmd = "0.14.19"

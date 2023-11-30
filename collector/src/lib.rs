@@ -440,19 +440,38 @@ impl<V: vdaf::Collector> Collector<V> {
         self.poll_until_complete(&job).await
     }
 
-    /// Send a collection request to the leader aggregator.
+    /// Send a collection request to the leader aggregator, using a randomly generated
+    /// [`CollectionJobId`].
     ///
     /// This returns a [`CollectionJob`] that must be polled separately using [`Self::poll_once`] or
     /// [`Self::poll_until_complete`].
+    ///
+    /// Since the collection job ID is randomly generated in this function, it is at risk of being
+    /// lost if the program crashes before the generated ID is returned to the caller. It is
+    /// recommended that collectors instead generate an ID themselves, store it to non-volatile
+    /// storage, then invoke [`Self::start_collection_with_id`].
     #[tracing::instrument(skip(aggregation_parameter), err)]
     pub async fn start_collection<Q: QueryType>(
         &self,
         query: Query<Q>,
         aggregation_parameter: &V::AggregationParam,
     ) -> Result<CollectionJob<V::AggregationParam, Q>, Error> {
+        self.start_collection_with_id(random(), query, aggregation_parameter)
+            .await
+    }
+
+    /// Send a collection request to the leader aggregator, with the given [`CollectionJobId`].
+    ///
+    /// This returns a [`CollectionJob`] that must be polled separately using [`Self::poll_once`] or
+    /// [`Self::poll_until_complete`].
+    pub async fn start_collection_with_id<Q: QueryType>(
+        &self,
+        collection_job_id: CollectionJobId,
+        query: Query<Q>,
+        aggregation_parameter: &V::AggregationParam,
+    ) -> Result<CollectionJob<V::AggregationParam, Q>, Error> {
         let collect_request =
             CollectionReq::new(query.clone(), aggregation_parameter.get_encoded());
-        let collection_job_id = random();
         let collection_job_url = self.collection_job_uri(collection_job_id)?;
 
         let response_res =

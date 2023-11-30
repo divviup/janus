@@ -3,26 +3,30 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::{
     builder::{NonEmptyStringValueParser, StringValueParser, TypedValueParser},
     error::ErrorKind,
-    ArgAction, Args, CommandFactory, FromArgMatches, Parser, ValueEnum,
+    ArgAction, Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::types::extra::{U15, U31};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32};
-use janus_collector::{default_http_client, AuthenticationToken, Collector, ExponentialBackoff};
+use janus_collector::{
+    default_http_client, AuthenticationToken, Collection, CollectionJob, Collector,
+    ExponentialBackoff, PollResult,
+};
 use janus_core::hpke::{DivviUpHpkeConfig, HpkeKeypair, HpkePrivateKey};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
-    BatchId, Duration, FixedSizeQuery, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId,
-    Time,
+    BatchId, CollectionJobId, Duration, FixedSizeQuery, HpkeConfig, Interval, PartialBatchSelector,
+    Query, TaskId, Time,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded;
 use prio::{
     codec::Decode,
-    vdaf::{self, prio3::Prio3},
+    vdaf::{self, prio3::Prio3, Vdaf},
 };
-use std::{fmt::Debug, fs::File, path::PathBuf, time::Duration as StdDuration};
+use rand::random;
+use std::{fmt::Debug, fs::File, path::PathBuf, process::exit, time::Duration as StdDuration};
 use tracing_log::LogTracer;
 use tracing_subscriber::{prelude::*, EnvFilter, Registry};
 use url::Url;
@@ -34,6 +38,12 @@ use url::Url;
 enum Error {
     Anyhow(anyhow::Error),
     Clap(clap::Error),
+    PollNotReady,
+}
+
+impl Error {
+    /// Corresponds to `EX_TEMPFAIL` on Unix-like systems.
+    const POLL_NOT_READY_EXIT_STATUS: i32 = 75;
 }
 
 impl From<anyhow::Error> for Error {
@@ -105,6 +115,36 @@ impl TypedValueParser for TaskIdValueParser {
                 clap::Error::raw(ErrorKind::ValueValidation, "task ID length incorrect")
             })?;
         Ok(TaskId::from(task_id_bytes))
+    }
+}
+
+#[derive(Clone)]
+struct CollectionJobIdValueParser {
+    inner: NonEmptyStringValueParser,
+}
+
+impl CollectionJobIdValueParser {
+    fn new() -> CollectionJobIdValueParser {
+        CollectionJobIdValueParser {
+            inner: NonEmptyStringValueParser::new(),
+        }
+    }
+}
+
+impl TypedValueParser for CollectionJobIdValueParser {
+    type Value = CollectionJobId;
+
+    fn parse_ref(
+        &self,
+        cmd: &clap::Command,
+        arg: Option<&clap::Arg>,
+        value: &std::ffi::OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        let input = self.inner.parse_ref(cmd, arg, value)?;
+        let collection_job_id = input
+            .parse()
+            .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, format!("{:?}", err)))?;
+        Ok(collection_job_id)
     }
 }
 
@@ -299,7 +339,7 @@ struct HpkeConfigOptions {
     )]
     hpke_private_key: Option<HpkePrivateKey>,
     /// Path to a JSON document containing the collector's HPKE configuration and private key, in
-    /// the format output by `divviup collector-credential generate`.
+    /// the format output by `divviup collector-credential generate`
     #[clap(
         long,
         help_heading = "HPKE Configuration",
@@ -321,15 +361,52 @@ struct HpkeConfigOptions {
     hpke_config_json_contents: Option<DivviUpHpkeConfig>,
 }
 
+#[derive(Debug, PartialEq, Eq, Subcommand)]
+enum Subcommands {
+    /// Create a new collection job and poll it to completion
+    ///
+    /// This is the default action when no subcommand is provided.
+    Run,
+    /// Initialize a new collection job
+    ///
+    /// Outputs collection job ID to stdout.
+    NewJob {
+        /// Job ID to use for the new collection job. If absent, an ID is randomly generated
+        ///
+        /// A valid ID consists of 16 randomly selected bytes, encoded with unpadded base64url.
+        #[clap(value_parser = CollectionJobIdValueParser::new())]
+        collection_job_id: Option<CollectionJobId>,
+    },
+    /// Poll an existing collection job once
+    ///
+    /// The supplied query options must exactly match the ones used to create the collection job,
+    /// so that the collection job state can be correctly reconstructed.
+    ///
+    /// If the collection job is ready, the exit status is 0 and the job results are output to
+    /// stdout. If it is not ready, the exit status is 75 (EX_TEMPFAIL).
+    PollJob {
+        /// Job ID for an existing collection job, encoded with unpadded base64url
+        #[clap(value_parser = CollectionJobIdValueParser::new(), required = true)]
+        collection_job_id: CollectionJobId,
+    },
+}
+
 #[derive(Debug, Parser, PartialEq, Eq)]
 #[clap(
     name = "collect",
     version,
     about = "Command-line DAP-PPM collector from ISRG's Divvi Up",
-    long_about = None,
+    long_about = concat!(
+        "Command-line DAP-PPM collector from ISRG's Divvi Up\n\n",
+        "The default subcommand is \"run\", which will create a collection job and poll it to ",
+        "completion",
+    ),
 )]
 struct Options {
-    /// DAP task identifier, encoded with base64url
+    #[clap(subcommand)]
+    subcommand: Option<Subcommands>,
+
+    /// DAP task identifier, encoded with unpadded base64url
     #[clap(
         long,
         value_parser = TaskIdValueParser::new(),
@@ -412,106 +489,134 @@ async fn main() -> anyhow::Result<()> {
         Ok(()) => Ok(()),
         Err(Error::Anyhow(err)) => Err(err),
         Err(Error::Clap(err)) => err.format(&mut command).exit(),
+        Err(Error::PollNotReady) => exit(Error::POLL_NOT_READY_EXIT_STATUS),
+    }
+}
+
+macro_rules! options_query_dispatch {
+    ($options:expr, ($query:ident) => $body:tt) => {
+        match (
+            &$options.query.batch_interval_start,
+            &$options.query.batch_interval_duration,
+            &$options.query.batch_id,
+            $options.query.current_batch,
+        ) {
+            (Some(batch_interval_start), Some(batch_interval_duration), None, false) => {
+                let $query = Query::new_time_interval(
+                    Interval::new(
+                        Time::from_seconds_since_epoch(*batch_interval_start),
+                        Duration::from_seconds(*batch_interval_duration),
+                    )
+                    .map_err(|err| Error::Anyhow(err.into()))?,
+                );
+                $body
+            }
+            (None, None, Some(batch_id), false) => {
+                let $query = Query::new_fixed_size(FixedSizeQuery::ByBatchId {
+                    batch_id: *batch_id,
+                });
+                $body
+            }
+            (None, None, None, true) => {
+                let $query = Query::new_fixed_size(FixedSizeQuery::CurrentBatch);
+                $body
+            }
+            _ => unreachable!("clap argument parsing shouldn't allow this to be possible"),
+        }
+    };
+}
+
+macro_rules! options_vdaf_dispatch {
+    ($options:expr, ($vdaf:ident) => $body:tt) => {
+        match ($options.vdaf, $options.length, $options.bits) {
+            (VdafType::Count, None, None) => {
+                let $vdaf = Prio3::new_count(2).map_err(|err| Error::Anyhow(err.into()))?;
+                $body
+            }
+            (VdafType::CountVec, Some(length), None) => {
+                // We can take advantage of the fact that Prio3SumVec unsharding does not use the
+                // chunk_length parameter and avoid asking the user for it.
+                let $vdaf =
+                    Prio3::new_sum_vec(2, 1, length, 1).map_err(|err| Error::Anyhow(err.into()))?;
+                $body
+            }
+            (VdafType::Sum, None, Some(bits)) => {
+                let $vdaf = Prio3::new_sum(2, bits).map_err(|err| Error::Anyhow(err.into()))?;
+                $body
+            }
+            (VdafType::SumVec, Some(length), Some(bits)) => {
+                // We can take advantage of the fact that Prio3SumVec unsharding does not use the
+                // chunk_length parameter and avoid asking the user for it.
+                let $vdaf = Prio3::new_sum_vec(2, bits, length, 1)
+                    .map_err(|err| Error::Anyhow(err.into()))?;
+                $body
+            }
+            (VdafType::Histogram, Some(length), None) => {
+                // We can take advantage of the fact that Prio3Histogram unsharding does not use the
+                // chunk_length parameter and avoid asking the user for it.
+                let $vdaf =
+                    Prio3::new_histogram(2, length, 1).map_err(|err| Error::Anyhow(err.into()))?;
+                $body
+            }
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (VdafType::FixedPoint16BitBoundedL2VecSum, Some(length), None) => {
+                let $vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>> =
+                    Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
+                        .map_err(|err| Error::Anyhow(err.into()))?;
+                $body
+            }
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (VdafType::FixedPoint32BitBoundedL2VecSum, Some(length), None) => {
+                let $vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>> =
+                    Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
+                        .map_err(|err| Error::Anyhow(err.into()))?;
+                $body
+            }
+            _ => Err(clap::Error::raw(
+                ErrorKind::ArgumentConflict,
+                format!(
+                    "incorrect VDAF parameter arguments were supplied for {}",
+                    $options
+                        .vdaf
+                        .to_possible_value()
+                        .unwrap()
+                        .get_help()
+                        .unwrap(),
+                ),
+            )
+            .into()),
+        }
+    };
+}
+
+macro_rules! options_dispatch {
+    ($options:expr, ($query:ident, $vdaf:ident) => $body:tt) => {
+        options_query_dispatch!($options, ($query) => {
+            options_vdaf_dispatch!($options, ($vdaf) => {
+                $body
+            })
+        })
     }
 }
 
 // This function is broken out from `main()` for the sake of testing its argument handling.
 async fn run(options: Options) -> Result<(), Error> {
-    match (
-        &options.query.batch_interval_start,
-        &options.query.batch_interval_duration,
-        &options.query.batch_id,
-        options.query.current_batch,
-    ) {
-        (Some(batch_interval_start), Some(batch_interval_duration), None, false) => {
-            let batch_interval = Interval::new(
-                Time::from_seconds_since_epoch(*batch_interval_start),
-                Duration::from_seconds(*batch_interval_duration),
-            )
-            .map_err(|err| Error::Anyhow(err.into()))?;
-            run_with_query(options, Query::new_time_interval(batch_interval)).await
-        }
-        (None, None, Some(batch_id), false) => {
-            let batch_id = *batch_id;
-            run_with_query(
-                options,
-                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
-            )
-            .await
-        }
-        (None, None, None, true) => {
-            run_with_query(options, Query::new_fixed_size(FixedSizeQuery::CurrentBatch)).await
-        }
-        _ => unreachable!(),
-    }
-}
-
-async fn run_with_query<Q: QueryType>(options: Options, query: Query<Q>) -> Result<(), Error>
-where
-    Q: QueryTypeExt,
-{
     let http_client = default_http_client().map_err(|err| Error::Anyhow(err.into()))?;
-    match (options.vdaf, options.length, options.bits) {
-        (VdafType::Count, None, None) => {
-            let vdaf = Prio3::new_count(2).map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(options, vdaf, http_client, query, &()).await
+    options_dispatch!(options, (query, vdaf) => {
+        match options.subcommand {
+            Some(Subcommands::NewJob { collection_job_id }) => {
+                let collection_job_id = collection_job_id.unwrap_or_else(random);
+                run_new_job(options, vdaf, http_client, query, &(), collection_job_id).await
+            }
+            Some(Subcommands::PollJob { collection_job_id }) => {
+                run_poll_job(options, vdaf, http_client, query, &(), collection_job_id).await
+            }
+            _ => run_collection(options, vdaf, http_client, query, &()).await,
         }
-        (VdafType::CountVec, Some(length), None) => {
-            // We can take advantage of the fact that Prio3SumVec unsharding does not use the
-            // chunk_length parameter and avoid asking the user for it.
-            let vdaf =
-                Prio3::new_sum_vec(2, 1, length, 1).map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(options, vdaf, http_client, query, &()).await
-        }
-        (VdafType::Sum, None, Some(bits)) => {
-            let vdaf = Prio3::new_sum(2, bits).map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(options, vdaf, http_client, query, &()).await
-        }
-        (VdafType::SumVec, Some(length), Some(bits)) => {
-            // We can take advantage of the fact that Prio3SumVec unsharding does not use the
-            // chunk_length parameter and avoid asking the user for it.
-            let vdaf =
-                Prio3::new_sum_vec(2, bits, length, 1).map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(options, vdaf, http_client, query, &()).await
-        }
-        (VdafType::Histogram, Some(length), None) => {
-            // We can take advantage of the fact that Prio3Histogram unsharding does not use the
-            // chunk_length parameter and avoid asking the user for it.
-            let vdaf =
-                Prio3::new_histogram(2, length, 1).map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(options, vdaf, http_client, query, &()).await
-        }
-        #[cfg(feature = "fpvec_bounded_l2")]
-        (VdafType::FixedPoint16BitBoundedL2VecSum, Some(length), None) => {
-            let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>> =
-                Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
-                    .map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(options, vdaf, http_client, query, &()).await
-        }
-        #[cfg(feature = "fpvec_bounded_l2")]
-        (VdafType::FixedPoint32BitBoundedL2VecSum, Some(length), None) => {
-            let vdaf: Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>> =
-                Prio3::new_fixedpoint_boundedl2_vec_sum_multithreaded(2, length)
-                    .map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(options, vdaf, http_client, query, &()).await
-        }
-        _ => Err(clap::Error::raw(
-            ErrorKind::ArgumentConflict,
-            format!(
-                "incorrect VDAF parameter arguments were supplied for {}",
-                options
-                    .vdaf
-                    .to_possible_value()
-                    .unwrap()
-                    .get_help()
-                    .unwrap(),
-            ),
-        )
-        .into()),
-    }
+    })
 }
 
-async fn run_collection_generic<V: vdaf::Collector, Q: QueryTypeExt>(
+async fn run_collection<V: vdaf::Collector, Q: QueryTypeExt>(
     options: Options,
     vdaf: V,
     http_client: reqwest::Client,
@@ -521,6 +626,71 @@ async fn run_collection_generic<V: vdaf::Collector, Q: QueryTypeExt>(
 where
     V::AggregateResult: Debug,
 {
+    let collection = new_collector(options, vdaf, http_client)?
+        .collect(query, agg_param)
+        .await
+        .map_err(|err| Error::Anyhow(err.into()))?;
+    print_collection::<V, Q>(collection)?;
+    Ok(())
+}
+
+async fn run_new_job<V: vdaf::Collector, Q: QueryTypeExt>(
+    options: Options,
+    vdaf: V,
+    http_client: reqwest::Client,
+    query: Query<Q>,
+    agg_param: &V::AggregationParam,
+    collection_job_id: CollectionJobId,
+) -> Result<(), Error>
+where
+    V::AggregateResult: Debug,
+{
+    let collection = new_collector(options, vdaf, http_client)?
+        .start_collection_with_id(collection_job_id, query, agg_param)
+        .await
+        .map_err(|err| Error::Anyhow(err.into()))?;
+    println!("Job ID: {}", collection.collection_job_id());
+    Ok(())
+}
+
+async fn run_poll_job<V: vdaf::Collector, Q: QueryTypeExt>(
+    options: Options,
+    vdaf: V,
+    http_client: reqwest::Client,
+    query: Query<Q>,
+    agg_param: &V::AggregationParam,
+    collection_job_id: CollectionJobId,
+) -> Result<(), Error>
+where
+    V::AggregateResult: Debug,
+{
+    let collection_job = CollectionJob::new(collection_job_id, query, agg_param.clone());
+    let poll_result = new_collector(options, vdaf, http_client)?
+        .poll_once(&collection_job)
+        .await
+        .map_err(|err| Error::Anyhow(err.into()))?;
+    match poll_result {
+        PollResult::CollectionResult(collection) => {
+            println!("State: Ready");
+            print_collection::<V, Q>(collection)?;
+            Ok(())
+        }
+        PollResult::NotReady(retry_after) => {
+            println!("State: Not ready");
+            match retry_after {
+                Some(retry_after) => println!("Retry after: {:?}", retry_after),
+                None => println!("Retry after: Not provided"),
+            }
+            Err(Error::PollNotReady)
+        }
+    }
+}
+
+fn new_collector<V: vdaf::Collector>(
+    options: Options,
+    vdaf: V,
+    http_client: reqwest::Client,
+) -> Result<Collector<V>, Error> {
     let hpke_keypair = options.hpke_keypair().map_err(Error::Anyhow)?;
     let task_id = options.task_id;
     let leader_endpoint = options.leader;
@@ -532,7 +702,6 @@ where
         (Some(token), None) => token,
         (None, None) | (Some(_), Some(_)) => unreachable!(),
     };
-
     let collector =
         Collector::builder(task_id, leader_endpoint, authentication, hpke_keypair, vdaf)
             .with_http_client(http_client)
@@ -546,10 +715,12 @@ where
             })
             .build()
             .map_err(|err| Error::Anyhow(err.into()))?;
-    let collection = collector
-        .collect(query, agg_param)
-        .await
-        .map_err(|err| Error::Anyhow(err.into()))?;
+    Ok(collector)
+}
+
+fn print_collection<V: vdaf::Collector, Q: QueryTypeExt>(
+    collection: Collection<<V as Vdaf>::AggregateResult, Q>,
+) -> Result<(), Error> {
     if !Q::IS_PARTIAL_BATCH_SELECTOR_TRIVIAL {
         println!(
             "Batch: {}",
@@ -613,7 +784,7 @@ impl QueryTypeExt for FixedSize {
 mod tests {
     use crate::{
         run, AuthenticationOptions, AuthenticationToken, Error, HpkeConfigOptions, Options,
-        QueryOptions, VdafType,
+        QueryOptions, Subcommands, VdafType,
     };
     use assert_matches::assert_matches;
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -648,6 +819,7 @@ mod tests {
         let auth_token = AuthenticationToken::DapAuth(random());
 
         let expected = Options {
+            subcommand: None,
             task_id,
             leader: leader.clone(),
             authentication: AuthenticationOptions {
@@ -893,6 +1065,7 @@ mod tests {
 
         // Check parsing arguments for a current batch query.
         let expected = Options {
+            subcommand: None,
             task_id,
             leader: leader.clone(),
             authentication: AuthenticationOptions {
@@ -936,6 +1109,7 @@ mod tests {
         let batch_id: BatchId = random();
         let batch_id_encoded = URL_SAFE_NO_PAD.encode(batch_id.as_ref());
         let expected = Options {
+            subcommand: None,
             task_id,
             leader: leader.clone(),
             authentication: AuthenticationOptions {
@@ -1173,6 +1347,7 @@ mod tests {
         let hpke_config_file_path = hpke_config_file.into_temp_path();
 
         let options = Options {
+            subcommand: None,
             task_id: random(),
             leader: Url::parse("https://example.com").unwrap(),
             authentication: AuthenticationOptions {
@@ -1228,6 +1403,158 @@ mod tests {
                 .hpke_config_json_contents
                 .unwrap(),
             hpke_config,
+        );
+    }
+
+    #[test]
+    fn subcommand_new_job_arguments() {
+        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let encoded_hpke_config = URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded());
+        let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
+
+        let task_id = random();
+        let leader = Url::parse("https://example.com/dap/").unwrap();
+        let auth_token = AuthenticationToken::DapAuth(random());
+
+        let mut expected = Options {
+            subcommand: Some(Subcommands::NewJob {
+                collection_job_id: None,
+            }),
+            task_id,
+            leader: leader.clone(),
+            authentication: AuthenticationOptions {
+                dap_auth_token: Some(auth_token.clone()),
+                authorization_bearer_token: None,
+            },
+            hpke_config: HpkeConfigOptions {
+                hpke_config: Some(hpke_keypair.config().clone()),
+                hpke_private_key: Some(hpke_keypair.private_key().clone()),
+                hpke_config_json: None,
+                hpke_config_json_contents: None,
+            },
+            vdaf: VdafType::Count,
+            length: None,
+            bits: None,
+            query: QueryOptions {
+                batch_interval_start: Some(1_000_000),
+                batch_interval_duration: Some(1_000),
+                batch_id: None,
+                current_batch: false,
+            },
+        };
+        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
+        let correct_arguments = [
+            "collect",
+            &format!("--task-id={task_id_encoded}"),
+            "--leader",
+            leader.as_str(),
+            &format!("--dap-auth-token={}", auth_token.as_str()),
+            &format!("--hpke-config={encoded_hpke_config}"),
+            &format!("--hpke-private-key={encoded_private_key}"),
+            "--vdaf",
+            "count",
+            "--batch-interval-start",
+            "1000000",
+            "--batch-interval-duration",
+            "1000",
+            "new-job",
+        ];
+        match Options::try_parse_from(correct_arguments) {
+            Ok(got) => assert_eq!(got, expected),
+            Err(e) => panic!("{}\narguments were {:?}", e, correct_arguments),
+        }
+
+        let collection_job_id = random();
+        expected.subcommand = Some(Subcommands::NewJob {
+            collection_job_id: Some(collection_job_id),
+        });
+        let correct_arguments = [
+            "collect",
+            &format!("--task-id={task_id_encoded}"),
+            "--leader",
+            leader.as_str(),
+            &format!("--dap-auth-token={}", auth_token.as_str()),
+            &format!("--hpke-config={encoded_hpke_config}"),
+            &format!("--hpke-private-key={encoded_private_key}"),
+            "--vdaf",
+            "count",
+            "--batch-interval-start",
+            "1000000",
+            "--batch-interval-duration",
+            "1000",
+            "new-job",
+            "--", // prevent ID from being interpreted as a flag, in case it starts with a hyphen.
+            &format!("{collection_job_id}"),
+        ];
+        match Options::try_parse_from(correct_arguments) {
+            Ok(got) => assert_eq!(got, expected),
+            Err(e) => panic!("{}\narguments were {:?}", e, correct_arguments),
+        }
+    }
+
+    #[test]
+    fn subcommand_poll_job_arguments() {
+        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let encoded_hpke_config = URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded());
+        let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
+
+        let task_id = random();
+        let leader = Url::parse("https://example.com/dap/").unwrap();
+        let auth_token = AuthenticationToken::DapAuth(random());
+        let collection_job_id = random();
+        let expected = Options {
+            subcommand: Some(Subcommands::PollJob { collection_job_id }),
+            task_id,
+            leader: leader.clone(),
+            authentication: AuthenticationOptions {
+                dap_auth_token: Some(auth_token.clone()),
+                authorization_bearer_token: None,
+            },
+            hpke_config: HpkeConfigOptions {
+                hpke_config: Some(hpke_keypair.config().clone()),
+                hpke_private_key: Some(hpke_keypair.private_key().clone()),
+                hpke_config_json: None,
+                hpke_config_json_contents: None,
+            },
+            vdaf: VdafType::Count,
+            length: None,
+            bits: None,
+            query: QueryOptions {
+                batch_interval_start: Some(1_000_000),
+                batch_interval_duration: Some(1_000),
+                batch_id: None,
+                current_batch: false,
+            },
+        };
+        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
+        let correct_arguments = [
+            "collect",
+            &format!("--task-id={task_id_encoded}"),
+            "--leader",
+            leader.as_str(),
+            &format!("--dap-auth-token={}", auth_token.as_str()),
+            &format!("--hpke-config={encoded_hpke_config}"),
+            &format!("--hpke-private-key={encoded_private_key}"),
+            "--vdaf",
+            "count",
+            "--batch-interval-start",
+            "1000000",
+            "--batch-interval-duration",
+            "1000",
+            "poll-job",
+            "--", // prevent ID from being interpreted as a flag, in case it starts with a hyphen.
+            &collection_job_id.to_string(),
+        ];
+        match Options::try_parse_from(correct_arguments) {
+            Ok(got) => assert_eq!(got, expected),
+            Err(e) => panic!("{}\narguments were {:?}", e, correct_arguments),
+        }
+
+        let mut bad_arguments = correct_arguments;
+        bad_arguments[bad_arguments.len() - 1] = "invalid";
+        assert_eq!(
+            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
+            ErrorKind::ValueValidation,
         );
     }
 }
