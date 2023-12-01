@@ -26,7 +26,7 @@ pub enum Error {
     Message(#[from] janus_messages::Error),
     /// Corresponds to `reportRejected`, §3.2
     #[error("task {0}: report {1} rejected: {2}")]
-    ReportRejected(TaskId, ReportId, Time),
+    ReportRejected(TaskId, ReportId, Time, ReportRejectedReason),
     /// Corresponds to `reportTooEarly`, §3.2. A report was rejected becuase the timestamp is too
     /// far in the future, §4.3.2.
     #[error("task {0}: report {1} too early: {2}")]
@@ -132,6 +132,25 @@ pub enum Error {
     DifferentialPrivacy(VdafError),
 }
 
+#[derive(Debug)]
+pub enum ReportRejectedReason {
+    IntervalAlreadyCollected,
+    TaskExpired,
+    TooOld,
+}
+
+impl ReportRejectedReason {
+    pub fn detail(&self) -> &'static str {
+        match self {
+            ReportRejectedReason::IntervalAlreadyCollected => {
+                "Report falls into a time interval that has already been collected."
+            }
+            ReportRejectedReason::TaskExpired => "Task has expired.",
+            ReportRejectedReason::TooOld => "Report timestamp is too old.",
+        }
+    }
+}
+
 /// Errors that cause the aggregator to opt-out of a taskprov task.
 #[derive(Debug, thiserror::Error)]
 pub enum OptOutReason {
@@ -155,7 +174,7 @@ impl Error {
             Error::InvalidConfiguration(_) => "invalid_configuration",
             Error::MessageDecode(_) => "message_decode",
             Error::Message(_) => "message",
-            Error::ReportRejected(_, _, _) => "report_rejected",
+            Error::ReportRejected(_, _, _, _) => "report_rejected",
             Error::ReportTooEarly(_, _, _) => "report_too_early",
             Error::InvalidMessage(_, _) => "unrecognized_message",
             Error::StepMismatch { .. } => "step_mismatch",

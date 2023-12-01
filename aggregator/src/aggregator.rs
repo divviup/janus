@@ -3,7 +3,9 @@
 pub use crate::aggregator::error::Error;
 use crate::{
     aggregator::{
+        accumulator::Accumulator,
         aggregate_share::compute_aggregate_share,
+        error::{handle_ping_pong_error, ReportRejectedReason},
         error::{BatchMismatch, OptOutReason},
         query_type::{CollectableQueryType, UploadableQueryType},
         report_writer::{ReportWriteBatcher, WritableReport},
@@ -90,8 +92,6 @@ use std::{
 use tokio::{sync::Mutex, try_join};
 use tracing::{debug, info, trace_span, warn};
 use url::Url;
-
-use self::{accumulator::Accumulator, error::handle_ping_pong_error};
 
 pub mod accumulator;
 #[cfg(test)]
@@ -1410,6 +1410,7 @@ impl VdafOps {
                     *task.id(),
                     *report.metadata().id(),
                     *report.metadata().time(),
+                    ReportRejectedReason::TaskExpired,
                 )));
             }
         }
@@ -1426,6 +1427,7 @@ impl VdafOps {
                     *task.id(),
                     *report.metadata().id(),
                     *report.metadata().time(),
+                    ReportRejectedReason::TooOld,
                 )));
             }
         }
@@ -3166,7 +3168,7 @@ async fn send_request_to_helper<T: Encode>(
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::{Aggregator, Config, Error};
+    use crate::aggregator::{error::ReportRejectedReason, Aggregator, Config, Error};
     use assert_matches::assert_matches;
     use futures::future::try_join_all;
     use janus_aggregator_core::{
@@ -3535,11 +3537,18 @@ mod tests {
             .unwrap();
 
         // Try to upload the report, verify that we get the expected error.
-        assert_matches!(aggregator.handle_upload(task.id(), &report.get_encoded()).await.unwrap_err().as_ref(), Error::ReportRejected(err_task_id, err_report_id, err_time) => {
-            assert_eq!(task.id(), err_task_id);
-            assert_eq!(report.metadata().id(), err_report_id);
-            assert_eq!(report.metadata().time(), err_time);
-        });
+        let error = aggregator
+            .handle_upload(task.id(), &report.get_encoded())
+            .await
+            .unwrap_err();
+        assert_matches!(
+            error.as_ref(),
+            Error::ReportRejected(err_task_id, err_report_id, err_time, ReportRejectedReason::IntervalAlreadyCollected) => {
+                assert_eq!(task.id(), err_task_id);
+                assert_eq!(report.metadata().id(), err_report_id);
+                assert_eq!(report.metadata().time(), err_time);
+            }
+        );
     }
 
     #[tokio::test]

@@ -44,50 +44,58 @@ impl Handler for Error {
         match self {
             Error::InvalidConfiguration(_) => conn.with_status(Status::InternalServerError),
             Error::MessageDecode(_) => {
-                conn.with_problem_details(DapProblemType::InvalidMessage, None)
+                conn.with_problem_details(DapProblemType::InvalidMessage, None, None)
             }
-            Error::ReportRejected(task_id, _, _) => {
-                conn.with_problem_details(DapProblemType::ReportRejected, Some(task_id))
-            }
+            Error::ReportRejected(task_id, _, _, reason) => conn.with_problem_details(
+                DapProblemType::ReportRejected,
+                Some(task_id),
+                Some(reason.detail()),
+            ),
             Error::InvalidMessage(task_id, _) => {
-                conn.with_problem_details(DapProblemType::InvalidMessage, task_id.as_ref())
+                conn.with_problem_details(DapProblemType::InvalidMessage, task_id.as_ref(), None)
             }
             Error::StepMismatch { task_id, .. } => {
-                conn.with_problem_details(DapProblemType::StepMismatch, Some(task_id))
+                conn.with_problem_details(DapProblemType::StepMismatch, Some(task_id), None)
             }
             Error::UnrecognizedTask(task_id) => {
-                conn.with_problem_details(DapProblemType::UnrecognizedTask, Some(task_id))
+                conn.with_problem_details(DapProblemType::UnrecognizedTask, Some(task_id), None)
             }
-            Error::MissingTaskId => conn.with_problem_details(DapProblemType::MissingTaskId, None),
-            Error::UnrecognizedAggregationJob(task_id, _) => {
-                conn.with_problem_details(DapProblemType::UnrecognizedAggregationJob, Some(task_id))
+            Error::MissingTaskId => {
+                conn.with_problem_details(DapProblemType::MissingTaskId, None, None)
             }
+            Error::UnrecognizedAggregationJob(task_id, _) => conn.with_problem_details(
+                DapProblemType::UnrecognizedAggregationJob,
+                Some(task_id),
+                None,
+            ),
             Error::DeletedCollectionJob(_) => conn.with_status(Status::NoContent),
             Error::UnrecognizedCollectionJob(_) => conn.with_status(Status::NotFound),
             Error::OutdatedHpkeConfig(task_id, _) => {
-                conn.with_problem_details(DapProblemType::OutdatedConfig, Some(task_id))
+                conn.with_problem_details(DapProblemType::OutdatedConfig, Some(task_id), None)
             }
             Error::ReportTooEarly(task_id, _, _) => {
-                conn.with_problem_details(DapProblemType::ReportTooEarly, Some(task_id))
+                conn.with_problem_details(DapProblemType::ReportTooEarly, Some(task_id), None)
             }
             Error::UnauthorizedRequest(task_id) => {
-                conn.with_problem_details(DapProblemType::UnauthorizedRequest, Some(task_id))
+                conn.with_problem_details(DapProblemType::UnauthorizedRequest, Some(task_id), None)
             }
             Error::InvalidBatchSize(task_id, _) => {
-                conn.with_problem_details(DapProblemType::InvalidBatchSize, Some(task_id))
+                conn.with_problem_details(DapProblemType::InvalidBatchSize, Some(task_id), None)
             }
             Error::BatchInvalid(task_id, _) => {
-                conn.with_problem_details(DapProblemType::BatchInvalid, Some(task_id))
+                conn.with_problem_details(DapProblemType::BatchInvalid, Some(task_id), None)
             }
             Error::BatchOverlap(task_id, _) => {
-                conn.with_problem_details(DapProblemType::BatchOverlap, Some(task_id))
+                conn.with_problem_details(DapProblemType::BatchOverlap, Some(task_id), None)
             }
             Error::BatchMismatch(inner) => {
-                conn.with_problem_details(DapProblemType::BatchMismatch, Some(&inner.task_id))
+                conn.with_problem_details(DapProblemType::BatchMismatch, Some(&inner.task_id), None)
             }
-            Error::BatchQueriedTooManyTimes(task_id, _) => {
-                conn.with_problem_details(DapProblemType::BatchQueriedTooManyTimes, Some(task_id))
-            }
+            Error::BatchQueriedTooManyTimes(task_id, _) => conn.with_problem_details(
+                DapProblemType::BatchQueriedTooManyTimes,
+                Some(task_id),
+                None,
+            ),
             Error::Hpke(_)
             | Error::Datastore(_)
             | Error::Vdaf(_)
@@ -99,12 +107,12 @@ impl Handler for Error {
             | Error::TaskParameters(_) => conn.with_status(Status::InternalServerError),
             Error::AggregateShareRequestRejected(_, _) => conn.with_status(Status::BadRequest),
             Error::EmptyAggregation(task_id) => {
-                conn.with_problem_details(DapProblemType::InvalidMessage, Some(task_id))
+                conn.with_problem_details(DapProblemType::InvalidMessage, Some(task_id), None)
             }
             Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
             Error::BadRequest(_) => conn.with_status(Status::BadRequest),
             Error::InvalidTask(task_id, _) => {
-                conn.with_problem_details(DapProblemType::InvalidTask, Some(task_id))
+                conn.with_problem_details(DapProblemType::InvalidTask, Some(task_id), None)
             }
             Error::DifferentialPrivacy(_) => conn.with_status(Status::InternalServerError),
         }
@@ -649,6 +657,7 @@ mod tests {
             },
             collection_job_tests::setup_collection_job_test_case,
             empty_batch_aggregations,
+            error::ReportRejectedReason,
             http_handlers::{
                 aggregator_handler, aggregator_handler_with_aggregator,
                 test_util::{decode_response_body, take_problem_details},
@@ -1075,17 +1084,22 @@ mod tests {
             desired_type: &str,
             desired_title: &str,
             desired_task_id: &TaskId,
+            desired_detail: Option<&str>,
         ) {
+            let mut desired_response = json!({
+                "status": desired_status as u16,
+                "type": format!("urn:ietf:params:ppm:dap:error:{desired_type}"),
+                "title": desired_title,
+                "taskid": format!("{desired_task_id}"),
+            });
+            if let Some(detail) = desired_detail {
+                desired_response
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("detail".to_string(), json!(detail));
+            }
             assert_eq!(test_conn.status(), Some(desired_status));
-            assert_eq!(
-                take_problem_details(test_conn).await,
-                json!({
-                    "status": desired_status as u16,
-                    "type": format!("urn:ietf:params:ppm:dap:error:{desired_type}"),
-                    "title": desired_title,
-                    "taskid": format!("{desired_task_id}"),
-                }),
-            )
+            assert_eq!(take_problem_details(test_conn).await, desired_response);
         }
 
         let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
@@ -1154,6 +1168,7 @@ mod tests {
             "reportRejected",
             "Report could not be processed.",
             task.id(),
+            Some(ReportRejectedReason::TooOld.detail()),
         )
         .await;
 
@@ -1187,6 +1202,7 @@ mod tests {
             "outdatedConfig",
             "The message was generated using an outdated configuration.",
             task.id(),
+            None,
         )
         .await;
 
@@ -1214,6 +1230,7 @@ mod tests {
             "reportTooEarly",
             "Report could not be processed because it arrived too early.",
             task.id(),
+            None,
         )
         .await;
 
@@ -1241,6 +1258,7 @@ mod tests {
             "reportRejected",
             "Report could not be processed.",
             task_expire_soon.id(),
+            Some(ReportRejectedReason::TaskExpired.detail()),
         )
         .await;
 

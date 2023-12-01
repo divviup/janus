@@ -33,17 +33,29 @@ struct ProblemDocument<'a> {
     status: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
     taskid: &'a Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: &'a Option<&'static str>,
 }
 
 pub trait ProblemDetailsConnExt {
     /// Send a response containing a JSON-encoded problem details document for the given
     /// DAP-specific problem type, (optionally including the DAP task ID) and set the appropriate
     /// HTTP status code.
-    fn with_problem_details(self, error_type: DapProblemType, task_id: Option<&TaskId>) -> Self;
+    fn with_problem_details(
+        self,
+        error_type: DapProblemType,
+        task_id: Option<&TaskId>,
+        detail: Option<&'static str>,
+    ) -> Self;
 }
 
 impl ProblemDetailsConnExt for Conn {
-    fn with_problem_details(self, error_type: DapProblemType, task_id: Option<&TaskId>) -> Self {
+    fn with_problem_details(
+        self,
+        error_type: DapProblemType,
+        task_id: Option<&TaskId>,
+        detail: Option<&'static str>,
+    ) -> Self {
         let status = error_type.http_status();
 
         self.with_status(status as u16)
@@ -56,13 +68,17 @@ impl ProblemDetailsConnExt for Conn {
                 title: error_type.description(),
                 status: status as u16,
                 taskid: &task_id.as_ref().map(ToString::to_string),
+                detail: &detail,
             })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::{error::BatchMismatch, send_request_to_helper, Error};
+    use crate::aggregator::{
+        error::{BatchMismatch, ReportRejectedReason},
+        send_request_to_helper, Error,
+    };
     use assert_matches::assert_matches;
     use futures::future::join_all;
     use http::Method;
@@ -130,7 +146,12 @@ mod tests {
                 TestCase::new(Box::new(|| Error::InvalidConfiguration("test")), None),
                 TestCase::new(
                     Box::new(|| {
-                        Error::ReportRejected(random(), random(), RealClock::default().now())
+                        Error::ReportRejected(
+                            random(),
+                            random(),
+                            RealClock::default().now(),
+                            ReportRejectedReason::TaskExpired
+                        )
                     }),
                     Some(DapProblemType::ReportRejected),
                 ),

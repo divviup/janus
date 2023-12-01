@@ -1,4 +1,4 @@
-use super::Error;
+use super::{error::ReportRejectedReason, Error};
 use async_trait::async_trait;
 use janus_aggregator_core::{
     datastore::{self, models::LeaderStoredReport, Transaction},
@@ -60,6 +60,7 @@ impl UploadableQueryType for TimeInterval {
                     *report.task_id(),
                     *report.metadata().id(),
                     *report.metadata().time(),
+                    ReportRejectedReason::IntervalAlreadyCollected,
                 )
                 .into(),
             ));
