@@ -708,9 +708,9 @@ mod tests {
         AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep, BatchSelector,
         Collection, CollectionJobId, CollectionReq, Duration, Extension, ExtensionType,
         HpkeCiphertext, HpkeConfigId, HpkeConfigList, InputShareAad, Interval,
-        PartialBatchSelector, PrepareContinue, PrepareError, PrepareInit, PrepareResp,
-        PrepareStepResult, Query, Report, ReportId, ReportIdChecksum, ReportMetadata, ReportShare,
-        Role, TaskId, Time,
+        PartialBatchSelector, PlaintextInputShare, PrepareContinue, PrepareError, PrepareInit,
+        PrepareResp, PrepareStepResult, Query, Report, ReportId, ReportIdChecksum, ReportMetadata,
+        ReportShare, Role, TaskId, Time,
     };
     use prio::{
         codec::{Decode, Encode},
@@ -1172,7 +1172,7 @@ mod tests {
         )
         .await;
 
-        // should reject a report using the wrong HPKE config for the leader, and reply with
+        // Should reject a report using the wrong HPKE config for the leader, and reply with
         // the error type outdatedConfig.
         let unused_hpke_config_id = (0..)
             .map(HpkeConfigId::from)
@@ -1262,6 +1262,96 @@ mod tests {
         )
         .await;
 
+        // Reject reports with an undecodeable public share.
+        let mut bad_public_share_report = create_report(&leader_task, clock.now());
+        bad_public_share_report = Report::new(
+            bad_public_share_report.metadata().clone(),
+            // Some obviously wrong public share.
+            vec![0; 10],
+            bad_public_share_report
+                .leader_encrypted_input_share()
+                .clone(),
+            bad_public_share_report
+                .helper_encrypted_input_share()
+                .clone(),
+        );
+        let mut test_conn = put(task.report_upload_uri().unwrap().path())
+            .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
+            .with_request_body(bad_public_share_report.get_encoded())
+            .run_async(&handler)
+            .await;
+        check_response(
+            &mut test_conn,
+            Status::BadRequest,
+            "reportRejected",
+            "Report could not be processed.",
+            leader_task.id(),
+            Some(ReportRejectedReason::PublicShareDecodeFailure.detail()),
+        )
+        .await;
+
+        // Reject reports which are not decryptable.
+        let undecryptable_report = create_report_custom(
+            &leader_task,
+            clock.now(),
+            *accepted_report_id,
+            // Encrypt report with some arbitrary key that has the same ID as an existing one.
+            &generate_test_hpke_config_and_private_key_with_id(
+                (*leader_task.current_hpke_key().config().id()).into(),
+            ),
+        );
+        let mut test_conn = put(task.report_upload_uri().unwrap().path())
+            .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
+            .with_request_body(undecryptable_report.get_encoded())
+            .run_async(&handler)
+            .await;
+        check_response(
+            &mut test_conn,
+            Status::BadRequest,
+            "reportRejected",
+            "Report could not be processed.",
+            leader_task.id(),
+            Some(ReportRejectedReason::LeaderDecryptFailure.detail()),
+        )
+        .await;
+
+        // Reject reports whose leader input share is corrupt.
+        let mut bad_leader_input_share_report = create_report(&leader_task, clock.now());
+        bad_leader_input_share_report = Report::new(
+            bad_leader_input_share_report.metadata().clone(),
+            bad_leader_input_share_report.public_share().to_vec(),
+            hpke::seal(
+                leader_task.current_hpke_key().config(),
+                &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader),
+                // Some obviously wrong payload.
+                &PlaintextInputShare::new(Vec::new(), vec![0; 100]).get_encoded(),
+                &InputShareAad::new(
+                    *task.id(),
+                    bad_leader_input_share_report.metadata().clone(),
+                    bad_leader_input_share_report.public_share().to_vec(),
+                )
+                .get_encoded(),
+            )
+            .unwrap(),
+            bad_leader_input_share_report
+                .helper_encrypted_input_share()
+                .clone(),
+        );
+        let mut test_conn = put(task.report_upload_uri().unwrap().path())
+            .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
+            .with_request_body(bad_leader_input_share_report.get_encoded())
+            .run_async(&handler)
+            .await;
+        check_response(
+            &mut test_conn,
+            Status::BadRequest,
+            "reportRejected",
+            "Report could not be processed.",
+            leader_task.id(),
+            Some(ReportRejectedReason::LeaderInputShareDecodeFailure.detail()),
+        )
+        .await;
+
         // Check for appropriate CORS headers in response to a preflight request.
         let test_conn = TestConn::build(
             trillium::Method::Options,
@@ -1286,21 +1376,7 @@ mod tests {
         let test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::Origin, "https://example.com/")
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-            .with_request_body(
-                Report::new(
-                    ReportMetadata::new(
-                        random(),
-                        clock
-                            .now()
-                            .to_batch_interval_start(task.time_precision())
-                            .unwrap(),
-                    ),
-                    report.public_share().to_vec(),
-                    report.leader_encrypted_input_share().clone(),
-                    report.helper_encrypted_input_share().clone(),
-                )
-                .get_encoded(),
-            )
+            .with_request_body(report.get_encoded())
             .run_async(&handler)
             .await;
         assert!(test_conn.status().unwrap().is_success());

@@ -1387,6 +1387,16 @@ impl VdafOps {
         C: Clock,
         Q: UploadableQueryType,
     {
+        // Shorthand function for generating an Error::ReportRejected with proper parameters.
+        let reject_report = |reason| {
+            Arc::new(Error::ReportRejected(
+                *task.id(),
+                *report.metadata().id(),
+                *report.metadata().time(),
+                reason,
+            ))
+        };
+
         let report_deadline = clock
             .now()
             .add(task.tolerable_clock_skew())
@@ -1406,12 +1416,7 @@ impl VdafOps {
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
         if let Some(task_expiration) = task.task_expiration() {
             if report.metadata().time().is_after(task_expiration) {
-                return Err(Arc::new(Error::ReportRejected(
-                    *task.id(),
-                    *report.metadata().id(),
-                    *report.metadata().time(),
-                    ReportRejectedReason::TaskExpired,
-                )));
+                return Err(reject_report(ReportRejectedReason::TaskExpired));
             }
         }
 
@@ -1423,12 +1428,7 @@ impl VdafOps {
                 .add(report_expiry_age)
                 .map_err(|err| Arc::new(Error::from(err)))?;
             if clock.now().is_after(&report_expiry_time) {
-                return Err(Arc::new(Error::ReportRejected(
-                    *task.id(),
-                    *report.metadata().id(),
-                    *report.metadata().time(),
-                    ReportRejectedReason::TooOld,
-                )));
+                return Err(reject_report(ReportRejectedReason::TooOld));
             }
         }
 
@@ -1436,7 +1436,7 @@ impl VdafOps {
         // report before storing them in the datastore. The spec does not require the /upload
         // handler to do this, but it exercises HPKE decryption, saves us the trouble of storing
         // reports we can't use, and lets the aggregation job handler assume the values it reads
-        // from the datastore are valid. We don't inform the client if this fails.
+        // from the datastore are valid.
         let public_share =
             match A::PublicShare::get_decoded_with_param(vdaf.as_ref(), report.public_share()) {
                 Ok(public_share) => public_share,
@@ -1448,7 +1448,9 @@ impl VdafOps {
                         "public share decoding failed",
                     );
                     upload_decode_failure_counter.add(1, &[]);
-                    return Ok(());
+                    return Err(reject_report(
+                        ReportRejectedReason::PublicShareDecodeFailure,
+                    ));
                 }
             };
 
@@ -1494,7 +1496,7 @@ impl VdafOps {
             }
         };
 
-        let encoded_leader_plaintext_input_share = match decryption_result {
+        let encoded_leader_input_share = match decryption_result {
             Ok(plaintext) => plaintext,
             Err(error) => {
                 info!(
@@ -1504,18 +1506,24 @@ impl VdafOps {
                     "Report decryption failed",
                 );
                 upload_decrypt_failure_counter.add(1, &[]);
-                return Ok(());
+                return Err(reject_report(ReportRejectedReason::LeaderDecryptFailure));
             }
         };
 
-        let leader_plaintext_input_share =
-            PlaintextInputShare::get_decoded(&encoded_leader_plaintext_input_share)
-                .map_err(|err| Arc::new(Error::from(err)))?;
+        let decoded_leader_input_share = PlaintextInputShare::get_decoded(
+            &encoded_leader_input_share,
+        )
+        .and_then(|plaintext_input_share| {
+            Ok((
+                plaintext_input_share.extensions().to_vec(),
+                A::InputShare::get_decoded_with_param(
+                    &(&vdaf, Role::Leader.index().unwrap()),
+                    plaintext_input_share.payload(),
+                )?,
+            ))
+        });
 
-        let leader_input_share = match A::InputShare::get_decoded_with_param(
-            &(&vdaf, Role::Leader.index().unwrap()),
-            leader_plaintext_input_share.payload(),
-        ) {
+        let (extensions, leader_input_share) = match decoded_leader_input_share {
             Ok(leader_input_share) => leader_input_share,
             Err(err) => {
                 warn!(
@@ -1525,7 +1533,9 @@ impl VdafOps {
                     "Leader input share decoding failed",
                 );
                 upload_decode_failure_counter.add(1, &[]);
-                return Ok(());
+                return Err(reject_report(
+                    ReportRejectedReason::LeaderInputShareDecodeFailure,
+                ));
             }
         };
 
@@ -1533,7 +1543,7 @@ impl VdafOps {
             *task.id(),
             report.metadata().clone(),
             public_share,
-            Vec::from(leader_plaintext_input_share.extensions()),
+            extensions,
             leader_input_share,
             report.helper_encrypted_input_share().clone(),
         );

@@ -27,7 +27,7 @@ pub enum Error {
     /// Corresponds to `reportRejected`, §3.2
     #[error("task {0}: report {1} rejected: {2}")]
     ReportRejected(TaskId, ReportId, Time, ReportRejectedReason),
-    /// Corresponds to `reportTooEarly`, §3.2. A report was rejected becuase the timestamp is too
+    /// Corresponds to `reportTooEarly`, §3.2. A report was rejected because the timestamp is too
     /// far in the future, §4.3.2.
     #[error("task {0}: report {1} too early: {2}")]
     ReportTooEarly(TaskId, ReportId, Time),
@@ -135,6 +135,9 @@ pub enum Error {
 #[derive(Debug)]
 pub enum ReportRejectedReason {
     IntervalAlreadyCollected,
+    LeaderDecryptFailure,
+    LeaderInputShareDecodeFailure,
+    PublicShareDecodeFailure,
     TaskExpired,
     TooOld,
 }
@@ -144,6 +147,15 @@ impl ReportRejectedReason {
         match self {
             ReportRejectedReason::IntervalAlreadyCollected => {
                 "Report falls into a time interval that has already been collected."
+            }
+            ReportRejectedReason::LeaderDecryptFailure => {
+                "Leader's report share could not be decrypted."
+            }
+            ReportRejectedReason::LeaderInputShareDecodeFailure => {
+                "Leader's input share could not be decoded."
+            }
+            ReportRejectedReason::PublicShareDecodeFailure => {
+                "Report public share could not be decoded."
             }
             ReportRejectedReason::TaskExpired => "Task has expired.",
             ReportRejectedReason::TooOld => "Report timestamp is too old.",
