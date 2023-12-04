@@ -19,7 +19,7 @@ janus_messages.workspace = true
 opentelemetry.workspace = true
 querystring = "1.1.0"
 rand = { version = "0.8", features = ["min_const_gen"] }
-ring = "0.17.5"
+ring = "0.17.6"
 serde.workspace = true
 serde_json.workspace = true
 serde_test.workspace = true
