@@ -44,7 +44,7 @@ ARG BINARY
 RUN cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_interop_binaries \
     --bin $BINARY
 
-FROM alpine:3.18.4 AS final
+FROM alpine:3.18.5 AS final
 ARG BINARY
 ARG PROFILE
 RUN mkdir /logs
