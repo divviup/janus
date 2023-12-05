@@ -51,9 +51,12 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+mod credential;
+
 use backoff::backoff::Backoff;
 pub use backoff::ExponentialBackoff;
 use chrono::{DateTime, Duration, TimeZone, Utc};
+pub use credential::PrivateCollectorCredential;
 use derivative::Derivative;
 pub use janus_core::auth_tokens::AuthenticationToken;
 use janus_core::{
