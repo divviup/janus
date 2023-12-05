@@ -25,51 +25,58 @@ static PROBLEM_DETAILS_JSON_MEDIA_TYPE: &str = "application/problem+json";
 
 /// Serialization helper struct for JSON problem details error responses. See
 /// https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-3.2.
-#[derive(Serialize)]
-struct ProblemDocument<'a> {
+#[derive(Debug, Serialize)]
+pub struct ProblemDocument<'a> {
     #[serde(rename = "type")]
     type_: &'static str,
     title: &'static str,
     status: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
-    taskid: &'a Option<String>,
+    taskid: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    detail: &'a Option<&'static str>,
+    detail: Option<&'a str>,
+}
+
+impl<'a> ProblemDocument<'a> {
+    pub fn new(error_type: DapProblemType) -> Self {
+        Self {
+            type_: error_type.type_uri(),
+            title: error_type.description(),
+            status: error_type.http_status().into(),
+            taskid: None,
+            detail: None,
+        }
+    }
+
+    pub fn with_task_id(self, taskid: &TaskId) -> Self {
+        Self {
+            taskid: Some(taskid.to_string()),
+            ..self
+        }
+    }
+
+    pub fn with_detail(self, detail: &'a str) -> Self {
+        Self {
+            detail: Some(detail),
+            ..self
+        }
+    }
 }
 
 pub trait ProblemDetailsConnExt {
     /// Send a response containing a JSON-encoded problem details document for the given
-    /// DAP-specific problem type, (optionally including the DAP task ID) and set the appropriate
-    /// HTTP status code.
-    fn with_problem_details(
-        self,
-        error_type: DapProblemType,
-        task_id: Option<&TaskId>,
-        detail: Option<&'static str>,
-    ) -> Self;
+    /// DAP-specific problem document, and set the appropriate HTTP status code.
+    fn with_problem_document(self, problem_document: &ProblemDocument) -> Self;
 }
 
 impl ProblemDetailsConnExt for Conn {
-    fn with_problem_details(
-        self,
-        error_type: DapProblemType,
-        task_id: Option<&TaskId>,
-        detail: Option<&'static str>,
-    ) -> Self {
-        let status = error_type.http_status();
-
-        self.with_status(status as u16)
+    fn with_problem_document(self, problem_document: &ProblemDocument) -> Self {
+        self.with_status(problem_document.status)
             .with_header(
                 KnownHeaderName::ContentType,
                 PROBLEM_DETAILS_JSON_MEDIA_TYPE,
             )
-            .with_json(&ProblemDocument {
-                type_: error_type.type_uri(),
-                title: error_type.description(),
-                status: status as u16,
-                taskid: &task_id.as_ref().map(ToString::to_string),
-                detail: &detail,
-            })
+            .with_json(problem_document)
     }
 }
 

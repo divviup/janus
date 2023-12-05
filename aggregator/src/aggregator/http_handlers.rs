@@ -1,5 +1,5 @@
 use super::{Aggregator, Config, Error};
-use crate::aggregator::problem_details::ProblemDetailsConnExt;
+use crate::aggregator::problem_details::{ProblemDetailsConnExt, ProblemDocument};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{datastore::Datastore, instrumented};
@@ -44,57 +44,59 @@ impl Handler for Error {
         match self {
             Error::InvalidConfiguration(_) => conn.with_status(Status::InternalServerError),
             Error::MessageDecode(_) => {
-                conn.with_problem_details(DapProblemType::InvalidMessage, None, None)
+                conn.with_problem_document(&ProblemDocument::new(DapProblemType::InvalidMessage))
             }
-            Error::ReportRejected(task_id, _, _, reason) => conn.with_problem_details(
-                DapProblemType::ReportRejected,
-                Some(task_id),
-                Some(reason.detail()),
+            Error::ReportRejected(task_id, _, _, reason) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::ReportRejected)
+                    .with_task_id(task_id)
+                    .with_detail(reason.detail()),
             ),
             Error::InvalidMessage(task_id, _) => {
-                conn.with_problem_details(DapProblemType::InvalidMessage, task_id.as_ref(), None)
+                let mut doc = ProblemDocument::new(DapProblemType::InvalidMessage);
+                if let Some(task_id) = task_id {
+                    doc = doc.with_task_id(task_id);
+                }
+                conn.with_problem_document(&doc)
             }
-            Error::StepMismatch { task_id, .. } => {
-                conn.with_problem_details(DapProblemType::StepMismatch, Some(task_id), None)
-            }
-            Error::UnrecognizedTask(task_id) => {
-                conn.with_problem_details(DapProblemType::UnrecognizedTask, Some(task_id), None)
-            }
+            Error::StepMismatch { task_id, .. } => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::StepMismatch).with_task_id(task_id),
+            ),
+            Error::UnrecognizedTask(task_id) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::UnrecognizedTask).with_task_id(task_id),
+            ),
             Error::MissingTaskId => {
-                conn.with_problem_details(DapProblemType::MissingTaskId, None, None)
+                conn.with_problem_document(&ProblemDocument::new(DapProblemType::MissingTaskId))
             }
-            Error::UnrecognizedAggregationJob(task_id, _) => conn.with_problem_details(
-                DapProblemType::UnrecognizedAggregationJob,
-                Some(task_id),
-                None,
+            Error::UnrecognizedAggregationJob(task_id, _) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::UnrecognizedAggregationJob)
+                    .with_task_id(task_id),
             ),
             Error::DeletedCollectionJob(_) => conn.with_status(Status::NoContent),
             Error::UnrecognizedCollectionJob(_) => conn.with_status(Status::NotFound),
-            Error::OutdatedHpkeConfig(task_id, _) => {
-                conn.with_problem_details(DapProblemType::OutdatedConfig, Some(task_id), None)
-            }
-            Error::ReportTooEarly(task_id, _, _) => {
-                conn.with_problem_details(DapProblemType::ReportTooEarly, Some(task_id), None)
-            }
-            Error::UnauthorizedRequest(task_id) => {
-                conn.with_problem_details(DapProblemType::UnauthorizedRequest, Some(task_id), None)
-            }
-            Error::InvalidBatchSize(task_id, _) => {
-                conn.with_problem_details(DapProblemType::InvalidBatchSize, Some(task_id), None)
-            }
-            Error::BatchInvalid(task_id, _) => {
-                conn.with_problem_details(DapProblemType::BatchInvalid, Some(task_id), None)
-            }
-            Error::BatchOverlap(task_id, _) => {
-                conn.with_problem_details(DapProblemType::BatchOverlap, Some(task_id), None)
-            }
-            Error::BatchMismatch(inner) => {
-                conn.with_problem_details(DapProblemType::BatchMismatch, Some(&inner.task_id), None)
-            }
-            Error::BatchQueriedTooManyTimes(task_id, _) => conn.with_problem_details(
-                DapProblemType::BatchQueriedTooManyTimes,
-                Some(task_id),
-                None,
+            Error::OutdatedHpkeConfig(task_id, _) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::OutdatedConfig).with_task_id(task_id),
+            ),
+            Error::ReportTooEarly(task_id, _, _) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::ReportTooEarly).with_task_id(task_id),
+            ),
+            Error::UnauthorizedRequest(task_id) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::UnauthorizedRequest).with_task_id(task_id),
+            ),
+            Error::InvalidBatchSize(task_id, _) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::InvalidBatchSize).with_task_id(task_id),
+            ),
+            Error::BatchInvalid(task_id, _) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::BatchInvalid).with_task_id(task_id),
+            ),
+            Error::BatchOverlap(task_id, _) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::BatchOverlap).with_task_id(task_id),
+            ),
+            Error::BatchMismatch(inner) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::BatchMismatch).with_task_id(&inner.task_id),
+            ),
+            Error::BatchQueriedTooManyTimes(task_id, _) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::BatchQueriedTooManyTimes)
+                    .with_task_id(task_id),
             ),
             Error::Hpke(_)
             | Error::Datastore(_)
@@ -106,14 +108,14 @@ impl Handler for Error {
             | Error::Http { .. }
             | Error::TaskParameters(_) => conn.with_status(Status::InternalServerError),
             Error::AggregateShareRequestRejected(_, _) => conn.with_status(Status::BadRequest),
-            Error::EmptyAggregation(task_id) => {
-                conn.with_problem_details(DapProblemType::InvalidMessage, Some(task_id), None)
-            }
+            Error::EmptyAggregation(task_id) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::InvalidMessage).with_task_id(task_id),
+            ),
             Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
             Error::BadRequest(_) => conn.with_status(Status::BadRequest),
-            Error::InvalidTask(task_id, _) => {
-                conn.with_problem_details(DapProblemType::InvalidTask, Some(task_id), None)
-            }
+            Error::InvalidTask(task_id, _) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::InvalidTask).with_task_id(task_id),
+            ),
             Error::DifferentialPrivacy(_) => conn.with_status(Status::InternalServerError),
         }
     }
