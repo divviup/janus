@@ -325,7 +325,7 @@ struct HpkeConfigOptions {
         help_heading = "HPKE Configuration",
         display_order = 0,
         requires = "hpke_private_key",
-        conflicts_with_all = ["hpke_config_json", "hpke_config_json_contents"]
+        conflicts_with_all = ["collector_credential_file", "collector_credential"]
     )]
     hpke_config: Option<HpkeConfig>,
     /// The collector's HPKE private key, encoded with base64url
@@ -337,20 +337,23 @@ struct HpkeConfigOptions {
         help_heading = "HPKE Configuration",
         display_order = 1,
         requires = "hpke_config",
-        conflicts_with_all = ["hpke_config_json", "hpke_config_json_contents"]
+        conflicts_with_all = ["collector_credential_file", "collector_credential"]
     )]
     hpke_private_key: Option<HpkePrivateKey>,
-    /// Path to a JSON document containing the collector's HPKE configuration and private key, in
-    /// the format output by `divviup collector-credential generate`
+    /// Path to a file containing private collector credentials
+    ///
+    /// This can be obtained with the command `divviup collector-credential generate`.
     #[clap(
         long,
         help_heading = "HPKE Configuration",
         display_order = 2,
-        conflicts_with_all = ["hpke_config", "hpke_private_key", "hpke_config_json_contents"]
+        conflicts_with_all = ["hpke_config", "hpke_private_key", "collector_credential"],
+        visible_alias = "hpke-config-json",
     )]
-    hpke_config_json: Option<PathBuf>,
-    /// Contents of a JSON document containing the collector's HPKE configuration and private key,
-    /// in the format output by `divviup collector-credential generate`
+    collector_credential_file: Option<PathBuf>,
+    /// Private collector credentials
+    ///
+    /// This can be obtained with the command `divviup collector-credential generate`.
     #[clap(
         long,
         value_parser = private_collector_credential_parser,
@@ -358,9 +361,9 @@ struct HpkeConfigOptions {
         hide_env_values = true,
         help_heading = "HPKE Configuration",
         display_order = 3,
-        conflicts_with_all = ["hpke_config", "hpke_private_key", "hpke_config_json"]
+        conflicts_with_all = ["hpke_config", "hpke_private_key", "collector_credential_file"],
     )]
-    hpke_config_json_contents: Option<PrivateCollectorCredential>,
+    collector_credential: Option<PrivateCollectorCredential>,
 }
 
 #[derive(Debug, PartialEq, Eq, Subcommand)]
@@ -451,22 +454,22 @@ impl Options {
         match (
             &self.hpke_config.hpke_config,
             &self.hpke_config.hpke_private_key,
-            &self.hpke_config.hpke_config_json,
-            &self.hpke_config.hpke_config_json_contents,
+            &self.hpke_config.collector_credential_file,
+            &self.hpke_config.collector_credential,
         ) {
             (Some(config), Some(private), _, _) => {
                 Ok(HpkeKeypair::new(config.clone(), private.clone()))
             }
-            (None, None, Some(hpke_config_json_path), _) => {
-                let reader =
-                    File::open(hpke_config_json_path).context("could not open HPKE config file")?;
+            (None, None, Some(collector_credential_file), _) => {
+                let reader = File::open(collector_credential_file)
+                    .context("could not open HPKE config file")?;
                 let credentials: PrivateCollectorCredential =
                     serde_json::from_reader(reader).context("could not parse HPKE config file")?;
                 credentials
                     .hpke_keypair()
                     .context("could not convert HPKE config")
             }
-            (None, None, None, Some(hpke_config_json_contents)) => hpke_config_json_contents
+            (None, None, None, Some(collector_credential)) => collector_credential
                 .hpke_keypair()
                 .context("could not convert HPKE config"),
             _ => unreachable!(),
@@ -841,8 +844,8 @@ mod tests {
             hpke_config: HpkeConfigOptions {
                 hpke_config: Some(hpke_keypair.config().clone()),
                 hpke_private_key: Some(hpke_keypair.private_key().clone()),
-                hpke_config_json: None,
-                hpke_config_json_contents: None,
+                collector_credential_file: None,
+                collector_credential: None,
             },
             vdaf: VdafType::Count,
             length: None,
@@ -1087,8 +1090,8 @@ mod tests {
             hpke_config: HpkeConfigOptions {
                 hpke_config: Some(hpke_keypair.config().clone()),
                 hpke_private_key: Some(hpke_keypair.private_key().clone()),
-                hpke_config_json: None,
-                hpke_config_json_contents: None,
+                collector_credential_file: None,
+                collector_credential: None,
             },
             vdaf: VdafType::Count,
             length: None,
@@ -1131,8 +1134,8 @@ mod tests {
             hpke_config: HpkeConfigOptions {
                 hpke_config: Some(hpke_keypair.config().clone()),
                 hpke_private_key: Some(hpke_keypair.private_key().clone()),
-                hpke_config_json: None,
-                hpke_config_json_contents: None,
+                collector_credential_file: None,
+                collector_credential: None,
             },
             vdaf: VdafType::Count,
             length: None,
@@ -1346,49 +1349,62 @@ mod tests {
     }
 
     #[test]
-    fn hpke_config_json_file() {
-        let hpke_keypair =
+    fn collector_credential_file() {
+        let collector_credential =
             serde_json::from_str::<PrivateCollectorCredential>(SAMPLE_COLLECTOR_CREDENTIAL)
-                .unwrap()
-                .hpke_keypair()
                 .unwrap();
 
-        let mut hpke_config_file = NamedTempFile::new().unwrap();
-        hpke_config_file
+        let mut collector_credential_file = NamedTempFile::new().unwrap();
+        collector_credential_file
             .write_all(SAMPLE_COLLECTOR_CREDENTIAL.as_bytes())
             .unwrap();
-        let hpke_config_file_path = hpke_config_file.into_temp_path();
+        let collector_credential_file_path = collector_credential_file.into_temp_path();
 
-        let options = Options {
-            subcommand: None,
-            task_id: random(),
-            leader: Url::parse("https://example.com").unwrap(),
-            authentication: AuthenticationOptions {
-                dap_auth_token: Some(random()),
-                authorization_bearer_token: None,
-            },
-            hpke_config: HpkeConfigOptions {
-                hpke_config: None,
-                hpke_private_key: None,
-                hpke_config_json: Some(hpke_config_file_path.to_path_buf()),
-                hpke_config_json_contents: None,
-            },
-            vdaf: VdafType::Count,
-            length: None,
-            bits: None,
-            query: QueryOptions {
-                batch_interval_start: Some(1_000_000),
-                batch_interval_duration: Some(1_000),
-                batch_id: None,
-                current_batch: false,
-            },
-        };
+        let task_id: TaskId = random();
+        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
+        let bearer_token: BearerToken = random();
+        let base_arguments = Vec::from([
+            "collect".to_string(),
+            format!("--task-id={task_id_encoded}"),
+            "--leader".to_string(),
+            "https://example.com/dap/".to_string(),
+            "--batch-interval-start".to_string(),
+            "1000000".to_string(),
+            "--batch-interval-duration".to_string(),
+            "1000".to_string(),
+            "--vdaf=count".to_string(),
+            format!("--authorization-bearer-token={}", bearer_token.as_str()),
+        ]);
 
-        assert_eq!(options.hpke_keypair().unwrap(), hpke_keypair);
+        let mut arguments = base_arguments.clone();
+        arguments.push(format!(
+            "--collector-credential-file={}",
+            collector_credential_file_path.to_string_lossy(),
+        ));
+        assert_eq!(
+            Options::try_parse_from(arguments)
+                .unwrap()
+                .hpke_keypair()
+                .unwrap(),
+            collector_credential.hpke_keypair().unwrap(),
+        );
+
+        let mut backcompat_arguments = base_arguments.clone();
+        backcompat_arguments.push(format!(
+            "--hpke-config-json={}",
+            collector_credential_file_path.to_string_lossy(),
+        ));
+        assert_eq!(
+            Options::try_parse_from(backcompat_arguments)
+                .unwrap()
+                .hpke_keypair()
+                .unwrap(),
+            collector_credential.hpke_keypair().unwrap(),
+        );
     }
 
     #[test]
-    fn hpke_config_json_contents() {
+    fn collector_credential() {
         let collector_credential =
             serde_json::from_str::<PrivateCollectorCredential>(SAMPLE_COLLECTOR_CREDENTIAL)
                 .unwrap();
@@ -1407,17 +1423,14 @@ mod tests {
             "1000".to_string(),
             "--vdaf=count".to_string(),
             format!("--authorization-bearer-token={}", bearer_token.as_str()),
-            format!(
-                "--hpke-config-json-contents={}",
-                SAMPLE_COLLECTOR_CREDENTIAL
-            ),
+            format!("--collector-credential={}", SAMPLE_COLLECTOR_CREDENTIAL),
         ]);
 
         assert_eq!(
             Options::try_parse_from(base_arguments)
                 .unwrap()
                 .hpke_config
-                .hpke_config_json_contents
+                .collector_credential
                 .unwrap(),
             collector_credential,
         );
@@ -1446,8 +1459,8 @@ mod tests {
             hpke_config: HpkeConfigOptions {
                 hpke_config: Some(hpke_keypair.config().clone()),
                 hpke_private_key: Some(hpke_keypair.private_key().clone()),
-                hpke_config_json: None,
-                hpke_config_json_contents: None,
+                collector_credential_file: None,
+                collector_credential: None,
             },
             vdaf: VdafType::Count,
             length: None,
@@ -1530,8 +1543,8 @@ mod tests {
             hpke_config: HpkeConfigOptions {
                 hpke_config: Some(hpke_keypair.config().clone()),
                 hpke_private_key: Some(hpke_keypair.private_key().clone()),
-                hpke_config_json: None,
-                hpke_config_json_contents: None,
+                collector_credential_file: None,
+                collector_credential: None,
             },
             vdaf: VdafType::Count,
             length: None,
