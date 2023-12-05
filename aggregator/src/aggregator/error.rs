@@ -12,7 +12,12 @@ use std::{
 };
 use tracing::info;
 
-/// Errors returned by functions and methods in this module
+/// Errors returned by functions and methods in this module.
+///
+/// Some variants correspond to errors defined in DAP. See the [DAP specification] for error
+/// message details.
+///
+/// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-errors
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// An invalid configuration was passed.
@@ -24,17 +29,18 @@ pub enum Error {
     /// Error handling a message.
     #[error("invalid message: {0}")]
     Message(#[from] janus_messages::Error),
-    /// Corresponds to `reportRejected`, §3.2
+    /// Corresponds to `reportRejected` in DAP. A report was rejected for some reason that is not
+    /// specified in DAP.
     #[error("task {0}: report {1} rejected: {2}")]
     ReportRejected(TaskId, ReportId, Time, ReportRejectedReason),
-    /// Corresponds to `reportTooEarly`, §3.2. A report was rejected because the timestamp is too
-    /// far in the future, §4.3.2.
+    /// Corresponds to `reportTooEarly` in DAP. A report was rejected because the timestamp is too
+    /// far in the future.
     #[error("task {0}: report {1} too early: {2}")]
     ReportTooEarly(TaskId, ReportId, Time),
-    /// Corresponds to `invalidMessage`, §3.2
+    /// Corresponds to `invalidMessage` in DAP.
     #[error("task {0:?}: invalid message: {1}")]
     InvalidMessage(Option<TaskId>, &'static str),
-    /// Corresponds to `stepMismatch`
+    /// Corresponds to `stepMismatch in DAP`
     #[error(
         "task {task_id}: unexpected step in aggregation job {aggregation_job_id} (expected \
          {expected_step}, got {got_step})"
@@ -45,10 +51,10 @@ pub enum Error {
         expected_step: AggregationJobStep,
         got_step: AggregationJobStep,
     },
-    /// Corresponds to `unrecognizedTask`, §3.2
+    /// Corresponds to `unrecognizedTask` in DAP.
     #[error("task {0}: unrecognized task")]
     UnrecognizedTask(TaskId),
-    /// Corresponds to `missingTaskID`, §3.2
+    /// Corresponds to `missingTaskID` in DAP.
     #[error("no task ID in request")]
     MissingTaskId,
     /// An attempt was made to act on an unknown aggregation job.
@@ -60,10 +66,10 @@ pub enum Error {
     /// An attempt was made to act on a known but deleted collection job.
     #[error("deleted collection job: {0}")]
     DeletedCollectionJob(CollectionJobId),
-    /// Corresponds to `outdatedHpkeConfig`, §3.2
+    /// Corresponds to `outdatedHpkeConfig` in DAP.
     #[error("task {0}: outdated HPKE config: {1}")]
     OutdatedHpkeConfig(TaskId, HpkeConfigId),
-    /// Corresponds to `unauthorizedRequest`, §3.2
+    /// Corresponds to `unauthorizedRequest` in DAP.
     #[error("task {0}: unauthorized request")]
     UnauthorizedRequest(TaskId),
     /// An error from the datastore.
@@ -72,21 +78,23 @@ pub enum Error {
     /// An error from the underlying VDAF library.
     #[error("VDAF error: {0}")]
     Vdaf(#[from] VdafError),
-    /// A collect or aggregate share request was rejected because the interval failed boundary
-    /// checks (§4.5.6).
+    /// Corresponds to `batchInvalid` in DAP. A collect or aggregate share request was rejected
+    /// because the interval failed boundary checks.
     #[error("task {0}: invalid batch interval: {1}")]
     BatchInvalid(TaskId, String),
-    /// The number of reports in the batch is invalid for the task's parameters.
+    /// Corresponds to `invalidBatchSize in DAP. The number of reports in the batch is invalid for
+    /// the task's parameters.
     #[error("task {0}: invalid number of reports ({1})")]
     InvalidBatchSize(TaskId, u64),
     #[error("URL parse error: {0}")]
     Url(#[from] url::ParseError),
-    /// The checksum or report count in one aggregator's aggregate share does not match the other
-    /// aggregator's aggregate share, suggesting different sets of reports were aggregated.
+    /// Corresponds to `batchMismatch` in DAP. The checksum or report count in one aggregator's
+    /// aggregate share does not match the other aggregator's aggregate share, suggesting different
+    /// sets of reports were aggregated.
     #[error("{0}")]
     BatchMismatch(Box<BatchMismatch>),
-    /// A collect or aggregate share request was rejected because the queries against a single batch
-    /// exceed the task's `max_batch_query_count` (§4.5.6).
+    /// Corresponds to `batchQueriedTooManyTimes` in DAP. A collect or aggregate share request was
+    /// rejected because the queries against a single batch exceed the task's `max_batch_query_count`.
     #[error("task {0}: batch queried too many times ({1})")]
     BatchQueriedTooManyTimes(TaskId, u64),
     /// A collect or aggregate share request was rejected because the batch overlaps with a
@@ -124,7 +132,9 @@ pub enum Error {
     /// A catch-all error representing an issue with a request.
     #[error("request error: {0}")]
     BadRequest(String),
-    /// Corresponds to taskprov invalidType (§2)
+    /// Corresponds to taskprov `invalidTask`. See the [Taskprov specification][1] for details.
+    ///
+    /// [1]: https://www.ietf.org/archive/id/draft-wang-ppm-dap-taskprov-04.html#name-conventions-and-definitions
     #[error("aggregator has opted out of the indicated task: {1}")]
     InvalidTask(TaskId, OptOutReason),
     /// An error occurred when trying to ensure differential privacy.

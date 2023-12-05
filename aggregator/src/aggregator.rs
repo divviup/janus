@@ -1403,7 +1403,7 @@ impl VdafOps {
             .map_err(|err| Arc::new(Error::from(err)))?;
 
         // Reject reports from too far in the future.
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-4.4.2-21
         if report.metadata().time().is_after(&report_deadline) {
             return Err(Arc::new(Error::ReportTooEarly(
                 *task.id(),
@@ -1413,7 +1413,7 @@ impl VdafOps {
         }
 
         // Reject reports after a task has expired.
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-4.4.2-20
         if let Some(task_expiration) = task.task_expiration() {
             if report.metadata().time().is_after(task_expiration) {
                 return Err(reject_report(ReportRejectedReason::TaskExpired));
@@ -1477,7 +1477,7 @@ impl VdafOps {
 
         let decryption_result = match (task_hpke_keypair, global_hpke_keypair) {
             // Verify that the report's HPKE config ID is known.
-            // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
+            // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-4.4.2-17
             (None, None) => {
                 return Err(Arc::new(Error::OutdatedHpkeConfig(
                     *task.id(),

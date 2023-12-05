@@ -13,9 +13,9 @@ impl DapProblemTypeExt for DapProblemType {
     /// Returns the HTTP status code that should be used in responses whose body is a problem
     /// document of this type.
     fn http_status(&self) -> Status {
-        // Per the errors section of the protocol, error responses should use "HTTP status code 400
-        // Bad Request unless explicitly specified otherwise."
-        // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#name-errors
+        // Per the errors section of the protocol, error responses should use HTTP status code 400
+        // Bad Request unless explicitly specified otherwise.
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-3.2-7
         Status::BadRequest
     }
 }
@@ -23,8 +23,9 @@ impl DapProblemTypeExt for DapProblemType {
 /// The media type for problem details formatted as a JSON document, per RFC 7807.
 static PROBLEM_DETAILS_JSON_MEDIA_TYPE: &str = "application/problem+json";
 
-/// Serialization helper struct for JSON problem details error responses. See
-/// https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-3.2.
+/// Serialization helper struct for [DAP JSON problem details error responses][1].
+///
+/// [1]: https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-3.2.
 #[derive(Debug, Serialize)]
 pub struct ProblemDocument<'a> {
     #[serde(rename = "type")]
