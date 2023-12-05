@@ -169,7 +169,7 @@ pub async fn datastore<C: Clock>(
 /// Loads a series of certificates from a PEM file into a rustls [`RootCertStore`].
 fn load_pem_trust_store(path: impl AsRef<Path>) -> Result<RootCertStore, io::Error> {
     let mut buf_read = BufReader::new(File::open(path)?);
-    let der_certs = rustls_pemfile::certs(&mut buf_read)?;
+    let der_certs = rustls_pemfile::certs(&mut buf_read).collect::<Result<Vec<_>, _>>()?;
     let mut root_cert_store = RootCertStore::empty();
     let (added, ignored) = root_cert_store.add_parsable_certificates(&der_certs);
     info!("loaded {added} root certificates for database connections, ignored {ignored}");
