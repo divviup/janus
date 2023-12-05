@@ -157,7 +157,9 @@ where
             // concurrently with us acquiring jobs; but that's OK, since this can only make us
             // underestimate the number of jobs we can acquire, and underestimation is acceptable
             // (we'll pick up any additional jobs on the next iteration of this loop). We can't
-            // overestimate since this task is the only place that leases are acquired.
+            // overestimate since this task is the only place that semaphore permits are acquired.
+            // Knowing this will let us synchronously call `Semaphore::try_acquire_owned()` later,
+            // and be assured we'll succeed.
             let max_acquire_count = sem.available_permits();
             let start = Instant::now();
             debug!(%max_acquire_count, "Acquiring jobs");
@@ -208,7 +210,8 @@ where
                     // permits.
                     //
                     // Unwrap safety: we have seen that at least `leases.len()` permits are
-                    // available, and this task is the only task that acquires permits.
+                    // available previously in the outer loop, and this task is the only task that
+                    // acquires permits.
                     let span = info_span!("Job stepper", acquired_job = ?lease.leased());
                     let (this, permit, job_step_time_histogram) = (
                         Arc::clone(&self),
