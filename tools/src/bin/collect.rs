@@ -11,9 +11,9 @@ use fixed::types::extra::{U15, U31};
 use fixed::{FixedI16, FixedI32};
 use janus_collector::{
     default_http_client, AuthenticationToken, Collection, CollectionJob, Collector,
-    ExponentialBackoff, PollResult,
+    ExponentialBackoff, PollResult, PrivateCollectorCredential,
 };
-use janus_core::hpke::{DivviUpHpkeConfig, HpkeKeypair, HpkePrivateKey};
+use janus_core::hpke::{HpkeKeypair, HpkePrivateKey};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     BatchId, CollectionJobId, Duration, FixedSizeQuery, HpkeConfig, Interval, PartialBatchSelector,
@@ -243,7 +243,9 @@ impl TypedValueParser for PrivateKeyValueParser {
     }
 }
 
-fn divviup_hpke_config_parser(s: &str) -> Result<DivviUpHpkeConfig, serde_json::Error> {
+fn private_collector_credential_parser(
+    s: &str,
+) -> Result<PrivateCollectorCredential, serde_json::Error> {
     serde_json::from_str(s)
 }
 
@@ -351,14 +353,14 @@ struct HpkeConfigOptions {
     /// in the format output by `divviup collector-credential generate`
     #[clap(
         long,
-        value_parser = divviup_hpke_config_parser,
+        value_parser = private_collector_credential_parser,
         env,
         hide_env_values = true,
         help_heading = "HPKE Configuration",
         display_order = 3,
         conflicts_with_all = ["hpke_config", "hpke_private_key", "hpke_config_json"]
     )]
-    hpke_config_json_contents: Option<DivviUpHpkeConfig>,
+    hpke_config_json_contents: Option<PrivateCollectorCredential>,
 }
 
 #[derive(Debug, PartialEq, Eq, Subcommand)]
@@ -458,14 +460,15 @@ impl Options {
             (None, None, Some(hpke_config_json_path), _) => {
                 let reader =
                     File::open(hpke_config_json_path).context("could not open HPKE config file")?;
-                let divviup_hpke_config: DivviUpHpkeConfig =
+                let credentials: PrivateCollectorCredential =
                     serde_json::from_reader(reader).context("could not parse HPKE config file")?;
-                HpkeKeypair::try_from(divviup_hpke_config).context("could not convert HPKE config")
-            }
-            (None, None, None, Some(hpke_config_json_contents)) => {
-                HpkeKeypair::try_from(hpke_config_json_contents.clone())
+                credentials
+                    .hpke_keypair()
                     .context("could not convert HPKE config")
             }
+            (None, None, None, Some(hpke_config_json_contents)) => hpke_config_json_contents
+                .hpke_keypair()
+                .context("could not convert HPKE config"),
             _ => unreachable!(),
         }
     }
@@ -789,12 +792,10 @@ mod tests {
     use assert_matches::assert_matches;
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use clap::{error::ErrorKind, CommandFactory, Parser};
+    use janus_collector::PrivateCollectorCredential;
     use janus_core::{
         auth_tokens::{BearerToken, DapAuthToken},
-        hpke::{
-            test_util::{generate_test_hpke_config_and_private_key, SAMPLE_DIVVIUP_HPKE_CONFIG},
-            DivviUpHpkeConfig, HpkeKeypair,
-        },
+        hpke::test_util::generate_test_hpke_config_and_private_key,
     };
     use janus_messages::{BatchId, TaskId};
     use prio::codec::Encode;
@@ -802,6 +803,17 @@ mod tests {
     use reqwest::Url;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    const SAMPLE_COLLECTOR_CREDENTIAL: &str = r#"{
+  "aead": "AesGcm128",
+  "id": 66,
+  "kdf": "Sha256",
+  "kem": "X25519HkdfSha256",
+  "private_key": "uKkTvzKLfYNUPZcoKI7hV64zS06OWgBkbivBL4Sw4mo",
+  "public_key": "CcDghts2boltt9GQtBUxdUsVR83SCVYHikcGh33aVlU",
+  "token": "Krx-CLfdWo1ULAfsxhr0rA"
+}
+"#;
 
     #[test]
     fn verify_app() {
@@ -1335,14 +1347,15 @@ mod tests {
 
     #[test]
     fn hpke_config_json_file() {
-        let hpke_keypair = HpkeKeypair::try_from(
-            serde_json::from_str::<DivviUpHpkeConfig>(SAMPLE_DIVVIUP_HPKE_CONFIG).unwrap(),
-        )
-        .unwrap();
+        let hpke_keypair =
+            serde_json::from_str::<PrivateCollectorCredential>(SAMPLE_COLLECTOR_CREDENTIAL)
+                .unwrap()
+                .hpke_keypair()
+                .unwrap();
 
         let mut hpke_config_file = NamedTempFile::new().unwrap();
         hpke_config_file
-            .write_all(SAMPLE_DIVVIUP_HPKE_CONFIG.as_bytes())
+            .write_all(SAMPLE_COLLECTOR_CREDENTIAL.as_bytes())
             .unwrap();
         let hpke_config_file_path = hpke_config_file.into_temp_path();
 
@@ -1376,8 +1389,9 @@ mod tests {
 
     #[test]
     fn hpke_config_json_contents() {
-        let hpke_config =
-            serde_json::from_str::<DivviUpHpkeConfig>(SAMPLE_DIVVIUP_HPKE_CONFIG).unwrap();
+        let collector_credential =
+            serde_json::from_str::<PrivateCollectorCredential>(SAMPLE_COLLECTOR_CREDENTIAL)
+                .unwrap();
         let task_id: TaskId = random();
         let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
         let bearer_token: BearerToken = random();
@@ -1393,7 +1407,10 @@ mod tests {
             "1000".to_string(),
             "--vdaf=count".to_string(),
             format!("--authorization-bearer-token={}", bearer_token.as_str()),
-            format!("--hpke-config-json-contents={}", SAMPLE_DIVVIUP_HPKE_CONFIG),
+            format!(
+                "--hpke-config-json-contents={}",
+                SAMPLE_COLLECTOR_CREDENTIAL
+            ),
         ]);
 
         assert_eq!(
@@ -1402,7 +1419,7 @@ mod tests {
                 .hpke_config
                 .hpke_config_json_contents
                 .unwrap(),
-            hpke_config,
+            collector_credential,
         );
     }
 

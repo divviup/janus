@@ -33,9 +33,13 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing = "0.1.40"
 url = "2.5.0"
+serde = { workspace = true }
+hpke-dispatch = { version = "0.5.1", features = ["serde"] }
+serde_json.workspace = true
 
 [dev-dependencies]
 assert_matches.workspace = true
+base64.workspace = true
 janus_collector = { path = ".", features = ["fpvec_bounded_l2", "test-util"] }
 janus_core = { workspace = true, features = ["fpvec_bounded_l2", "test-util"] }
 mockito = "1.2.0"

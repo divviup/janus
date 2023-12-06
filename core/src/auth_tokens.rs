@@ -8,7 +8,10 @@ use ring::{
     digest::{digest, SHA256, SHA256_OUTPUT_LEN},
 };
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
-use std::{str, sync::OnceLock};
+use std::{
+    str::{self, FromStr},
+    sync::OnceLock,
+};
 
 /// HTTP header where auth tokens are provided in messages between participants.
 pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
@@ -145,6 +148,14 @@ impl TryFrom<String> for DapAuthToken {
     }
 }
 
+impl FromStr for DapAuthToken {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::try_from(s.to_string())
+    }
+}
+
 impl TryFrom<Vec<u8>> for DapAuthToken {
     type Error = anyhow::Error;
 
@@ -235,6 +246,14 @@ impl TryFrom<String> for BearerToken {
     fn try_from(value: String) -> Result<Self, Self::Error> {
         Self::validate(&value)?;
         Ok(Self(value))
+    }
+}
+
+impl FromStr for BearerToken {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::try_from(s.to_string())
     }
 }
 

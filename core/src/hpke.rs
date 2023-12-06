@@ -1,8 +1,7 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
-
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
-use hpke_dispatch::{Aead, HpkeError, Kdf, Kem, Keypair};
+use hpke_dispatch::{HpkeError, Kem, Keypair};
 use janus_messages::{
     HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,
 };
@@ -261,39 +260,53 @@ impl HpkeKeypair {
     }
 }
 
-/// HPKE configuration compatible with the output of `divviup collector-credential generate`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct DivviUpHpkeConfig {
-    id: HpkeConfigId,
-    kem: Kem,
-    kdf: Kdf,
-    aead: Aead,
-    public_key: HpkePublicKey,
-    private_key: HpkePrivateKey,
-}
+// This mod is a workaround for https://github.com/serde-rs/serde/issues/2195. The `Deserialize`
+// derive macro triggers deprecation warnings when used on a deprecated struct.
+#[allow(deprecated)]
+pub use deprecated::DivviUpHpkeConfig;
+mod deprecated {
+    #![allow(deprecated)]
 
-// We use a fallible TryFrom conversion because it's possible that HpkeDispatch, Janus and
-// divviup-api could be built with support for different sets of HPKE algorithms.
-impl TryFrom<DivviUpHpkeConfig> for HpkeKeypair {
-    type Error = Error;
+    use super::{Error, HpkeKeypair, HpkePrivateKey};
+    use hpke_dispatch::{Aead, Kdf, Kem};
+    use janus_messages::{HpkeConfig, HpkeConfigId, HpkePublicKey};
+    use serde::Deserialize;
 
-    fn try_from(value: DivviUpHpkeConfig) -> Result<Self, Self::Error> {
-        Ok(Self::new(
-            HpkeConfig::new(
-                value.id,
-                (value.kem as u16)
-                    .try_into()
-                    .map_err(|_| Error::InvalidConfiguration("did not recognize kem"))?,
-                (value.kdf as u16)
-                    .try_into()
-                    .map_err(|_| Error::InvalidConfiguration("did not recognize kdf"))?,
-                (value.aead as u16)
-                    .try_into()
-                    .map_err(|_| Error::InvalidConfiguration("did not recognize aead"))?,
-                value.public_key,
-            ),
-            value.private_key,
-        ))
+    /// HPKE configuration compatible with the output of `divviup collector-credential generate`.
+    #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+    #[deprecated = "use CollectorCredential instead"]
+    pub struct DivviUpHpkeConfig {
+        id: HpkeConfigId,
+        kem: Kem,
+        kdf: Kdf,
+        aead: Aead,
+        public_key: HpkePublicKey,
+        private_key: HpkePrivateKey,
+    }
+
+    // We use a fallible TryFrom conversion because it's possible that HpkeDispatch, Janus and
+    // divviup-api could be built with support for different sets of HPKE algorithms.
+    impl TryFrom<DivviUpHpkeConfig> for HpkeKeypair {
+        type Error = Error;
+
+        fn try_from(value: DivviUpHpkeConfig) -> Result<Self, Self::Error> {
+            Ok(Self::new(
+                HpkeConfig::new(
+                    value.id,
+                    (value.kem as u16)
+                        .try_into()
+                        .map_err(|_| Error::InvalidConfiguration("did not recognize kem"))?,
+                    (value.kdf as u16)
+                        .try_into()
+                        .map_err(|_| Error::InvalidConfiguration("did not recognize kdf"))?,
+                    (value.aead as u16)
+                        .try_into()
+                        .map_err(|_| Error::InvalidConfiguration("did not recognize aead"))?,
+                    value.public_key,
+                ),
+                value.private_key,
+            ))
+        }
     }
 }
 
@@ -302,6 +315,7 @@ impl TryFrom<DivviUpHpkeConfig> for HpkeKeypair {
 pub mod test_util {
     use super::{generate_hpke_config_and_private_key, HpkeKeypair};
     use janus_messages::{HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId};
+
     use rand::random;
 
     pub const SAMPLE_DIVVIUP_HPKE_CONFIG: &str = r#"{
@@ -337,11 +351,12 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        test_util::{generate_test_hpke_config_and_private_key, SAMPLE_DIVVIUP_HPKE_CONFIG},
-        DivviUpHpkeConfig, HpkeApplicationInfo, Label,
+    use super::{test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label};
+    #[allow(deprecated)]
+    use crate::hpke::{
+        open, seal, test_util::SAMPLE_DIVVIUP_HPKE_CONFIG, DivviUpHpkeConfig, HpkeKeypair,
+        HpkePrivateKey,
     };
-    use crate::hpke::{open, seal, HpkeKeypair, HpkePrivateKey};
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use hpke_dispatch::{Kem, Keypair};
     use janus_messages::{
@@ -631,6 +646,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn deserialize_divviup_api_hpke_config() {
         let deserialized: DivviUpHpkeConfig =
             serde_json::from_str(SAMPLE_DIVVIUP_HPKE_CONFIG).unwrap();
