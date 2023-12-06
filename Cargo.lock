@@ -2163,6 +2163,7 @@ dependencies = [
  "prio",
  "rand",
  "reqwest",
+ "rstest",
  "serde",
  "serde_json",
  "tempfile",
