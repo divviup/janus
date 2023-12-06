@@ -36,6 +36,7 @@ pub fn http_request_exponential_backoff() -> ExponentialBackoff {
         ..Default::default()
     }
 }
+
 /// An [`ExponentialBackoff`] with parameters tuned for tests where we don't want to be retrying
 /// for 10 minutes.
 #[cfg(feature = "test-util")]
@@ -57,6 +58,7 @@ pub fn test_http_request_exponential_backoff() -> ExponentialBackoff {
 ///   - a timeout
 ///   - a problem establishing a connection
 ///   - an HTTP status code indicating a server error
+///   - HTTP status code 429 Too Many Requests
 ///
 /// If the request eventually succeeds, the value returned by `request_fn` is returned. If an
 /// unretryable failure occurs or enough transient failures occur, then `Err(ret)` is returned,
@@ -66,9 +68,9 @@ pub fn test_http_request_exponential_backoff() -> ExponentialBackoff {
 /// # TODOs:
 ///
 /// This function could take a list of HTTP status codes that should be considered retryable, so
-/// that a caller could opt to retry when it sees 408 Request Timeout or 429 Too Many Requests, but
-/// since none of the servers this is currently used to communicate with ever return those statuses,
-/// we don't yet need that feature.
+/// that a caller could opt to retry when it sees 408 Request Timeout, but since none of the servers
+/// this is currently used to communicate with ever return those statuses, we don't yet need that
+/// feature.
 pub async fn retry_http_request<RequestFn, ResultFuture>(
     backoff: ExponentialBackoff,
     request_fn: RequestFn,
@@ -84,8 +86,9 @@ where
         // reqwest::Response, which the caller may need in order to examine its body or headers.
         match request_fn().await {
             Ok(response) => {
-                if response.status().is_server_error()
-                    && response.status() != StatusCode::NOT_IMPLEMENTED
+                if (response.status().is_server_error()
+                    && response.status() != StatusCode::NOT_IMPLEMENTED)
+                    || response.status() == StatusCode::TOO_MANY_REQUESTS
                 {
                     warn!(?response, "encountered retryable server error");
                     return Err(backoff::Error::transient(Ok(response)));
