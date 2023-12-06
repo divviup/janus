@@ -4,7 +4,7 @@ Command-line DAP-PPM collector from ISRG's Divvi Up
 
 The default subcommand is "run", which will create a collection job and poll it to completion
 
-Usage: collect [OPTIONS] --task-id <TASK_ID> --leader <LEADER> --vdaf <VDAF> <--dap-auth-token <DAP_AUTH_TOKEN>|--authorization-bearer-token <AUTHORIZATION_BEARER_TOKEN>> <--hpke-config <HPKE_CONFIG>|--hpke-private-key <HPKE_PRIVATE_KEY>|--hpke-config-json <HPKE_CONFIG_JSON>|--hpke-config-json-contents <HPKE_CONFIG_JSON_CONTENTS>> <--batch-interval-start <BATCH_INTERVAL_START>|--batch-interval-duration <BATCH_INTERVAL_DURATION>|--batch-id <BATCH_ID>|--current-batch> [COMMAND]
+Usage: collect [OPTIONS] --task-id <TASK_ID> --leader <LEADER> --vdaf <VDAF> <--dap-auth-token <DAP_AUTH_TOKEN>|--authorization-bearer-token <AUTHORIZATION_BEARER_TOKEN>> <--hpke-config <HPKE_CONFIG>|--hpke-private-key <HPKE_PRIVATE_KEY>|--collector-credential-file <COLLECTOR_CREDENTIAL_FILE>|--collector-credential <COLLECTOR_CREDENTIAL>> <--batch-interval-start <BATCH_INTERVAL_START>|--batch-interval-duration <BATCH_INTERVAL_DURATION>|--batch-id <BATCH_ID>|--current-batch> [COMMAND]
 
 Commands:
   run       Create a new collection job and poll it to completion
@@ -46,13 +46,19 @@ HPKE Configuration:
           
           [env: HPKE_PRIVATE_KEY]
 
-      --hpke-config-json <HPKE_CONFIG_JSON>
-          Path to a JSON document containing the collector's HPKE configuration and private key, in the format output by `divviup collector-credential generate`
-
-      --hpke-config-json-contents <HPKE_CONFIG_JSON_CONTENTS>
-          Contents of a JSON document containing the collector's HPKE configuration and private key, in the format output by `divviup collector-credential generate`
+      --collector-credential-file <COLLECTOR_CREDENTIAL_FILE>
+          Path to a file containing private collector credentials
           
-          [env: HPKE_CONFIG_JSON_CONTENTS]
+          This can be obtained with the command `divviup collector-credential generate`.
+          
+          [aliases: hpke-config-json]
+
+      --collector-credential <COLLECTOR_CREDENTIAL>
+          Private collector credentials
+          
+          This can be obtained with the command `divviup collector-credential generate`.
+          
+          [env: COLLECTOR_CREDENTIAL]
 
 VDAF Algorithm and Parameters:
       --vdaf <VDAF>
