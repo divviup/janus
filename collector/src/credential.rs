@@ -19,7 +19,7 @@ pub struct PrivateCollectorCredential {
     aead: Aead,
     public_key: HpkePublicKey,
     private_key: HpkePrivateKey,
-    // TODO(inahga): Turn this non-optional for the next breaking change cycle.
+    // TODO(#2329): Turn this non-optional for the next breaking change cycle.
     token: Option<BearerToken>,
 }
 
