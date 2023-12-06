@@ -25,7 +25,7 @@ static PROBLEM_DETAILS_JSON_MEDIA_TYPE: &str = "application/problem+json";
 
 /// Serialization helper struct for [DAP JSON problem details error responses][1].
 ///
-/// [1]: https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-3.2.
+/// [1]: https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-07#section-3.2.
 #[derive(Debug, Serialize)]
 pub struct ProblemDocument<'a> {
     #[serde(rename = "type")]
