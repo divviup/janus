@@ -13,9 +13,9 @@ impl DapProblemTypeExt for DapProblemType {
     /// Returns the HTTP status code that should be used in responses whose body is a problem
     /// document of this type.
     fn http_status(&self) -> Status {
-        // Per the errors section of the protocol, error responses should use "HTTP status code 400
-        // Bad Request unless explicitly specified otherwise."
-        // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#name-errors
+        // Per the errors section of the protocol, error responses should use HTTP status code 400
+        // Bad Request unless explicitly specified otherwise.
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-3.2-7
         Status::BadRequest
     }
 }
@@ -23,46 +23,70 @@ impl DapProblemTypeExt for DapProblemType {
 /// The media type for problem details formatted as a JSON document, per RFC 7807.
 static PROBLEM_DETAILS_JSON_MEDIA_TYPE: &str = "application/problem+json";
 
-/// Serialization helper struct for JSON problem details error responses. See
-/// https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-3.2.
-#[derive(Serialize)]
-struct ProblemDocument<'a> {
+/// Serialization helper struct for [DAP JSON problem details error responses][1].
+///
+/// [1]: https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-07#section-3.2.
+#[derive(Debug, Serialize)]
+pub struct ProblemDocument<'a> {
     #[serde(rename = "type")]
     type_: &'static str,
     title: &'static str,
     status: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
-    taskid: &'a Option<String>,
+    taskid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<&'a str>,
+}
+
+impl<'a> ProblemDocument<'a> {
+    pub fn new(error_type: DapProblemType) -> Self {
+        Self {
+            type_: error_type.type_uri(),
+            title: error_type.description(),
+            status: error_type.http_status().into(),
+            taskid: None,
+            detail: None,
+        }
+    }
+
+    pub fn with_task_id(self, taskid: &TaskId) -> Self {
+        Self {
+            taskid: Some(taskid.to_string()),
+            ..self
+        }
+    }
+
+    pub fn with_detail(self, detail: &'a str) -> Self {
+        Self {
+            detail: Some(detail),
+            ..self
+        }
+    }
 }
 
 pub trait ProblemDetailsConnExt {
     /// Send a response containing a JSON-encoded problem details document for the given
-    /// DAP-specific problem type, (optionally including the DAP task ID) and set the appropriate
-    /// HTTP status code.
-    fn with_problem_details(self, error_type: DapProblemType, task_id: Option<&TaskId>) -> Self;
+    /// DAP-specific problem document, and set the appropriate HTTP status code.
+    fn with_problem_document(self, problem_document: &ProblemDocument) -> Self;
 }
 
 impl ProblemDetailsConnExt for Conn {
-    fn with_problem_details(self, error_type: DapProblemType, task_id: Option<&TaskId>) -> Self {
-        let status = error_type.http_status();
-
-        self.with_status(status as u16)
+    fn with_problem_document(self, problem_document: &ProblemDocument) -> Self {
+        self.with_status(problem_document.status)
             .with_header(
                 KnownHeaderName::ContentType,
                 PROBLEM_DETAILS_JSON_MEDIA_TYPE,
             )
-            .with_json(&ProblemDocument {
-                type_: error_type.type_uri(),
-                title: error_type.description(),
-                status: status as u16,
-                taskid: &task_id.as_ref().map(ToString::to_string),
-            })
+            .with_json(problem_document)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::{error::BatchMismatch, send_request_to_helper, Error};
+    use crate::aggregator::{
+        error::{BatchMismatch, ReportRejectedReason},
+        send_request_to_helper, Error,
+    };
     use assert_matches::assert_matches;
     use futures::future::join_all;
     use http::Method;
@@ -130,7 +154,12 @@ mod tests {
                 TestCase::new(Box::new(|| Error::InvalidConfiguration("test")), None),
                 TestCase::new(
                     Box::new(|| {
-                        Error::ReportRejected(random(), random(), RealClock::default().now())
+                        Error::ReportRejected(
+                            random(),
+                            random(),
+                            RealClock::default().now(),
+                            ReportRejectedReason::TaskExpired
+                        )
                     }),
                     Some(DapProblemType::ReportRejected),
                 ),

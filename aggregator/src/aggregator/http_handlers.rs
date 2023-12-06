@@ -1,5 +1,5 @@
 use super::{Aggregator, Config, Error};
-use crate::aggregator::problem_details::ProblemDetailsConnExt;
+use crate::aggregator::problem_details::{ProblemDetailsConnExt, ProblemDocument};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{datastore::Datastore, instrumented};
@@ -44,50 +44,60 @@ impl Handler for Error {
         match self {
             Error::InvalidConfiguration(_) => conn.with_status(Status::InternalServerError),
             Error::MessageDecode(_) => {
-                conn.with_problem_details(DapProblemType::InvalidMessage, None)
+                conn.with_problem_document(&ProblemDocument::new(DapProblemType::InvalidMessage))
             }
-            Error::ReportRejected(task_id, _, _) => {
-                conn.with_problem_details(DapProblemType::ReportRejected, Some(task_id))
-            }
+            Error::ReportRejected(task_id, _, _, reason) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::ReportRejected)
+                    .with_task_id(task_id)
+                    .with_detail(reason.detail()),
+            ),
             Error::InvalidMessage(task_id, _) => {
-                conn.with_problem_details(DapProblemType::InvalidMessage, task_id.as_ref())
+                let mut doc = ProblemDocument::new(DapProblemType::InvalidMessage);
+                if let Some(task_id) = task_id {
+                    doc = doc.with_task_id(task_id);
+                }
+                conn.with_problem_document(&doc)
             }
-            Error::StepMismatch { task_id, .. } => {
-                conn.with_problem_details(DapProblemType::StepMismatch, Some(task_id))
+            Error::StepMismatch { task_id, .. } => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::StepMismatch).with_task_id(task_id),
+            ),
+            Error::UnrecognizedTask(task_id) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::UnrecognizedTask).with_task_id(task_id),
+            ),
+            Error::MissingTaskId => {
+                conn.with_problem_document(&ProblemDocument::new(DapProblemType::MissingTaskId))
             }
-            Error::UnrecognizedTask(task_id) => {
-                conn.with_problem_details(DapProblemType::UnrecognizedTask, Some(task_id))
-            }
-            Error::MissingTaskId => conn.with_problem_details(DapProblemType::MissingTaskId, None),
-            Error::UnrecognizedAggregationJob(task_id, _) => {
-                conn.with_problem_details(DapProblemType::UnrecognizedAggregationJob, Some(task_id))
-            }
+            Error::UnrecognizedAggregationJob(task_id, _) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::UnrecognizedAggregationJob)
+                    .with_task_id(task_id),
+            ),
             Error::DeletedCollectionJob(_) => conn.with_status(Status::NoContent),
             Error::UnrecognizedCollectionJob(_) => conn.with_status(Status::NotFound),
-            Error::OutdatedHpkeConfig(task_id, _) => {
-                conn.with_problem_details(DapProblemType::OutdatedConfig, Some(task_id))
-            }
-            Error::ReportTooEarly(task_id, _, _) => {
-                conn.with_problem_details(DapProblemType::ReportTooEarly, Some(task_id))
-            }
-            Error::UnauthorizedRequest(task_id) => {
-                conn.with_problem_details(DapProblemType::UnauthorizedRequest, Some(task_id))
-            }
-            Error::InvalidBatchSize(task_id, _) => {
-                conn.with_problem_details(DapProblemType::InvalidBatchSize, Some(task_id))
-            }
-            Error::BatchInvalid(task_id, _) => {
-                conn.with_problem_details(DapProblemType::BatchInvalid, Some(task_id))
-            }
-            Error::BatchOverlap(task_id, _) => {
-                conn.with_problem_details(DapProblemType::BatchOverlap, Some(task_id))
-            }
-            Error::BatchMismatch(inner) => {
-                conn.with_problem_details(DapProblemType::BatchMismatch, Some(&inner.task_id))
-            }
-            Error::BatchQueriedTooManyTimes(task_id, _) => {
-                conn.with_problem_details(DapProblemType::BatchQueriedTooManyTimes, Some(task_id))
-            }
+            Error::OutdatedHpkeConfig(task_id, _) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::OutdatedConfig).with_task_id(task_id),
+            ),
+            Error::ReportTooEarly(task_id, _, _) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::ReportTooEarly).with_task_id(task_id),
+            ),
+            Error::UnauthorizedRequest(task_id) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::UnauthorizedRequest).with_task_id(task_id),
+            ),
+            Error::InvalidBatchSize(task_id, _) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::InvalidBatchSize).with_task_id(task_id),
+            ),
+            Error::BatchInvalid(task_id, _) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::BatchInvalid).with_task_id(task_id),
+            ),
+            Error::BatchOverlap(task_id, _) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::BatchOverlap).with_task_id(task_id),
+            ),
+            Error::BatchMismatch(inner) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::BatchMismatch).with_task_id(&inner.task_id),
+            ),
+            Error::BatchQueriedTooManyTimes(task_id, _) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::BatchQueriedTooManyTimes)
+                    .with_task_id(task_id),
+            ),
             Error::Hpke(_)
             | Error::Datastore(_)
             | Error::Vdaf(_)
@@ -98,14 +108,14 @@ impl Handler for Error {
             | Error::Http { .. }
             | Error::TaskParameters(_) => conn.with_status(Status::InternalServerError),
             Error::AggregateShareRequestRejected(_, _) => conn.with_status(Status::BadRequest),
-            Error::EmptyAggregation(task_id) => {
-                conn.with_problem_details(DapProblemType::InvalidMessage, Some(task_id))
-            }
+            Error::EmptyAggregation(task_id) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::InvalidMessage).with_task_id(task_id),
+            ),
             Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
             Error::BadRequest(_) => conn.with_status(Status::BadRequest),
-            Error::InvalidTask(task_id, _) => {
-                conn.with_problem_details(DapProblemType::InvalidTask, Some(task_id))
-            }
+            Error::InvalidTask(task_id, _) => conn.with_problem_document(
+                &ProblemDocument::new(DapProblemType::InvalidTask).with_task_id(task_id),
+            ),
             Error::DifferentialPrivacy(_) => conn.with_status(Status::InternalServerError),
         }
     }
@@ -649,6 +659,7 @@ mod tests {
             },
             collection_job_tests::setup_collection_job_test_case,
             empty_batch_aggregations,
+            error::ReportRejectedReason,
             http_handlers::{
                 aggregator_handler, aggregator_handler_with_aggregator,
                 test_util::{decode_response_body, take_problem_details},
@@ -699,9 +710,9 @@ mod tests {
         AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep, BatchSelector,
         Collection, CollectionJobId, CollectionReq, Duration, Extension, ExtensionType,
         HpkeCiphertext, HpkeConfigId, HpkeConfigList, InputShareAad, Interval,
-        PartialBatchSelector, PrepareContinue, PrepareError, PrepareInit, PrepareResp,
-        PrepareStepResult, Query, Report, ReportId, ReportIdChecksum, ReportMetadata, ReportShare,
-        Role, TaskId, Time,
+        PartialBatchSelector, PlaintextInputShare, PrepareContinue, PrepareError, PrepareInit,
+        PrepareResp, PrepareStepResult, Query, Report, ReportId, ReportIdChecksum, ReportMetadata,
+        ReportShare, Role, TaskId, Time,
     };
     use prio::{
         codec::{Decode, Encode},
@@ -1075,17 +1086,22 @@ mod tests {
             desired_type: &str,
             desired_title: &str,
             desired_task_id: &TaskId,
+            desired_detail: Option<&str>,
         ) {
+            let mut desired_response = json!({
+                "status": desired_status as u16,
+                "type": format!("urn:ietf:params:ppm:dap:error:{desired_type}"),
+                "title": desired_title,
+                "taskid": format!("{desired_task_id}"),
+            });
+            if let Some(detail) = desired_detail {
+                desired_response
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("detail".to_string(), json!(detail));
+            }
             assert_eq!(test_conn.status(), Some(desired_status));
-            assert_eq!(
-                take_problem_details(test_conn).await,
-                json!({
-                    "status": desired_status as u16,
-                    "type": format!("urn:ietf:params:ppm:dap:error:{desired_type}"),
-                    "title": desired_title,
-                    "taskid": format!("{desired_task_id}"),
-                }),
-            )
+            assert_eq!(take_problem_details(test_conn).await, desired_response);
         }
 
         let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
@@ -1154,10 +1170,11 @@ mod tests {
             "reportRejected",
             "Report could not be processed.",
             task.id(),
+            Some(ReportRejectedReason::TooOld.detail()),
         )
         .await;
 
-        // should reject a report using the wrong HPKE config for the leader, and reply with
+        // Should reject a report using the wrong HPKE config for the leader, and reply with
         // the error type outdatedConfig.
         let unused_hpke_config_id = (0..)
             .map(HpkeConfigId::from)
@@ -1187,6 +1204,7 @@ mod tests {
             "outdatedConfig",
             "The message was generated using an outdated configuration.",
             task.id(),
+            None,
         )
         .await;
 
@@ -1214,6 +1232,7 @@ mod tests {
             "reportTooEarly",
             "Report could not be processed because it arrived too early.",
             task.id(),
+            None,
         )
         .await;
 
@@ -1241,6 +1260,97 @@ mod tests {
             "reportRejected",
             "Report could not be processed.",
             task_expire_soon.id(),
+            Some(ReportRejectedReason::TaskExpired.detail()),
+        )
+        .await;
+
+        // Reject reports with an undecodeable public share.
+        let mut bad_public_share_report = create_report(&leader_task, clock.now());
+        bad_public_share_report = Report::new(
+            bad_public_share_report.metadata().clone(),
+            // Some obviously wrong public share.
+            vec![0; 10],
+            bad_public_share_report
+                .leader_encrypted_input_share()
+                .clone(),
+            bad_public_share_report
+                .helper_encrypted_input_share()
+                .clone(),
+        );
+        let mut test_conn = put(task.report_upload_uri().unwrap().path())
+            .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
+            .with_request_body(bad_public_share_report.get_encoded())
+            .run_async(&handler)
+            .await;
+        check_response(
+            &mut test_conn,
+            Status::BadRequest,
+            "reportRejected",
+            "Report could not be processed.",
+            leader_task.id(),
+            Some(ReportRejectedReason::PublicShareDecodeFailure.detail()),
+        )
+        .await;
+
+        // Reject reports which are not decryptable.
+        let undecryptable_report = create_report_custom(
+            &leader_task,
+            clock.now(),
+            *accepted_report_id,
+            // Encrypt report with some arbitrary key that has the same ID as an existing one.
+            &generate_test_hpke_config_and_private_key_with_id(
+                (*leader_task.current_hpke_key().config().id()).into(),
+            ),
+        );
+        let mut test_conn = put(task.report_upload_uri().unwrap().path())
+            .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
+            .with_request_body(undecryptable_report.get_encoded())
+            .run_async(&handler)
+            .await;
+        check_response(
+            &mut test_conn,
+            Status::BadRequest,
+            "reportRejected",
+            "Report could not be processed.",
+            leader_task.id(),
+            Some(ReportRejectedReason::LeaderDecryptFailure.detail()),
+        )
+        .await;
+
+        // Reject reports whose leader input share is corrupt.
+        let mut bad_leader_input_share_report = create_report(&leader_task, clock.now());
+        bad_leader_input_share_report = Report::new(
+            bad_leader_input_share_report.metadata().clone(),
+            bad_leader_input_share_report.public_share().to_vec(),
+            hpke::seal(
+                leader_task.current_hpke_key().config(),
+                &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader),
+                // Some obviously wrong payload.
+                &PlaintextInputShare::new(Vec::new(), vec![0; 100]).get_encoded(),
+                &InputShareAad::new(
+                    *task.id(),
+                    bad_leader_input_share_report.metadata().clone(),
+                    bad_leader_input_share_report.public_share().to_vec(),
+                )
+                .get_encoded(),
+            )
+            .unwrap(),
+            bad_leader_input_share_report
+                .helper_encrypted_input_share()
+                .clone(),
+        );
+        let mut test_conn = put(task.report_upload_uri().unwrap().path())
+            .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
+            .with_request_body(bad_leader_input_share_report.get_encoded())
+            .run_async(&handler)
+            .await;
+        check_response(
+            &mut test_conn,
+            Status::BadRequest,
+            "reportRejected",
+            "Report could not be processed.",
+            leader_task.id(),
+            Some(ReportRejectedReason::LeaderInputShareDecodeFailure.detail()),
         )
         .await;
 
@@ -1268,21 +1378,7 @@ mod tests {
         let test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::Origin, "https://example.com/")
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-            .with_request_body(
-                Report::new(
-                    ReportMetadata::new(
-                        random(),
-                        clock
-                            .now()
-                            .to_batch_interval_start(task.time_precision())
-                            .unwrap(),
-                    ),
-                    report.public_share().to_vec(),
-                    report.leader_encrypted_input_share().clone(),
-                    report.helper_encrypted_input_share().clone(),
-                )
-                .get_encoded(),
-            )
+            .with_request_body(report.get_encoded())
             .run_async(&handler)
             .await;
         assert!(test_conn.status().unwrap().is_success());

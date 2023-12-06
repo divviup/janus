@@ -3,7 +3,9 @@
 pub use crate::aggregator::error::Error;
 use crate::{
     aggregator::{
+        accumulator::Accumulator,
         aggregate_share::compute_aggregate_share,
+        error::{handle_ping_pong_error, ReportRejectedReason},
         error::{BatchMismatch, OptOutReason},
         query_type::{CollectableQueryType, UploadableQueryType},
         report_writer::{ReportWriteBatcher, WritableReport},
@@ -90,8 +92,6 @@ use std::{
 use tokio::{sync::Mutex, try_join};
 use tracing::{debug, info, trace_span, warn};
 use url::Url;
-
-use self::{accumulator::Accumulator, error::handle_ping_pong_error};
 
 pub mod accumulator;
 #[cfg(test)]
@@ -1387,13 +1387,23 @@ impl VdafOps {
         C: Clock,
         Q: UploadableQueryType,
     {
+        // Shorthand function for generating an Error::ReportRejected with proper parameters.
+        let reject_report = |reason| {
+            Arc::new(Error::ReportRejected(
+                *task.id(),
+                *report.metadata().id(),
+                *report.metadata().time(),
+                reason,
+            ))
+        };
+
         let report_deadline = clock
             .now()
             .add(task.tolerable_clock_skew())
             .map_err(|err| Arc::new(Error::from(err)))?;
 
         // Reject reports from too far in the future.
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-4.4.2-21
         if report.metadata().time().is_after(&report_deadline) {
             return Err(Arc::new(Error::ReportTooEarly(
                 *task.id(),
@@ -1403,14 +1413,10 @@ impl VdafOps {
         }
 
         // Reject reports after a task has expired.
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-4.4.2-20
         if let Some(task_expiration) = task.task_expiration() {
             if report.metadata().time().is_after(task_expiration) {
-                return Err(Arc::new(Error::ReportRejected(
-                    *task.id(),
-                    *report.metadata().id(),
-                    *report.metadata().time(),
-                )));
+                return Err(reject_report(ReportRejectedReason::TaskExpired));
             }
         }
 
@@ -1422,11 +1428,7 @@ impl VdafOps {
                 .add(report_expiry_age)
                 .map_err(|err| Arc::new(Error::from(err)))?;
             if clock.now().is_after(&report_expiry_time) {
-                return Err(Arc::new(Error::ReportRejected(
-                    *task.id(),
-                    *report.metadata().id(),
-                    *report.metadata().time(),
-                )));
+                return Err(reject_report(ReportRejectedReason::TooOld));
             }
         }
 
@@ -1434,7 +1436,7 @@ impl VdafOps {
         // report before storing them in the datastore. The spec does not require the /upload
         // handler to do this, but it exercises HPKE decryption, saves us the trouble of storing
         // reports we can't use, and lets the aggregation job handler assume the values it reads
-        // from the datastore are valid. We don't inform the client if this fails.
+        // from the datastore are valid.
         let public_share =
             match A::PublicShare::get_decoded_with_param(vdaf.as_ref(), report.public_share()) {
                 Ok(public_share) => public_share,
@@ -1446,7 +1448,9 @@ impl VdafOps {
                         "public share decoding failed",
                     );
                     upload_decode_failure_counter.add(1, &[]);
-                    return Ok(());
+                    return Err(reject_report(
+                        ReportRejectedReason::PublicShareDecodeFailure,
+                    ));
                 }
             };
 
@@ -1473,7 +1477,7 @@ impl VdafOps {
 
         let decryption_result = match (task_hpke_keypair, global_hpke_keypair) {
             // Verify that the report's HPKE config ID is known.
-            // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
+            // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-4.4.2-17
             (None, None) => {
                 return Err(Arc::new(Error::OutdatedHpkeConfig(
                     *task.id(),
@@ -1492,7 +1496,7 @@ impl VdafOps {
             }
         };
 
-        let encoded_leader_plaintext_input_share = match decryption_result {
+        let encoded_leader_input_share = match decryption_result {
             Ok(plaintext) => plaintext,
             Err(error) => {
                 info!(
@@ -1502,18 +1506,24 @@ impl VdafOps {
                     "Report decryption failed",
                 );
                 upload_decrypt_failure_counter.add(1, &[]);
-                return Ok(());
+                return Err(reject_report(ReportRejectedReason::LeaderDecryptFailure));
             }
         };
 
-        let leader_plaintext_input_share =
-            PlaintextInputShare::get_decoded(&encoded_leader_plaintext_input_share)
-                .map_err(|err| Arc::new(Error::from(err)))?;
+        let decoded_leader_input_share = PlaintextInputShare::get_decoded(
+            &encoded_leader_input_share,
+        )
+        .and_then(|plaintext_input_share| {
+            Ok((
+                plaintext_input_share.extensions().to_vec(),
+                A::InputShare::get_decoded_with_param(
+                    &(&vdaf, Role::Leader.index().unwrap()),
+                    plaintext_input_share.payload(),
+                )?,
+            ))
+        });
 
-        let leader_input_share = match A::InputShare::get_decoded_with_param(
-            &(&vdaf, Role::Leader.index().unwrap()),
-            leader_plaintext_input_share.payload(),
-        ) {
+        let (extensions, leader_input_share) = match decoded_leader_input_share {
             Ok(leader_input_share) => leader_input_share,
             Err(err) => {
                 warn!(
@@ -1523,7 +1533,9 @@ impl VdafOps {
                     "Leader input share decoding failed",
                 );
                 upload_decode_failure_counter.add(1, &[]);
-                return Ok(());
+                return Err(reject_report(
+                    ReportRejectedReason::LeaderInputShareDecodeFailure,
+                ));
             }
         };
 
@@ -1531,7 +1543,7 @@ impl VdafOps {
             *task.id(),
             report.metadata().clone(),
             public_share,
-            Vec::from(leader_plaintext_input_share.extensions()),
+            extensions,
             leader_input_share,
             report.helper_encrypted_input_share().clone(),
         );
@@ -3166,7 +3178,7 @@ async fn send_request_to_helper<T: Encode>(
 
 #[cfg(test)]
 mod tests {
-    use crate::aggregator::{Aggregator, Config, Error};
+    use crate::aggregator::{error::ReportRejectedReason, Aggregator, Config, Error};
     use assert_matches::assert_matches;
     use futures::future::try_join_all;
     use janus_aggregator_core::{
@@ -3535,11 +3547,18 @@ mod tests {
             .unwrap();
 
         // Try to upload the report, verify that we get the expected error.
-        assert_matches!(aggregator.handle_upload(task.id(), &report.get_encoded()).await.unwrap_err().as_ref(), Error::ReportRejected(err_task_id, err_report_id, err_time) => {
-            assert_eq!(task.id(), err_task_id);
-            assert_eq!(report.metadata().id(), err_report_id);
-            assert_eq!(report.metadata().time(), err_time);
-        });
+        let error = aggregator
+            .handle_upload(task.id(), &report.get_encoded())
+            .await
+            .unwrap_err();
+        assert_matches!(
+            error.as_ref(),
+            Error::ReportRejected(err_task_id, err_report_id, err_time, ReportRejectedReason::IntervalAlreadyCollected) => {
+                assert_eq!(task.id(), err_task_id);
+                assert_eq!(report.metadata().id(), err_report_id);
+                assert_eq!(report.metadata().time(), err_time);
+            }
+        );
     }
 
     #[tokio::test]
