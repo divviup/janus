@@ -235,7 +235,7 @@ async fn aggregator_handler_with_aggregator<C: Clock>(
 ) -> Result<impl Handler, Error> {
     Ok((
         State(aggregator),
-        metrics("janus_aggregator").with_route(|conn| conn.route().map(ToString::to_string)),
+        metrics(meter).with_route(|conn| conn.route().map(ToString::to_string)),
         Router::new()
             .without_options_handling()
             .get("hpke_config", instrumented(api(hpke_config::<C>)))
