@@ -13,7 +13,6 @@ pub mod janus;
 
 /// Task parameters needed for an integration test. This encompasses the parameters used by either
 /// the client or collector.
-#[derive(Clone)]
 pub struct TaskParameters {
     pub task_id: TaskId,
     pub endpoint_fragments: EndpointFragments,
@@ -26,7 +25,7 @@ pub struct TaskParameters {
 }
 
 /// Components of one aggregator's DAP endpoint. The scheme is assumed to always be `http:`.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum AggregatorEndpointFragments {
     /// The aggregator is in a virtual network, (a Docker network or a Kind cluster) so different
     /// URLs must be used depending on whether it is accessed from within the same virtual network
@@ -79,7 +78,6 @@ impl AggregatorEndpointFragments {
 }
 
 /// Components of DAP endpoints for a leader and helper aggregator.
-#[derive(Clone)]
 pub struct EndpointFragments {
     pub leader: AggregatorEndpointFragments,
     pub helper: AggregatorEndpointFragments,
