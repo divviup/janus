@@ -374,8 +374,15 @@ mod rate_limits {
         }
     }
 
+    struct RequestUrlParameters<'a> {
+        leader_url: &'a Url,
+        helper_url: &'a Url,
+        first_task_id: &'a TaskId,
+        second_task_id: &'a TaskId,
+    }
+
     async fn run_rate_limit_test(
-        request_url_maker: &dyn Fn(&Url, &Url, &TaskId, &TaskId) -> (Url, Url),
+        request_url_maker: &dyn Fn(&RequestUrlParameters) -> (Url, Url),
         rate_limit_picker: &dyn Fn(&TestConfig) -> u64,
         method: Method,
     ) {
@@ -393,12 +400,12 @@ mod rate_limits {
 
         // Send requests to two different tasks, to prove that rate limits are per-task ID. It
         // doesn't matter that one of the tasks doesn't exist for purposes of rate limits.
-        let (first_request_url, second_request_url) = request_url_maker(
-            &leader_url,
-            &helper_url,
-            &janus_pair.task_parameters.task_id,
-            &other_task_id,
-        );
+        let (first_request_url, second_request_url) = request_url_maker(&RequestUrlParameters {
+            leader_url: &leader_url,
+            helper_url: &helper_url,
+            first_task_id: &janus_pair.task_parameters.task_id,
+            second_task_id: &other_task_id,
+        });
         let rate_limit = rate_limit_picker(&test_config);
         let rate_limit_excess = 0.1;
         let total_requests_count =
@@ -410,7 +417,7 @@ mod rate_limits {
         // Send ten requests at a time, because otherwise the kubectl port-forward gets overwhelmed
         for _ in 0..(total_requests_count / 10) {
             let mut handles = Vec::new();
-            for _ in 0..(10) {
+            for _ in 0..10 {
                 for url in [first_request_url.clone(), second_request_url.clone()] {
                     let method = method.clone();
                     handles.push(tokio::spawn(async move {
@@ -464,13 +471,18 @@ mod rate_limits {
     #[tokio::test]
     async fn upload() {
         run_rate_limit_test(
-            &|leader_url, _, task_id_1, task_id_2| {
+            &|RequestUrlParameters {
+                  leader_url,
+                  first_task_id,
+                  second_task_id,
+                  ..
+              }| {
                 (
                     leader_url
-                        .join(&format!("tasks/{task_id_1}/reports"))
+                        .join(&format!("tasks/{first_task_id}/reports"))
                         .unwrap(),
                     leader_url
-                        .join(&format!("tasks/{task_id_2}/reports"))
+                        .join(&format!("tasks/{second_task_id}/reports"))
                         .unwrap(),
                 )
             },
@@ -487,15 +499,20 @@ mod rate_limits {
     #[tokio::test]
     async fn collection_job(#[case] method: Method) {
         run_rate_limit_test(
-            &|leader_url, _, task_id_1, task_id_2| {
+            &|RequestUrlParameters {
+                  leader_url,
+                  first_task_id,
+                  second_task_id,
+                  ..
+              }| {
                 let job_id: CollectionJobId = random();
 
                 (
                     leader_url
-                        .join(&format!("tasks/{task_id_1}/collection_jobs/{job_id}"))
+                        .join(&format!("tasks/{first_task_id}/collection_jobs/{job_id}"))
                         .unwrap(),
                     leader_url
-                        .join(&format!("tasks/{task_id_2}/collection_jobs/{job_id}"))
+                        .join(&format!("tasks/{second_task_id}/collection_jobs/{job_id}"))
                         .unwrap(),
                 )
             },
@@ -511,14 +528,19 @@ mod rate_limits {
     #[tokio::test]
     async fn aggregation_job_put(#[case] method: Method) {
         run_rate_limit_test(
-            &|_, helper_url, task_id_1, task_id_2| {
+            &|RequestUrlParameters {
+                  helper_url,
+                  first_task_id,
+                  second_task_id,
+                  ..
+              }| {
                 let job_id: AggregationJobId = random();
                 (
                     helper_url
-                        .join(&format!("tasks/{task_id_1}/aggregation_jobs/{job_id}"))
+                        .join(&format!("tasks/{first_task_id}/aggregation_jobs/{job_id}"))
                         .unwrap(),
                     helper_url
-                        .join(&format!("tasks/{task_id_2}/aggregation_jobs/{job_id}"))
+                        .join(&format!("tasks/{second_task_id}/aggregation_jobs/{job_id}"))
                         .unwrap(),
                 )
             },
@@ -531,13 +553,18 @@ mod rate_limits {
     #[tokio::test]
     async fn aggregate_share_post() {
         run_rate_limit_test(
-            &|_, helper_url, task_id_1, task_id_2| {
+            &|RequestUrlParameters {
+                  helper_url,
+                  first_task_id,
+                  second_task_id,
+                  ..
+              }| {
                 (
                     helper_url
-                        .join(&format!("tasks/{task_id_1}/aggregate_shares"))
+                        .join(&format!("tasks/{first_task_id}/aggregate_shares"))
                         .unwrap(),
                     helper_url
-                        .join(&format!("tasks/{task_id_2}/aggregate_shares"))
+                        .join(&format!("tasks/{second_task_id}/aggregate_shares"))
                         .unwrap(),
                 )
             },
