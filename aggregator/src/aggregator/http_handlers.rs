@@ -33,6 +33,7 @@ use trillium_opentelemetry::metrics;
 use trillium_router::{Router, RouterConnExt};
 
 /// Newtype holding a textual error code, to be stored in a Trillium connection's state.
+#[derive(Clone, Copy)]
 struct ErrorCode(&'static str);
 
 #[async_trait]
@@ -235,10 +236,15 @@ async fn aggregator_handler_with_aggregator<C: Clock>(
 ) -> Result<impl Handler, Error> {
     Ok((
         State(aggregator),
-        metrics(meter).with_route(|conn| {
-            conn.route()
-                .map(|route_spec| Cow::Owned(route_spec.to_string()))
-        }),
+        metrics(meter)
+            .with_route(|conn| {
+                conn.route()
+                    .map(|route_spec| Cow::Owned(route_spec.to_string()))
+            })
+            .with_error_type(|conn| {
+                conn.state::<ErrorCode>()
+                    .map(|error_code| Cow::Borrowed(error_code.0))
+            }),
         Router::new()
             .without_options_handling()
             .get("hpke_config", instrumented(api(hpke_config::<C>)))
