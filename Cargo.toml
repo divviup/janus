@@ -59,7 +59,7 @@ trillium = "0.2.11"
 trillium-api = { version = "0.2.0-rc.7", default-features = false }
 trillium-caching-headers = "0.2.1"
 trillium-head = "0.2.0"
-trillium-opentelemetry = "0.3.0"
+trillium-opentelemetry = "0.4.0"
 trillium-router = "0.3.5"
 trillium-testing = "0.5.0"
 trillium-tokio = "0.3.2"

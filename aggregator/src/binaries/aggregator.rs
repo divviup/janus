@@ -73,6 +73,7 @@ async fn run_aggregator(
     let garbage_collector_future = {
         let datastore = Arc::clone(&datastore);
         let gc_config = config.garbage_collection.take();
+        let meter = meter.clone();
         async move {
             if let Some(gc_config) = gc_config {
                 let gc = GarbageCollector::new(

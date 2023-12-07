@@ -13,7 +13,7 @@ use janus_core::{auth_tokens::AuthenticationToken, hpke, http::extract_bearer_to
 use janus_messages::{HpkeConfigId, RoleParseError, TaskId};
 use opentelemetry::metrics::Meter;
 use routes::*;
-use std::{str::FromStr, sync::Arc};
+use std::{borrow::Cow, str::FromStr, sync::Arc};
 use tracing::error;
 use trillium::{
     Conn, Handler,
@@ -78,7 +78,10 @@ pub fn aggregator_api_handler<C: Clock>(
         State(ds),
         State(Arc::new(cfg)),
         // Metrics.
-        metrics(meter).with_route(|conn| conn.route().map(ToString::to_string)),
+        metrics(meter).with_route(|conn| {
+            conn.route()
+                .map(|route_spec| Cow::Owned(route_spec.to_string()))
+        }),
         // Authorization check.
         api(auth_check),
         // Check content type and accept headers
