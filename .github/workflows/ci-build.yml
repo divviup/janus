@@ -133,6 +133,8 @@ jobs:
       run: cargo clippy --profile ci --workspace --all-targets --all-features
     - name: Document
       run: cargo doc --profile ci --workspace
+    - name: cargo-deny
+      uses: EmbarkStudios/cargo-deny-action@v1
 
   janus_docker:
     runs-on: ubuntu-latest
