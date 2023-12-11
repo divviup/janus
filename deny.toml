@@ -1,0 +1,17 @@
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "x86_64-unknown-linux-musl" },
+]
+all-features = true
+
+[bans]
+deny = [
+    { name = "tracing", deny-multiple-versions = true },
+    { name = "opentelemetry", deny-multiple-versions = true },
+]
+skip = [{ name = "janus_messages" }]
+
+[licenses]
+copyleft = "allow"
+default = "allow"
+unlicensed = "allow"
