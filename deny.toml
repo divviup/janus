@@ -1,0 +1,16 @@
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "x86_64-unknown-linux-musl" },
+]
+
+[bans]
+multiple-versions = "allow"
+deny = [
+    { name = "tracing", deny-multiple-versions = true },
+    { name = "opentelemetry", deny-multiple-versions = true },
+]
+
+[licenses]
+copyleft = "allow"
+default = "allow"
+unlicensed = "allow"
