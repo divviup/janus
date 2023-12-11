@@ -60,7 +60,7 @@ janus_messages.workspace = true
 k8s-openapi.workspace = true
 kube.workspace = true
 lazy_static = { version = "1", optional = true }
-once_cell = "1.18.0"
+once_cell = "1.19.0"
 opentelemetry.workspace = true
 opentelemetry-otlp = { version = "0.14", optional = true, features = ["metrics"] }  # ensure that the version of tonic below matches what this uses
 opentelemetry-prometheus = { version = "0.14", optional = true }
