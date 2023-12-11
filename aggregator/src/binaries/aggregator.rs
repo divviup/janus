@@ -10,6 +10,7 @@ use derivative::Derivative;
 use janus_aggregator_api::{self, aggregator_api_handler};
 use janus_aggregator_core::datastore::Datastore;
 use janus_core::{auth_tokens::AuthenticationToken, time::RealClock};
+use opentelemetry::metrics::Meter;
 use serde::{de, Deserialize, Deserializer, Serialize};
 use std::{
     future::{ready, Future},
@@ -72,6 +73,7 @@ async fn run_aggregator(
     let garbage_collector_future = {
         let datastore = Arc::clone(&datastore);
         let gc_config = config.garbage_collection.take();
+        let meter = meter.clone();
         async move {
             if let Some(gc_config) = gc_config {
                 let gc = GarbageCollector::new(
@@ -93,7 +95,7 @@ async fn run_aggregator(
     };
 
     let aggregator_api_future: Pin<Box<dyn Future<Output = ()> + Send + 'static>> =
-        match build_aggregator_api_handler(&options, &config, &datastore)? {
+        match build_aggregator_api_handler(&options, &config, &datastore, &meter)? {
             Some((handler, config)) => {
                 if let Some(listen_address) = config.listen_address {
                     // Bind the requested address and spawn a future that serves the aggregator API
@@ -153,6 +155,7 @@ fn build_aggregator_api_handler<'a>(
     options: &Options,
     config: &'a Config,
     datastore: &Arc<Datastore<RealClock>>,
+    meter: &Meter,
 ) -> Result<Option<(impl Handler, &'a AggregatorApi)>> {
     let Some(aggregator_api) = &config.aggregator_api else {
         return Ok(None);
@@ -175,6 +178,7 @@ fn build_aggregator_api_handler<'a>(
                 auth_tokens: aggregator_api_auth_tokens,
                 public_dap_url: aggregator_api.public_dap_url.clone(),
             },
+            meter,
         ),
         aggregator_api,
     )))

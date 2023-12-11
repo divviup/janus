@@ -11,8 +11,9 @@ use janus_aggregator_core::{
 };
 use janus_core::{auth_tokens::AuthenticationToken, hpke, http::extract_bearer_token, time::Clock};
 use janus_messages::{HpkeConfigId, RoleParseError, TaskId};
+use opentelemetry::metrics::Meter;
 use routes::*;
-use std::{str::FromStr, sync::Arc};
+use std::{borrow::Cow, str::FromStr, sync::Arc};
 use tracing::error;
 use trillium::{
     Conn, Handler,
@@ -67,13 +68,20 @@ impl Handler for ReplaceMimeTypes {
 
 /// Returns a new handler for an instance of the aggregator API, backed by the given datastore,
 /// according to the given configuration.
-pub fn aggregator_api_handler<C: Clock>(ds: Arc<Datastore<C>>, cfg: Config) -> impl Handler {
+pub fn aggregator_api_handler<C: Clock>(
+    ds: Arc<Datastore<C>>,
+    cfg: Config,
+    meter: &Meter,
+) -> impl Handler {
     (
         // State used by endpoint handlers.
         State(ds),
         State(Arc::new(cfg)),
         // Metrics.
-        metrics("janus_aggregator").with_route(|conn| conn.route().map(ToString::to_string)),
+        metrics(meter).with_route(|conn| {
+            conn.route()
+                .map(|route_spec| Cow::Owned(route_spec.to_string()))
+        }),
         // Authorization check.
         api(auth_check),
         // Check content type and accept headers

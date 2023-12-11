@@ -21,6 +21,7 @@ use janus_aggregator_core::{
     },
     task::{test_util::TaskBuilder, AggregatorTask, AggregatorTaskParameters, QueryType},
     taskprov::test_util::PeerAggregatorBuilder,
+    test_util::noop_meter,
     SecretBytes,
 };
 use janus_core::{
@@ -68,6 +69,7 @@ async fn setup_api_test() -> (impl Handler, EphemeralDatastore, Arc<Datastore<Mo
             ]),
             public_dap_url: "https://dap.url".parse().unwrap(),
         },
+        &noop_meter(),
     );
 
     (handler, ephemeral_datastore, datastore)
