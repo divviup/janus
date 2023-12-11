@@ -5,11 +5,11 @@ targets = [
 all-features = true
 
 [bans]
+multiple-versions = "allow"
 deny = [
     { name = "tracing", deny-multiple-versions = true },
     { name = "opentelemetry", deny-multiple-versions = true },
 ]
-skip = [{ name = "janus_messages" }]
 
 [licenses]
 copyleft = "allow"
