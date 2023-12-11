@@ -1,26 +1,22 @@
-use super::{
-    install_metrics_exporter, MetricsConfiguration, MetricsExporterConfiguration,
-    MetricsExporterHandle,
-};
+use std::net::Ipv4Addr;
+
 use http::StatusCode;
 use janus_core::retries::{retry_http_request, test_http_request_exponential_backoff};
+use opentelemetry::metrics::MeterProvider as _;
+use prometheus::Registry;
+
+use crate::metrics::{build_opentelemetry_prometheus_meter_provider, prometheus_metrics_server};
 
 #[tokio::test]
 async fn prometheus_metrics_pull() {
-    let handle = install_metrics_exporter(&MetricsConfiguration {
-        exporter: Some(MetricsExporterConfiguration::Prometheus {
-            host: Some("127.0.0.1".to_owned()),
-            port: Some(0),
-        }),
-    })
-    .await
-    .unwrap();
-    let port = match handle {
-        MetricsExporterHandle::Prometheus { port, .. } => port,
-        _ => unreachable!(),
-    };
+    let registry = Registry::new();
+    let meter_provider = build_opentelemetry_prometheus_meter_provider(registry.clone()).unwrap();
+    let (join_handle, port) = prometheus_metrics_server(registry, Ipv4Addr::LOCALHOST.into(), 0)
+        .await
+        .unwrap();
 
-    opentelemetry::global::meter("tests")
+    let meter = meter_provider.meter("tests");
+    meter
         .u64_observable_gauge("test_metric")
         .with_description("Gauge for test purposes")
         .init()
@@ -44,8 +40,5 @@ async fn prometheus_metrics_pull() {
         text
     );
 
-    match handle {
-        MetricsExporterHandle::Prometheus { handle, .. } => handle.abort(),
-        _ => unreachable!(),
-    }
+    join_handle.abort();
 }

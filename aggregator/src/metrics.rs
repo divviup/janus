@@ -9,7 +9,7 @@ use std::net::AddrParseError;
 #[cfg(feature = "prometheus")]
 use {
     anyhow::Context,
-    opentelemetry::global::set_meter_provider,
+    opentelemetry::{global::set_meter_provider, metrics::MetricsError},
     prometheus::Registry,
     std::net::{IpAddr, Ipv4Addr},
     tokio::{sync::oneshot, task::JoinHandle},
@@ -101,6 +101,51 @@ impl AggregationSelector for CustomAggregationSelector {
     }
 }
 
+#[cfg(feature = "prometheus")]
+fn build_opentelemetry_prometheus_meter_provider(
+    registry: Registry,
+) -> Result<MeterProvider, MetricsError> {
+    let reader = opentelemetry_prometheus::exporter()
+        .with_aggregation_selector(CustomAggregationSelector)
+        .with_registry(registry)
+        .build()?;
+    let meter_provider = MeterProvider::builder()
+        .with_reader(reader)
+        .with_resource(resource())
+        .build();
+    Ok(meter_provider)
+}
+
+#[cfg(feature = "prometheus")]
+async fn prometheus_metrics_server(
+    registry: Registry,
+    host: IpAddr,
+    port: u16,
+) -> Result<(JoinHandle<()>, u16), Error> {
+    let router = trillium_prometheus::text_format_handler(registry.clone());
+
+    let (sender, receiver) = oneshot::channel();
+    let init = Init::new(|info: Info| async move {
+        // Ignore error if the receiver is dropped.
+        let _ = sender.send(info.tcp_socket_addr().map(|socket_addr| socket_addr.port()));
+    });
+
+    let handle = tokio::task::spawn(
+        trillium_tokio::config()
+            .with_port(port)
+            .with_host(&host.to_string())
+            .without_signals()
+            .run_async((init, router)),
+    );
+
+    let port = receiver
+        .await
+        .context("Init handler was dropped before sending port")?
+        .context("server does not have a TCP port")?;
+
+    Ok((handle, port))
+}
+
 /// Install a metrics provider and exporter, per the given configuration. The OpenTelemetry global
 /// API can be used to create and update meters, and they will be sent through this exporter. The
 /// returned handle should not be dropped until the application shuts down.
@@ -114,46 +159,22 @@ pub async fn install_metrics_exporter(
             port: config_exporter_port,
         }) => {
             let registry = Registry::new();
-            let exporter = opentelemetry_prometheus::exporter()
-                .with_aggregation_selector(CustomAggregationSelector)
-                .with_registry(registry.clone())
-                .build()?;
-
-            set_meter_provider(
-                MeterProvider::builder()
-                    .with_reader(exporter)
-                    .with_resource(resource())
-                    .build(),
-            );
+            let meter_provider = build_opentelemetry_prometheus_meter_provider(registry.clone())?;
+            set_meter_provider(meter_provider);
 
             let host = config_exporter_host
                 .as_ref()
                 .map(|host| IpAddr::from_str(host))
                 .unwrap_or_else(|| Ok(Ipv4Addr::UNSPECIFIED.into()))?;
-            let port = config_exporter_port.unwrap_or_else(|| 9464);
+            let config_port = config_exporter_port.unwrap_or_else(|| 9464);
 
-            let router = trillium_prometheus::text_format_handler(registry.clone());
+            let (handle, actual_port) =
+                prometheus_metrics_server(registry, host, config_port).await?;
 
-            let (sender, receiver) = oneshot::channel();
-            let init = Init::new(|info: Info| async move {
-                // Ignore error if the receiver is dropped.
-                let _ = sender.send(info.tcp_socket_addr().map(|socket_addr| socket_addr.port()));
-            });
-
-            let handle = tokio::task::spawn(
-                trillium_tokio::config()
-                    .with_port(port)
-                    .with_host(&host.to_string())
-                    .without_signals()
-                    .run_async((init, router)),
-            );
-
-            let port = receiver
-                .await
-                .context("Init handler was dropped before sending port")?
-                .context("server does not have a TCP port")?;
-
-            Ok(MetricsExporterHandle::Prometheus { handle, port })
+            Ok(MetricsExporterHandle::Prometheus {
+                handle,
+                port: actual_port,
+            })
         }
         #[cfg(not(feature = "prometheus"))]
         Some(MetricsExporterConfiguration::Prometheus { .. }) => Err(Error::Other(anyhow!(

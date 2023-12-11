@@ -3177,8 +3177,31 @@ async fn send_request_to_helper<T: Encode>(
 }
 
 #[cfg(test)]
+pub(crate) mod test_util {
+    use std::time::Duration;
+
+    use crate::aggregator::Config;
+
+    pub(crate) const BATCH_AGGREGATION_SHARD_COUNT: u64 = 32;
+
+    pub(crate) fn default_aggregator_config() -> Config {
+        // Enable upload write batching & batch aggregation sharding by default, in hopes that we
+        // can shake out any bugs.
+        Config {
+            max_upload_batch_size: 5,
+            max_upload_batch_write_delay: Duration::from_millis(100),
+            batch_aggregation_shard_count: BATCH_AGGREGATION_SHARD_COUNT,
+            ..Default::default()
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
-    use crate::aggregator::{error::ReportRejectedReason, Aggregator, Config, Error};
+    use crate::aggregator::{
+        error::ReportRejectedReason, test_util::default_aggregator_config, Aggregator, Config,
+        Error,
+    };
     use assert_matches::assert_matches;
     use futures::future::try_join_all;
     use janus_aggregator_core::{
@@ -3213,19 +3236,6 @@ mod tests {
     };
     use rand::random;
     use std::{collections::HashSet, iter, sync::Arc, time::Duration as StdDuration};
-
-    pub(crate) const BATCH_AGGREGATION_SHARD_COUNT: u64 = 32;
-
-    pub(crate) fn default_aggregator_config() -> Config {
-        // Enable upload write batching & batch aggregation sharding by default, in hopes that we
-        // can shake out any bugs.
-        Config {
-            max_upload_batch_size: 5,
-            max_upload_batch_write_delay: StdDuration::from_millis(100),
-            batch_aggregation_shard_count: BATCH_AGGREGATION_SHARD_COUNT,
-            ..Default::default()
-        }
-    }
 
     pub(super) fn create_report_custom(
         task: &AggregatorTask,
