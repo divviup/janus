@@ -250,12 +250,10 @@ fn private_collector_credential_parser(
 }
 
 #[derive(Debug, Args, PartialEq, Eq)]
-#[group(required = true)]
 struct AuthenticationOptions {
     /// Authentication token for the DAP-Auth-Token HTTP header
     #[clap(
         long,
-        required = false,
         value_parser = StringValueParser::new().try_map(AuthenticationToken::new_dap_auth_token_from_string),
         env,
         hide_env_values = true,
@@ -268,7 +266,6 @@ struct AuthenticationOptions {
     /// Authentication token for the "Authorization: Bearer ..." HTTP header
     #[clap(
         long,
-        required = false,
         value_parser = StringValueParser::new().try_map(AuthenticationToken::new_bearer_token_from_string),
         env,
         hide_env_values = true,
@@ -450,30 +447,78 @@ struct Options {
 }
 
 impl Options {
-    fn hpke_keypair(&self) -> Result<HpkeKeypair, anyhow::Error> {
+    fn collector_credential(&self) -> Result<Option<PrivateCollectorCredential>, Error> {
+        match (
+            &self.hpke_config.collector_credential,
+            &self.hpke_config.collector_credential_file,
+        ) {
+            (Some(collector_credential), None) => Ok(Some(collector_credential.clone())),
+            (None, Some(collector_credential_file)) => {
+                let reader = File::open(collector_credential_file)
+                    .context("could not open HPKE config file")?;
+                Ok(Some(
+                    serde_json::from_reader(reader).context("could not parse HPKE config file")?,
+                ))
+            }
+            _ => unreachable!("collector credential arguments are mutually exclusive"),
+        }
+    }
+
+    fn authentication_token(
+        &self,
+        collector_credential: Option<&PrivateCollectorCredential>,
+    ) -> Option<AuthenticationToken> {
+        match (
+            &self.authentication.dap_auth_token,
+            &self.authentication.authorization_bearer_token,
+            collector_credential,
+        ) {
+            // Prioritize tokens provided via CLI arguments.
+            (Some(token), None, _) => Some(token.clone()),
+            (None, Some(token), _) => Some(token.clone()),
+            // Fall back to collector credential token, if present.
+            (None, None, Some(collector_credential)) => collector_credential.authentication_token(),
+            (None, None, None) => None,
+            _ => unreachable!("all authentication token arguments are mutually exclusive"),
+        }
+    }
+
+    fn hpke_keypair(
+        &self,
+        collector_credential: Option<&PrivateCollectorCredential>,
+    ) -> Result<HpkeKeypair, anyhow::Error> {
         match (
             &self.hpke_config.hpke_config,
             &self.hpke_config.hpke_private_key,
-            &self.hpke_config.collector_credential_file,
-            &self.hpke_config.collector_credential,
+            collector_credential,
         ) {
-            (Some(config), Some(private), _, _) => {
+            (Some(config), Some(private), None) => {
                 Ok(HpkeKeypair::new(config.clone(), private.clone()))
             }
-            (None, None, Some(collector_credential_file), _) => {
-                let reader = File::open(collector_credential_file)
-                    .context("could not open HPKE config file")?;
-                let credentials: PrivateCollectorCredential =
-                    serde_json::from_reader(reader).context("could not parse HPKE config file")?;
-                credentials
-                    .hpke_keypair()
-                    .context("could not convert HPKE config")
-            }
-            (None, None, None, Some(collector_credential)) => collector_credential
+            (None, None, Some(collector_credential)) => Ok(collector_credential
                 .hpke_keypair()
-                .context("could not convert HPKE config"),
-            _ => unreachable!(),
+                .context("unsupported config")?),
+            _ => unreachable!(
+                "hpke arguments are mutually exclusive with collector credential arguments"
+            ),
         }
+    }
+
+    /// Extract all collector-related credentials from the given options.
+    fn credential(&self) -> Result<(AuthenticationToken, HpkeKeypair), Error> {
+        let collector_credential = self.collector_credential()?;
+        let authentication_token = self
+            .authentication_token(collector_credential.as_ref())
+            .ok_or_else(|| {
+                clap::Error::raw(
+                    ErrorKind::MissingRequiredArgument,
+                    "no authentication token was provided",
+                )
+            })?;
+        Ok((
+            authentication_token,
+            self.hpke_keypair(collector_credential.as_ref())?,
+        ))
     }
 }
 
@@ -697,17 +742,9 @@ fn new_collector<V: vdaf::Collector>(
     vdaf: V,
     http_client: reqwest::Client,
 ) -> Result<Collector<V>, Error> {
-    let hpke_keypair = options.hpke_keypair().map_err(Error::Anyhow)?;
+    let (authentication, hpke_keypair) = options.credential()?;
     let task_id = options.task_id;
     let leader_endpoint = options.leader;
-    let authentication = match (
-        options.authentication.dap_auth_token,
-        options.authentication.authorization_bearer_token,
-    ) {
-        (None, Some(token)) => token,
-        (Some(token), None) => token,
-        (None, None) | (Some(_), Some(_)) => unreachable!(),
-    };
     let collector =
         Collector::builder(task_id, leader_endpoint, authentication, hpke_keypair, vdaf)
             .with_http_client(http_client)
@@ -1320,14 +1357,6 @@ mod tests {
             }
         );
 
-        let case_3_arguments = base_arguments.clone();
-        assert_eq!(
-            Options::try_parse_from(case_3_arguments)
-                .unwrap_err()
-                .kind(),
-            ErrorKind::MissingRequiredArgument
-        );
-
         let mut case_4_arguments = base_arguments.clone();
         case_4_arguments.push(dap_auth_token_argument);
         case_4_arguments.push(authorization_bearer_token_argument);
@@ -1373,7 +1402,6 @@ mod tests {
             "--batch-interval-duration".to_string(),
             "1000".to_string(),
             "--vdaf=count".to_string(),
-            format!("--authorization-bearer-token={}", bearer_token.as_str()),
         ]);
 
         let mut arguments = base_arguments.clone();
@@ -1382,11 +1410,30 @@ mod tests {
             collector_credential_file_path.to_string_lossy(),
         ));
         assert_eq!(
+            Options::try_parse_from(arguments.clone())
+                .unwrap()
+                .credential()
+                .unwrap(),
+            (
+                collector_credential.authentication_token().unwrap(),
+                collector_credential.hpke_keypair().unwrap()
+            ),
+        );
+
+        // Should prioritize any tokens provided via CLI arguments.
+        arguments.push(format!(
+            "--authorization-bearer-token={}",
+            bearer_token.as_str()
+        ));
+        assert_eq!(
             Options::try_parse_from(arguments)
                 .unwrap()
-                .hpke_keypair()
+                .credential()
                 .unwrap(),
-            collector_credential.hpke_keypair().unwrap(),
+            (
+                AuthenticationToken::Bearer(bearer_token.clone()),
+                collector_credential.hpke_keypair().unwrap()
+            ),
         );
 
         let mut backcompat_arguments = base_arguments.clone();
@@ -1397,9 +1444,12 @@ mod tests {
         assert_eq!(
             Options::try_parse_from(backcompat_arguments)
                 .unwrap()
-                .hpke_keypair()
+                .credential()
                 .unwrap(),
-            collector_credential.hpke_keypair().unwrap(),
+            (
+                collector_credential.authentication_token().unwrap(),
+                collector_credential.hpke_keypair().unwrap()
+            ),
         );
     }
 
