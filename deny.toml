@@ -2,7 +2,6 @@ targets = [
     { triple = "x86_64-unknown-linux-gnu" },
     { triple = "x86_64-unknown-linux-musl" },
 ]
-all-features = true
 
 [bans]
 multiple-versions = "allow"
