@@ -452,7 +452,7 @@ impl Options {
             &self.hpke_config.collector_credential,
             &self.hpke_config.collector_credential_file,
         ) {
-            (Some(collector_credential), _) => Ok(Some(collector_credential.clone())),
+            (Some(collector_credential), None) => Ok(Some(collector_credential.clone())),
             (None, Some(collector_credential_file)) => {
                 let reader = File::open(collector_credential_file)
                     .context("could not open HPKE config file")?;
@@ -460,7 +460,7 @@ impl Options {
                     serde_json::from_reader(reader).context("could not parse HPKE config file")?,
                 ))
             }
-            (None, None) => Ok(None),
+            _ => unreachable!("collector credential arguments are mutually exclusive"),
         }
     }
 
@@ -474,11 +474,12 @@ impl Options {
             collector_credential,
         ) {
             // Prioritize tokens provided via CLI arguments.
-            (Some(token), _, _) => Some(token.clone()),
+            (Some(token), None, _) => Some(token.clone()),
             (None, Some(token), _) => Some(token.clone()),
             // Fall back to collector credential token, if present.
             (None, None, Some(collector_credential)) => collector_credential.authentication_token(),
             (None, None, None) => None,
+            _ => unreachable!("all authentication token arguments are mutually exclusive"),
         }
     }
 
@@ -491,15 +492,15 @@ impl Options {
             &self.hpke_config.hpke_private_key,
             collector_credential,
         ) {
-            (Some(config), Some(private), _) => {
+            (Some(config), Some(private), None) => {
                 Ok(HpkeKeypair::new(config.clone(), private.clone()))
             }
             (None, None, Some(collector_credential)) => Ok(collector_credential
                 .hpke_keypair()
                 .context("unsupported config")?),
-            // It should not be possible to provide hpke_* arguments and collector_credential_*
-            // arguments at the same time.
-            _ => unreachable!(),
+            _ => unreachable!(
+                "hpke arguments are mutually exclusive with collector credential arguments"
+            ),
         }
     }
 
