@@ -2142,6 +2142,7 @@ name = "janus_integration_tests"
 version = "0.6.6"
 dependencies = [
  "anyhow",
+ "assert_matches",
  "backoff",
  "base64",
  "divviup-client",
@@ -2161,6 +2162,7 @@ dependencies = [
  "prio",
  "rand",
  "reqwest",
+ "rstest",
  "serde",
  "serde_json",
  "tempfile",
