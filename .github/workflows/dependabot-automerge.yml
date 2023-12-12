@@ -4,7 +4,7 @@ on: pull_request
 jobs:
   dependabot:
     runs-on: ubuntu-latest
-    if: ${{ github.actor == 'dependabot[bot]' }}
+    if: ${{ github.actor == 'dependabot[bot]' && github.event.review.state != 'APPROVED' }}
     steps:
       - name: Approve & enable auto-merge for Dependabot PRs
         run: gh pr review --approve -b "Auto-approving dependabot PR." "$PR_URL" && gh pr merge --auto --squash "$PR_URL"
