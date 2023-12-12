@@ -334,10 +334,10 @@ async fn in_cluster_fixed_size() {
     .await;
 }
 
+#[cfg(feature = "in-cluster-rate-limits")]
 mod rate_limits {
-    #![cfg(feature = "in-cluster-rate-limits")]
-
     use super::InClusterJanusPair;
+    use assert_matches::assert_matches;
     use http::Method;
     use janus_aggregator_core::task::QueryType;
     use janus_core::{test_util::install_test_trace_subscriber, vdaf::VdafInstance};
@@ -345,7 +345,13 @@ mod rate_limits {
     use rand::random;
     use reqwest::StatusCode;
     use serde::Deserialize;
-    use std::{env, fs::File};
+    use std::{
+        env,
+        fs::File,
+        sync::{Arc, OnceLock},
+        time::Duration,
+    };
+    use tokio::sync::Semaphore;
     use url::Url;
 
     /// Configuration for the rate limit test. We need to know the QPS and the window over which
@@ -354,6 +360,7 @@ mod rate_limits {
     /// deployed to the cluster we test against can set the values.
     #[derive(Deserialize)]
     struct TestConfig {
+        rate_limit_excess: f64,
         window: u64,
         upload_qps: u64,
         aggregation_job_qps: u64,
@@ -361,16 +368,15 @@ mod rate_limits {
     }
 
     impl TestConfig {
-        fn load() -> Self {
-            serde_json::from_reader(
-                File::open(
-                    env::var("JANUS_E2E_RATE_LIMIT_TEST_CONFIG")
-                        .unwrap()
-                        .as_str(),
+        fn load() -> &'static Self {
+            static CONFIG: OnceLock<TestConfig> = OnceLock::new();
+
+            CONFIG.get_or_init(|| {
+                serde_json::from_reader(
+                    File::open(env::var("JANUS_E2E_RATE_LIMIT_TEST_CONFIG").unwrap()).unwrap(),
                 )
-                .unwrap(),
-            )
-            .unwrap()
+                .unwrap()
+            })
         }
     }
 
@@ -407,50 +413,52 @@ mod rate_limits {
             second_task_id: &other_task_id,
         });
         let rate_limit = rate_limit_picker(&test_config);
-        let rate_limit_excess = 0.1;
+        let rate_limit_excess = test_config.rate_limit_excess;
         let total_requests_count =
             ((1.0 + rate_limit_excess) * (rate_limit * test_config.window) as f64) as u64;
 
         let mut acceptable_status_count = 0;
         let mut too_many_requests_count = 0;
+        let mut last_retry_after = None;
+        let client = reqwest::Client::builder().build().unwrap();
 
         // Send ten requests at a time, because otherwise the kubectl port-forward gets overwhelmed
-        for _ in 0..(total_requests_count / 10) {
-            let mut handles = Vec::new();
-            for _ in 0..10 {
-                for url in [first_request_url.clone(), second_request_url.clone()] {
-                    let method = method.clone();
-                    handles.push(tokio::spawn(async move {
-                        // We avoid using janus_client here because we don't want it to automatically
-                        // retry on HTTP 429 for us.
-                        let response = reqwest::Client::builder()
-                            .build()
-                            .unwrap()
-                            .request(method, url)
-                            .send()
-                            .await
-                            .unwrap();
+        let semaphore = Arc::new(Semaphore::new(10));
+        let mut handles = Vec::new();
+        for _ in 0..total_requests_count {
+            for url in [first_request_url.clone(), second_request_url.clone()] {
+                let (client, method, semaphore) =
+                    (client.clone(), method.clone(), semaphore.clone());
+                handles.push(tokio::spawn(async move {
+                    let _permit = semaphore.acquire_owned().await.unwrap();
+                    // We avoid using janus_client here because we don't want it to automatically
+                    // retry on HTTP 429 for us.
+                    let response = client.request(method, url).send().await.unwrap();
 
-                        // We could look at the retry-after header, but currently the rate limiting
-                        // plugin only ever sets that value to 0 when run in the distributed mode
-                        // https://github.com/mholt/caddy-ratelimit/blob/1ef5298afeec6792f08a00d8bc9ce66edccbfa18/distributed.go#L198
-                        response.status()
-                    }));
-                }
+                    (
+                        response.headers().get("retry-after").cloned(),
+                        response.status(),
+                    )
+                }));
             }
+        }
 
-            for handle in handles {
-                let status = handle.await.unwrap();
-
-                // Every request this test send should get rejected due to a missing body if it gets
-                // past the rate limiter.
-                if status == StatusCode::BAD_REQUEST {
-                    acceptable_status_count += 1
-                } else if status == StatusCode::TOO_MANY_REQUESTS {
-                    too_many_requests_count += 1
-                } else {
-                    panic!("unexpected status {status:?}");
-                }
+        for handle in handles {
+            let (retry_after, status) = handle.await.unwrap();
+            // Every request this test send should get rejected due to a missing body if it gets
+            // past the rate limiter.
+            if status == StatusCode::BAD_REQUEST {
+                assert!(retry_after.is_none());
+                acceptable_status_count += 1
+            } else if status == StatusCode::TOO_MANY_REQUESTS {
+                assert_matches!(retry_after, Some(retry_after) => {
+                    let retry_after = retry_after.to_str().unwrap().parse::<u64>().unwrap();
+                    assert!(retry_after <= test_config.window);
+                    last_retry_after = Some(retry_after);
+                });
+                too_many_requests_count += 1
+            } else {
+                panic!("unexpected status {status:?}");
             }
         }
 
@@ -464,8 +472,20 @@ mod rate_limits {
             ratio > expected_429_rate - 0.05 && ratio <= expected_429_rate + 0.05,
             "ratio: {ratio} expected 429 rate: {expected_429_rate} \
             count of HTTP 429: {too_many_requests_count} \
-            count of acceptable HTTP status: {acceptable_status_count}",
+            count of HTTP 400: {acceptable_status_count}",
         );
+
+        let last_retry_after = assert_matches!(last_retry_after, Some(l) => l);
+
+        // Wait for prescribed time to elapse and then try again. Requests should go through.
+        std::thread::sleep(Duration::from_secs(last_retry_after));
+
+        for url in [first_request_url.clone(), second_request_url.clone()] {
+            let method = method.clone();
+            let response = client.request(method, url).send().await.unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert!(response.headers().get("retry-after").is_none());
+        }
     }
 
     #[tokio::test]

@@ -15,6 +15,7 @@ in-cluster-rate-limits = []
 
 [dependencies]
 anyhow.workspace = true
+assert_matches.workspace = true
 backoff = { version = "0.4", features = ["tokio"] }
 base64.workspace = true
 divviup-client = { version = "0.1", features = ["admin"] }

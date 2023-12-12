@@ -2144,6 +2144,7 @@ name = "janus_integration_tests"
 version = "0.6.6"
 dependencies = [
  "anyhow",
+ "assert_matches",
  "backoff",
  "base64 0.21.5",
  "divviup-client",
