@@ -673,10 +673,10 @@ mod tests {
                 aggregator_handler, aggregator_handler_with_aggregator,
                 test_util::{decode_response_body, take_problem_details},
             },
+            test_util::{default_aggregator_config, BATCH_AGGREGATION_SHARD_COUNT},
             tests::{
-                create_report, create_report_custom, default_aggregator_config,
-                generate_helper_report_share, generate_helper_report_share_for_plaintext,
-                BATCH_AGGREGATION_SHARD_COUNT,
+                create_report, create_report_custom, generate_helper_report_share,
+                generate_helper_report_share_for_plaintext,
             },
             Config,
         },

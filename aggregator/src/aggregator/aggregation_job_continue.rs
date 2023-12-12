@@ -382,7 +382,7 @@ mod tests {
             post_aggregation_job_expecting_status,
         },
         http_handlers::aggregator_handler,
-        tests::default_aggregator_config,
+        test_util::default_aggregator_config,
     };
     use janus_aggregator_core::{
         datastore::{
