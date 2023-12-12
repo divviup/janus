@@ -412,7 +412,7 @@ mod rate_limits {
             first_task_id: &janus_pair.task_parameters.task_id,
             second_task_id: &other_task_id,
         });
-        let rate_limit = rate_limit_picker(&test_config);
+        let rate_limit = rate_limit_picker(test_config);
         let rate_limit_excess = test_config.rate_limit_excess;
         let total_requests_count =
             ((1.0 + rate_limit_excess) * (rate_limit * test_config.window) as f64) as u64;
