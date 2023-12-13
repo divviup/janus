@@ -121,6 +121,52 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
         rslt
     }
 
+    /// Returns the set of report IDs that cannot be merged into its batch aggregation because the
+    /// batch has already been collected.
+    pub async fn unwritable_reports<C: Clock>(
+        &self,
+        tx: &Transaction<'_, C>,
+        vdaf: &A,
+    ) -> Result<HashSet<ReportId>, datastore::Error> {
+        let unmergeable_report_ids = Arc::new(Mutex::new(HashSet::new()));
+        try_join_all(self.aggregations.values().map(|data| {
+            let unmergeable_report_ids = Arc::clone(&unmergeable_report_ids);
+            async move {
+                tx.get_batch_aggregation::<SEED_SIZE, Q, A>(
+                    vdaf,
+                    data.batch_aggregation.task_id(),
+                    data.batch_aggregation.batch_identifier(),
+                    data.batch_aggregation.aggregation_parameter(),
+                    data.batch_aggregation.ord(),
+                )
+                .await
+                .map(|batch_aggregation| {
+                    batch_aggregation.map(|batch_aggregation| {
+                        if batch_aggregation.state() == &BatchAggregationState::Collected {
+                            // Unwrap safety: this only panics if the mutex is poisoned. If
+                            // it is, one of the other futures also panicked, so we can
+                            // panic too.
+                            unmergeable_report_ids
+                                .lock()
+                                .unwrap()
+                                .extend(&data.included_report_ids);
+                        }
+                    })
+                })
+            }
+        }))
+        .await?;
+
+        // Unwrap safety: at this point, `unmergeable_report_ids` is the only instance of this Arc,
+        // so `try_unwrap().unwrap()` will succeed. `into_inner().unwrap()` can only panic if code
+        // that held this mutex panicked; but in this case, we would have panicked already while
+        // awaiting the above future (and if not, we do want to panic now).
+        Ok(Arc::try_unwrap(unmergeable_report_ids)
+            .unwrap()
+            .into_inner()
+            .unwrap())
+    }
+
     /// Write the accumulated aggregate shares, report counts and checksums to the datastore. If a
     /// batch aggregation already exists for some accumulator, it is updated. If no batch
     /// aggregation exists, one is created and initialized with the accumulated values.
@@ -129,6 +175,9 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
     /// so, a set of unmergeable report IDs is returned; the contribution of the reports
     /// corresponding to these IDs was not written back to the datastore because it is too late to
     /// do so.
+    ///
+    /// The returned IDs will match the results of [`Self::unwritable_reports`] if run in the same
+    /// transaction.
     #[tracing::instrument(skip(self, tx), err)]
     pub async fn flush_to_datastore<C: Clock>(
         &self,
