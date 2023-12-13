@@ -334,7 +334,7 @@ mod tests {
                     let interval = Interval::new(timestamp, Duration::from_seconds(1)).unwrap();
                     let batch = Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                         *task.id(),
-                        batch_id.clone(),
+                        batch_id,
                         AggregationParam(0),
                         BatchState::Open,
                         0,
@@ -348,7 +348,7 @@ mod tests {
                         let batch_aggregation =
                             BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                                 *task.id(),
-                                batch_id.clone(),
+                                batch_id,
                                 AggregationParam(0),
                                 shard,
                                 BatchAggregationState::Collected,
