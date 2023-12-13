@@ -251,7 +251,7 @@ CREATE TYPE BATCH_STATE AS ENUM(
     'CLOSED'    -- this batch can no longer accept additional aggregation jobs.
 );
 
--- Tracks the state of a given batch, by aggregation parameter. Populated for the Leader only.
+-- Tracks the state of a given batch, by aggregation parameter.
 CREATE TABLE batches(
     id                    BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     task_id                       BIGINT NOT NULL,       -- the task ID
