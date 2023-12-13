@@ -1750,6 +1750,8 @@ mod tests {
         // aggregation parameter.
         let (prepare_init_8, transcript_8) = prep_init_generator.next(&measurement);
 
+        let mut batch_aggregations_results = vec![];
+        let mut aggregation_jobs_results = vec![];
         let (conflicting_aggregation_job, non_conflicting_aggregation_job) = datastore
             .run_unnamed_tx(|tx| {
                 let task = helper_task.clone();
@@ -1849,8 +1851,9 @@ mod tests {
             .await
             .unwrap();
 
+        let aggregation_param = dummy_vdaf::AggregationParam(0);
         let request = AggregationJobInitializeReq::new(
-            dummy_vdaf::AggregationParam(0).get_encoded(),
+            aggregation_param.get_encoded(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([
                 prepare_init_0.clone(),
@@ -1969,14 +1972,22 @@ mod tests {
             });
 
             // Check aggregation job in datastore.
-            let aggregation_jobs = datastore
+            let (aggregation_jobs, batch_aggregations) = datastore
                 .run_unnamed_tx(|tx| {
                     let task = task.clone();
+                    let vdaf = vdaf.clone();
                     Box::pin(async move {
-                        tx.get_aggregation_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                            task.id(),
-                        )
-                        .await
+                        Ok((
+                            tx.get_aggregation_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                                task.id(),
+                            )
+                            .await?,
+                            tx.get_batch_aggregations_for_task::<0, TimeInterval, _>(
+                                &vdaf,
+                                task.id(),
+                            )
+                            .await?,
+                        ))
                     })
                 })
                 .await
@@ -1988,7 +1999,7 @@ mod tests {
             let mut saw_non_conflicting_aggregation_job = false;
             let mut saw_new_aggregation_job = false;
 
-            for aggregation_job in aggregation_jobs {
+            for aggregation_job in &aggregation_jobs {
                 if aggregation_job.eq(&conflicting_aggregation_job) {
                     saw_conflicting_aggregation_job = true;
                 } else if aggregation_job.eq(&non_conflicting_aggregation_job) {
@@ -2005,7 +2016,13 @@ mod tests {
             assert!(saw_conflicting_aggregation_job);
             assert!(saw_non_conflicting_aggregation_job);
             assert!(saw_new_aggregation_job);
+
+            aggregation_jobs_results.push(aggregation_jobs);
+            batch_aggregations_results.push(batch_aggregations);
         }
+
+        assert!(aggregation_jobs_results.windows(2).all(|v| v[0] == v[1]));
+        assert!(batch_aggregations_results.windows(2).all(|v| v[0] == v[1]));
     }
 
     #[tokio::test]
