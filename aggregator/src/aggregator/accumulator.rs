@@ -143,9 +143,7 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
                 .map(|batch_aggregation| {
                     batch_aggregation.map(|batch_aggregation| {
                         if batch_aggregation.state() == &BatchAggregationState::Collected {
-                            // Unwrap safety: this only panics if the mutex is poisoned. If
-                            // it is, one of the other futures also panicked, so we can
-                            // panic too.
+                            // Unwrap safety: panic on mutex poisoning.
                             unmergeable_report_ids
                                 .lock()
                                 .unwrap()
@@ -158,9 +156,7 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
         .await?;
 
         // Unwrap safety: at this point, `unmergeable_report_ids` is the only instance of this Arc,
-        // so `try_unwrap().unwrap()` will succeed. `into_inner().unwrap()` can only panic if code
-        // that held this mutex panicked; but in this case, we would have panicked already while
-        // awaiting the above future (and if not, we do want to panic now).
+        // so `try_unwrap().unwrap()` will succeed. Panic if the inner mutex is poisoned.
         Ok(Arc::try_unwrap(unmergeable_report_ids)
             .unwrap()
             .into_inner()
@@ -204,9 +200,7 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
                             match batch_aggregation.merged_with(&data.batch_aggregation) {
                                 Ok(batch_aggregation) => batch_aggregation,
                                 Err(datastore::Error::AlreadyCollected) => {
-                                    // Unwrap safety: this only panics if the mutex is poisoned. If
-                                    // it is, one of the other futures also panicked, so we can
-                                    // panic too.
+                                    // Unwrap safety: panic on mutex poisoning.
                                     let mut unmergeable_report_ids =
                                         unmergeable_report_ids.lock().unwrap();
                                     unmergeable_report_ids.extend(&data.included_report_ids);
@@ -254,9 +248,7 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
         .await?;
 
         // Unwrap safety: at this point, `unmergeable_report_ids` is the only instance of this Arc,
-        // so `try_unwrap().unwrap()` will succeed. `into_inner().unwrap()` can only panic if code
-        // that held this mutex panicked; but in this case, we would have panicked already while
-        // awaiting the above future (and if not, we do want to panic now).
+        // so `try_unwrap().unwrap()` will succeed. Panic if the inner mutex is poisoned.
         Ok(Arc::try_unwrap(unmergeable_report_ids)
             .unwrap()
             .into_inner()

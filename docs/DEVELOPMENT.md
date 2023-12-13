@@ -73,3 +73,27 @@ To create a new migration:
   so a panic is appropriate. (Note that some `FromSql` implementations may
   return errors for other reasons, such as out-of-range values or serde
   deserialization falures)
+
+* In production code, use of `.unwrap()` should be preceded by a comment
+  that asserts the safety of the unwrap.
+
+  Example:
+  ```rust
+  // Unwrap safety: The constructor checks that max_concurrent_job_workers 
+  // can be converted to a u32.
+  // Unwrap safety: Semaphore::acquire is documented as only returning an error
+  // if the semaphore is closed, and we never close this semaphore.
+  let _: SemaphorePermit<'_> = sem
+      .acquire_many(u32::try_from(self.max_concurrent_job_workers).unwrap())
+      .await
+      .unwrap();
+  ```
+
+  If unwrapping a mutex lock, where panic is a desired outcome of mutex poisoning,
+  you can simply state:
+  ```rust
+  // Unwrap safety: panic on mutex poisoning.
+  mutex.lock().unwrap();
+  ```
+
+  Explanation of `.unwrap()` is not necessary in test code.
