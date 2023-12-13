@@ -2034,7 +2034,7 @@ impl VdafOps {
 
                     if !replayed_request {
                         // Write report shares, aggregations, and batches.
-                        let (resulting_unwriteable_reports, resulting_report_share_data, _) = try_join!(
+                        (_, report_share_data, _) = try_join!(
                             accumulator.flush_to_datastore(tx, &vdaf),
                             try_join_all(report_share_data.into_iter().map(|mut rsd| {
                                 let task = Arc::clone(&task);
@@ -2089,12 +2089,6 @@ impl VdafOps {
                                 Ok(())
                             }}))
                         )?;
-                        report_share_data = resulting_report_share_data;
-
-                        // Sanity check: we should receive the same set of unwritable reports after
-                        // writing as we did in the beginning of this transaction. If not, this is
-                        // a bug and we shouldn't commit this transaction.
-                        assert_eq!(unwritable_reports, resulting_unwriteable_reports);
                     }
 
                     Ok(Self::aggregation_job_resp_for(

@@ -263,3 +263,125 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
             .unwrap())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::aggregator::accumulator::Accumulator;
+    use janus_aggregator_core::{
+        datastore::{
+            models::{Batch, BatchAggregation, BatchAggregationState, BatchState},
+            test_util::ephemeral_datastore,
+        },
+        task::{test_util::TaskBuilder, QueryType},
+    };
+    use janus_core::{
+        report_id::ReportIdChecksumExt,
+        test_util::{
+            dummy_vdaf::{self, AggregationParam, OutputShare},
+            install_test_trace_subscriber,
+        },
+        time::{Clock, MockClock},
+        vdaf::VdafInstance,
+    };
+    use janus_messages::{query_type::FixedSize, Duration, Interval, ReportIdChecksum};
+    use rand::random;
+    use std::{collections::HashSet, sync::Arc};
+
+    #[tokio::test]
+    async fn test_unwritable_reports() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+
+        let task = Arc::new(
+            TaskBuilder::new(
+                QueryType::FixedSize {
+                    max_batch_size: 100,
+                    batch_time_window_size: None,
+                },
+                VdafInstance::Fake,
+            )
+            .build()
+            .leader_view()
+            .unwrap(),
+        );
+        datastore.put_aggregator_task(&task).await.unwrap();
+
+        let shards = 2;
+        let mut accumulator = Accumulator::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+            Arc::clone(&task),
+            shards,
+            AggregationParam(0),
+        );
+
+        let batch_id = random();
+        let report_id = random();
+        let timestamp = clock.now();
+        let output_share = OutputShare();
+
+        accumulator
+            .update(&batch_id, &report_id, &timestamp, &output_share)
+            .unwrap();
+        let accumulator = Arc::new(accumulator);
+
+        // Pretend that we're another concurrently running process: insert some aggregations to the
+        // same batch ID and mark them collected.
+        datastore
+            .run_unnamed_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move {
+                    let interval = Interval::new(timestamp, Duration::from_seconds(1)).unwrap();
+                    let batch = Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        batch_id.clone(),
+                        AggregationParam(0),
+                        BatchState::Open,
+                        0,
+                        interval,
+                    );
+                    tx.put_batch(&batch).await.unwrap();
+
+                    // Insert for all possible shards, since we non-deterministically assign shards
+                    // when we call update().
+                    for shard in 0..shards {
+                        let batch_aggregation =
+                            BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                                *task.id(),
+                                batch_id.clone(),
+                                AggregationParam(0),
+                                shard,
+                                BatchAggregationState::Collected,
+                                Some(OutputShare().into()),
+                                1,
+                                interval,
+                                ReportIdChecksum::for_report_id(&report_id),
+                            );
+                        tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
+                    }
+
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        // Now in this process, attempt to flush to the database.
+        let (unwritable_reports, actual_unwritable_reports) = datastore
+            .run_unnamed_tx(|tx| {
+                let accumulator = accumulator.clone();
+                let vdaf = dummy_vdaf::Vdaf::new();
+                Box::pin(async move {
+                    Ok((
+                        accumulator.unwritable_reports(tx, &vdaf).await?,
+                        accumulator.flush_to_datastore(tx, &vdaf).await?,
+                    ))
+                })
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(unwritable_reports, HashSet::from([report_id]));
+        assert_eq!(unwritable_reports, actual_unwritable_reports);
+    }
+}
