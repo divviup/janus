@@ -460,7 +460,10 @@ impl Options {
                     serde_json::from_reader(reader).context("could not parse HPKE config file")?,
                 ))
             }
-            _ => unreachable!("collector credential arguments are mutually exclusive"),
+            (None, None) => Ok(None),
+            (Some(_), Some(_)) => {
+                unreachable!("collector credential arguments are mutually exclusive")
+            }
         }
     }
 
@@ -1335,26 +1338,24 @@ mod tests {
 
         let mut case_1_arguments = base_arguments.clone();
         case_1_arguments.push(dap_auth_token_argument.clone());
+        let (authentication_token, _) = Options::try_parse_from(case_1_arguments)
+            .unwrap()
+            .credential()
+            .unwrap();
         assert_eq!(
-            Options::try_parse_from(case_1_arguments)
-                .unwrap()
-                .authentication,
-            AuthenticationOptions {
-                dap_auth_token: Some(AuthenticationToken::DapAuth(dap_auth_token)),
-                authorization_bearer_token: None,
-            }
+            authentication_token,
+            AuthenticationToken::DapAuth(dap_auth_token),
         );
 
         let mut case_2_arguments = base_arguments.clone();
         case_2_arguments.push(authorization_bearer_token_argument.clone());
+        let (authentication_token, _) = Options::try_parse_from(case_2_arguments)
+            .unwrap()
+            .credential()
+            .unwrap();
         assert_eq!(
-            Options::try_parse_from(case_2_arguments)
-                .unwrap()
-                .authentication,
-            AuthenticationOptions {
-                dap_auth_token: None,
-                authorization_bearer_token: Some(AuthenticationToken::Bearer(bearer_token)),
-            }
+            authentication_token,
+            AuthenticationToken::Bearer(bearer_token),
         );
 
         let mut case_4_arguments = base_arguments.clone();
@@ -1403,6 +1404,14 @@ mod tests {
             "1000".to_string(),
             "--vdaf=count".to_string(),
         ]);
+
+        // Missing all credential args entirely.
+        assert_eq!(
+            Options::try_parse_from(base_arguments.clone())
+                .unwrap_err()
+                .kind(),
+            ErrorKind::MissingRequiredArgument
+        );
 
         let mut arguments = base_arguments.clone();
         arguments.push(format!(
@@ -1483,6 +1492,75 @@ mod tests {
                 .collector_credential
                 .unwrap(),
             collector_credential,
+        );
+    }
+
+    #[test]
+    fn hpke_config() {
+        let task_id: TaskId = random();
+        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
+        let leader = Url::parse("https://example.com/dap/").unwrap();
+        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let encoded_hpke_config = URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded());
+        let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
+        let auth_token = AuthenticationToken::DapAuth(random());
+
+        let base_arguments = Vec::from([
+            "collect".to_string(),
+            format!("--task-id={task_id_encoded}"),
+            "--leader".to_string(),
+            leader.to_string(),
+            format!("--dap-auth-token={}", auth_token.as_str()),
+            "--vdaf".to_string(),
+            "count".to_string(),
+            "--current-batch".to_string(),
+        ]);
+
+        let mut correct_arguments = base_arguments.clone();
+        correct_arguments.extend([
+            format!("--hpke-config={encoded_hpke_config}"),
+            format!("--hpke-private-key={encoded_private_key}"),
+        ]);
+        let (_, got_hpke_keypair) = Options::try_parse_from(correct_arguments.clone())
+            .unwrap()
+            .credential()
+            .unwrap();
+        assert_eq!(hpke_keypair, got_hpke_keypair);
+
+        let mut missing_config = base_arguments.clone();
+        missing_config.push(format!("--hpke-private-key={encoded_private_key}"));
+        assert_eq!(
+            Options::try_parse_from(missing_config).unwrap_err().kind(),
+            ErrorKind::MissingRequiredArgument,
+        );
+
+        let mut missing_key = base_arguments.clone();
+        missing_key.push(format!("--hpke-config={encoded_hpke_config}"));
+        assert_eq!(
+            Options::try_parse_from(missing_key).unwrap_err().kind(),
+            ErrorKind::MissingRequiredArgument,
+        );
+
+        let mut collector_credential_mutually_exclusive = correct_arguments.clone();
+        collector_credential_mutually_exclusive.push(format!(
+            "--collector-credential={}",
+            SAMPLE_COLLECTOR_CREDENTIAL
+        ));
+        assert_eq!(
+            Options::try_parse_from(collector_credential_mutually_exclusive)
+                .unwrap_err()
+                .kind(),
+            ErrorKind::ArgumentConflict,
+        );
+
+        let mut collector_credential_file_mutually_exclusive = correct_arguments.clone();
+        collector_credential_file_mutually_exclusive
+            .push(format!("--collector-credential-file=foo"));
+        assert_eq!(
+            Options::try_parse_from(collector_credential_file_mutually_exclusive)
+                .unwrap_err()
+                .kind(),
+            ErrorKind::ArgumentConflict,
         );
     }
 
