@@ -1499,7 +1499,7 @@ impl VdafOps {
         let encoded_leader_input_share = match decryption_result {
             Ok(plaintext) => plaintext,
             Err(error) => {
-                info!(
+                debug!(
                     report.task_id = %task.id(),
                     report.metadata = ?report.metadata(),
                     ?error,
@@ -1717,7 +1717,7 @@ impl VdafOps {
             );
 
             let check_keypairs = if task_hpke_keypair.is_none() && global_hpke_keypair.is_none() {
-                info!(
+                debug!(
                     config_id = %prepare_init.report_share().encrypted_input_share().config_id(),
                     "Helper encrypted input share references unknown HPKE config ID"
                 );
@@ -1743,7 +1743,7 @@ impl VdafOps {
                     }
                 }
                 .map_err(|error| {
-                    info!(
+                    debug!(
                         task_id = %task.id(),
                         metadata = ?prepare_init.report_share().metadata(),
                         ?error,
@@ -1758,7 +1758,7 @@ impl VdafOps {
             let plaintext_input_share = plaintext.and_then(|plaintext| {
                 let plaintext_input_share =
                     PlaintextInputShare::get_decoded(&plaintext).map_err(|error| {
-                        info!(
+                        debug!(
                             task_id = %task.id(),
                             metadata = ?prepare_init.report_share().metadata(),
                             ?error, "Couldn't decode helper's plaintext input share",
@@ -1779,7 +1779,7 @@ impl VdafOps {
                     .iter()
                     .all(|extension| extension_types.insert(extension.extension_type()))
                 {
-                    info!(
+                    debug!(
                         task_id = %task.id(),
                         metadata = ?prepare_init.report_share().metadata(),
                         "Received report share with duplicate extensions",
@@ -1797,7 +1797,7 @@ impl VdafOps {
                     plaintext_input_share.payload(),
                 )
                 .map_err(|error| {
-                    info!(
+                    debug!(
                         task_id = %task.id(),
                         metadata = ?prepare_init.report_share().metadata(),
                         ?error, "Couldn't decode helper's input share",
@@ -1813,7 +1813,7 @@ impl VdafOps {
                 prepare_init.report_share().public_share(),
             )
             .map_err(|error| {
-                info!(
+                debug!(
                     task_id = %task.id(),
                     metadata = ?prepare_init.report_share().metadata(),
                     ?error, "Couldn't decode public share",
