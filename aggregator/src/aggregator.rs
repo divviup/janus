@@ -1943,7 +1943,7 @@ impl VdafOps {
         let accumulator = Arc::new(accumulator);
 
         Ok(datastore
-            .run_tx("aggregate_init", |tx|  {
+            .run_tx("aggregate_init", |tx| {
                 let vdaf = vdaf.clone();
                 let task = Arc::clone(&task);
                 let req = Arc::clone(&req);
@@ -1953,58 +1953,55 @@ impl VdafOps {
                 let accumulator = Arc::clone(&accumulator);
 
                 Box::pin(async move {
-                    let unwritable_reports = accumulator.unwritable_reports(tx, &vdaf).await?;
-
                     for report_share_data in &mut report_share_data {
                         // Verify that we haven't seen this report ID and aggregation parameter
                         // before in another aggregation job, and that the report isn't for a batch
                         // interval that has already started collection.
-                        let (
-                            report_aggregation_exists,
-                            conflicting_aggregate_share_jobs,
-                        ) = try_join!(
-                            tx.check_other_report_aggregation_exists::<SEED_SIZE, A>(
-                                task.id(),
-                                report_share_data.report_share.metadata().id(),
-                                aggregation_job.aggregation_parameter(),
-                                aggregation_job.id(),
-                            ),
-                            Q::get_conflicting_aggregate_share_jobs::<SEED_SIZE, C, A>(
-                                tx,
-                                &vdaf,
-                                task.id(),
-                                req.batch_selector().batch_identifier(),
-                                report_share_data.report_share.metadata()
-                            ),
-                        )?;
+                        let (report_aggregation_exists, conflicting_aggregate_share_jobs) =
+                            try_join!(
+                                tx.check_other_report_aggregation_exists::<SEED_SIZE, A>(
+                                    task.id(),
+                                    report_share_data.report_share.metadata().id(),
+                                    aggregation_job.aggregation_parameter(),
+                                    aggregation_job.id(),
+                                ),
+                                Q::get_conflicting_aggregate_share_jobs::<SEED_SIZE, C, A>(
+                                    tx,
+                                    &vdaf,
+                                    task.id(),
+                                    req.batch_selector().batch_identifier(),
+                                    report_share_data.report_share.metadata(),
+                                ),
+                            )?;
 
                         if report_aggregation_exists {
-                            report_share_data.report_aggregation =
-                                report_share_data.report_aggregation
-                                    .clone()
-                                    .with_state(ReportAggregationState::Failed(
-                                        PrepareError::ReportReplayed))
-                                    .with_last_prep_resp(Some(PrepareResp::new(
-                                        *report_share_data.report_share.metadata().id(),
-                                        PrepareStepResult::Reject(PrepareError::ReportReplayed))
-                                    ));
-                        } else if !conflicting_aggregate_share_jobs.is_empty() ||
-                            unwritable_reports.contains(report_share_data.report_aggregation.report_id()) {
-                            report_share_data.report_aggregation =
-                                report_share_data.report_aggregation
-                                    .clone()
-                                    .with_state(ReportAggregationState::Failed(
-                                        PrepareError::BatchCollected))
-                                    .with_last_prep_resp(Some(PrepareResp::new(
-                                        *report_share_data.report_share.metadata().id(),
-                                        PrepareStepResult::Reject(PrepareError::BatchCollected))
-                                    ));
+                            report_share_data.report_aggregation = report_share_data
+                                .report_aggregation
+                                .clone()
+                                .with_state(ReportAggregationState::Failed(
+                                    PrepareError::ReportReplayed,
+                                ))
+                                .with_last_prep_resp(Some(PrepareResp::new(
+                                    *report_share_data.report_share.metadata().id(),
+                                    PrepareStepResult::Reject(PrepareError::ReportReplayed),
+                                )));
+                        } else if !conflicting_aggregate_share_jobs.is_empty() {
+                            report_share_data.report_aggregation = report_share_data
+                                .report_aggregation
+                                .clone()
+                                .with_state(ReportAggregationState::Failed(
+                                    PrepareError::BatchCollected,
+                                ))
+                                .with_last_prep_resp(Some(PrepareResp::new(
+                                    *report_share_data.report_share.metadata().id(),
+                                    PrepareStepResult::Reject(PrepareError::BatchCollected),
+                                )));
                         }
                     }
 
                     // Write aggregation job.
-                    let replayed_request = match tx.put_aggregation_job(&aggregation_job).await {
-                        Ok(_) => false,
+                    match tx.put_aggregation_job(&aggregation_job).await {
+                        Ok(_) => {}
                         Err(datastore::Error::MutationTargetAlreadyExists) => {
                             // Slow path: this request is writing an aggregation job that already
                             // exists in the datastore. PUT to an aggregation job is idempotent, so
@@ -2027,74 +2024,102 @@ impl VdafOps {
                                 ));
                             }
 
-                            true
+                            return Ok(Self::aggregation_job_resp_for(
+                                report_share_data
+                                    .into_iter()
+                                    .map(|data| data.report_aggregation),
+                            ));
                         }
                         Err(e) => return Err(e),
                     };
 
-                    if !replayed_request {
-                        // Write report shares, aggregations, and batches.
-                        (_, report_share_data, _) = try_join!(
-                            accumulator.flush_to_datastore(tx, &vdaf),
-                            try_join_all(report_share_data.into_iter().map(|mut rsd| {
-                                let task = Arc::clone(&task);
-                                async move {
-                                    if let Err(err) =
-                                        tx.put_report_share(task.id(), &rsd.report_share).await
-                                    {
-                                        match err {
-                                            datastore::Error::MutationTargetAlreadyExists => {
-                                                rsd.report_aggregation = rsd
-                                                    .report_aggregation
-                                                    .clone()
-                                                    .with_state(ReportAggregationState::Failed(
+                    // Write report shares, aggregations, and batches.
+                    let (unwritable_reports, report_share_data, _) = try_join!(
+                        accumulator.flush_to_datastore(tx, &vdaf),
+                        try_join_all(report_share_data.into_iter().map(|mut rsd| {
+                            let task = Arc::clone(&task);
+                            async move {
+                                if let Err(err) =
+                                    tx.put_report_share(task.id(), &rsd.report_share).await
+                                {
+                                    match err {
+                                        datastore::Error::MutationTargetAlreadyExists => {
+                                            rsd.report_aggregation = rsd
+                                                .report_aggregation
+                                                .clone()
+                                                .with_state(ReportAggregationState::Failed(
+                                                    PrepareError::ReportReplayed,
+                                                ))
+                                                .with_last_prep_resp(Some(PrepareResp::new(
+                                                    *rsd.report_share.metadata().id(),
+                                                    PrepareStepResult::Reject(
                                                         PrepareError::ReportReplayed,
-                                                    ))
-                                                    .with_last_prep_resp(Some(PrepareResp::new(
-                                                        *rsd.report_share.metadata().id(),
-                                                        PrepareStepResult::Reject(
-                                                            PrepareError::ReportReplayed,
-                                                        ),
-                                                    )));
-                                            }
-                                            err => return Err(err),
+                                                    ),
+                                                )));
                                         }
+                                        err => return Err(err),
                                     }
-                                    tx.put_report_aggregation(&rsd.report_aggregation).await?;
-                                    Ok(rsd)
                                 }
-                            })),
-                            try_join_all(interval_per_batch_identifier.iter().map(|(batch_identifier, interval)| {
+                                tx.put_report_aggregation(&rsd.report_aggregation).await?;
+                                Ok(rsd)
+                            }
+                        })),
+                        try_join_all(interval_per_batch_identifier.iter().map(
+                            |(batch_identifier, interval)| {
                                 let task = Arc::clone(&task);
                                 let aggregation_job = Arc::clone(&aggregation_job);
                                 async move {
-                                match tx.get_batch::<SEED_SIZE, Q, A>(
-                                    task.id(),
-                                    batch_identifier,
-                                    aggregation_job.aggregation_parameter(),
-                                ).await? {
-                                    Some(batch) => {
-                                        let interval = batch.client_timestamp_interval().merge(interval)?;
-                                        tx.update_batch(&batch.with_client_timestamp_interval(interval)).await?;
-                                    },
-                                    None => tx.put_batch(&Batch::<SEED_SIZE, Q, A>::new(
-                                        *task.id(),
-                                        batch_identifier.clone(),
-                                        aggregation_job.aggregation_parameter().clone(),
-                                        BatchState::Open,
-                                        0,
-                                        *interval,
-                                    )).await?
+                                    match tx
+                                        .get_batch::<SEED_SIZE, Q, A>(
+                                            task.id(),
+                                            batch_identifier,
+                                            aggregation_job.aggregation_parameter(),
+                                        )
+                                        .await?
+                                    {
+                                        Some(batch) => {
+                                            let interval = batch
+                                                .client_timestamp_interval()
+                                                .merge(interval)?;
+                                            tx.update_batch(
+                                                &batch.with_client_timestamp_interval(interval),
+                                            )
+                                            .await?;
+                                        }
+                                        None => {
+                                            tx.put_batch(&Batch::<SEED_SIZE, Q, A>::new(
+                                                *task.id(),
+                                                batch_identifier.clone(),
+                                                aggregation_job.aggregation_parameter().clone(),
+                                                BatchState::Open,
+                                                0,
+                                                *interval,
+                                            ))
+                                            .await?
+                                        }
+                                    }
+                                    Ok(())
                                 }
-                                Ok(())
-                            }}))
-                        )?;
-                    }
+                            }
+                        ))
+                    )?;
 
                     Ok(Self::aggregation_job_resp_for(
-                        report_share_data
-                            .into_iter()
-                            .map(|data| data.report_aggregation),
+                        report_share_data.into_iter().map(|data| {
+                            let id = data.report_share.metadata().id();
+                            if unwritable_reports.contains(id) {
+                                data.report_aggregation
+                                    .with_state(ReportAggregationState::Failed(
+                                        PrepareError::BatchCollected,
+                                    ))
+                                    .with_last_prep_resp(Some(PrepareResp::new(
+                                        *id,
+                                        PrepareStepResult::Reject(PrepareError::BatchCollected),
+                                    )))
+                            } else {
+                                data.report_aggregation
+                            }
+                        }),
                     ))
                 })
             })

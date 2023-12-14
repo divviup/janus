@@ -121,48 +121,6 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
         rslt
     }
 
-    /// Returns the set of report IDs that cannot be merged into its batch aggregation because the
-    /// batch has already been collected.
-    pub async fn unwritable_reports<C: Clock>(
-        &self,
-        tx: &Transaction<'_, C>,
-        vdaf: &A,
-    ) -> Result<HashSet<ReportId>, datastore::Error> {
-        let unmergeable_report_ids = Arc::new(Mutex::new(HashSet::new()));
-        try_join_all(self.aggregations.values().map(|data| {
-            let unmergeable_report_ids = Arc::clone(&unmergeable_report_ids);
-            async move {
-                tx.get_batch_aggregation::<SEED_SIZE, Q, A>(
-                    vdaf,
-                    data.batch_aggregation.task_id(),
-                    data.batch_aggregation.batch_identifier(),
-                    data.batch_aggregation.aggregation_parameter(),
-                    data.batch_aggregation.ord(),
-                )
-                .await
-                .map(|batch_aggregation| {
-                    batch_aggregation.map(|batch_aggregation| {
-                        if batch_aggregation.state() == &BatchAggregationState::Collected {
-                            // Unwrap safety: panic on mutex poisoning.
-                            unmergeable_report_ids
-                                .lock()
-                                .unwrap()
-                                .extend(&data.included_report_ids);
-                        }
-                    })
-                })
-            }
-        }))
-        .await?;
-
-        // Unwrap safety: at this point, `unmergeable_report_ids` is the only instance of this Arc,
-        // so `try_unwrap().unwrap()` will succeed. Panic if the inner mutex is poisoned.
-        Ok(Arc::try_unwrap(unmergeable_report_ids)
-            .unwrap()
-            .into_inner()
-            .unwrap())
-    }
-
     /// Write the accumulated aggregate shares, report counts and checksums to the datastore. If a
     /// batch aggregation already exists for some accumulator, it is updated. If no batch
     /// aggregation exists, one is created and initialized with the accumulated values.
@@ -171,9 +129,6 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
     /// so, a set of unmergeable report IDs is returned; the contribution of the reports
     /// corresponding to these IDs was not written back to the datastore because it is too late to
     /// do so.
-    ///
-    /// The returned IDs will match the results of [`Self::unwritable_reports`] if run in the same
-    /// transaction.
     #[tracing::instrument(skip(self, tx), err)]
     pub async fn flush_to_datastore<C: Clock>(
         &self,
@@ -253,127 +208,5 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
             .unwrap()
             .into_inner()
             .unwrap())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::aggregator::accumulator::Accumulator;
-    use janus_aggregator_core::{
-        datastore::{
-            models::{Batch, BatchAggregation, BatchAggregationState, BatchState},
-            test_util::ephemeral_datastore,
-        },
-        task::{test_util::TaskBuilder, QueryType},
-    };
-    use janus_core::{
-        report_id::ReportIdChecksumExt,
-        test_util::{
-            dummy_vdaf::{self, AggregationParam, OutputShare},
-            install_test_trace_subscriber,
-        },
-        time::{Clock, MockClock},
-        vdaf::VdafInstance,
-    };
-    use janus_messages::{query_type::FixedSize, Duration, Interval, ReportIdChecksum};
-    use rand::random;
-    use std::{collections::HashSet, sync::Arc};
-
-    #[tokio::test]
-    async fn test_unwritable_reports() {
-        install_test_trace_subscriber();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-
-        let task = Arc::new(
-            TaskBuilder::new(
-                QueryType::FixedSize {
-                    max_batch_size: 100,
-                    batch_time_window_size: None,
-                },
-                VdafInstance::Fake,
-            )
-            .build()
-            .leader_view()
-            .unwrap(),
-        );
-        datastore.put_aggregator_task(&task).await.unwrap();
-
-        let shards = 2;
-        let mut accumulator = Accumulator::<0, FixedSize, dummy_vdaf::Vdaf>::new(
-            Arc::clone(&task),
-            shards,
-            AggregationParam(0),
-        );
-
-        let batch_id = random();
-        let report_id = random();
-        let timestamp = clock.now();
-        let output_share = OutputShare();
-
-        accumulator
-            .update(&batch_id, &report_id, &timestamp, &output_share)
-            .unwrap();
-        let accumulator = Arc::new(accumulator);
-
-        // Pretend that we're another concurrently running process: insert some aggregations to the
-        // same batch ID and mark them collected.
-        datastore
-            .run_unnamed_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move {
-                    let interval = Interval::new(timestamp, Duration::from_seconds(1)).unwrap();
-                    let batch = Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
-                        *task.id(),
-                        batch_id,
-                        AggregationParam(0),
-                        BatchState::Open,
-                        0,
-                        interval,
-                    );
-                    tx.put_batch(&batch).await.unwrap();
-
-                    // Insert for all possible shards, since we non-deterministically assign shards
-                    // when we call update().
-                    for shard in 0..shards {
-                        let batch_aggregation =
-                            BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
-                                *task.id(),
-                                batch_id,
-                                AggregationParam(0),
-                                shard,
-                                BatchAggregationState::Collected,
-                                Some(OutputShare().into()),
-                                1,
-                                interval,
-                                ReportIdChecksum::for_report_id(&report_id),
-                            );
-                        tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
-                    }
-
-                    Ok(())
-                })
-            })
-            .await
-            .unwrap();
-
-        // Now in this process, attempt to flush to the database.
-        let (unwritable_reports, actual_unwritable_reports) = datastore
-            .run_unnamed_tx(|tx| {
-                let accumulator = accumulator.clone();
-                let vdaf = dummy_vdaf::Vdaf::new();
-                Box::pin(async move {
-                    Ok((
-                        accumulator.unwritable_reports(tx, &vdaf).await?,
-                        accumulator.flush_to_datastore(tx, &vdaf).await?,
-                    ))
-                })
-            })
-            .await
-            .unwrap();
-
-        assert_eq!(unwritable_reports, HashSet::from([report_id]));
-        assert_eq!(unwritable_reports, actual_unwritable_reports);
     }
 }
