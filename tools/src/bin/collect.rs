@@ -1555,7 +1555,7 @@ mod tests {
 
         let mut collector_credential_file_mutually_exclusive = correct_arguments.clone();
         collector_credential_file_mutually_exclusive
-            .push(format!("--collector-credential-file=foo"));
+            .push("--collector-credential-file=foo".to_string());
         assert_eq!(
             Options::try_parse_from(collector_credential_file_mutually_exclusive)
                 .unwrap_err()
