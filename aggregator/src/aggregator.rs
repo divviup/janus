@@ -1441,7 +1441,7 @@ impl VdafOps {
             match A::PublicShare::get_decoded_with_param(vdaf.as_ref(), report.public_share()) {
                 Ok(public_share) => public_share,
                 Err(err) => {
-                    warn!(
+                    debug!(
                         report.task_id = %task.id(),
                         report.metadata = ?report.metadata(),
                         ?err,
@@ -1526,7 +1526,7 @@ impl VdafOps {
         let (extensions, leader_input_share) = match decoded_leader_input_share {
             Ok(leader_input_share) => leader_input_share,
             Err(err) => {
-                warn!(
+                debug!(
                     report.task_id = %task.id(),
                     report.metadata = ?report.metadata(),
                     ?err,
