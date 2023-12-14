@@ -2045,7 +2045,6 @@ mod tests {
         datastore.put_aggregator_task(&helper_task).await.unwrap();
 
         let vdaf = dummy_vdaf::Vdaf::new();
-        let measurement = ();
         let prep_init_generator = PrepareInitGenerator::new(
             clock.clone(),
             helper_task.clone(),
@@ -2053,7 +2052,7 @@ mod tests {
             dummy_vdaf::AggregationParam(0),
         );
 
-        let (prepare_init, _) = prep_init_generator.next(&measurement);
+        let (prepare_init, _) = prep_init_generator.next(&());
 
         let aggregation_param = dummy_vdaf::AggregationParam(0);
         let batch_id = random();
