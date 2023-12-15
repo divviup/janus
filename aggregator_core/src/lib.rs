@@ -6,7 +6,7 @@
 #![allow(clippy::single_component_path_imports)]
 
 use derivative::Derivative;
-use tracing::{info, info_span, Instrument, Span};
+use tracing::{debug, info_span, Instrument, Span};
 use trillium::{Conn, Handler, Status};
 use trillium_macros::Handler;
 use trillium_router::RouterConnExt;
@@ -79,7 +79,7 @@ impl<H: Handler> InstrumentedHandler<H> {
                     .status()
                     .as_ref()
                     .map_or("unknown", Status::canonical_reason);
-                info!(status, "Finished handling request");
+                debug!(status, "Finished handling request");
             });
             conn
         } else {

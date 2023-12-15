@@ -40,7 +40,7 @@ use std::{
     time::Duration,
 };
 use tokio::try_join;
-use tracing::{info, trace_span, warn};
+use tracing::{debug, info, trace_span, warn};
 
 use super::error::handle_ping_pong_error;
 
@@ -355,7 +355,7 @@ impl AggregationJobDriver {
                 .iter()
                 .all(|extension| extension_types.insert(extension.extension_type()))
             {
-                info!(report_id = %report_aggregation.report_id(), "Received report with duplicate extensions");
+                debug!(report_id = %report_aggregation.report_id(), "Received report with duplicate extensions");
                 self.aggregate_step_failure_counter
                     .add(1, &[KeyValue::new("type", "duplicate_extension")]);
                 report_aggregations_to_write.push(
