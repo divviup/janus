@@ -2038,17 +2038,36 @@ impl VdafOps {
                             }
 
                             return Ok(Self::aggregation_job_resp_for(
-                                report_share_data
-                                    .into_iter()
-                                    .map(|data| data.report_aggregation),
+                                tx.get_report_aggregations_for_aggregation_job(
+                                    vdaf.as_ref(),
+                                    &Role::Helper,
+                                    task.id(),
+                                    aggregation_job.id(),
+                                )
+                                .await?,
                             ));
                         }
                         Err(e) => return Err(e),
                     };
 
                     // Write report shares, aggregations, and batches.
-                    let (unwritable_reports, report_share_data, _) = try_join!(
-                        accumulator.flush_to_datastore(tx, &vdaf),
+                    let unwritable_reports = accumulator.flush_to_datastore(tx, &vdaf).await?;
+                    for rsd in &mut report_share_data {
+                        if unwritable_reports.contains(rsd.report_share.metadata().id()) {
+                            rsd.report_aggregation = rsd
+                                .report_aggregation
+                                .clone()
+                                .with_state(ReportAggregationState::Failed(
+                                    PrepareError::BatchCollected,
+                                ))
+                                .with_last_prep_resp(Some(PrepareResp::new(
+                                    *rsd.report_share.metadata().id(),
+                                    PrepareStepResult::Reject(PrepareError::BatchCollected),
+                                )))
+                        }
+                    }
+
+                    let (report_share_data, _) = try_join!(
                         try_join_all(report_share_data.into_iter().map(|mut rsd| {
                             let task = Arc::clone(&task);
                             async move {
@@ -2118,21 +2137,9 @@ impl VdafOps {
                     )?;
 
                     Ok(Self::aggregation_job_resp_for(
-                        report_share_data.into_iter().map(|data| {
-                            let id = data.report_share.metadata().id();
-                            if unwritable_reports.contains(id) {
-                                data.report_aggregation
-                                    .with_state(ReportAggregationState::Failed(
-                                        PrepareError::BatchCollected,
-                                    ))
-                                    .with_last_prep_resp(Some(PrepareResp::new(
-                                        *id,
-                                        PrepareStepResult::Reject(PrepareError::BatchCollected),
-                                    )))
-                            } else {
-                                data.report_aggregation
-                            }
-                        }),
+                        report_share_data
+                            .into_iter()
+                            .map(|data| data.report_aggregation),
                     ))
                 })
             })
