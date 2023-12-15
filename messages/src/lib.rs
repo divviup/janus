@@ -213,7 +213,7 @@ impl TryFrom<SystemTime> for Time {
 
 /// DAP protocol message representing a half-open interval of time with a resolution of seconds;
 /// the start of the interval is included while the end of the interval is excluded.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Interval {
     /// The start of the interval.
     start: Time,
@@ -1963,6 +1963,8 @@ pub mod query_type {
             + Hash
             + PartialEq
             + Eq
+            + PartialOrd
+            + Ord
             + Encode
             + Decode
             + Send
@@ -1975,6 +1977,8 @@ pub mod query_type {
             + Hash
             + PartialEq
             + Eq
+            + PartialOrd
+            + Ord
             + Encode
             + Decode
             + Send
