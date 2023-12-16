@@ -137,7 +137,36 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
     ) -> Result<HashSet<ReportId>, datastore::Error> {
         let unmergeable_report_ids = Arc::new(Mutex::new(HashSet::new()));
 
-        try_join_all(self.aggregations.values().map(|data| {
+        // Prevent deadlocks when inserting into shards by providing a deterministic order to shard
+        // updates. Suppose two concurrent processes are attempting to update a batch aggregation.
+        // We want to avert this situation:
+        //
+        // A> BEGIN;
+        // A> UPDATE batch_aggregations WHERE ord = 1 ... -- Row with ord 1 is locked for update.
+        // B> BEGIN;
+        // B> UPDATE batch_aggregations WHERE ord = 2 ... -- Row with ord 2 is locked for update.
+        // A> UPDATE batch_aggregations WHERE ord = 2 ... -- A is now blocked waiting for B to finish.
+        // B> UPDATE batch_aggregations WHERE ord = 1 ... -- Kaboom!
+        //
+        // Fully ameliorating this requires we sort by `batch_identifier` and `ord`.
+        //
+        // However, `try_join_all` executes futures concurrently thus there's no guarantee that the
+        // order will be respected, so there remains the possibility of deadlock. This is rare--in
+        // testing we have noticed that the probability of deadlock is drastically lower with a
+        // sorted list than with an unsorted list.
+        //
+        // There could be changes in the `Accumulator`'s usage patterns or changes in the tokio
+        // scheduler that cause this to regress, in which case the next possible solution is to
+        // execute batch aggregation updates serially.
+        let mut aggregations: Vec<_> = self.aggregations.values().collect();
+        aggregations.sort_unstable_by_key(|data| {
+            (
+                data.batch_aggregation.batch_identifier(),
+                data.batch_aggregation.ord(),
+            )
+        });
+
+        try_join_all(aggregations.into_iter().map(|data| {
             let unmergeable_report_ids = Arc::clone(&unmergeable_report_ids);
             async move {
                 match tx
