@@ -90,7 +90,7 @@ tracing = "0.1.40"
 tracing-chrome = "0.7.1"
 tracing-log = "0.2.0"
 tracing-opentelemetry = { version = "0.22", optional = true }
-tracing-stackdriver = "0.8.0"
+tracing-stackdriver = "0.9.0"
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt", "json"] }
 trillium.workspace = true
 trillium-api.workspace = true
