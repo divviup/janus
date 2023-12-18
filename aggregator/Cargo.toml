@@ -47,7 +47,7 @@ deadpool-postgres = "0.11.0"
 derivative.workspace = true
 futures = "0.3.29"
 fixed = { version = "1.24", optional = true }
-git-version = "0.3.8"
+git-version = "0.3.9"
 hex = { version = "0.4.3", features = ["serde"], optional = true }
 http = "0.2.11"
 http-api-problem = "0.57.0"
