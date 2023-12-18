@@ -25,7 +25,7 @@ derivative.workspace = true
 futures = "0.3.29"
 hex = { version = "0.4.3", features = ["serde"], optional = true }
 http = "0.2.11"
-http-api-problem = "0.57.0"
+http-api-problem = "0.58.0"
 hyper = "1.1.0"
 janus_core.workspace = true
 janus_messages.workspace = true

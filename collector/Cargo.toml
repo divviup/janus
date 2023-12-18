@@ -21,7 +21,7 @@ test-util = []
 backoff = { version = "0.4.0", features = ["tokio"] }
 chrono.workspace = true
 derivative.workspace = true
-http-api-problem = "0.57.0"
+http-api-problem = "0.58.0"
 janus_core.workspace = true
 janus_messages.workspace = true
 fixed = { version = "1.24", optional = true }
