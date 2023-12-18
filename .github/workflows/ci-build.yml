@@ -92,7 +92,7 @@ jobs:
     - name: Upload container logs
       # Only get logs on test failure
       if: steps.test.outcome == 'failure' || steps.test-docker.outcome == 'failure'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: container-logs
         path: ${{ github.workspace }}/test-logs/
