@@ -20,7 +20,7 @@ base64 = "0.21.5"
 bytes = "1.5.0"
 chrono = "0.4"
 deadpool = { version = "0.10.0", features = ["rt_tokio_1"] }
-deadpool-postgres = "0.11.0"
+deadpool-postgres = "0.12.1"
 derivative.workspace = true
 futures = "0.3.29"
 hex = { version = "0.4.3", features = ["serde"], optional = true }
