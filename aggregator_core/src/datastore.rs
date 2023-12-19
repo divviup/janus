@@ -13,6 +13,7 @@ use crate::{
     taskprov::PeerAggregator,
     SecretBytes,
 };
+use backoff::{backoff::Backoff, ExponentialBackoff, ExponentialBackoffBuilder};
 use chrono::NaiveDateTime;
 use futures::future::try_join_all;
 use janus_core::{
@@ -54,7 +55,7 @@ use std::{
     },
     time::{Duration as StdDuration, Instant},
 };
-use tokio::{sync::Barrier, try_join};
+use tokio::{sync::Barrier, time::sleep, try_join};
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row, Statement, ToStatement};
 use tracing::error;
 use url::Url;
@@ -109,6 +110,9 @@ pub struct Datastore<C: Clock> {
     pool: deadpool_postgres::Pool,
     crypter: Crypter,
     clock: C,
+    /// The exponential backoff configuration to use when retrying transactions. Note that this
+    /// always uses the system clock.
+    transaction_backoff_config: ExponentialBackoff,
     transaction_status_counter: Counter<u64>,
     transaction_retry_histogram: Histogram<u64>,
     rollback_error_counter: Counter<u64>,
@@ -129,7 +133,7 @@ impl<C: Clock> Datastore<C> {
         crypter: Crypter,
         clock: C,
         meter: &Meter,
-    ) -> Result<Datastore<C>, Error> {
+    ) -> Result<Self, Error> {
         Self::new_with_supported_versions(pool, crypter, clock, meter, SUPPORTED_SCHEMA_VERSIONS)
             .await
     }
@@ -140,7 +144,7 @@ impl<C: Clock> Datastore<C> {
         clock: C,
         meter: &Meter,
         supported_schema_versions: &[i64],
-    ) -> Result<Datastore<C>, Error> {
+    ) -> Result<Self, Error> {
         let datastore = Self::new_without_supported_versions(pool, crypter, clock, meter).await;
 
         let (current_version, migration_description) = datastore
@@ -164,7 +168,7 @@ impl<C: Clock> Datastore<C> {
         crypter: Crypter,
         clock: C,
         meter: &Meter,
-    ) -> Datastore<C> {
+    ) -> Self {
         let transaction_status_counter = meter
             .u64_counter("janus_database_transactions")
             .with_description("Count of database transactions run, with their status.")
@@ -178,9 +182,9 @@ impl<C: Clock> Datastore<C> {
             ))
             .with_unit(Unit::new("{error}"))
             .init();
-        let transaction_retry_counter = meter
+        let transaction_retry_histogram = meter
             .u64_histogram("janus_database_retries")
-            .with_unit(Unit::new("{error}"))
+            .with_unit(Unit::new("{retry}"))
             .init();
         let transaction_duration_histogram = meter
             .f64_histogram("janus_database_transaction_duration")
@@ -188,14 +192,33 @@ impl<C: Clock> Datastore<C> {
             .with_unit(Unit::new("s"))
             .init();
 
+        let transaction_backoff_config = ExponentialBackoffBuilder::new()
+            .with_initial_interval(StdDuration::from_millis(5))
+            .with_randomization_factor(0.5)
+            .with_multiplier(1.5)
+            .with_max_interval(StdDuration::from_secs(2))
+            .with_max_elapsed_time(Some(StdDuration::from_secs(15)))
+            .build();
+
         Self {
             pool,
             crypter,
             clock,
+            transaction_backoff_config,
             transaction_status_counter,
-            transaction_retry_histogram: transaction_retry_counter,
+            transaction_retry_histogram,
             rollback_error_counter,
             transaction_duration_histogram,
+        }
+    }
+
+    pub fn with_transaction_backoff_config(
+        self,
+        transaction_backoff_config: ExponentialBackoff,
+    ) -> Self {
+        Self {
+            transaction_backoff_config,
+            ..self
         }
     }
 
@@ -215,10 +238,13 @@ impl<C: Clock> Datastore<C> {
         for<'a> F:
             Fn(&'a Transaction<C>) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
     {
-        let mut retry_count = 0;
+        let mut retries = 0;
+        let mut backoff = self.transaction_backoff_config.clone();
+        backoff.reset();
+
         loop {
             let before = Instant::now();
-            let (rslt, retry) = self.run_tx_once(name, &f).await;
+            let (mut rslt, retry) = self.run_tx_once(name, &f).await;
             let elapsed = before.elapsed();
             self.transaction_duration_histogram
                 .record(elapsed.as_secs_f64(), &[KeyValue::new("tx", name)]);
@@ -232,13 +258,29 @@ impl<C: Clock> Datastore<C> {
                 1,
                 &[KeyValue::new("status", status), KeyValue::new("tx", name)],
             );
+
             if retry {
-                retry_count += 1;
-                continue;
+                match backoff.next_backoff() {
+                    Some(wait) => {
+                        sleep(wait).await;
+                        retries += 1;
+                        continue;
+                    }
+                    None => {
+                        error!(
+                            tx_name = name,
+                            error = ?rslt.err(),
+                            retries,
+                            elapsed_time = ?backoff.get_elapsed_time(),
+                            "Aborting transaction due too many retries"
+                        );
+                        rslt = Err(Error::Timeout)
+                    }
+                }
             }
 
             self.transaction_retry_histogram
-                .record(retry_count, &[KeyValue::new("tx", name)]);
+                .record(retries, &[KeyValue::new("tx", name)]);
             return rslt;
         }
     }
@@ -5000,6 +5042,8 @@ pub enum Error {
     /// via `put_report_share`.
     #[error("report data incomplete")]
     IncompleteReport,
+    #[error("transaction timeout")]
+    Timeout,
 }
 
 impl From<ring::error::Unspecified> for Error {

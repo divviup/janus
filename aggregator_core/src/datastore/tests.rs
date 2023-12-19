@@ -17,6 +17,7 @@ use crate::{
 };
 use assert_matches::assert_matches;
 use async_trait::async_trait;
+use backoff::ExponentialBackoffBuilder;
 use chrono::NaiveDate;
 use futures::future::try_join_all;
 use janus_core::{
@@ -98,6 +99,36 @@ async fn down_migrations(
     ephemeral_datastore: EphemeralDatastore,
 ) {
     ephemeral_datastore.downgrade(0).await;
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn transaction_retries(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
+    let ds = ephemeral_datastore
+        .datastore(MockClock::default())
+        .await
+        .with_transaction_backoff_config(
+            ExponentialBackoffBuilder::new()
+                .with_initial_interval(StdDuration::from_millis(5))
+                .with_randomization_factor(0.5)
+                .with_multiplier(1.5)
+                .with_max_interval(StdDuration::from_millis(100))
+                .with_max_elapsed_time(Some(StdDuration::from_millis(500)))
+                .build(),
+        );
+
+    // Infinitely retrying transaction.
+    let result = ds
+        .run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                tx.retry();
+                Ok(())
+            })
+        })
+        .await;
+
+    assert_matches!(result, Err(Error::Timeout));
 }
 
 #[rstest_reuse::apply(schema_versions_template)]
