@@ -110,6 +110,7 @@ pub struct Datastore<C: Clock> {
     crypter: Crypter,
     clock: C,
     transaction_status_counter: Counter<u64>,
+    transaction_retry_histogram: Histogram<u64>,
     rollback_error_counter: Counter<u64>,
     transaction_duration_histogram: Histogram<f64>,
 }
@@ -177,6 +178,11 @@ impl<C: Clock> Datastore<C> {
             ))
             .with_unit(Unit::new("{error}"))
             .init();
+        let transaction_retry_histogram = meter
+            .u64_histogram("janus_database_transaction_retries")
+            .with_description("The number of retries before a transaction is committed or aborted.")
+            .with_unit(Unit::new("{retry}"))
+            .init();
         let transaction_duration_histogram = meter
             .f64_histogram("janus_database_transaction_duration")
             .with_description("Duration of database transactions.")
@@ -188,6 +194,7 @@ impl<C: Clock> Datastore<C> {
             crypter,
             clock,
             transaction_status_counter,
+            transaction_retry_histogram,
             rollback_error_counter,
             transaction_duration_histogram,
         }
@@ -209,6 +216,7 @@ impl<C: Clock> Datastore<C> {
         for<'a> F:
             Fn(&'a Transaction<C>) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
     {
+        let mut retry_count = 0;
         loop {
             let before = Instant::now();
             let (rslt, retry) = self.run_tx_once(name, &f).await;
@@ -226,8 +234,12 @@ impl<C: Clock> Datastore<C> {
                 &[KeyValue::new("status", status), KeyValue::new("tx", name)],
             );
             if retry {
+                retry_count += 1;
                 continue;
             }
+
+            self.transaction_retry_histogram
+                .record(retry_count, &[KeyValue::new("tx", name)]);
             return rslt;
         }
     }
