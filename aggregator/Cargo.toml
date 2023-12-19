@@ -99,7 +99,6 @@ trillium-router.workspace = true
 trillium-testing = { workspace = true, optional = true }
 trillium-tokio.workspace = true
 url = { version = "2.5.0", features = ["serde"] }
-uuid = { version = "1.6.1", features = ["v4"] }
 
 [dev-dependencies]
 assert_matches.workspace = true

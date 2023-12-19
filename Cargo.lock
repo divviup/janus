@@ -1949,7 +1949,6 @@ dependencies = [
  "trillium-tokio",
  "trycmd",
  "url",
- "uuid",
  "wait-timeout",
 ]
 
@@ -2036,7 +2035,6 @@ dependencies = [
  "trillium-macros",
  "trillium-router",
  "url",
- "uuid",
 ]
 
 [[package]]
