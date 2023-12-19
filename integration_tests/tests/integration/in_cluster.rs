@@ -1,12 +1,16 @@
 #![cfg(feature = "in-cluster")]
 
-use crate::common::{submit_measurements_and_verify_aggregate, test_task_builder};
+use crate::common::{
+    submit_measurements_and_verify_aggregate, test_task_builder, test_task_builder_remote,
+};
 use divviup_client::{
     Client, DivviupClient, Histogram, HpkeConfig, NewAggregator, NewSharedAggregator, NewTask, Vdaf,
 };
-use janus_aggregator_core::task::QueryType;
+use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
+use janus_collector::PrivateCollectorCredential;
 use janus_core::{
     auth_tokens::AuthenticationToken,
+    hpke::HpkeKeypair,
     test_util::{
         install_test_trace_subscriber,
         kubernetes::{Cluster, PortForward},
@@ -15,9 +19,11 @@ use janus_core::{
 };
 use janus_integration_tests::{client::ClientBackend, TaskParameters};
 use janus_messages::TaskId;
-use std::{env, str::FromStr};
+use std::{env, str::FromStr, time::Duration};
+use trillium_rustls::RustlsConfig;
 use trillium_tokio::ClientConfig;
 use url::Url;
+use uuid::Uuid;
 
 struct InClusterJanusPair {
     /// Task parameters needed by the client and collector, for the task configured in both Janus
@@ -32,8 +38,185 @@ struct InClusterJanusPair {
 
 impl InClusterJanusPair {
     /// Set up a new DAP task, using the given VDAF and query type, in a pair of existing Janus
-    /// instances in a Kubernetes cluster. `divviup-api` is used to configure the task in each Janus
-    /// instance. The following environment variables must be set.
+    /// instances, which can be running either in a local Kubernetes cluster accessed over port-
+    /// forwards, or remotely, depending on whether feature `in-cluster-in-cloud` is enabled.
+    /// `divviup-api` is used to provision the task into the aggregators.
+    async fn new(vdaf: VdafInstance, query_type: QueryType) -> Self {
+        if cfg!(feature = "in-cluster-in-cloud") {
+            Self::new_in_cloud(vdaf, query_type).await
+        } else {
+            Self::new_in_kind(vdaf, query_type).await
+        }
+    }
+
+    /// Set up a new DAP task in a pair of aggregators. `divviup-api` is used to provision the task
+    /// into the two aggregators. Unlike [`Self::new_in_kind`], this does not create a new account
+    /// and pair new aggregators. While tasks created by this test can eventually be garbage
+    /// collected, accounts and paired aggregators would (currently) hang around forever.
+    ///
+    /// The following environment variables must be set:
+    ///
+    ///  - `JANUS_E2E_DIVVIUP_API_URL` (URL): API endpoint for `divviup-api`, used to provision
+    ///    tasks.
+    ///  - `JANUS_E2E_DIVVIUP_API_TOKEN` (Bearer token): API token with which to authenticate to the
+    ///    `divviup-api` instance at `JANUS_E2E_DIVVIUP_API_URL` as a member of account
+    ///    `JANUS_E2E_DIVVIUP_ACCOUNT_ID`.
+    ///  - `JANUS_E2E_DIVVIUP_ACCOUNT_ID` (UUID): Account ID in which to create a task.
+    ///  - `JANUS_E2E_LEADER_AGGREGATOR_ID` (UUID): ID of the aggregator to use as DAP leader in the
+    ///    task.
+    ///  - `JANUS_E2E_HELPER_AGGREGATOR_ID` (UUID): ID of the aggregator to use as DAP helper in the
+    ///    task.
+    ///  - `JANUS_E2E_COLLECTOR_CREDENTIAL_ID` (UUID): ID of the collector credential to use when
+    ///    collecting aggregate shares in the task.
+    ///  - `JANUS_E2E_COLLECTOR_CREDENTIAL_JSON`: JSON representation of the collector credential,
+    ///    including the auth token and the HPKE private key. Example:
+    ///
+    ///    {
+    ///      "aead": "AesGcm128",
+    ///      "id": 66,
+    ///      "kdf": "Sha256",
+    ///      "kem": "X25519HkdfSha256",
+    ///      "private_key": "uKkTvzKLfYNUPZcoKI7hV64zS06OWgBkbivBL4Sw4mo",
+    ///      "public_key": "CcDghts2boltt9GQtBUxdUsVR83SCVYHikcGh33aVlU",
+    ///      "token": "Krx-CLfdWo1ULAfsxhr0rA"
+    ///    }
+    async fn new_in_cloud(vdaf: VdafInstance, query_type: QueryType) -> Self {
+        let (
+            divviup_api_url,
+            divviup_api_token,
+            divviup_account_id,
+            leader_aggregator_id,
+            helper_aggregator_id,
+            collector_credential_id,
+            collector_credential,
+        ) = match (
+            env::var("JANUS_E2E_DIVVIUP_API_URL"),
+            env::var("JANUS_E2E_DIVVIUP_API_TOKEN"),
+            env::var("JANUS_E2E_DIVVIUP_ACCOUNT_ID"),
+            env::var("JANUS_E2E_LEADER_AGGREGATOR_ID"),
+            env::var("JANUS_E2E_HELPER_AGGREGATOR_ID"),
+            env::var("JANUS_E2E_COLLECTOR_CREDENTIAL_ID"),
+            env::var("JANUS_E2E_COLLECTOR_CREDENTIAL_JSON"),
+        ) {
+            (
+                Ok(divviup_api_url),
+                Ok(divviup_api_token),
+                Ok(divviup_account_id),
+                Ok(leader_aggregator_id),
+                Ok(helper_aggregator_id),
+                Ok(collector_credential_id),
+                Ok(collector_credential_json),
+            ) => (
+                divviup_api_url.parse().unwrap(),
+                divviup_api_token,
+                Uuid::parse_str(&divviup_account_id).unwrap(),
+                Uuid::parse_str(&leader_aggregator_id).unwrap(),
+                Uuid::parse_str(&helper_aggregator_id).unwrap(),
+                Uuid::parse_str(&collector_credential_id).unwrap(),
+                serde_json::from_str::<PrivateCollectorCredential>(&collector_credential_json)
+                    .unwrap(),
+            ),
+            _ => panic!("missing or invalid environment variables"),
+        };
+
+        let mut divviup_api = DivviupClient::new(
+            divviup_api_token,
+            Client::new(RustlsConfig::<ClientConfig>::default()).with_default_pool(),
+        );
+        divviup_api.set_url(divviup_api_url);
+
+        let aggregators = divviup_api.aggregators(divviup_account_id).await.unwrap();
+        let leader_aggregator_dap_url = aggregators
+            .iter()
+            .find(|a| a.id == leader_aggregator_id)
+            .map(|a| &a.dap_url)
+            .unwrap();
+        let helper_aggregator_dap_url = aggregators
+            .iter()
+            .find(|a| a.id == helper_aggregator_id)
+            .map(|a| &a.dap_url)
+            .unwrap();
+
+        let (mut task_parameters, task_builder) = test_task_builder_remote(
+            vdaf,
+            query_type,
+            leader_aggregator_dap_url,
+            helper_aggregator_dap_url,
+            Duration::from_secs(30),
+            Duration::from_secs(600),
+        );
+        let task = task_builder.with_min_batch_size(100).build();
+        task_parameters.min_batch_size = 100;
+
+        let provision_task_request = NewTask {
+            name: format!("Integration test task {}", Uuid::new_v4()),
+            leader_aggregator_id,
+            helper_aggregator_id,
+            vdaf: match task.vdaf().to_owned() {
+                VdafInstance::Prio3Count => Vdaf::Count,
+                VdafInstance::Prio3Sum { bits } => Vdaf::Sum {
+                    bits: bits.try_into().unwrap(),
+                },
+                VdafInstance::Prio3SumVec {
+                    bits,
+                    length,
+                    chunk_length,
+                } => Vdaf::SumVec {
+                    bits: bits.try_into().unwrap(),
+                    length: length.try_into().unwrap(),
+                    chunk_length: Some(chunk_length.try_into().unwrap()),
+                },
+                VdafInstance::Prio3Histogram {
+                    length,
+                    chunk_length,
+                } => Vdaf::Histogram(Histogram::Length {
+                    length: length.try_into().unwrap(),
+                    chunk_length: Some(chunk_length.try_into().unwrap()),
+                }),
+                VdafInstance::Prio3CountVec {
+                    length,
+                    chunk_length,
+                } => Vdaf::CountVec {
+                    length: length.try_into().unwrap(),
+                    chunk_length: Some(chunk_length.try_into().unwrap()),
+                },
+                other => panic!("unsupported vdaf {other:?}"),
+            },
+            min_batch_size: task.min_batch_size(),
+            max_batch_size: match task.query_type() {
+                QueryType::TimeInterval => None,
+                QueryType::FixedSize { max_batch_size, .. } => Some(*max_batch_size),
+            },
+            time_precision_seconds: task.time_precision().as_seconds(),
+            collector_credential_id,
+        };
+
+        // Provision the task into both aggregators via divviup-api
+        let provisioned_task = divviup_api
+            .create_task(divviup_account_id, provision_task_request)
+            .await
+            .unwrap();
+
+        // Update the task parameters with the ID and collector auth token from divviup-api.
+        task_parameters.task_id = TaskId::from_str(&provisioned_task.id).unwrap();
+        task_parameters.collector_auth_token = collector_credential.authentication_token().unwrap();
+        task_parameters.collector_hpke_keypair = collector_credential.hpke_keypair().unwrap();
+
+        Self {
+            task_parameters,
+            leader: InClusterJanus {
+                aggregator_port_forward: None,
+            },
+            helper: InClusterJanus {
+                aggregator_port_forward: None,
+            },
+        }
+    }
+
+    /// Set up a new DAP task, using the given VDAF and query type, in a pair of existing Janus
+    /// instances in a Kubernetes cluster. `divviup-api` is used to create an account, pair both
+    /// aggregators and configure the task in each Janus instance. The following environment
+    /// variables must be set.
     ///
     ///  - `JANUS_E2E_KUBE_CONFIG_PATH`: The path to a kubeconfig file, containing the information
     ///    needed to connect to the cluster.
@@ -46,7 +229,7 @@ impl InClusterJanusPair {
     ///     helper's aggregator API are authenticated.
     ///  - `JANUS_E2E_DIVVIUP_API_NAMESPACE`: The Kubernetes namespace where `divviup-api` is
     ///     deployed.
-    async fn new(vdaf: VdafInstance, query_type: QueryType) -> Self {
+    async fn new_in_kind(vdaf: VdafInstance, query_type: QueryType) -> Self {
         let (
             kubeconfig_path,
             kubectl_context_name,
@@ -86,9 +269,12 @@ impl InClusterJanusPair {
 
         let cluster = Cluster::new(&kubeconfig_path, &kubectl_context_name);
 
-        let (mut task_parameters, task_builder) = test_task_builder(vdaf, query_type);
-        let task = task_builder.with_min_batch_size(100).build();
-        task_parameters.min_batch_size = 100;
+        let (task_parameters, task_builder) = test_task_builder(
+            vdaf,
+            query_type,
+            Duration::from_millis(500),
+            Duration::from_secs(60),
+        );
 
         // From outside the cluster, the aggregators are reached at a dynamically allocated port on
         // localhost. When the aggregators talk to each other, they do so in the cluster's network,
@@ -102,7 +288,7 @@ impl InClusterJanusPair {
 
         let mut divviup_api = DivviupClient::new(
             "DUATignored".into(),
-            Client::new(ClientConfig::new()).with_default_pool(),
+            Client::new(RustlsConfig::<ClientConfig>::default()).with_default_pool(),
         );
         divviup_api.set_url(format!("http://127.0.0.1:{port}").parse().unwrap());
 
@@ -142,7 +328,8 @@ impl InClusterJanusPair {
             .await
             .unwrap();
 
-        let hpke_config = task.collector_hpke_keypair().config();
+        let hpke_keypair = task_builder.collector_hpke_keypair().clone();
+        let hpke_config = hpke_keypair.config();
         let collector_credential = divviup_api
             .create_collector_credential(
                 account.id,
@@ -158,10 +345,53 @@ impl InClusterJanusPair {
             .await
             .unwrap();
 
+        Self::new_common(
+            divviup_api,
+            account.id,
+            task_parameters,
+            task_builder,
+            paired_leader_aggregator.id,
+            paired_helper_aggregator.id,
+            collector_credential.id,
+            collector_credential
+                .token
+                .map(|t| AuthenticationToken::new_bearer_token_from_string(t).unwrap())
+                .unwrap(),
+            hpke_keypair.clone(),
+            InClusterJanus::new(&cluster, &leader_namespace).await,
+            InClusterJanus::new(&cluster, &helper_namespace).await,
+        )
+        .await
+    }
+
+    fn in_cluster_aggregator_api_url(namespace: &str) -> Url {
+        Url::parse(&format!(
+            "http://aggregator.{namespace}.svc.cluster.local:80/aggregator-api/"
+        ))
+        .unwrap()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn new_common(
+        divviup_api: DivviupClient,
+        divviup_account_id: Uuid,
+        mut task_parameters: TaskParameters,
+        task_builder: TaskBuilder,
+        leader_aggregator_id: Uuid,
+        helper_aggregator_id: Uuid,
+        collector_credential_id: Uuid,
+        collector_auth_token: AuthenticationToken,
+        collector_hpke_keypair: HpkeKeypair,
+        leader: InClusterJanus,
+        helper: InClusterJanus,
+    ) -> Self {
+        let task = task_builder.with_min_batch_size(100).build();
+        task_parameters.min_batch_size = 100;
+
         let provision_task_request = NewTask {
-            name: "Integration test task".to_string(),
-            leader_aggregator_id: paired_leader_aggregator.id,
-            helper_aggregator_id: paired_helper_aggregator.id,
+            name: format!("Integration test task {}", Uuid::new_v4()),
+            leader_aggregator_id,
+            helper_aggregator_id,
             vdaf: match task.vdaf().to_owned() {
                 VdafInstance::Prio3Count => Vdaf::Count,
                 VdafInstance::Prio3Sum { bits } => Vdaf::Sum {
@@ -198,39 +428,30 @@ impl InClusterJanusPair {
                 QueryType::FixedSize { max_batch_size, .. } => Some(*max_batch_size),
             },
             time_precision_seconds: task.time_precision().as_seconds(),
-            collector_credential_id: collector_credential.id,
+            collector_credential_id,
         };
 
         // Provision the task into both aggregators via divviup-api
         let provisioned_task = divviup_api
-            .create_task(account.id, provision_task_request)
+            .create_task(divviup_account_id, provision_task_request)
             .await
             .unwrap();
 
         // Update the task parameters with the ID and collector auth token from divviup-api.
         task_parameters.task_id = TaskId::from_str(&provisioned_task.id).unwrap();
-        task_parameters.collector_auth_token = AuthenticationToken::new_bearer_token_from_string(
-            collector_credential.token.clone().unwrap(),
-        )
-        .unwrap();
+        task_parameters.collector_auth_token = collector_auth_token;
+        task_parameters.collector_hpke_keypair = collector_hpke_keypair;
 
         Self {
             task_parameters,
-            leader: InClusterJanus::new(&cluster, &leader_namespace).await,
-            helper: InClusterJanus::new(&cluster, &helper_namespace).await,
+            leader,
+            helper,
         }
-    }
-
-    fn in_cluster_aggregator_api_url(namespace: &str) -> Url {
-        Url::parse(&format!(
-            "http://aggregator.{namespace}.svc.cluster.local:80/aggregator-api/"
-        ))
-        .unwrap()
     }
 }
 
 struct InClusterJanus {
-    aggregator_port_forward: PortForward,
+    aggregator_port_forward: Option<PortForward>,
 }
 
 impl InClusterJanus {
@@ -241,12 +462,15 @@ impl InClusterJanus {
             .forward_port(aggregator_namespace, "aggregator", 80)
             .await;
         Self {
-            aggregator_port_forward,
+            aggregator_port_forward: Some(aggregator_port_forward),
         }
     }
 
     fn port(&self) -> u16 {
-        self.aggregator_port_forward.local_port()
+        self.aggregator_port_forward
+            .as_ref()
+            .map(PortForward::local_port)
+            .unwrap_or(0)
     }
 }
 

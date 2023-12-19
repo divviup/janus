@@ -13,6 +13,7 @@ use janus_integration_tests::{
 };
 use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
+use std::time::Duration;
 use testcontainers::clients::Cli;
 
 async fn run_divviup_ts_integration_test(
@@ -20,7 +21,12 @@ async fn run_divviup_ts_integration_test(
     container_client: &Cli,
     vdaf: VdafInstance,
 ) {
-    let (task_parameters, task_builder) = test_task_builder(vdaf, QueryType::TimeInterval);
+    let (task_parameters, task_builder) = test_task_builder(
+        vdaf,
+        QueryType::TimeInterval,
+        Duration::from_millis(500),
+        Duration::from_secs(60),
+    );
     let task = task_builder.build();
     let network = generate_network_name();
     let leader =

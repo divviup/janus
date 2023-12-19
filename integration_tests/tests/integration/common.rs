@@ -27,6 +27,8 @@ use url::Url;
 pub fn test_task_builder(
     vdaf: VdafInstance,
     query_type: QueryType,
+    collector_max_interval: time::Duration,
+    collector_max_elapsed_time: time::Duration,
 ) -> (TaskParameters, TaskBuilder) {
     let endpoint_random_value = hex::encode(random::<[u8; 4]>());
     let endpoint_fragments = EndpointFragments {
@@ -39,29 +41,17 @@ pub fn test_task_builder(
             path: "/".to_string(),
         },
     };
-    let task_builder = TaskBuilder::new(query_type, vdaf.clone())
-        .with_leader_aggregator_endpoint(
-            Url::parse(&format!("http://leader-{endpoint_random_value}:8080/")).unwrap(),
-        )
-        .with_helper_aggregator_endpoint(
-            Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
-        )
-        .with_min_batch_size(46)
-        // Force use of DAP-Auth-Tokens, as required by interop testing standard.
-        .with_dap_auth_aggregator_token()
-        .with_dap_auth_collector_token();
-    let task_parameters = TaskParameters {
-        task_id: *task_builder.task_id(),
-        endpoint_fragments,
-        query_type,
-        vdaf,
-        min_batch_size: task_builder.min_batch_size(),
-        time_precision: *task_builder.time_precision(),
-        collector_hpke_keypair: task_builder.collector_hpke_keypair().clone(),
-        collector_auth_token: task_builder.collector_auth_token().clone(),
-    };
 
-    (task_parameters, task_builder)
+    test_task_builder_inner(
+        vdaf,
+        query_type,
+        &Url::parse(&format!("http://leader-{endpoint_random_value}:8080/")).unwrap(),
+        &Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
+        endpoint_fragments,
+        true,
+        collector_max_interval,
+        collector_max_elapsed_time,
+    )
 }
 
 /// Returns a tuple of [`TaskParameters`] and a task builder. This is suitable for test aggregators
@@ -70,6 +60,8 @@ pub fn test_task_builder(
 pub fn test_task_builder_host(
     vdaf: VdafInstance,
     query_type: QueryType,
+    collector_max_interval: time::Duration,
+    collector_max_elapsed_time: time::Duration,
 ) -> (TaskParameters, TaskBuilder) {
     let endpoint_fragments = EndpointFragments {
         leader: AggregatorEndpointFragments::Localhost {
@@ -79,12 +71,72 @@ pub fn test_task_builder_host(
             path: "/".to_string(),
         },
     };
-    let task_builder = TaskBuilder::new(query_type, vdaf.clone())
-        .with_leader_aggregator_endpoint(Url::parse("http://invalid/").unwrap())
-        .with_helper_aggregator_endpoint(Url::parse("http://invalid/").unwrap())
-        .with_min_batch_size(46)
-        .with_dap_auth_aggregator_token()
-        .with_dap_auth_collector_token();
+
+    test_task_builder_inner(
+        vdaf,
+        query_type,
+        &Url::parse("http://invalid/").unwrap(),
+        &Url::parse("http://invalid/").unwrap(),
+        endpoint_fragments,
+        true,
+        collector_max_interval,
+        collector_max_elapsed_time,
+    )
+}
+
+/// Returns a tuple of [`TaskParameters`] and a task builder. This is suitable for test aggregators
+/// running remotely, say in a staging environment.
+// This is dead code if feature in-cluster-in-cloud is not enabled.
+#[allow(dead_code)]
+pub fn test_task_builder_remote(
+    vdaf: VdafInstance,
+    query_type: QueryType,
+    leader_endpoint: &Url,
+    helper_endpoint: &Url,
+    collector_max_interval: time::Duration,
+    collector_max_elapsed_time: time::Duration,
+) -> (TaskParameters, TaskBuilder) {
+    let endpoint_fragments = EndpointFragments {
+        leader: AggregatorEndpointFragments::Remote {
+            url: leader_endpoint.clone(),
+        },
+        helper: AggregatorEndpointFragments::Remote {
+            url: helper_endpoint.clone(),
+        },
+    };
+
+    test_task_builder_inner(
+        vdaf,
+        query_type,
+        leader_endpoint,
+        helper_endpoint,
+        endpoint_fragments,
+        false,
+        collector_max_interval,
+        collector_max_elapsed_time,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn test_task_builder_inner(
+    vdaf: VdafInstance,
+    query_type: QueryType,
+    leader_endpoint: &Url,
+    helper_endpoint: &Url,
+    endpoint_fragments: EndpointFragments,
+    dap_auth_tokens: bool,
+    collector_max_interval: time::Duration,
+    collector_max_elapsed_time: time::Duration,
+) -> (TaskParameters, TaskBuilder) {
+    let mut task_builder = TaskBuilder::new(query_type, vdaf.clone())
+        .with_leader_aggregator_endpoint(leader_endpoint.clone())
+        .with_helper_aggregator_endpoint(helper_endpoint.clone())
+        .with_min_batch_size(46);
+    if dap_auth_tokens {
+        task_builder = task_builder
+            .with_dap_auth_aggregator_token()
+            .with_dap_auth_collector_token();
+    }
     let task_parameters = TaskParameters {
         task_id: *task_builder.task_id(),
         endpoint_fragments,
@@ -94,6 +146,8 @@ pub fn test_task_builder_host(
         time_precision: *task_builder.time_precision(),
         collector_hpke_keypair: task_builder.collector_hpke_keypair().clone(),
         collector_auth_token: task_builder.collector_auth_token().clone(),
+        collector_max_interval,
+        collector_max_elapsed_time,
     };
 
     (task_parameters, task_builder)
@@ -182,8 +236,8 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
     .with_collect_poll_backoff(
         ExponentialBackoffBuilder::new()
             .with_initial_interval(time::Duration::from_millis(500))
-            .with_max_interval(time::Duration::from_millis(500))
-            .with_max_elapsed_time(Some(time::Duration::from_secs(60)))
+            .with_max_interval(time::Duration::from_secs(30))
+            .with_max_elapsed_time(Some(time::Duration::from_secs(600)))
             .build(),
     )
     .build()

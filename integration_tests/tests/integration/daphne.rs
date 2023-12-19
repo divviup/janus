@@ -11,6 +11,7 @@ use janus_integration_tests::{
 };
 use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
+use std::time::Duration;
 
 // This test places Daphne in the leader role & Janus in the helper role.
 #[tokio::test(flavor = "multi_thread")]
@@ -22,8 +23,12 @@ async fn daphne_janus() {
 
     // Start servers.
     let network = generate_network_name();
-    let (mut task_parameters, task_builder) =
-        test_task_builder(VdafInstance::Prio3Count, QueryType::TimeInterval);
+    let (mut task_parameters, task_builder) = test_task_builder(
+        VdafInstance::Prio3Count,
+        QueryType::TimeInterval,
+        Duration::from_millis(500),
+        Duration::from_secs(60),
+    );
 
     // Daphne is hardcoded to serve from a path starting with /v04/.
     task_parameters
@@ -61,8 +66,12 @@ async fn janus_daphne() {
 
     // Start servers.
     let network = generate_network_name();
-    let (mut task_parameters, task_builder) =
-        test_task_builder(VdafInstance::Prio3Count, QueryType::TimeInterval);
+    let (mut task_parameters, task_builder) = test_task_builder(
+        VdafInstance::Prio3Count,
+        QueryType::TimeInterval,
+        Duration::from_millis(500),
+        Duration::from_secs(60),
+    );
 
     // Daphne is hardcoded to serve from a path starting with /v04/.
     task_parameters
@@ -101,8 +110,12 @@ async fn janus_in_process_daphne() {
     // Start servers.
     let network = generate_network_name();
     let container_client = container_client();
-    let (mut task_parameters, mut task_builder) =
-        test_task_builder(VdafInstance::Prio3Count, QueryType::TimeInterval);
+    let (mut task_parameters, mut task_builder) = test_task_builder(
+        VdafInstance::Prio3Count,
+        QueryType::TimeInterval,
+        Duration::from_millis(500),
+        Duration::from_secs(60),
+    );
     task_parameters.endpoint_fragments.leader = AggregatorEndpointFragments::Localhost {
         path: "/".to_owned(),
     };

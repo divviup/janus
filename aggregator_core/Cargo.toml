@@ -51,7 +51,7 @@ tracing-log = "0.2.0"
 trillium.workspace = true
 trillium-macros = "0.0.4"
 trillium-router.workspace = true
-url = { version = "2.5.0", features = ["serde"] }
+url.workspace = true
 
 [dev-dependencies]
 assert_matches.workspace = true

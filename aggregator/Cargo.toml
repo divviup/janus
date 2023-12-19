@@ -105,7 +105,7 @@ trillium-prometheus = { version = "0.1.0", optional = true }
 trillium-router.workspace = true
 trillium-testing = { workspace = true, optional = true }
 trillium-tokio.workspace = true
-url = { version = "2.5.0", features = ["serde"] }
+url.workspace = true
 
 [dev-dependencies]
 assert_matches.workspace = true

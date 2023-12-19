@@ -216,6 +216,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-rustls"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd10f063fb367d26334e10c50c67ea31ac542b8c3402be2251db4cfc5d74ba66"
+dependencies = [
+ "futures-io",
+ "rustls",
+]
+
+[[package]]
 name = "async-stream"
 version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2117,8 +2127,10 @@ dependencies = [
  "tempfile",
  "testcontainers",
  "tokio",
+ "trillium-rustls",
  "trillium-tokio",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -3419,7 +3431,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webpki-roots",
+ "webpki-roots 0.25.2",
  "winreg",
 ]
 
@@ -3581,7 +3593,7 @@ checksum = "629648aced5775d558af50b2b4c7b02983a04b312126d45eeead26e7caa498b9"
 dependencies = [
  "log",
  "ring 0.17.7",
- "rustls-webpki",
+ "rustls-webpki 0.101.7",
  "sct",
 ]
 
@@ -3621,6 +3633,16 @@ name = "rustls-pki-types"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eb0a1f9b9efec70d32e6d6aa3e58ebd88c3754ec98dfe9145c63cf54cc829b83"
+
+[[package]]
+name = "rustls-webpki"
+version = "0.100.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f6a5fc258f1c1276dfe3016516945546e2d5383911efc0fc4f1cdc5df3a4ae3"
+dependencies = [
+ "ring 0.16.20",
+ "untrusted 0.7.1",
+]
 
 [[package]]
 name = "rustls-webpki"
@@ -4136,7 +4158,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "url",
- "webpki-roots",
+ "webpki-roots 0.25.2",
 ]
 
 [[package]]
@@ -5013,6 +5035,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "trillium-rustls"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3016aa92cfc68551ad7291c2f0dee6bb87f1bd08133d61ca93e61cebd1d3b4ce"
+dependencies = [
+ "async-rustls",
+ "log",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pemfile 1.0.4",
+ "rustls-webpki 0.100.3",
+ "trillium-server-common",
+ "webpki-roots 0.23.1",
+]
+
+[[package]]
 name = "trillium-server-common"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5364,6 +5402,15 @@ checksum = "57099a701fb3a8043f993e8228dc24229c7b942e2b009a1b962e54489ba1d3bf"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b03058f88386e5ff5310d9111d53f48b17d732b401aeb83a8d5190f2ac459338"
+dependencies = [
+ "rustls-webpki 0.100.3",
 ]
 
 [[package]]
