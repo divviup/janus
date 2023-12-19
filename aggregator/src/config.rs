@@ -1,7 +1,9 @@
 //! Configuration for various Janus binaries.
 
 use crate::{metrics::MetricsConfiguration, trace::TraceConfiguration};
+use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
 use derivative::Derivative;
+use janus_aggregator_core::datastore::default_transaction_retry_config;
 use serde::{
     de::{DeserializeOwned, Error as _},
     Deserialize, Deserializer, Serialize,
@@ -10,6 +12,7 @@ use std::{
     fmt::Debug,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
+    time::Duration as StdDuration,
 };
 use tracing::warn;
 use url::Url;
@@ -29,7 +32,7 @@ use url::Url;
 ///
 /// let _decoded: CommonConfig = serde_yaml::from_str(yaml_config).unwrap();
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CommonConfig {
     /// The database configuration.
     pub database: DbConfig,
@@ -61,7 +64,7 @@ pub trait BinaryConfig: Debug + DeserializeOwned {
 }
 
 /// Configuration for a Janus server using a database.
-#[derive(Clone, Derivative, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Derivative, PartialEq, Serialize, Deserialize)]
 #[derivative(Debug)]
 pub struct DbConfig {
     /// URL at which to connect to the database.
@@ -82,6 +85,9 @@ pub struct DbConfig {
     /// Path to a PEM file with root certificates to trust for TLS database connections.
     #[serde(default)]
     pub tls_trust_store_path: Option<PathBuf>,
+
+    #[serde(default)]
+    pub transaction_retry_config: BackoffConfig,
 }
 
 impl DbConfig {
@@ -91,6 +97,41 @@ impl DbConfig {
 
     fn default_check_schema_version() -> bool {
         true
+    }
+}
+
+/// Settings for an exponential backoff strategy.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BackoffConfig {
+    initial_interval: StdDuration,
+    randomization_factor: f64,
+    multiplier: f64,
+    max_interval: StdDuration,
+    max_elapsed_time: Option<StdDuration>,
+}
+
+impl Default for BackoffConfig {
+    fn default() -> Self {
+        let default_config = default_transaction_retry_config();
+        Self {
+            initial_interval: default_config.initial_interval,
+            randomization_factor: default_config.randomization_factor,
+            multiplier: default_config.multiplier,
+            max_interval: default_config.max_interval,
+            max_elapsed_time: default_config.max_elapsed_time,
+        }
+    }
+}
+
+impl From<BackoffConfig> for ExponentialBackoff {
+    fn from(value: BackoffConfig) -> Self {
+        ExponentialBackoffBuilder::new()
+            .with_initial_interval(value.initial_interval)
+            .with_randomization_factor(value.randomization_factor)
+            .with_multiplier(value.multiplier)
+            .with_max_interval(value.max_interval)
+            .with_max_elapsed_time(value.max_elapsed_time)
+            .build()
     }
 }
 
@@ -182,7 +223,7 @@ impl<'de> Deserialize<'de> for JobDriverConfig {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use super::DbConfig;
+    use super::{BackoffConfig, DbConfig};
     use crate::{
         metrics::{MetricsConfiguration, MetricsExporterConfiguration},
         trace::{
@@ -198,6 +239,7 @@ pub mod test_util {
             connection_pool_timeouts_secs: DbConfig::default_connection_pool_timeout(),
             check_schema_version: DbConfig::default_check_schema_version(),
             tls_trust_store_path: None,
+            transaction_retry_config: BackoffConfig::default(),
         }
     }
 

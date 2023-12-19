@@ -234,7 +234,7 @@ pub fn run_vdaf<
 
 /// Encodes the given value to YAML, then decodes it again, and checks that the
 /// resulting value is equal to the given value.
-pub fn roundtrip_encoding<T: Serialize + DeserializeOwned + Debug + Eq>(value: T) {
+pub fn roundtrip_encoding<T: Serialize + DeserializeOwned + Debug + PartialEq>(value: T) {
     let encoded = serde_yaml::to_string(&value).unwrap();
     let decoded = serde_yaml::from_str(&encoded).unwrap();
     assert_eq!(value, decoded);

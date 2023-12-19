@@ -131,6 +131,7 @@ pub async fn datastore<C: Clock>(
     meter: &Meter,
     datastore_keys: &[String],
     check_schema_version: bool,
+    transaction_backoff_config: ExponentialBackoff,
 ) -> Result<Datastore<C>> {
     let datastore_keys = datastore_keys
         .iter()
@@ -157,10 +158,23 @@ pub async fn datastore<C: Clock>(
     }
 
     let datastore = if check_schema_version {
-        Datastore::new(pool, Crypter::new(datastore_keys), clock, meter).await?
+        Datastore::new(
+            pool,
+            Crypter::new(datastore_keys),
+            clock,
+            meter,
+            transaction_backoff_config,
+        )
+        .await?
     } else {
-        Datastore::new_without_supported_versions(pool, Crypter::new(datastore_keys), clock, meter)
-            .await
+        Datastore::new_without_supported_versions(
+            pool,
+            Crypter::new(datastore_keys),
+            clock,
+            meter,
+            transaction_backoff_config,
+        )
+        .await
     };
 
     Ok(datastore)
@@ -275,6 +289,11 @@ where
         &meter,
         &options.common_options().datastore_keys,
         config.common_config().database.check_schema_version,
+        config
+            .common_config()
+            .database
+            .transaction_retry_config
+            .into(),
     )
     .await
     .context("couldn't create datastore")?;
@@ -430,7 +449,7 @@ mod tests {
     use crate::{
         aggregator::http_handlers::test_util::take_response_body,
         binary_utils::{database_pool, zpages_handler, CommonBinaryOptions},
-        config::DbConfig,
+        config::{BackoffConfig, DbConfig},
     };
     use clap::CommandFactory;
     use janus_core::test_util::{
@@ -578,6 +597,7 @@ mod tests {
             connection_pool_timeouts_secs: 5,
             check_schema_version: false,
             tls_trust_store_path: Some("tests/tls_files/rootCA.pem".into()),
+            transaction_retry_config: BackoffConfig::default(),
         };
         let pool = database_pool(&db_config, None).await.unwrap();
         let conn = pool.get().await.unwrap();

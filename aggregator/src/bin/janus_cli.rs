@@ -317,6 +317,11 @@ async fn datastore_from_opts(
             .datastore_keys(&command_line_options.common_options, kube_client)
             .await?,
         config_file.common_config().database.check_schema_version,
+        config_file
+            .common_config()
+            .database
+            .transaction_retry_config
+            .into(),
     )
     .await
 }
@@ -401,7 +406,7 @@ impl KubernetesSecretOptions {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct ConfigFile {
     #[serde(flatten)]
     common_config: CommonConfig,

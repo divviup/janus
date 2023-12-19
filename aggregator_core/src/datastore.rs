@@ -133,9 +133,17 @@ impl<C: Clock> Datastore<C> {
         crypter: Crypter,
         clock: C,
         meter: &Meter,
+        transaction_backoff_config: ExponentialBackoff,
     ) -> Result<Self, Error> {
-        Self::new_with_supported_versions(pool, crypter, clock, meter, SUPPORTED_SCHEMA_VERSIONS)
-            .await
+        Self::new_with_supported_versions(
+            pool,
+            crypter,
+            clock,
+            meter,
+            transaction_backoff_config,
+            SUPPORTED_SCHEMA_VERSIONS,
+        )
+        .await
     }
 
     async fn new_with_supported_versions(
@@ -143,9 +151,17 @@ impl<C: Clock> Datastore<C> {
         crypter: Crypter,
         clock: C,
         meter: &Meter,
+        transaction_backoff_config: ExponentialBackoff,
         supported_schema_versions: &[i64],
     ) -> Result<Self, Error> {
-        let datastore = Self::new_without_supported_versions(pool, crypter, clock, meter).await;
+        let datastore = Self::new_without_supported_versions(
+            pool,
+            crypter,
+            clock,
+            meter,
+            transaction_backoff_config,
+        )
+        .await;
 
         let (current_version, migration_description) = datastore
             .run_tx("check schema version", |tx| {
@@ -168,6 +184,7 @@ impl<C: Clock> Datastore<C> {
         crypter: Crypter,
         clock: C,
         meter: &Meter,
+        transaction_backoff_config: ExponentialBackoff,
     ) -> Self {
         let transaction_status_counter = meter
             .u64_counter("janus_database_transactions")
@@ -192,14 +209,6 @@ impl<C: Clock> Datastore<C> {
             .with_unit(Unit::new("s"))
             .init();
 
-        let transaction_backoff_config = ExponentialBackoffBuilder::new()
-            .with_initial_interval(StdDuration::from_millis(5))
-            .with_randomization_factor(0.5)
-            .with_multiplier(1.5)
-            .with_max_interval(StdDuration::from_secs(2))
-            .with_max_elapsed_time(Some(StdDuration::from_secs(15)))
-            .build();
-
         Self {
             pool,
             crypter,
@@ -209,16 +218,6 @@ impl<C: Clock> Datastore<C> {
             transaction_retry_histogram,
             rollback_error_counter,
             transaction_duration_histogram,
-        }
-    }
-
-    pub fn with_transaction_backoff_config(
-        self,
-        transaction_backoff_config: ExponentialBackoff,
-    ) -> Self {
-        Self {
-            transaction_backoff_config,
-            ..self
         }
     }
 
@@ -5050,4 +5049,14 @@ impl From<ring::error::Unspecified> for Error {
     fn from(_: ring::error::Unspecified) -> Self {
         Error::Crypt
     }
+}
+
+pub fn default_transaction_retry_config() -> ExponentialBackoff {
+    ExponentialBackoffBuilder::new()
+        .with_initial_interval(StdDuration::from_millis(5))
+        .with_randomization_factor(0.5)
+        .with_multiplier(1.5)
+        .with_max_interval(StdDuration::from_secs(2))
+        .with_max_elapsed_time(Some(StdDuration::from_secs(15)))
+        .build()
 }

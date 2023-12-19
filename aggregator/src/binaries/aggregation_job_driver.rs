@@ -96,7 +96,7 @@ impl BinaryOptions for Options {
 ///
 /// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     #[serde(flatten)]
     pub common_config: CommonConfig,

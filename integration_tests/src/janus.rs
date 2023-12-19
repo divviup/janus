@@ -17,7 +17,7 @@ use janus_aggregator::{
         },
     },
     binary_utils::{BinaryContext, CommonBinaryOptions},
-    config::{CommonConfig, DbConfig, JobDriverConfig, TaskprovConfig},
+    config::{BackoffConfig, CommonConfig, DbConfig, JobDriverConfig, TaskprovConfig},
     metrics::MetricsConfiguration,
     trace::{TokioConsoleConfiguration, TraceConfiguration},
 };
@@ -140,6 +140,7 @@ impl JanusInProcess {
                 connection_pool_timeouts_secs: 60,
                 check_schema_version: false,
                 tls_trust_store_path: None,
+                transaction_retry_config: BackoffConfig::default(),
             },
             logging_config,
             metrics_config: MetricsConfiguration { exporter: None },

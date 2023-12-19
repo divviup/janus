@@ -1,5 +1,6 @@
 use crate::{
     datastore::{
+        default_transaction_retry_config,
         models::{
             AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
             AggregationJobState, Batch, BatchAggregation, BatchAggregationState, BatchState,
@@ -82,6 +83,7 @@ async fn reject_unsupported_schema_version(ephemeral_datastore: EphemeralDatasto
         ephemeral_datastore.crypter(),
         MockClock::default(),
         &noop_meter(),
+        default_transaction_retry_config(),
         &[0],
     )
     .await
@@ -105,18 +107,21 @@ async fn down_migrations(
 #[tokio::test]
 async fn transaction_retries(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
-    let ds = ephemeral_datastore
-        .datastore(MockClock::default())
-        .await
-        .with_transaction_backoff_config(
-            ExponentialBackoffBuilder::new()
-                .with_initial_interval(StdDuration::from_millis(5))
-                .with_randomization_factor(0.5)
-                .with_multiplier(1.5)
-                .with_max_interval(StdDuration::from_millis(100))
-                .with_max_elapsed_time(Some(StdDuration::from_millis(500)))
-                .build(),
-        );
+    let ds = Datastore::new(
+        ephemeral_datastore.pool(),
+        ephemeral_datastore.crypter(),
+        MockClock::default(),
+        &noop_meter(),
+        ExponentialBackoffBuilder::new()
+            .with_initial_interval(StdDuration::from_millis(5))
+            .with_randomization_factor(0.5)
+            .with_multiplier(1.5)
+            .with_max_interval(StdDuration::from_millis(100))
+            .with_max_elapsed_time(Some(StdDuration::from_millis(500)))
+            .build(),
+    )
+    .await
+    .unwrap();
 
     // Infinitely retrying transaction.
     let result = ds

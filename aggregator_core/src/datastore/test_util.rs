@@ -26,7 +26,7 @@ use tokio::sync::{oneshot, Mutex};
 use tokio_postgres::{connect, Config, NoTls};
 use tracing::trace;
 
-use super::SUPPORTED_SCHEMA_VERSIONS;
+use super::{default_transaction_retry_config, SUPPORTED_SCHEMA_VERSIONS};
 
 struct EphemeralDatabase {
     port_number: u16,
@@ -115,9 +115,15 @@ impl EphemeralDatastore {
     /// Creates a Datastore instance based on this EphemeralDatastore. All returned Datastore
     /// instances will refer to the same underlying durable state.
     pub async fn datastore<C: Clock>(&self, clock: C) -> Datastore<C> {
-        Datastore::new(self.pool(), self.crypter(), clock, &noop_meter())
-            .await
-            .unwrap()
+        Datastore::new(
+            self.pool(),
+            self.crypter(),
+            clock,
+            &noop_meter(),
+            default_transaction_retry_config(),
+        )
+        .await
+        .unwrap()
     }
 
     /// Retrieves the connection pool used for this EphemeralDatastore. Typically, this would be
