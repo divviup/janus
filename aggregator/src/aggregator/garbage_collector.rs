@@ -1,10 +1,14 @@
-use anyhow::{Context, Result};
-use futures::future::join_all;
-use janus_aggregator_core::{datastore::Datastore, task::AggregatorTask};
+use anyhow::{Context, Error, Result};
+use futures::future::{join_all, try_join_all, OptionFuture};
+use janus_aggregator_core::datastore::{self, Datastore};
 use janus_core::time::Clock;
+use janus_messages::TaskId;
 use opentelemetry::metrics::{Counter, Meter, Unit};
-use std::sync::Arc;
-use tokio::try_join;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
+use tokio::{sync::Semaphore, try_join};
 use tracing::error;
 
 pub struct GarbageCollector<C: Clock> {
@@ -15,6 +19,8 @@ pub struct GarbageCollector<C: Clock> {
     report_limit: u64,
     aggregation_limit: u64,
     collection_limit: u64,
+    tasks_per_tx: usize,
+    concurrent_tx_semaphore: Option<Semaphore>,
 
     // Metrics.
     deleted_report_counter: Counter<u64>,
@@ -29,6 +35,8 @@ impl<C: Clock> GarbageCollector<C> {
         report_limit: u64,
         aggregation_limit: u64,
         collection_limit: u64,
+        tasks_per_tx: usize,
+        concurrent_tx_limit: Option<usize>,
     ) -> Self {
         let deleted_report_counter = meter
             .u64_counter("janus_gc_deleted_reports")
@@ -50,6 +58,8 @@ impl<C: Clock> GarbageCollector<C> {
         deleted_aggregation_job_counter.add(0, &[]);
         deleted_batch_counter.add(0, &[]);
 
+        let concurrent_tx_semaphore = concurrent_tx_limit.map(Semaphore::new);
+
         Self {
             datastore,
             report_limit,
@@ -58,6 +68,8 @@ impl<C: Clock> GarbageCollector<C> {
             deleted_report_counter,
             deleted_aggregation_job_counter,
             deleted_batch_counter,
+            tasks_per_tx,
+            concurrent_tx_semaphore,
         }
     }
 
@@ -66,48 +78,94 @@ impl<C: Clock> GarbageCollector<C> {
         // TODO(#224): add support for handling only a subset of tasks in a single job (i.e. sharding).
 
         // Retrieve tasks.
-        let tasks = self
+        let task_ids: Vec<_> = self
             .datastore
             .run_tx("garbage_collector_get_tasks", |tx| {
                 Box::pin(async move { tx.get_aggregator_tasks().await })
             })
             .await
-            .context("couldn't retrieve tasks")?;
+            .context("couldn't retrieve tasks")?
+            .into_iter()
+            .map(|task| *task.id())
+            .collect();
 
         // Run GC for each task.
-        join_all(tasks.into_iter().map(|task| async move {
-            let task = Arc::new(task);
-            if let Err(err) = self.gc_task(Arc::clone(&task)).await {
-                error!(task_id = ?task.id(), ?err, "Couldn't GC task");
-            }
-        }))
+        join_all(
+            task_ids
+                .chunks(self.tasks_per_tx)
+                .map(|task_ids| async move {
+                    // unwrap safety: we never close concurrent_tx_semaphore.
+                    let _permit = OptionFuture::from(
+                        self.concurrent_tx_semaphore
+                            .as_ref()
+                            .map(Semaphore::acquire),
+                    )
+                    .await
+                    .transpose()
+                    .expect("concurrent_tx_semaphore has been closed");
+
+                    if let Err(err) = self.gc_tasks(task_ids.to_vec()).await {
+                        error!(?err, "GC failure")
+                    }
+                }),
+        )
         .await;
         Ok(())
     }
 
-    #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
-    async fn gc_task(&self, task: Arc<AggregatorTask>) -> Result<()> {
+    #[tracing::instrument(skip(self))]
+    async fn gc_tasks(&self, task_ids: Vec<TaskId>) -> Result<()> {
+        let task_ids = Arc::new(task_ids);
         let (client_reports_deleted, aggregation_jobs_deleted, batches_deleted) = self
             .datastore
             .run_tx("garbage_collector", |tx| {
-                let task = Arc::clone(&task);
+                let task_ids = Arc::clone(&task_ids);
                 let report_limit = self.report_limit;
                 let aggregation_limit = self.aggregation_limit;
                 let collection_limit = self.collection_limit;
 
                 Box::pin(async move {
-                    try_join!(
-                        tx.delete_expired_client_reports(task.id(), report_limit),
-                        tx.delete_expired_aggregation_artifacts(task.id(), aggregation_limit),
-                        tx.delete_expired_collection_artifacts(task.id(), collection_limit),
-                    )
+                    let client_reports_deleted = Arc::new(AtomicU64::new(0));
+                    let aggregation_jobs_deleted = Arc::new(AtomicU64::new(0));
+                    let batches_deleted = Arc::new(AtomicU64::new(0));
+
+                    try_join_all(task_ids.iter().map(|task_id| {
+                        let client_reports_deleted = Arc::clone(&client_reports_deleted);
+                        let aggregation_jobs_deleted = Arc::clone(&aggregation_jobs_deleted);
+                        let batches_deleted = Arc::clone(&batches_deleted);
+
+                        async move {
+                            let (report_count, agg_job_count, batch_count) = try_join!(
+                                tx.delete_expired_client_reports(task_id, report_limit),
+                                tx.delete_expired_aggregation_artifacts(task_id, aggregation_limit),
+                                tx.delete_expired_collection_artifacts(task_id, collection_limit),
+                            )
+                            .with_context(|| format!("Couldn't GC {task_id}"))?;
+
+                            client_reports_deleted.fetch_add(report_count, Ordering::Relaxed);
+                            aggregation_jobs_deleted.fetch_add(agg_job_count, Ordering::Relaxed);
+                            batches_deleted.fetch_add(batch_count, Ordering::Relaxed);
+
+                            Ok::<_, Error>(())
+                        }
+                    }))
+                    .await
+                    .map_err(|err| datastore::Error::User(err.into()))?;
+
+                    Ok((
+                        client_reports_deleted.load(Ordering::Relaxed),
+                        aggregation_jobs_deleted.load(Ordering::Relaxed),
+                        batches_deleted.load(Ordering::Relaxed),
+                    ))
                 })
             })
             .await?;
+
         self.deleted_report_counter.add(client_reports_deleted, &[]);
         self.deleted_aggregation_job_counter
             .add(aggregation_jobs_deleted, &[]);
         self.deleted_batch_counter.add(batches_deleted, &[]);
+
         Ok(())
     }
 }
@@ -265,13 +323,12 @@ mod tests {
             u64::try_from(i64::MAX).unwrap(),
             u64::try_from(i64::MAX).unwrap(),
             u64::try_from(i64::MAX).unwrap(),
+            1,
+            Some(1),
         )
-        .gc_task(Arc::clone(&task))
+        .gc_tasks(Vec::from([*task.id()]))
         .await
         .unwrap();
-
-        // Reset the clock to "undo" read-based expiry.
-        clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
         // Reset the clock to "undo" read-based expiry.
         clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
@@ -456,8 +513,10 @@ mod tests {
             u64::try_from(i64::MAX).unwrap(),
             u64::try_from(i64::MAX).unwrap(),
             u64::try_from(i64::MAX).unwrap(),
+            1,
+            Some(1),
         )
-        .gc_task(Arc::clone(&task))
+        .gc_tasks(Vec::from([*task.id()]))
         .await
         .unwrap();
 
@@ -638,8 +697,10 @@ mod tests {
             u64::try_from(i64::MAX).unwrap(),
             u64::try_from(i64::MAX).unwrap(),
             u64::try_from(i64::MAX).unwrap(),
+            1,
+            Some(1),
         )
-        .gc_task(Arc::clone(&task))
+        .gc_tasks(Vec::from([*task.id()]))
         .await
         .unwrap();
 
@@ -835,8 +896,10 @@ mod tests {
             u64::try_from(i64::MAX).unwrap(),
             u64::try_from(i64::MAX).unwrap(),
             u64::try_from(i64::MAX).unwrap(),
+            1,
+            Some(1),
         )
-        .gc_task(Arc::clone(&task))
+        .gc_tasks(Vec::from([*task.id()]))
         .await
         .unwrap();
 
