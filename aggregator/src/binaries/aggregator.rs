@@ -82,6 +82,8 @@ async fn run_aggregator(
                     gc_config.report_limit,
                     gc_config.aggregation_limit,
                     gc_config.collection_limit,
+                    gc_config.tasks_per_tx,
+                    gc_config.concurrent_tx_limit,
                 );
                 let mut interval = interval(Duration::from_secs(gc_config.gc_frequency_s));
                 loop {
@@ -380,6 +382,19 @@ pub struct GarbageCollectorConfig {
     /// The limit to the number of batches, and related collection artifacts, deleted for a single
     /// task by a single run of the garbage collector.
     pub collection_limit: u64,
+
+    /// The maximum number of tasks to process together for GC in a single database transaction.
+    /// Defaults to a single task per database transaction.
+    #[serde(default = "default_tasks_per_tx")]
+    pub tasks_per_tx: usize,
+
+    /// The maximum number of concurrent database transactions to open at once while processing GC.
+    /// Leaving this unset means there is no maximum.
+    pub concurrent_tx_limit: Option<usize>,
+}
+
+fn default_tasks_per_tx() -> usize {
+    1
 }
 
 impl Config {
@@ -468,6 +483,8 @@ mod tests {
                 report_limit: 25,
                 aggregation_limit: 50,
                 collection_limit: 75,
+                tasks_per_tx: 15,
+                concurrent_tx_limit: Some(23),
             }),
             aggregator_api: Some(aggregator_api),
             common_config: CommonConfig {
@@ -534,6 +551,39 @@ mod tests {
                 report_limit: 25,
                 aggregation_limit: 50,
                 collection_limit: 75,
+                tasks_per_tx: 1,
+                concurrent_tx_limit: None,
+            }),
+        );
+
+        assert_eq!(
+            serde_yaml::from_str::<Config>(
+                r#"---
+    listen_address: "0.0.0.0:8080"
+    database:
+        url: "postgres://postgres:postgres@localhost:5432/postgres"
+        connection_pool_timeouts_secs: 60
+    max_upload_batch_size: 100
+    max_upload_batch_write_delay_ms: 250
+    batch_aggregation_shard_count: 32
+    garbage_collection:
+        gc_frequency_s: 60
+        report_limit: 25
+        aggregation_limit: 50
+        collection_limit: 75
+        tasks_per_tx: 15
+        concurrent_tx_limit: 23
+    "#
+            )
+            .unwrap()
+            .garbage_collection,
+            Some(GarbageCollectorConfig {
+                gc_frequency_s: 60,
+                report_limit: 25,
+                aggregation_limit: 50,
+                collection_limit: 75,
+                tasks_per_tx: 15,
+                concurrent_tx_limit: Some(23),
             }),
         );
     }
