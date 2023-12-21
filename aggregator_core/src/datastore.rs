@@ -166,12 +166,12 @@ impl<C: Clock> Datastore<C> {
         meter: &Meter,
     ) -> Datastore<C> {
         let transaction_status_counter = meter
-            .u64_counter("janus_database_transactions")
+            .u64_counter(TRANSACTION_METER_NAME)
             .with_description("Count of database transactions run, with their status.")
             .with_unit(Unit::new("{transaction}"))
             .init();
         let rollback_error_counter = meter
-            .u64_counter("janus_database_rollback_errors")
+            .u64_counter(TRANSACTION_ROLLBACK_METER_NAME)
             .with_description(concat!(
                 "Count of errors received when rolling back a database transaction, ",
                 "with their PostgreSQL error code.",
@@ -179,12 +179,12 @@ impl<C: Clock> Datastore<C> {
             .with_unit(Unit::new("{error}"))
             .init();
         let transaction_retry_histogram = meter
-            .u64_histogram("janus_database_transaction_retries")
+            .u64_histogram(TRANSACTION_RETRIES_METER_NAME)
             .with_description("The number of retries before a transaction is committed or aborted.")
             .with_unit(Unit::new("{retry}"))
             .init();
         let transaction_duration_histogram = meter
-            .f64_histogram("janus_database_transaction_duration")
+            .f64_histogram(TRANSACTION_DURATION_METER_NAME)
             .with_description("Duration of database transactions.")
             .with_unit(Unit::new("s"))
             .init();
@@ -357,6 +357,11 @@ fn is_transaction_abort_error(err: &tokio_postgres::Error) -> bool {
     err.code()
         .map_or(false, |code| code == &SqlState::IN_FAILED_SQL_TRANSACTION)
 }
+
+pub const TRANSACTION_METER_NAME: &str = "janus_database_transactions";
+pub const TRANSACTION_ROLLBACK_METER_NAME: &str = "janus_database_rollback_errors";
+pub const TRANSACTION_RETRIES_METER_NAME: &str = "janus_database_transaction_retries";
+pub const TRANSACTION_DURATION_METER_NAME: &str = "janus_database_transaction_duration";
 
 /// Transaction represents an ongoing datastore transaction.
 pub struct Transaction<'a, C: Clock> {
