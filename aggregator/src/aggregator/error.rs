@@ -66,6 +66,9 @@ pub enum Error {
     /// An attempt was made to act on a known but deleted collection job.
     #[error("deleted collection job: {0}")]
     DeletedCollectionJob(CollectionJobId),
+    /// An attempt was made to act on a collection job that has been abandoned by the aggregator.
+    #[error("abandoned collection job: {0}")]
+    AbandonedCollectionJob(CollectionJobId),
     /// Corresponds to `outdatedHpkeConfig` in DAP.
     #[error("task {0}: outdated HPKE config: {1}")]
     OutdatedHpkeConfig(TaskId, HpkeConfigId),
@@ -204,6 +207,7 @@ impl Error {
             Error::MissingTaskId => "missing_task_id",
             Error::UnrecognizedAggregationJob(_, _) => "unrecognized_aggregation_job",
             Error::DeletedCollectionJob(_) => "deleted_collection_job",
+            Error::AbandonedCollectionJob(_) => "abandoned_collection_job",
             Error::UnrecognizedCollectionJob(_) => "unrecognized_collection_job",
             Error::OutdatedHpkeConfig(_, _) => "outdated_hpke_config",
             Error::UnauthorizedRequest(_) => "unauthorized_request",

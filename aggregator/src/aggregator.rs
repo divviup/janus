@@ -2745,17 +2745,7 @@ impl VdafOps {
                     .get_encoded(),
                 ))
             }
-
-            CollectionJobState::Abandoned => {
-                // TODO(#248): decide how to respond for abandoned collection jobs.
-                warn!(
-                    %collection_job_id,
-                    task_id = %task.id(),
-                    "Attempting to collect abandoned collection job"
-                );
-                Ok(None)
-            }
-
+            CollectionJobState::Abandoned => Err(Error::AbandonedCollectionJob(*collection_job_id)),
             CollectionJobState::Deleted => Err(Error::DeletedCollectionJob(*collection_job_id)),
         }
     }

@@ -44,59 +44,73 @@ impl Handler for Error {
         warn!(error_code, error=?self, "Error handling endpoint");
         match self {
             Error::InvalidConfiguration(_) => conn.with_status(Status::InternalServerError),
-            Error::MessageDecode(_) => {
-                conn.with_problem_document(&ProblemDocument::new(DapProblemType::InvalidMessage))
-            }
+            Error::MessageDecode(_) => conn
+                .with_problem_document(&ProblemDocument::new_dap(DapProblemType::InvalidMessage)),
             Error::ReportRejected(task_id, _, _, reason) => conn.with_problem_document(
-                &ProblemDocument::new(DapProblemType::ReportRejected)
+                &ProblemDocument::new_dap(DapProblemType::ReportRejected)
                     .with_task_id(task_id)
                     .with_detail(reason.detail()),
             ),
             Error::InvalidMessage(task_id, _) => {
-                let mut doc = ProblemDocument::new(DapProblemType::InvalidMessage);
+                let mut doc = ProblemDocument::new_dap(DapProblemType::InvalidMessage);
                 if let Some(task_id) = task_id {
                     doc = doc.with_task_id(task_id);
                 }
                 conn.with_problem_document(&doc)
             }
             Error::StepMismatch { task_id, .. } => conn.with_problem_document(
-                &ProblemDocument::new(DapProblemType::StepMismatch).with_task_id(task_id),
+                &ProblemDocument::new_dap(DapProblemType::StepMismatch).with_task_id(task_id),
             ),
             Error::UnrecognizedTask(task_id) => conn.with_problem_document(
-                &ProblemDocument::new(DapProblemType::UnrecognizedTask).with_task_id(task_id),
+                &ProblemDocument::new_dap(DapProblemType::UnrecognizedTask).with_task_id(task_id),
             ),
             Error::MissingTaskId => {
-                conn.with_problem_document(&ProblemDocument::new(DapProblemType::MissingTaskId))
+                conn.with_problem_document(&ProblemDocument::new_dap(DapProblemType::MissingTaskId))
             }
             Error::UnrecognizedAggregationJob(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new(DapProblemType::UnrecognizedAggregationJob)
+                &ProblemDocument::new_dap(DapProblemType::UnrecognizedAggregationJob)
                     .with_task_id(task_id),
             ),
             Error::DeletedCollectionJob(_) => conn.with_status(Status::NoContent),
+            Error::AbandonedCollectionJob(collection_job_id) => conn.with_problem_document(
+                &ProblemDocument::new(
+                    "https://docs.divviup.org/references/janus_errors#collection-job-abandoned",
+                    "The collection job has been abandoned.",
+                    Status::InternalServerError,
+                )
+                .with_detail(concat!(
+                    "An internal problem has caused the server to stop processing this collection ",
+                    "job. The job is no longer collectable. Contact the server operators for ",
+                    "assistance."
+                ))
+                .with_collection_job_id(collection_job_id),
+            ),
             Error::UnrecognizedCollectionJob(_) => conn.with_status(Status::NotFound),
             Error::OutdatedHpkeConfig(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new(DapProblemType::OutdatedConfig).with_task_id(task_id),
+                &ProblemDocument::new_dap(DapProblemType::OutdatedConfig).with_task_id(task_id),
             ),
             Error::ReportTooEarly(task_id, _, _) => conn.with_problem_document(
-                &ProblemDocument::new(DapProblemType::ReportTooEarly).with_task_id(task_id),
+                &ProblemDocument::new_dap(DapProblemType::ReportTooEarly).with_task_id(task_id),
             ),
             Error::UnauthorizedRequest(task_id) => conn.with_problem_document(
-                &ProblemDocument::new(DapProblemType::UnauthorizedRequest).with_task_id(task_id),
+                &ProblemDocument::new_dap(DapProblemType::UnauthorizedRequest)
+                    .with_task_id(task_id),
             ),
             Error::InvalidBatchSize(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new(DapProblemType::InvalidBatchSize).with_task_id(task_id),
+                &ProblemDocument::new_dap(DapProblemType::InvalidBatchSize).with_task_id(task_id),
             ),
             Error::BatchInvalid(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new(DapProblemType::BatchInvalid).with_task_id(task_id),
+                &ProblemDocument::new_dap(DapProblemType::BatchInvalid).with_task_id(task_id),
             ),
             Error::BatchOverlap(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new(DapProblemType::BatchOverlap).with_task_id(task_id),
+                &ProblemDocument::new_dap(DapProblemType::BatchOverlap).with_task_id(task_id),
             ),
             Error::BatchMismatch(inner) => conn.with_problem_document(
-                &ProblemDocument::new(DapProblemType::BatchMismatch).with_task_id(&inner.task_id),
+                &ProblemDocument::new_dap(DapProblemType::BatchMismatch)
+                    .with_task_id(&inner.task_id),
             ),
             Error::BatchQueriedTooManyTimes(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new(DapProblemType::BatchQueriedTooManyTimes)
+                &ProblemDocument::new_dap(DapProblemType::BatchQueriedTooManyTimes)
                     .with_task_id(task_id),
             ),
             Error::Hpke(_)
@@ -110,12 +124,12 @@ impl Handler for Error {
             | Error::TaskParameters(_) => conn.with_status(Status::InternalServerError),
             Error::AggregateShareRequestRejected(_, _) => conn.with_status(Status::BadRequest),
             Error::EmptyAggregation(task_id) => conn.with_problem_document(
-                &ProblemDocument::new(DapProblemType::InvalidMessage).with_task_id(task_id),
+                &ProblemDocument::new_dap(DapProblemType::InvalidMessage).with_task_id(task_id),
             ),
             Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
             Error::BadRequest(_) => conn.with_status(Status::BadRequest),
             Error::InvalidTask(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new(DapProblemType::InvalidTask).with_task_id(task_id),
+                &ProblemDocument::new_dap(DapProblemType::InvalidTask).with_task_id(task_id),
             ),
             Error::DifferentialPrivacy(_) => conn.with_status(Status::InternalServerError),
         }
