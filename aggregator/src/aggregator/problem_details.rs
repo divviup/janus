@@ -56,7 +56,7 @@ impl<'a> ProblemDocument<'a> {
         Self::new(
             error_type.type_uri(),
             error_type.description(),
-            error_type.http_status().into(),
+            error_type.http_status(),
         )
     }
 
