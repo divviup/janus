@@ -33,6 +33,7 @@ use {
 #[cfg(any(feature = "otlp", feature = "prometheus"))]
 use {
     git_version::git_version,
+    janus_aggregator_core::datastore::TRANSACTION_RETRIES_METER_NAME,
     opentelemetry::{metrics::MetricsError, KeyValue},
     opentelemetry_sdk::{
         metrics::{new_view, Aggregation, Instrument, InstrumentKind, MeterProvider, Stream, View},
@@ -94,6 +95,7 @@ pub enum MetricsExporterHandle {
 
 #[cfg(any(feature = "prometheus", feature = "otlp"))]
 struct CustomView {
+    uint_histogram_view: Box<dyn View>,
     bytes_histogram_view: Box<dyn View>,
     default_histogram_view: Box<dyn View>,
 }
@@ -106,6 +108,13 @@ impl CustomView {
         33554432.0, 67108864.0,
     ];
 
+    /// These boundaries are for measurements of unsigned integers, such as the number of retries
+    /// that an operation took.
+    const UINT_HISTOGRAM_BOUNDARIES: &'static [f64] = &[
+        1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0, 1024.0, 2048.0, 4096.0, 8192.0,
+        16384.0,
+    ];
+
     /// These boundaries are intended to be able to capture the length of short-lived operations
     /// (e.g HTTP requests) as well as longer-running operations.
     const DEFAULT_HISTOGRAM_BOUNDARIES: &'static [f64] = &[
@@ -114,6 +123,13 @@ impl CustomView {
 
     pub fn new() -> Result<Self, MetricsError> {
         Ok(Self {
+            uint_histogram_view: new_view(
+                Instrument::new().name("*"),
+                Stream::new().aggregation(Aggregation::ExplicitBucketHistogram {
+                    boundaries: Vec::from(Self::UINT_HISTOGRAM_BOUNDARIES),
+                    record_min_max: true,
+                }),
+            )?,
             bytes_histogram_view: new_view(
                 Instrument::new().name("*"),
                 Stream::new().aggregation(Aggregation::ExplicitBucketHistogram {
@@ -140,6 +156,9 @@ impl View for CustomView {
                 Some(InstrumentKind::Histogram),
                 "http.server.request.body.size" | "http.server.response.body.size",
             ) => self.bytes_histogram_view.match_inst(inst),
+            (Some(InstrumentKind::Histogram), TRANSACTION_RETRIES_METER_NAME) => {
+                self.uint_histogram_view.match_inst(inst)
+            }
             (Some(InstrumentKind::Histogram), _) => self.default_histogram_view.match_inst(inst),
             _ => None,
         }
