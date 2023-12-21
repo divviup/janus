@@ -117,8 +117,8 @@ impl InteropClient {
                 name: "us-west2-docker.pkg.dev/divviup-artifacts-public/divviup-ts/\
                        divviup_ts_interop_client"
                     .to_string(),
-                tag: "dap-draft-04@sha256:\
-                      43ccdf68e319c677f12f0cb730c63e73b872477cf0e1310b727f449b74a14ac2"
+                tag: "dap-draft-07@sha256:\
+                      3c7ee0bc6e82bd24c8502b7630ac3ff6eb9c87c91498d5765cff0403683231cc"
                     .to_string(),
             }
         }
