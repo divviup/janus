@@ -15,6 +15,7 @@ Janus is currently in active development.
 <!--toc:start-->
 - [janus](#janus)
   - [Draft versions and release branches](#draft-versions-and-release-branches)
+  - [Versioning and Stability](#versioning-and-stability)
   - [Building](#building)
     - [Container image](#container-image)
   - [Minimum Supported Rust Version (MSRV)](#minimum-supported-rust-version-msrv)
@@ -22,7 +23,6 @@ Janus is currently in active development.
     - [inotify limits](#inotify-limits)
   - [Deploying Janus](#deploying-janus)
   - [Cargo features](#cargo-features)
-  - [Versioning and Stability](#versioning-and-stability)
 <!--toc:end-->
 
 ## Draft versions and release branches
@@ -57,6 +57,30 @@ fixed.
 [dap-04]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/04/
 [dap-07]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/07/
 [dap-gh]: https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap
+
+## Versioning and Stability
+
+Janus follows [semantic versioning](https://semver.org/). Because we are at major
+version 0, we increment the minor version number for breaking changes, and
+increment the patch version for new features and backwards-compatible bug fixes.
+
+What is considered a breaking change depends on the crate. The following crates
+are stable on their Rust API:
+- `janus_collector`
+- `janus_client`
+- `janus_messages`
+
+`janus_core` is published to crates.io, but has no stability guarantees. It
+should not be depended on directly. If you find yourself needing to depend
+on it directly while using any other Janus crates, open a bug report.
+
+The following crates are stable on their external configuration, CLI arguments,
+and HTTP API. Their Rust API may arbitrarily change and should not be depended 
+on. They are not published to crates.io.
+- `janus_aggregator`
+- `janus_tools`
+
+Any other crates not mentioned have no stability guarantees whatsoever.
 
 ## Building
 
@@ -134,23 +158,3 @@ its configuration and operation.
   [`tokio-console`](https://github.com/tokio-rs/console). See the
   [documentation](docs/CONFIGURING_TOKIO_CONSOLE.md) for configuration
   instructions.
-
-## Versioning and Stability
-
-Janus follows [semantic versioning](https://semver.org/). Because we are at major
-version 0, we increment the minor version number for breaking changes, and
-increment the patch version for new features and backwards-compatible bug fixes.
-
-What is considered a breaking change depends on the crate. The following crates
-are stable on their Rust API:
-- `janus_collector`
-- `janus_client`
-- `janus_messages`
-- `janus_core`
-
-The following crates are stable on their external configuration and HTTP API.
-Their Rust API may arbitrarily change and should not be depended on.
-- `janus_aggregator`
-- `janus_tools`
-
-Any other crates not mentioned have no stability guarantees whatsoever.
