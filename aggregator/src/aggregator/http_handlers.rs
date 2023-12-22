@@ -74,7 +74,7 @@ impl Handler for Error {
             Error::DeletedCollectionJob(_) => conn.with_status(Status::NoContent),
             Error::AbandonedCollectionJob(collection_job_id) => conn.with_problem_document(
                 &ProblemDocument::new(
-                    "https://docs.divviup.org/references/janus_errors#collection-job-abandoned",
+                    "https://docs.divviup.org/references/janus-errors#collection-job-abandoned",
                     "The collection job has been abandoned.",
                     Status::InternalServerError,
                 )
