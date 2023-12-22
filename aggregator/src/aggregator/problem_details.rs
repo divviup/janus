@@ -41,6 +41,12 @@ pub struct ProblemDocument<'a> {
 }
 
 impl<'a> ProblemDocument<'a> {
+    /// Creates a general problem document for errors that aren't defined in DAP. Follow
+    /// [RFC 9457][1] for guidance on a good problem document.
+    ///
+    /// If the error is defined in DAP, use [`Self::new_dap`] instead.
+    ///
+    /// [1]: https://www.rfc-editor.org/rfc/rfc9457
     pub fn new(type_: &'static str, title: &'static str, status: Status) -> Self {
         Self {
             type_,
@@ -52,6 +58,7 @@ impl<'a> ProblemDocument<'a> {
         }
     }
 
+    /// Creates a problem document corresponding to a [`DapProblemType`].
     pub fn new_dap(error_type: DapProblemType) -> Self {
         Self::new(
             error_type.type_uri(),
