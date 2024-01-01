@@ -37,7 +37,7 @@ rand.workspace = true
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
 rstest.workspace = true
 serde.workspace = true
-serde_json = "1.0.108"
+serde_json = "1.0.109"
 testcontainers.workspace = true
 tokio.workspace = true
 url = { version = "2.5.0", features = ["serde"] }
