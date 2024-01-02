@@ -284,8 +284,11 @@ mod deprecated {
         private_key: HpkePrivateKey,
     }
 
-    // We use a fallible TryFrom conversion because it's possible that HpkeDispatch, Janus and
-    // divviup-api could be built with support for different sets of HPKE algorithms.
+    // We use a fallible TryFrom conversion for historical reasons. The algorithm enums didn't used
+    // to have `Other` catch-all variants, so conversion from raw integer IDs to each enum was
+    // fallible. It was possible that HpkeDispatch, Janus and divviup-api could be built with
+    // support for different sets of HPKE algorithms, and that used to be an error at
+    // deserialization/conversion time, rather than at decryption time.
     impl TryFrom<DivviUpHpkeConfig> for HpkeKeypair {
         type Error = Error;
 
@@ -293,15 +296,9 @@ mod deprecated {
             Ok(Self::new(
                 HpkeConfig::new(
                     value.id,
-                    (value.kem as u16)
-                        .try_into()
-                        .map_err(|_| Error::InvalidConfiguration("did not recognize kem"))?,
-                    (value.kdf as u16)
-                        .try_into()
-                        .map_err(|_| Error::InvalidConfiguration("did not recognize kdf"))?,
-                    (value.aead as u16)
-                        .try_into()
-                        .map_err(|_| Error::InvalidConfiguration("did not recognize aead"))?,
+                    (value.kem as u16).into(),
+                    (value.kdf as u16).into(),
+                    (value.aead as u16).into(),
                     value.public_key,
                 ),
                 value.private_key,
