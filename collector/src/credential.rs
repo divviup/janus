@@ -31,8 +31,14 @@ impl PrivateCollectorCredential {
 
     /// Returns the [`HpkeKeypair`] necessary for decrypting aggregate shares. This cannot fail
     /// currently, but returns a `Result` for historical reasons.
+    #[deprecated = "Use `hpke_keypair_infallible` instead"]
     pub fn hpke_keypair(&self) -> Result<HpkeKeypair, Error> {
-        Ok(HpkeKeypair::new(
+        Ok(self.hpke_keypair_infallible())
+    }
+
+    /// Returns the [`HpkeKeypair`] necessary for decrypting aggregate shares.
+    pub fn hpke_keypair_infallible(&self) -> HpkeKeypair {
+        HpkeKeypair::new(
             HpkeConfig::new(
                 self.id,
                 (self.kem as u16).into(),
@@ -41,7 +47,7 @@ impl PrivateCollectorCredential {
                 self.public_key.clone(),
             ),
             self.private_key.clone(),
-        ))
+        )
     }
 }
 
@@ -93,7 +99,7 @@ mod tests {
         );
         let expected_token = AuthenticationToken::Bearer("Krx-CLfdWo1ULAfsxhr0rA".parse().unwrap());
 
-        assert_eq!(credential.hpke_keypair().unwrap(), expected_keypair);
+        assert_eq!(credential.hpke_keypair_infallible(), expected_keypair);
         assert_eq!(credential.authentication_token(), Some(expected_token));
     }
 }
