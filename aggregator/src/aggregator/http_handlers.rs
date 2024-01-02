@@ -1919,7 +1919,7 @@ mod tests {
             // Validate response.
             assert_eq!(aggregate_resp.prepare_steps().len(), 9);
 
-            let prepare_step_0 = aggregate_resp.prepare_steps().get(0).unwrap();
+            let prepare_step_0 = aggregate_resp.prepare_steps().first().unwrap();
             assert_eq!(prepare_step_0.report_id(), report_share_0.metadata().id());
             assert_matches!(prepare_step_0.result(), &PrepareStepResult::Continued(..));
 
@@ -2218,7 +2218,7 @@ mod tests {
         // Validate response.
         assert_eq!(aggregate_resp.prepare_steps().len(), 4);
 
-        let prepare_step_same_id = aggregate_resp.prepare_steps().get(0).unwrap();
+        let prepare_step_same_id = aggregate_resp.prepare_steps().first().unwrap();
         assert_eq!(
             prepare_step_same_id.report_id(),
             report_share_same_id.metadata().id()
@@ -2297,7 +2297,7 @@ mod tests {
 
         assert_eq!(aggregate_resp.prepare_steps().len(), 1);
 
-        let prepare_step = aggregate_resp.prepare_steps().get(0).unwrap();
+        let prepare_step = aggregate_resp.prepare_steps().first().unwrap();
         assert_eq!(
             prepare_step.report_id(),
             mutated_timestamp_report_share.metadata().id()
@@ -2388,7 +2388,7 @@ mod tests {
         // Validate response.
         assert_eq!(aggregate_resp.prepare_steps().len(), 1);
 
-        let prepare_step = aggregate_resp.prepare_steps().get(0).unwrap();
+        let prepare_step = aggregate_resp.prepare_steps().first().unwrap();
         assert_eq!(prepare_step.report_id(), report_share.metadata().id());
         assert_matches!(
             prepare_step.result(),
@@ -2458,7 +2458,7 @@ mod tests {
         // Validate response.
         assert_eq!(aggregate_resp.prepare_steps().len(), 1);
 
-        let prepare_step = aggregate_resp.prepare_steps().get(0).unwrap();
+        let prepare_step = aggregate_resp.prepare_steps().first().unwrap();
         assert_eq!(prepare_step.report_id(), report_share.metadata().id());
         assert_matches!(
             prepare_step.result(),
