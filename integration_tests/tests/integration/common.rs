@@ -236,8 +236,8 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
     .with_collect_poll_backoff(
         ExponentialBackoffBuilder::new()
             .with_initial_interval(time::Duration::from_millis(500))
-            .with_max_interval(time::Duration::from_secs(30))
-            .with_max_elapsed_time(Some(time::Duration::from_secs(600)))
+            .with_max_interval(task_parameters.collector_max_interval)
+            .with_max_elapsed_time(Some(task_parameters.collector_max_elapsed_time))
             .build(),
     )
     .build()
