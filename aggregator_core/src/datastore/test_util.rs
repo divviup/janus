@@ -18,7 +18,7 @@ use sqlx::{
 use std::{
     path::PathBuf,
     str::FromStr,
-    sync::{Arc, Barrier, OnceLock, Weak},
+    sync::{Arc, Barrier, Weak},
     thread::{self, JoinHandle},
 };
 use testcontainers::RunnableImage;
@@ -36,13 +36,9 @@ struct EphemeralDatabase {
 
 impl EphemeralDatabase {
     async fn shared() -> Arc<Self> {
-        // (once Weak::new is stabilized as a const function in Rust 1.73, remove the OnceLock)
-        static EPHEMERAL_DATABASE: OnceLock<Mutex<Weak<EphemeralDatabase>>> = OnceLock::new();
+        static EPHEMERAL_DATABASE: Mutex<Weak<EphemeralDatabase>> = Mutex::const_new(Weak::new());
 
-        let mut g = EPHEMERAL_DATABASE
-            .get_or_init(|| Mutex::new(Weak::new()))
-            .lock()
-            .await;
+        let mut g = EPHEMERAL_DATABASE.lock().await;
         if let Some(ephemeral_database) = g.upgrade() {
             return ephemeral_database;
         }
