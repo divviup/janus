@@ -2,7 +2,7 @@ use crate::Error;
 use hpke_dispatch::{Aead, Kdf, Kem};
 use janus_core::{
     auth_tokens::{AuthenticationToken, BearerToken},
-    hpke::{self, HpkeKeypair, HpkePrivateKey},
+    hpke::{HpkeKeypair, HpkePrivateKey},
 };
 use janus_messages::{HpkeConfig, HpkeConfigId, HpkePublicKey};
 use serde::{Deserialize, Serialize};
@@ -29,25 +29,25 @@ impl PrivateCollectorCredential {
         self.token.clone().map(AuthenticationToken::Bearer)
     }
 
-    /// Returns the [`HpkeKeypair`] necessary for decrypting aggregate shares. This errors if the
-    /// configuration references any HPKE parameters that are not supported by the application.
+    /// Returns the [`HpkeKeypair`] necessary for decrypting aggregate shares. This cannot fail
+    /// currently, but returns a `Result` for historical reasons.
+    #[deprecated = "Use `hpke_keypair_infallible` instead"]
     pub fn hpke_keypair(&self) -> Result<HpkeKeypair, Error> {
-        Ok(HpkeKeypair::new(
+        Ok(self.hpke_keypair_infallible())
+    }
+
+    /// Returns the [`HpkeKeypair`] necessary for decrypting aggregate shares.
+    pub fn hpke_keypair_infallible(&self) -> HpkeKeypair {
+        HpkeKeypair::new(
             HpkeConfig::new(
                 self.id,
-                (self.kem as u16)
-                    .try_into()
-                    .map_err(|_| hpke::Error::InvalidConfiguration("did not recognize kem"))?,
-                (self.kdf as u16)
-                    .try_into()
-                    .map_err(|_| hpke::Error::InvalidConfiguration("did not recognize kdf"))?,
-                (self.aead as u16)
-                    .try_into()
-                    .map_err(|_| hpke::Error::InvalidConfiguration("did not recognize aead"))?,
+                (self.kem as u16).into(),
+                (self.kdf as u16).into(),
+                (self.aead as u16).into(),
                 self.public_key.clone(),
             ),
             self.private_key.clone(),
-        ))
+        )
     }
 }
 
@@ -99,7 +99,7 @@ mod tests {
         );
         let expected_token = AuthenticationToken::Bearer("Krx-CLfdWo1ULAfsxhr0rA".parse().unwrap());
 
-        assert_eq!(credential.hpke_keypair().unwrap(), expected_keypair);
+        assert_eq!(credential.hpke_keypair_infallible(), expected_keypair);
         assert_eq!(credential.authentication_token(), Some(expected_token));
     }
 }

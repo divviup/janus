@@ -1900,7 +1900,7 @@ mod tests {
             // Validate response.
             assert_eq!(aggregate_resp.prepare_resps().len(), 9);
 
-            let prepare_step_0 = aggregate_resp.prepare_resps().get(0).unwrap();
+            let prepare_step_0 = aggregate_resp.prepare_resps().first().unwrap();
             assert_eq!(
                 prepare_step_0.report_id(),
                 prepare_init_0.report_share().metadata().id()
@@ -2136,7 +2136,7 @@ mod tests {
         assert_eq!(test_conn.status(), Some(Status::Ok));
         let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
 
-        let prepare_step = aggregate_resp.prepare_resps().get(0).unwrap();
+        let prepare_step = aggregate_resp.prepare_resps().first().unwrap();
         assert_eq!(
             prepare_step.report_id(),
             prepare_init.report_share().metadata().id()
@@ -2335,7 +2335,7 @@ mod tests {
         // Validate response.
         assert_eq!(aggregate_resp.prepare_resps().len(), 4);
 
-        let prepare_step_same_id = aggregate_resp.prepare_resps().get(0).unwrap();
+        let prepare_step_same_id = aggregate_resp.prepare_resps().first().unwrap();
         assert_eq!(
             prepare_step_same_id.report_id(),
             prepare_init_same_id.report_share().metadata().id()
@@ -2419,7 +2419,7 @@ mod tests {
 
         assert_eq!(aggregate_resp.prepare_resps().len(), 1);
 
-        let prepare_step = aggregate_resp.prepare_resps().get(0).unwrap();
+        let prepare_step = aggregate_resp.prepare_resps().first().unwrap();
         assert_eq!(
             prepare_step.report_id(),
             mutated_timestamp_prepare_init
@@ -2494,7 +2494,7 @@ mod tests {
         // Validate response.
         assert_eq!(aggregate_resp.prepare_resps().len(), 1);
 
-        let prepare_step = aggregate_resp.prepare_resps().get(0).unwrap();
+        let prepare_step = aggregate_resp.prepare_resps().first().unwrap();
         assert_eq!(
             prepare_step.report_id(),
             prepare_init.report_share().metadata().id()
@@ -2541,7 +2541,7 @@ mod tests {
         // Validate response.
         assert_eq!(aggregate_resp.prepare_resps().len(), 1);
 
-        let prepare_step = aggregate_resp.prepare_resps().get(0).unwrap();
+        let prepare_step = aggregate_resp.prepare_resps().first().unwrap();
         assert_eq!(
             prepare_step.report_id(),
             prepare_init.report_share().metadata().id()
