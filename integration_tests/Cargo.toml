@@ -19,7 +19,7 @@ assert_matches.workspace = true
 backoff = { version = "0.4", features = ["tokio"] }
 base64.workspace = true
 divviup-client = { version = "0.1", features = ["admin"] }
-futures = "0.3.29"
+futures = "0.3.30"
 hex = "0.4"
 http = "0.2"
 itertools.workspace = true
