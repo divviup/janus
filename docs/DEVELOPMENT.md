@@ -97,3 +97,32 @@ To create a new migration:
   ```
 
   Explanation of `.unwrap()` is not necessary in test code.
+
+* Use `clap` as the CLI argument parser, with the `derive` feature.
+
+  * Ensure that environment variables that contain secrets won't output their
+    contents when `--help` is used, by using [`hide_env_values`][hide_env_values].
+
+  * Prefer to keep all help text inside a Rust doccomment. The first line should
+    be very brief and without punctuation. Additional help text should be
+    included on subsequent lines and contain punctuation.
+
+    Example:
+    ```rust
+        /// Poll an existing collection job once
+        ///
+        /// The supplied query options must exactly match the ones used to create
+        /// the collection job, so that the collection job state can be correctly
+        /// reconstructed.
+        ///
+        /// If the collection job is ready, the exit status is 0 and the job
+        /// results are output to stdout. If it is not ready, the exit status 
+        /// is 75 (EX_TEMPFAIL).
+        PollJob {
+            /// Job ID for an existing collection job, encoded with unpadded base64url
+            #[clap(value_parser = CollectionJobIdValueParser::new(), required = true)]
+            collection_job_id: CollectionJobId,
+        },
+    ```
+
+[hide_env_values]: https://docs.rs/clap/latest/clap/struct.Arg.html#method.hide_env_values
