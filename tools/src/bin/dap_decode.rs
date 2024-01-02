@@ -139,10 +139,12 @@ enum MediaType {
     rename_all = "kebab-case"
 )]
 struct Options {
-    /// Path to file containing message to decode. Pass "-" to read from stdin.
+    /// Path to file containing message to decode.
+    ///
+    /// Pass "-" to read from stdin.
     message_file: String,
 
-    /// Media type of the message to decode.
+    /// Media type of the message to decode
     #[arg(long, short = 't', required = true)]
     media_type: MediaType,
 }

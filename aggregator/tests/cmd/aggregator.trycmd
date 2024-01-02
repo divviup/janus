@@ -6,15 +6,34 @@ Usage: aggregator [OPTIONS] --config-file <CONFIG_FILE>
 
 Options:
       --config-file <CONFIG_FILE>
-          path to configuration file [env: CONFIG_FILE=]
+          Path to configuration YAML file
+          
+          [env: CONFIG_FILE=]
+
       --database-password <DATABASE_PASSWORD>
-          PostgreSQL password [env: PGPASSWORD]
+          Password for the PostgreSQL database connection
+          
+          If specified, it must not be specified in the connection string.
+          
+          [env: PGPASSWORD]
+
       --datastore-keys <DATASTORE_KEYS>
-          datastore encryption keys, encoded in url-safe unpadded base64 then comma-separated [env: DATASTORE_KEYS]
+          Datastore encryption keys
+          
+          Keys are encoded in unpadded url-safe base64, then comma separated.
+          
+          [env: DATASTORE_KEYS]
+
       --aggregator-api-auth-tokens [<AGGREGATOR_API_AUTH_TOKENS>]
-          aggregator API auth tokens, encoded in base64 then comma-separated [env: AGGREGATOR_API_AUTH_TOKENS]
+          Aggregator API authentication tokens
+          
+          API tokens are encoded in unpadded url-safe base64, then comma-separated.
+          
+          [env: AGGREGATOR_API_AUTH_TOKENS]
+
   -h, --help
-          Print help
+          Print help (see a summary with '-h')
+
   -V, --version
           Print version
 
