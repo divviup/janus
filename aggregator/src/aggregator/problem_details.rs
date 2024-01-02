@@ -1,4 +1,4 @@
-use janus_messages::{problem_type::DapProblemType, TaskId};
+use janus_messages::{problem_type::DapProblemType, CollectionJobId, TaskId};
 use serde::Serialize;
 use trillium::{Conn, KnownHeaderName, Status};
 use trillium_api::ApiConnExt;
@@ -36,17 +36,35 @@ pub struct ProblemDocument<'a> {
     taskid: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     detail: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    collection_job_id: Option<String>,
 }
 
 impl<'a> ProblemDocument<'a> {
-    pub fn new(error_type: DapProblemType) -> Self {
+    /// Creates a general problem document for errors that aren't defined in DAP. Follow
+    /// [RFC 9457][1] for guidance on a good problem document.
+    ///
+    /// If the error is defined in DAP, use [`Self::new_dap`] instead.
+    ///
+    /// [1]: https://www.rfc-editor.org/rfc/rfc9457
+    pub fn new(type_: &'static str, title: &'static str, status: Status) -> Self {
         Self {
-            type_: error_type.type_uri(),
-            title: error_type.description(),
-            status: error_type.http_status().into(),
+            type_,
+            title,
+            status: status.into(),
             taskid: None,
             detail: None,
+            collection_job_id: None,
         }
+    }
+
+    /// Creates a problem document corresponding to a [`DapProblemType`].
+    pub fn new_dap(error_type: DapProblemType) -> Self {
+        Self::new(
+            error_type.type_uri(),
+            error_type.description(),
+            error_type.http_status(),
+        )
     }
 
     pub fn with_task_id(self, taskid: &TaskId) -> Self {
@@ -59,6 +77,13 @@ impl<'a> ProblemDocument<'a> {
     pub fn with_detail(self, detail: &'a str) -> Self {
         Self {
             detail: Some(detail),
+            ..self
+        }
+    }
+
+    pub fn with_collection_job_id(self, collection_job_id: &CollectionJobId) -> Self {
+        Self {
+            collection_job_id: Some(collection_job_id.to_string()),
             ..self
         }
     }
