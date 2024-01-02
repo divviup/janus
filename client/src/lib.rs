@@ -166,7 +166,7 @@ pub async fn aggregator_hpke_config(
     // we support any HpkeConfig we can decode, and it should be the server's preferred one.
     let hpke_config = hpke_configs
         .hpke_configs()
-        .get(0)
+        .first()
         .ok_or(Error::UnexpectedServerResponse(
             "aggregator provided empty HpkeConfigList",
         ))?

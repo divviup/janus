@@ -290,7 +290,7 @@ async fn taskprov_aggregate_init() {
     let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
     assert_eq!(aggregate_resp.prepare_steps().len(), 1);
-    let prepare_step = aggregate_resp.prepare_steps().get(0).unwrap();
+    let prepare_step = aggregate_resp.prepare_steps().first().unwrap();
     assert_eq!(prepare_step.report_id(), test.report_share.metadata().id());
     assert_matches!(prepare_step.result(), &PrepareStepResult::Continued(..));
 

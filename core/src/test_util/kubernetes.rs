@@ -85,7 +85,7 @@ impl Cluster {
         let matching_pods = pods.list(&lp).await.unwrap();
         let pod = matching_pods
             .items
-            .get(0)
+            .first()
             .unwrap_or_else(|| panic!("could not find any pods for the service {service_name}"));
         let pod_name = pod.name_unchecked();
 
