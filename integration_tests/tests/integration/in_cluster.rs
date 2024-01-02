@@ -200,7 +200,8 @@ impl InClusterJanusPair {
         // Update the task parameters with the ID and collector auth token from divviup-api.
         task_parameters.task_id = TaskId::from_str(&provisioned_task.id).unwrap();
         task_parameters.collector_auth_token = collector_credential.authentication_token().unwrap();
-        task_parameters.collector_hpke_keypair = collector_credential.hpke_keypair().unwrap();
+        task_parameters.collector_hpke_keypair =
+            collector_credential.hpke_keypair_infallible().unwrap();
 
         Self {
             task_parameters,
