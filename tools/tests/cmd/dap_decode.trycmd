@@ -5,11 +5,21 @@ Distributed Aggregation Protocol message decoder
 Usage: dap_decode --media-type <MEDIA_TYPE> <MESSAGE_FILE>
 
 Arguments:
-  <MESSAGE_FILE>  Path to file containing message to decode. Pass "-" to read from stdin
+  <MESSAGE_FILE>
+          Path to file containing message to decode.
+          
+          Pass "-" to read from stdin.
 
 Options:
-  -t, --media-type <MEDIA_TYPE>  Media type of the message to decode [possible values: hpke-config, hpke-config-list, report, aggregation-job-init-req, aggregation-job-resp, aggregation-job-continue-req, aggregate-share-req, aggregate-share, collect-req, collection]
-  -h, --help                     Print help
-  -V, --version                  Print version
+  -t, --media-type <MEDIA_TYPE>
+          Media type of the message to decode
+          
+          [possible values: hpke-config, hpke-config-list, report, aggregation-job-init-req, aggregation-job-resp, aggregation-job-continue-req, aggregate-share-req, aggregate-share, collect-req, collection]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 
 ```

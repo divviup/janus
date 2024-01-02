@@ -185,34 +185,25 @@ pub trait BinaryOptions: Parser + Debug {
 #[cfg_attr(doc, doc = "Common options that are used by all Janus binaries.")]
 #[derive(Default, Clone, Parser)]
 pub struct CommonBinaryOptions {
-    /// Path to configuration YAML.
-    #[clap(
-        long,
-        env = "CONFIG_FILE",
-        num_args = 1,
-        required(true),
-        help = "path to configuration file"
-    )]
+    /// Path to configuration YAML file
+    #[clap(long, env = "CONFIG_FILE", num_args = 1, required(true))]
     pub config_file: PathBuf,
 
-    /// Password for the PostgreSQL database connection. If specified, must not be specified in the
-    /// connection string.
-    #[clap(
-        long,
-        env = "PGPASSWORD",
-        hide_env_values = true,
-        help = "PostgreSQL password"
-    )]
+    /// Password for the PostgreSQL database connection
+    ///
+    /// If specified, it must not be specified in the connection string.
+    #[clap(long, env = "PGPASSWORD", hide_env_values = true)]
     pub database_password: Option<String>,
 
-    /// Datastore encryption keys.
+    /// Datastore encryption keys
+    ///
+    /// Keys are encoded in unpadded url-safe base64, then comma separated.
     #[clap(
         long,
         env = "DATASTORE_KEYS",
         hide_env_values = true,
         num_args = 1,
-        use_value_delimiter = true,
-        help = "datastore encryption keys, encoded in url-safe unpadded base64 then comma-separated"
+        use_value_delimiter = true
     )]
     pub datastore_keys: Vec<String>,
 }

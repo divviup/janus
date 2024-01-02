@@ -197,14 +197,15 @@ pub struct Options {
     #[clap(flatten)]
     pub common: CommonBinaryOptions,
 
-    /// Aggregator API authentication tokens.
+    /// Aggregator API authentication tokens
+    ///
+    /// API tokens are encoded in unpadded url-safe base64, then comma-separated.
     #[clap(
         long,
         env = "AGGREGATOR_API_AUTH_TOKENS",
         hide_env_values = true,
         num_args = 0..=1,
         use_value_delimiter = true,
-        help = "aggregator API auth tokens, encoded in base64 then comma-separated"
     )]
     pub aggregator_api_auth_tokens: Vec<String>,
 }
