@@ -57,6 +57,26 @@ jobs:
 
               Unused dependencies were detected in the Cargo workspace.
 
+              #### --all-features
+
+              <details><summary>Show output</summary>
+
+              \`\`\`
+              ${logAllFeatures}
+              \`\`\`
+
+              </details>
+
+              #### Default features
+
+              <details><summary>Show output</summary>
+
+              \`\`\`
+              ${logDefaultFeatures}
+              \`\`\`
+
+              </details>
+
               `;
             }
             output += `#### Details
