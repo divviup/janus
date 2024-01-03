@@ -12,13 +12,13 @@ version.workspace = true
 in-cluster = ["dep:k8s-openapi", "dep:kube"]
 testcontainer = ["janus_interop_binaries/testcontainer"]
 in-cluster-rate-limits = []
-in-cluster-in-cloud = []
 
 [dependencies]
 anyhow.workspace = true
 assert_matches.workspace = true
 backoff = { version = "0.4", features = ["tokio"] }
 base64.workspace = true
+clap.workspace = true
 futures = "0.3.30"
 hex = "0.4"
 http = "0.2"
@@ -45,6 +45,7 @@ url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+chrono.workspace = true
 divviup-client = { version = "0.1", features = ["admin"] }
 janus_collector = { workspace = true, features = ["test-util"] }
 rstest.workspace = true

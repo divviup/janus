@@ -2104,6 +2104,8 @@ dependencies = [
  "assert_matches",
  "backoff",
  "base64",
+ "chrono",
+ "clap",
  "divviup-client",
  "futures",
  "hex",

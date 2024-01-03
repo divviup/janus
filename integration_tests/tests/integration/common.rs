@@ -86,8 +86,6 @@ pub fn test_task_builder_host(
 
 /// Returns a tuple of [`TaskParameters`] and a task builder. This is suitable for test aggregators
 /// running remotely, say in a staging environment.
-// This is dead code if feature in-cluster-in-cloud is not enabled.
-#[allow(dead_code)]
 pub fn test_task_builder_remote(
     vdaf: VdafInstance,
     query_type: QueryType,

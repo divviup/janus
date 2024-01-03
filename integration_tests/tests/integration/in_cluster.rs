@@ -3,6 +3,8 @@
 use crate::common::{
     submit_measurements_and_verify_aggregate, test_task_builder, test_task_builder_remote,
 };
+use chrono::prelude::*;
+use clap::{CommandFactory, FromArgMatches, Parser};
 use divviup_client::{
     Client, DivviupClient, Histogram, HpkeConfig, NewAggregator, NewSharedAggregator, NewTask, Vdaf,
 };
@@ -25,6 +27,25 @@ use trillium_tokio::ClientConfig;
 use url::Url;
 use uuid::Uuid;
 
+/// Options for running tests.
+#[derive(Debug, Parser)]
+#[clap(
+    name = "janus-integration-tests",
+    about = "Janus integration test driver",
+    rename_all = "kebab-case",
+    version = env!("CARGO_PKG_VERSION"),
+)]
+struct Options {
+    /// If set, the integration tests will be run against remote instances of `divviup-api`, a Janus
+    /// leader and a Janus helper. If not set, the integration tests will be run against instances
+    /// of `divviup-api`, a Janus leader and a Janus helper in an adjacent Kubernetes cluster.
+    ///
+    /// See doccomments on InClusterJanusPair::new_in_cloud and InClusterJanusPair::new_in_kind for
+    /// discussion of how to configure this test setup.
+    #[arg(long, default_value = "false")]
+    in_cloud: Option<bool>,
+}
+
 struct InClusterJanusPair {
     /// Task parameters needed by the client and collector, for the task configured in both Janus
     /// aggregators.
@@ -39,10 +60,37 @@ struct InClusterJanusPair {
 impl InClusterJanusPair {
     /// Set up a new DAP task, using the given VDAF and query type, in a pair of existing Janus
     /// instances, which can be running either in a local Kubernetes cluster accessed over port-
-    /// forwards, or remotely, depending on whether feature `in-cluster-in-cloud` is enabled.
+    /// forwards, or remotely, depending on whether the `--in-cloud` flag is set.
     /// `divviup-api` is used to provision the task into the aggregators.
     async fn new(vdaf: VdafInstance, query_type: QueryType) -> Self {
-        if cfg!(feature = "in-cluster-in-cloud") {
+        // The test invocation will be like
+        // `cargo test <args for cargo> -- <args for test runner> -- <args for Janus tests>`. We
+        // want to parse just that last set of arguments into `struct Options` so we:
+        // Get all the args from environment
+        let test_args = std::env::args_os()
+            // Start from the end of the iterator and take until we encounter the argument separator
+            .rev()
+            .take_while(|arg| *arg != "--")
+            // Tack on a fake argv[0] as otherwise clap can't parse the arguments
+            .chain(["janus-integration-tests".into()])
+            // Collect back into a Vec because [`std::iter::TakeWhile`] is not a
+            // [`DoubleEndedIterator`].
+            .collect::<Vec<_>>()
+            // Reverse to get the last chunk of args in the correct order.
+            .into_iter()
+            .rev();
+
+        let options = Options::from_arg_matches(
+            &mut Options::command()
+                // Parse arguments permissively so that an invocation like
+                // `cargo test <args for cargo> -- <args for test runner>` or
+                // `cargo test <args for cargo> -- <args for test runner> --` will be accepted.
+                .ignore_errors(true)
+                .get_matches_from(test_args),
+        )
+        .unwrap();
+
+        if options.in_cloud == Some(true) {
             Self::new_in_cloud(vdaf, query_type).await
         } else {
             Self::new_in_kind(vdaf, query_type).await
@@ -119,11 +167,12 @@ impl InClusterJanusPair {
             _ => panic!("missing or invalid environment variables"),
         };
 
-        let mut divviup_api = DivviupClient::new(
+        let divviup_api = DivviupClient::new(
             divviup_api_token,
-            Client::new(RustlsConfig::<ClientConfig>::default()).with_default_pool(),
-        );
-        divviup_api.set_url(divviup_api_url);
+            Client::new(RustlsConfig::<ClientConfig>::default()),
+        )
+        .with_default_pool()
+        .with_url(divviup_api_url);
 
         let aggregators = divviup_api.aggregators(divviup_account_id).await.unwrap();
         let leader_aggregator_dap_url = aggregators
@@ -137,7 +186,7 @@ impl InClusterJanusPair {
             .map(|a| &a.dap_url)
             .unwrap();
 
-        let (mut task_parameters, task_builder) = test_task_builder_remote(
+        let (task_parameters, task_builder) = test_task_builder_remote(
             vdaf,
             query_type,
             leader_aggregator_dap_url,
@@ -145,72 +194,25 @@ impl InClusterJanusPair {
             Duration::from_secs(30),
             Duration::from_secs(600),
         );
-        let task = task_builder.with_min_batch_size(100).build();
-        task_parameters.min_batch_size = 100;
 
-        let provision_task_request = NewTask {
-            name: format!("Integration test task {}", Uuid::new_v4()),
+        Self::new_common(
+            divviup_api,
+            divviup_account_id,
+            task_parameters,
+            task_builder,
             leader_aggregator_id,
             helper_aggregator_id,
-            vdaf: match task.vdaf().to_owned() {
-                VdafInstance::Prio3Count => Vdaf::Count,
-                VdafInstance::Prio3Sum { bits } => Vdaf::Sum {
-                    bits: bits.try_into().unwrap(),
-                },
-                VdafInstance::Prio3SumVec {
-                    bits,
-                    length,
-                    chunk_length,
-                } => Vdaf::SumVec {
-                    bits: bits.try_into().unwrap(),
-                    length: length.try_into().unwrap(),
-                    chunk_length: Some(chunk_length.try_into().unwrap()),
-                },
-                VdafInstance::Prio3Histogram {
-                    length,
-                    chunk_length,
-                } => Vdaf::Histogram(Histogram::Length {
-                    length: length.try_into().unwrap(),
-                    chunk_length: Some(chunk_length.try_into().unwrap()),
-                }),
-                VdafInstance::Prio3CountVec {
-                    length,
-                    chunk_length,
-                } => Vdaf::CountVec {
-                    length: length.try_into().unwrap(),
-                    chunk_length: Some(chunk_length.try_into().unwrap()),
-                },
-                other => panic!("unsupported vdaf {other:?}"),
-            },
-            min_batch_size: task.min_batch_size(),
-            max_batch_size: match task.query_type() {
-                QueryType::TimeInterval => None,
-                QueryType::FixedSize { max_batch_size, .. } => Some(*max_batch_size),
-            },
-            time_precision_seconds: task.time_precision().as_seconds(),
             collector_credential_id,
-        };
-
-        // Provision the task into both aggregators via divviup-api
-        let provisioned_task = divviup_api
-            .create_task(divviup_account_id, provision_task_request)
-            .await
-            .unwrap();
-
-        // Update the task parameters with the ID and collector auth token from divviup-api.
-        task_parameters.task_id = TaskId::from_str(&provisioned_task.id).unwrap();
-        task_parameters.collector_auth_token = collector_credential.authentication_token().unwrap();
-        task_parameters.collector_hpke_keypair = collector_credential.hpke_keypair_infallible();
-
-        Self {
-            task_parameters,
-            leader: InClusterJanus {
+            collector_credential.authentication_token().unwrap(),
+            collector_credential.hpke_keypair_infallible(),
+            InClusterJanus {
                 aggregator_port_forward: None,
             },
-            helper: InClusterJanus {
+            InClusterJanus {
                 aggregator_port_forward: None,
             },
-        }
+        )
+        .await
     }
 
     /// Set up a new DAP task, using the given VDAF and query type, in a pair of existing Janus
@@ -286,11 +288,12 @@ impl InClusterJanusPair {
             .await;
         let port = port_forward.local_port();
 
-        let mut divviup_api = DivviupClient::new(
+        let divviup_api = DivviupClient::new(
             "DUATignored".into(),
-            Client::new(RustlsConfig::<ClientConfig>::default()).with_default_pool(),
-        );
-        divviup_api.set_url(format!("http://127.0.0.1:{port}").parse().unwrap());
+            Client::new(RustlsConfig::<ClientConfig>::default()),
+        )
+        .with_default_pool()
+        .with_url(format!("http://127.0.0.1:{port}").parse().unwrap());
 
         // Create an account first. (We should be implicitly logged in as a testing user already,
         // assuming divviup-api was built with the integration-testing feature)
@@ -389,7 +392,7 @@ impl InClusterJanusPair {
         task_parameters.min_batch_size = 100;
 
         let provision_task_request = NewTask {
-            name: format!("Integration test task {}", Uuid::new_v4()),
+            name: format!("Integration test task {}", Utc::now().to_rfc3339()),
             leader_aggregator_id,
             helper_aggregator_id,
             vdaf: match task.vdaf().to_owned() {
