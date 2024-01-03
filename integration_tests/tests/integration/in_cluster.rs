@@ -81,7 +81,7 @@ impl InClusterJanusPair {
             .rev();
 
         let options = Options::from_arg_matches(
-            &mut Options::command()
+            &Options::command()
                 // Parse arguments permissively so that an invocation like
                 // `cargo test <args for cargo> -- <args for test runner>` or
                 // `cargo test <args for cargo> -- <args for test runner> --` will be accepted.
