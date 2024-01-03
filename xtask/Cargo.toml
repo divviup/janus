@@ -13,4 +13,4 @@ anyhow.workspace = true
 clap = { version = "4.4.12", features = ["derive"] }
 serde.workspace = true
 serde_json.workspace = true
-tempfile = "3.8.1"
+tempfile = "3.9.0"
