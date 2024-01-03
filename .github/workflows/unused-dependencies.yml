@@ -19,9 +19,11 @@ jobs:
       - name: Install cargo-udeps
         uses: taiki-e/install-action@cargo-udeps
       - name: Run cargo-udeps, all features
+        shell: bash   # Set this explicitly for -o pipefail behavior
         run: cargo +nightly udeps --all-features | tee log_all_features.txt
       - name: Run cargo-udeps, default features
         if: success() || failure()
+        shell: bash   # Set this explicitly for -o pipefail behavior
         run: cargo +nightly udeps | tee log_default_features.txt
       - name: Create issue
         if: failure()
@@ -54,6 +56,26 @@ jobs:
               output = `### Unused dependencies
 
               Unused dependencies were detected in the Cargo workspace.
+
+              #### --all-features
+
+              <details><summary>Show output</summary>
+
+              \`\`\`
+              ${logAllFeatures}
+              \`\`\`
+
+              </details>
+
+              #### Default features
+
+              <details><summary>Show output</summary>
+
+              \`\`\`
+              ${logDefaultFeatures}
+              \`\`\`
+
+              </details>
 
               `;
             }
