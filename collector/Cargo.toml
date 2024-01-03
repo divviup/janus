@@ -14,7 +14,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-fpvec_bounded_l2 = ["dep:fixed", "dep:fixed-macro", "janus_core/fpvec_bounded_l2", "prio/experimental"]
+fpvec_bounded_l2 = ["dep:fixed", "janus_core/fpvec_bounded_l2", "prio/experimental"]
 test-util = []
 
 [dependencies]
@@ -24,7 +24,6 @@ derivative.workspace = true
 janus_core.workspace = true
 janus_messages.workspace = true
 fixed = { version = "1.24", optional = true }
-fixed-macro = { version = "1.1.1", optional = true }
 prio.workspace = true
 rand = { workspace = true, features = ["min_const_gen"] }
 reqwest = { version = "0.11.23", default-features = false, features = ["rustls-tls", "json"] }
@@ -40,6 +39,7 @@ serde_json.workspace = true
 [dev-dependencies]
 assert_matches.workspace = true
 base64.workspace = true
+fixed-macro = "1.1.1"
 janus_collector = { path = ".", features = ["fpvec_bounded_l2", "test-util"] }
 janus_core = { workspace = true, features = ["fpvec_bounded_l2", "test-util"] }
 mockito = "1.2.0"
