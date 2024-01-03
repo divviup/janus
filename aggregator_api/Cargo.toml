@@ -28,7 +28,7 @@ trillium.workspace = true
 trillium-api.workspace = true
 trillium-opentelemetry.workspace = true
 trillium-router.workspace = true
-url = { version = "2.5.0", features = ["serde"] }
+url.workspace = true
 
 [dev-dependencies]
 assert_matches.workspace = true

@@ -30,6 +30,7 @@ base64 = "0.21.5"
 # (yet) need other default features.
 # https://docs.rs/chrono/latest/chrono/#duration
 chrono = { version = "0.4", default-features = false }
+clap = { version = "4.4.12", features = ["cargo", "derive", "env"] }
 derivative = "2.2.0"
 itertools = "0.11"
 janus_aggregator = { version = "0.6", path = "aggregator" }
@@ -61,8 +62,11 @@ trillium-caching-headers = "0.2.1"
 trillium-head = "0.2.0"
 trillium-opentelemetry = "0.4.0"
 trillium-router = "0.3.5"
+trillium-rustls = "0.4.0"
 trillium-testing = "0.5.0"
 trillium-tokio = "0.3.2"
+url = { version = "2.5.0", features = ["serde"] }
+uuid = { version = "1.6.1", features = ["v4"] }
 
 [profile.ci]
 # Disabling debug info improves build speeds & reduces build artifact sizes, which helps CI caching.

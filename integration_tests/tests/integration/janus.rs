@@ -11,6 +11,7 @@ use janus_integration_tests::{client::ClientBackend, janus::JanusInProcess, Task
 #[cfg(feature = "testcontainer")]
 use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
+use std::time::Duration;
 #[cfg(feature = "testcontainer")]
 use testcontainers::clients::Cli;
 
@@ -37,7 +38,12 @@ impl<'a> JanusContainerPair<'a> {
         vdaf: VdafInstance,
         query_type: QueryType,
     ) -> JanusContainerPair<'a> {
-        let (task_parameters, task_builder) = test_task_builder(vdaf, query_type);
+        let (task_parameters, task_builder) = test_task_builder(
+            vdaf,
+            query_type,
+            Duration::from_millis(500),
+            Duration::from_secs(60),
+        );
         let task = task_builder.build();
 
         let network = generate_network_name();
@@ -70,7 +76,12 @@ impl JanusInProcessPair {
     /// Set up a new pair of in-process Janus test instances, and set up a new task in each using
     /// the given VDAF and query type.
     pub async fn new(vdaf: VdafInstance, query_type: QueryType) -> JanusInProcessPair {
-        let (task_parameters, mut task_builder) = test_task_builder_host(vdaf, query_type);
+        let (task_parameters, mut task_builder) = test_task_builder_host(
+            vdaf,
+            query_type,
+            Duration::from_millis(500),
+            Duration::from_secs(60),
+        );
 
         let helper = JanusInProcess::new(&task_builder.clone().build(), Role::Helper).await;
         let helper_url = task_parameters
