@@ -1414,7 +1414,7 @@ mod tests {
         );
     }
 
-    // Helper should not expose /upload endpoint
+    // Helper should not expose `tasks/{task-id}/reports` endpoint.
     #[tokio::test]
     async fn upload_handler_helper() {
         let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;

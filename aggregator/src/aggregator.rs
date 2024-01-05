@@ -169,9 +169,11 @@ pub struct Aggregator<C: Clock> {
     task_aggregators: Mutex<HashMap<TaskId, Arc<TaskAggregator<C>>>>,
 
     // Metrics.
-    /// Counter tracking the number of failed decryptions while handling the /upload endpoint.
+    /// Counter tracking the number of failed decryptions while handling the
+    /// `tasks/{task-id}/reports` endpoint.
     upload_decrypt_failure_counter: Counter<u64>,
-    /// Counter tracking the number of failed message decodes while handling the /upload endpoint.
+    /// Counter tracking the number of failed message decodes while handling the
+    /// `tasks/{task-id}/reports` endpoint.
     upload_decode_failure_counter: Counter<u64>,
     /// Counters tracking the number of failures to step client reports through the aggregation
     /// process.
@@ -192,8 +194,8 @@ pub struct Config {
     pub max_upload_batch_size: usize,
 
     /// Defines the maximum delay before writing a batch of uploaded reports, even if it has not yet
-    /// reached `max_batch_upload_size`. This is the maximum delay added to the /upload endpoint due
-    /// to write-batching.
+    /// reached `max_batch_upload_size`. This is the maximum delay added to the
+    /// `tasks/{task-id}/reports` endpoint due to write-batching.
     pub max_upload_batch_write_delay: StdDuration,
 
     /// Defines the number of shards to break each batch aggregation into. Increasing this value
@@ -235,14 +237,18 @@ impl<C: Clock> Aggregator<C> {
 
         let upload_decrypt_failure_counter = meter
             .u64_counter("janus_upload_decrypt_failures")
-            .with_description("Number of decryption failures in the /upload endpoint.")
+            .with_description(
+                "Number of decryption failures in the tasks/{task-id}/reports endpoint.",
+            )
             .with_unit(Unit::new("{error}"))
             .init();
         upload_decrypt_failure_counter.add(0, &[]);
 
         let upload_decode_failure_counter = meter
             .u64_counter("janus_upload_decode_failures")
-            .with_description("Number of message decode failures in the /upload endpoint.")
+            .with_description(
+                "Number of message decode failures in the tasks/{task-id}/reports endpoint.",
+            )
             .with_unit(Unit::new("{error}"))
             .init();
         upload_decode_failure_counter.add(0, &[]);
@@ -1434,10 +1440,10 @@ impl VdafOps {
         }
 
         // Decode (and in the case of the leader input share, decrypt) the remaining fields of the
-        // report before storing them in the datastore. The spec does not require the /upload
-        // handler to do this, but it exercises HPKE decryption, saves us the trouble of storing
-        // reports we can't use, and lets the aggregation job handler assume the values it reads
-        // from the datastore are valid.
+        // report before storing them in the datastore. The spec does not require the
+        // `tasks/{task-id}/reports` handler to do this, but it exercises HPKE decryption, saves us
+        // the trouble of storing reports we can't use, and lets the aggregation job handler assume
+        // the values it reads from the datastore are valid.
         let public_share =
             match A::PublicShare::get_decoded_with_param(vdaf.as_ref(), report.public_share()) {
                 Ok(public_share) => public_share,
@@ -2832,7 +2838,7 @@ impl VdafOps {
         Ok(())
     }
 
-    /// Implements the `/aggregate_share` endpoint for the helper, described in §4.4.4.3
+    /// Implements the `tasks/{task-id}/aggregate_shares` endpoint for the helper, described in §4.4.4.3
     #[tracing::instrument(
         skip(self, datastore, clock, task, req_bytes),
         fields(task_id = ?task.id()),
