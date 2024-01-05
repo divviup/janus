@@ -2589,9 +2589,9 @@ impl VdafOps {
             .await?)
     }
 
-    /// Handle GET requests to a collection job URI obtained from the leader's `/collect` endpoint.
-    /// The return value is an encoded `CollectResp<Q>`.
-    /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.1>
+    /// Handle GET requests to the leader's `tasks/{task-id}/collection_jobs/{collection-job-id}`
+    /// endpoint. The return value is an encoded `CollectResp<Q>`.
+    /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-collecting-results>
     #[tracing::instrument(skip(self, datastore, task), fields(task_id = ?task.id()), err)]
     async fn handle_get_collection_job<C: Clock>(
         &self,
@@ -2838,7 +2838,7 @@ impl VdafOps {
         Ok(())
     }
 
-    /// Implements the `tasks/{task-id}/aggregate_shares` endpoint for the helper, described in §4.4.4.3
+    /// Implements the `tasks/{task-id}/aggregate_shares` endpoint for the helper.
     #[tracing::instrument(
         skip(self, datastore, clock, task, req_bytes),
         fields(task_id = ?task.id()),
