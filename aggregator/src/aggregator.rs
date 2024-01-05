@@ -1266,8 +1266,9 @@ impl VdafOps {
         }
     }
 
-    /// Implements the `/aggregate` endpoint for initialization requests for the helper, described
-    /// in §4.4.4.1 & §4.4.4.2 of draft-gpew-priv-ppm.
+    /// Implements [helper aggregate initialization][1].
+    ///
+    /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-helper-initialization
     #[tracing::instrument(
         skip(self, datastore, global_hpke_keypairs, aggregate_step_failure_counter, task, req_bytes),
         fields(task_id = ?task.id()),
@@ -1613,8 +1614,9 @@ impl VdafOps {
         Ok(existing_aggregation_job.eq(incoming_aggregation_job))
     }
 
-    /// Implements the aggregate initialization request portion of the `/aggregate` endpoint for the
-    /// helper, described in §4.4.4.1 of draft-gpew-priv-ppm.
+    /// Implements [helper aggregate initialization][1].
+    ///
+    /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-helper-initialization
     async fn handle_aggregate_init_generic<const SEED_SIZE: usize, Q, A, C>(
         datastore: &Datastore<C>,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
