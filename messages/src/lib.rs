@@ -512,12 +512,13 @@ impl Role {
         matches!(self, Role::Leader | Role::Helper)
     }
 
-    /// If this [`Role`] is one of the aggregators, returns the index at which
-    /// that aggregator's message or data can be found in various lists, or
-    /// `None` if the role is not an aggregator.
+    /// Returns a VDAF aggregator ID if this [`Role`] is one of the aggregators, or `None` if the
+    /// role is not an aggregator. This is also used in [draft-wang-ppm-dap-taskprov-04][1] and earlier
+    /// to index into the `aggregator_endpoints` array.
+    ///
+    /// [1]: https://www.ietf.org/archive/id/draft-wang-ppm-dap-taskprov-04.html#section-3-4
     pub fn index(&self) -> Option<usize> {
         match self {
-            // draft-gpew-priv-ppm §4.2: the leader's endpoint MUST be the first
             Role::Leader => Some(0),
             Role::Helper => Some(1),
             _ => None,

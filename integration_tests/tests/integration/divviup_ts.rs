@@ -87,4 +87,18 @@ async fn janus_divviup_ts_histogram() {
     .await;
 }
 
-// TODO(https://github.com/divviup/divviup-ts/issues/100): Test CountVec once it is implemented.
+#[tokio::test(flavor = "multi_thread")]
+async fn janus_divviup_ts_sumvec() {
+    install_test_trace_subscriber();
+
+    run_divviup_ts_integration_test(
+        "janus_divviup_ts_sumvec",
+        &container_client(),
+        VdafInstance::Prio3SumVec {
+            bits: 16,
+            length: 15,
+            chunk_length: 16,
+        },
+    )
+    .await;
+}

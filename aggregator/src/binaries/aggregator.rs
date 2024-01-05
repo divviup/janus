@@ -335,7 +335,6 @@ pub struct Config {
 
     /// Address on which this server should listen for connections to the DAP aggregator API and
     /// serve its API endpoints.
-    // TODO(#232): options for terminating TLS, unless that gets handled in a load balancer?
     pub listen_address: SocketAddr,
 
     /// How to serve the Janus aggregator API. If not set, the aggregator API is not served.

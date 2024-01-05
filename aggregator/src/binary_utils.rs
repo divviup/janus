@@ -335,9 +335,8 @@ async fn get_traceconfigz(
         })
 }
 
-/// Allows modifying the runtime tracing filter. Accepts a request with a body corresponding to
-/// [`TraceconfigzBody`]. If the `filter` field is empty, the filter will fallback to `error`.
-/// See [`EnvFilter::try_new`] for details.
+/// Allows modifying the runtime tracing filter. Accepts a request with a body containing a filter
+/// expression. See [`EnvFilter::try_new`] for details.
 async fn put_traceconfigz(
     conn: &mut trillium::Conn,
     (State(trace_reload_handle), request): (State<Arc<TraceReloadHandle>>, String),
