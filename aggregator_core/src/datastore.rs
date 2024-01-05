@@ -788,7 +788,7 @@ impl<C: Clock> Transaction<'_, C> {
             .collect::<Result<_, _>>()
     }
 
-    /// Construct a [`Task`] from the contents of the provided (tasks) `Row` and
+    /// Construct an [`AggregatorTask`] from the contents of the provided (tasks) `Row` and
     /// `task_hpke_keys` rows.
     fn task_from_rows(
         &self,

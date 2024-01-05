@@ -2591,7 +2591,7 @@ impl VdafOps {
 
     /// Handle GET requests to a collection job URI obtained from the leader's `/collect` endpoint.
     /// The return value is an encoded `CollectResp<Q>`.
-    /// https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.1
+    /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.1>
     #[tracing::instrument(skip(self, datastore, task), fields(task_id = ?task.id()), err)]
     async fn handle_get_collection_job<C: Clock>(
         &self,

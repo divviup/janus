@@ -140,7 +140,7 @@ impl Handler for Error {
 /// long clients will cache the results of CORS preflight requests. Of popular browsers, Mozilla
 /// Firefox has the highest Max-Age cap, at 24 hours, so we use that. Our CORS preflight handlers
 /// are tightly scoped to relevant endpoints, and our CORS settings are unlikely to change.
-/// See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Max-Age
+/// See: <https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Max-Age>.
 const CORS_PREFLIGHT_CACHE_AGE: u32 = 24 * 60 * 60;
 
 /// Wrapper around a type that implements [`Encode`]. It acts as a Trillium handler, encoding the

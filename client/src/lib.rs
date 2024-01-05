@@ -348,8 +348,8 @@ impl<V: vdaf::Client<16>> Client<V> {
         )
     }
 
-    /// Shard a measurement, encrypt its shares, and construct a [`janus_core::message::Report`]
-    /// to be uploaded.
+    /// Shard a measurement, encrypt its shares, and construct a [`janus_messages::Report`] to be
+    /// uploaded.
     fn prepare_report(&self, measurement: &V::Measurement, time: &Time) -> Result<Report, Error> {
         let report_id: ReportId = random();
         let (public_share, input_shares) = self.vdaf.shard(measurement, report_id.as_ref())?;
