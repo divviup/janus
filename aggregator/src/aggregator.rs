@@ -787,8 +787,8 @@ impl<C: Clock> Aggregator<C> {
 }
 
 /// TaskAggregator provides aggregation functionality for a single task.
-// TODO(#224): refactor Aggregator to perform indepedent batched operations (e.g. report handling in
-// Aggregate requests) using a parallelized library like Rayon.
+// TODO(#1307): refactor Aggregator to perform indepedent batched operations (e.g. report handling
+// in Aggregate requests) using a parallelized library like Rayon.
 pub struct TaskAggregator<C: Clock> {
     /// The task being aggregated.
     task: Arc<AggregatorTask>,
@@ -2186,7 +2186,7 @@ impl VdafOps {
         }
 
         // TODO(#224): don't hold DB transaction open while computing VDAF updates?
-        // TODO(#224): don't do O(n) network round-trips (where n is the number of prepare steps)
+        // TODO(#1035): don't do O(n) network round-trips (where n is the number of prepare steps)
         Ok(datastore
             .run_tx("aggregate_continue", |tx| {
                 let (

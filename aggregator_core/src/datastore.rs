@@ -66,8 +66,6 @@ pub mod test_util;
 #[cfg(test)]
 mod tests;
 
-// TODO(#196): retry network-related & other transient failures once we know what they look like
-
 /// This macro stamps out an array of schema versions supported by this version of Janus and an
 /// [`rstest_reuse`][1] template that can be applied to tests to have them run against all supported
 /// schema versions.
@@ -3837,7 +3835,6 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         min_report_count: u64,
     ) -> Result<Option<BatchId>, Error> {
-        // TODO(#1467): fix this to work in presence of GC.
         let stmt = self
             .prepare_cached(
                 "WITH batches AS (
