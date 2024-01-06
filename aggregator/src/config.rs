@@ -100,7 +100,7 @@ fn format_database_url(url: &Url, fmt: &mut std::fmt::Formatter) -> Result<(), s
     match url.password() {
         Some(_) => {
             let mut url = url.clone();
-            url.set_password(Some("REDACTED")).ok();
+            let _ = url.set_password(Some("REDACTED"));
             fmt.write_str(url.as_str())
         }
         None => fmt.write_str(url.as_str()),
