@@ -194,9 +194,9 @@ dependencies = [
 
 [[package]]
 name = "async-compat"
-version = "0.2.1"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b48b4ff0c2026db683dea961cd8ea874737f56cffca86fa84415eaddc51c00d"
+checksum = "f68a707c1feb095d8c07f8a65b9f506b117d30af431cab89374357de7c11461b"
 dependencies = [
  "futures-core",
  "futures-io",
@@ -1068,20 +1068,9 @@ checksum = "0206175f82b8d6bf6652ff7d71a1e27fd2e4efde587fd368662814d6ec1d9ce0"
 
 [[package]]
 name = "event-listener"
-version = "3.0.0"
+version = "4.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29e56284f00d94c1bc7fd3c77027b4623c88c1f53d8d2394c6199f2921dea325"
-dependencies = [
- "concurrent-queue",
- "parking",
- "pin-project-lite",
-]
-
-[[package]]
-name = "event-listener"
-version = "4.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "770d968249b5d99410d61f5bf89057f3199a077a04d087092f58e7d10692baae"
+checksum = "67b215c49b2b248c855fb73579eb1f4f26c38ffdc12973e20e07b91d78d5646e"
 dependencies = [
  "concurrent-queue",
  "parking",
@@ -1302,14 +1291,13 @@ dependencies = [
 
 [[package]]
 name = "futures-lite"
-version = "2.0.1"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3831c2651acb5177cbd83943f3d9c8912c5ad03c76afcc0e9511ba568ec5ebb"
+checksum = "445ba825b27408685aaecefd65178908c36c6e96aaf6d8599419d46e624192ba"
 dependencies = [
  "fastrand 2.0.0",
  "futures-core",
  "futures-io",
- "memchr",
  "parking",
  "pin-project-lite",
 ]
@@ -1995,7 +1983,7 @@ dependencies = [
  "tracing",
  "tracing-log",
  "trillium",
- "trillium-macros",
+ "trillium-macros 0.0.5",
  "trillium-router",
  "url",
 ]
@@ -2440,9 +2428,9 @@ dependencies = [
 
 [[package]]
 name = "memchr"
-version = "2.6.4"
+version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f665ee40bc4a3c5590afb1e9677db74a508659dfd71e126420da8274909a0167"
+checksum = "523dc4f511e55ab87b694dc30d0f820d60906ef06413f93d4d7a1385599cc149"
 
 [[package]]
 name = "memoffset"
@@ -4319,8 +4307,8 @@ version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "810ecf6a47020ea27b2cc949d2f1292b9759e8f2c4cebf71376520124417d9e6"
 dependencies = [
- "event-listener 4.0.0",
- "futures-lite 2.0.1",
+ "event-listener 4.0.3",
+ "futures-lite 2.2.0",
  "pin-project-lite",
 ]
 
@@ -4901,21 +4889,21 @@ dependencies = [
 
 [[package]]
 name = "trillium"
-version = "0.2.11"
+version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a924e0aeb1b4e0cb844cd57d9a8b81bea9cba1a0bdb323bd753920149089fe2"
+checksum = "8b4a1ea726106cfe880370300042a8712b0911f30a63920597437c76cda47893"
 dependencies = [
  "async-trait",
- "futures-lite 2.0.1",
+ "futures-lite 2.2.0",
  "log",
  "trillium-http",
 ]
 
 [[package]]
 name = "trillium-api"
-version = "0.2.0-rc.7"
+version = "0.2.0-rc.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1ba54a34ce9ccbe37dfe5549395830e5e7c7c49a5ab9eeff22de3c9f6e4ce5d"
+checksum = "630a402bad8daa6547b77f1cac8ab2d41476314a9e7b16bf3da92e13fa70a8e3"
 dependencies = [
  "log",
  "mime",
@@ -4924,14 +4912,14 @@ dependencies = [
  "serde_path_to_error",
  "thiserror",
  "trillium",
- "trillium-macros",
+ "trillium-macros 0.0.5",
 ]
 
 [[package]]
 name = "trillium-caching-headers"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "babb5b0bd26ae31576f0d4fa2591459a7098a021cf93f69fe6c3f2937d8f0a03"
+checksum = "fc0aec904fd1cc3f003b78a1165e1623bc1e1c907d73030e168867b325eced15"
 dependencies = [
  "etag",
  "httpdate",
@@ -4947,7 +4935,7 @@ dependencies = [
  "crossbeam-queue",
  "dashmap",
  "encoding_rs",
- "futures-lite 2.0.1",
+ "futures-lite 2.2.0",
  "httparse",
  "log",
  "memchr",
@@ -4963,21 +4951,21 @@ dependencies = [
 
 [[package]]
 name = "trillium-head"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4dc99042d2de11f55a2447d860ba272bb7edf11cccdb046645b172f46449c52a"
+checksum = "b73468273727c391b57bc4732bfc8c2163b05c81c23a0737f8fd7f5d4c68cc1b"
 dependencies = [
  "trillium",
 ]
 
 [[package]]
 name = "trillium-http"
-version = "0.3.6"
+version = "0.3.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99e0cb5adb4dc9f3d8a53a6cb1c86372b7dfec0be46f252d38d09909b9ba578c"
+checksum = "d9b5f80f30b6958cff1e0b5b8587c6e8d1fe2f7e6ba656ea1ef115f745f9106d"
 dependencies = [
  "encoding_rs",
- "futures-lite 2.0.1",
+ "futures-lite 2.2.0",
  "hashbrown 0.14.3",
  "httparse",
  "httpdate",
@@ -4989,7 +4977,7 @@ dependencies = [
  "smartstring",
  "stopper",
  "thiserror",
- "trillium-macros",
+ "trillium-macros 0.0.5",
 ]
 
 [[package]]
@@ -4997,6 +4985,17 @@ name = "trillium-macros"
 version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d19bf7f37bc3e66beae9792c0f7a0e3500465cf431da63fdb6af593b0e353a4"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.46",
+]
+
+[[package]]
+name = "trillium-macros"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "916054381183f0cfed7604bf7de2044a760624a50d26eef5492468fb73083bbb"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5027,9 +5026,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-router"
-version = "0.3.5"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a93cacd817bbd4e8308e5ca8223009e6de60198580d66a7fede1c022ceb16cd7"
+checksum = "71daa9c919d4b4a7afae1a846fa2e60aad712e5b924936751630a880a84e9659"
 dependencies = [
  "log",
  "routefinder",
@@ -5038,9 +5037,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-rustls"
-version = "0.4.0"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3016aa92cfc68551ad7291c2f0dee6bb87f1bd08133d61ca93e61cebd1d3b4ce"
+checksum = "0dbc8492bf036593ba6f7de10e15a9c26ca521772fffb3c8c0ebb2bc280b35af"
 dependencies = [
  "async-rustls",
  "log",
@@ -5054,14 +5053,14 @@ dependencies = [
 
 [[package]]
 name = "trillium-server-common"
-version = "0.4.5"
+version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72bc41ffb1eb97c76f95b9684ce10fce6ba710d0322bd826b0480f00f3ddc98d"
+checksum = "9b4f157b81051bb2630b6750d6583f648f545d241ef4b939781f4ad6a45fe700"
 dependencies = [
  "async-trait",
  "async_cell",
- "event-listener 3.0.0",
- "futures-lite 2.0.1",
+ "event-listener 4.0.3",
+ "futures-lite 2.2.0",
  "log",
  "pin-project-lite",
  "rlimit",
@@ -5083,7 +5082,7 @@ dependencies = [
  "portpicker",
  "trillium",
  "trillium-http",
- "trillium-macros",
+ "trillium-macros 0.0.4",
  "trillium-server-common",
  "trillium-tokio",
  "url",
@@ -5091,9 +5090,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-tokio"
-version = "0.3.2"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fe0cef8c430f8697c5e83efd0e467a7f84e3902e4242d43700369545c82cce1"
+checksum = "4acd81475156dd61cf34157acea522f394d1b73d90905986c152ef970f512540"
 dependencies = [
  "async-compat",
  "log",
@@ -5103,8 +5102,9 @@ dependencies = [
  "tokio-stream",
  "trillium",
  "trillium-http",
- "trillium-macros",
+ "trillium-macros 0.0.5",
  "trillium-server-common",
+ "url",
 ]
 
 [[package]]
