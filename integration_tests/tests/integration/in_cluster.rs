@@ -289,7 +289,7 @@ impl InClusterJanusPair {
         let port = port_forward.local_port();
 
         let divviup_api = DivviupClient::new(
-            "DUATignored".into(),
+            "DUATignored".to_string(),
             Client::new(RustlsConfig::<ClientConfig>::default()),
         )
         .with_default_pool()
