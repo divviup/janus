@@ -39,7 +39,6 @@ serde.workspace = true
 serde_json = "1.0.110"
 testcontainers.workspace = true
 tokio.workspace = true
-trillium-rustls.workspace = true
 trillium-tokio.workspace = true
 url.workspace = true
 uuid.workspace = true
@@ -50,3 +49,4 @@ divviup-client = { version = "0.1", features = ["admin"] }
 janus_collector = { workspace = true, features = ["test-util"] }
 rstest.workspace = true
 tempfile = "3"
+trillium-rustls.workspace = true
