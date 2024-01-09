@@ -3155,6 +3155,7 @@ async fn send_request_to_helper<T: Encode>(
     let domain = url.domain().unwrap_or_default().to_string();
     let request_body = request.get_encoded();
     let (auth_header, auth_value) = auth_token.request_authentication();
+    let method_string = method.as_str().to_string();
 
     let start = Instant::now();
     let response_result = http_client
@@ -3173,6 +3174,7 @@ async fn send_request_to_helper<T: Encode>(
                     KeyValue::new("status", "error"),
                     KeyValue::new("domain", domain),
                     KeyValue::new("endpoint", route_label),
+                    KeyValue::new("method", method_string),
                 ],
             );
             return Err(error.into());
@@ -3187,6 +3189,7 @@ async fn send_request_to_helper<T: Encode>(
                 KeyValue::new("status", "error"),
                 KeyValue::new("domain", domain),
                 KeyValue::new("endpoint", route_label),
+                KeyValue::new("method", method_string),
             ],
         );
         return Err(Error::Http(Box::new(
@@ -3202,6 +3205,7 @@ async fn send_request_to_helper<T: Encode>(
                     KeyValue::new("status", "success"),
                     KeyValue::new("domain", domain),
                     KeyValue::new("endpoint", route_label),
+                    KeyValue::new("method", method_string),
                 ],
             );
             Ok(response_body)
@@ -3213,6 +3217,7 @@ async fn send_request_to_helper<T: Encode>(
                     KeyValue::new("status", "error"),
                     KeyValue::new("domain", domain),
                     KeyValue::new("endpoint", route_label),
+                    KeyValue::new("method", method_string),
                 ],
             );
             Err(error.into())
