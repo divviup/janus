@@ -47,6 +47,7 @@ uuid.workspace = true
 chrono.workspace = true
 divviup-client = { version = "0.1", features = ["admin"] }
 janus_collector = { workspace = true, features = ["test-util"] }
+quickcheck = "1.0.3"
 rstest.workspace = true
 tempfile = "3"
 trillium-rustls.workspace = true
