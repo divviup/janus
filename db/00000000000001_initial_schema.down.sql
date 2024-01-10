@@ -25,6 +25,7 @@ DROP INDEX client_reports_task_and_timestamp_unaggregated_index CASCADE;
 DROP TABLE client_reports CASCADE;
 DROP TABLE task_hpke_keys CASCADE;
 DROP INDEX task_id_index CASCADE;
+DROP TABLE task_upload_counters CASCADE;
 DROP TABLE tasks CASCADE;
 DROP TABLE taskprov_aggregator_auth_tokens;
 DROP TABLE taskprov_collector_auth_tokens;

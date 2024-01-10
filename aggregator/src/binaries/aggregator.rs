@@ -358,12 +358,22 @@ pub struct Config {
     /// the cost of collection.
     pub batch_aggregation_shard_count: u64,
 
+    /// Defines the number of shards to break report counters into. Increasing this value will
+    /// reduce the amount of database contention during report uploads, while increasing the cost
+    /// of getting task metrics.
+    #[serde(default = "default_task_counter_shard_count")]
+    pub task_counter_shard_count: u64,
+
     /// Defines how often to refresh the global HPKE configs cache in milliseconds. This affects how
     /// often an aggregator becomes aware of key state changes. If unspecified, default is defined
     /// by [`GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL`]. You shouldn't normally have to
     /// specify this.
     #[serde(default)]
     pub global_hpke_configs_refresh_interval: Option<u64>,
+}
+
+fn default_task_counter_shard_count() -> u64 {
+    1
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -417,6 +427,7 @@ impl Config {
                 self.max_upload_batch_write_delay_ms,
             ),
             batch_aggregation_shard_count: self.batch_aggregation_shard_count,
+            task_counter_shard_count: self.task_counter_shard_count,
             taskprov_config: self.taskprov_config.clone(),
             global_hpke_configs_refresh_interval: match self.global_hpke_configs_refresh_interval {
                 Some(duration) => Duration::from_millis(duration),
@@ -500,6 +511,7 @@ mod tests {
             max_upload_batch_size: 100,
             max_upload_batch_write_delay_ms: 250,
             batch_aggregation_shard_count: 32,
+            task_counter_shard_count: 64,
             taskprov_config: TaskprovConfig::default(),
             global_hpke_configs_refresh_interval: None,
         })

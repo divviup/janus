@@ -1,4 +1,4 @@
-use super::{Aggregator, Config, Error};
+use super::{error::ReportRejectionReason, Aggregator, Config, Error};
 use crate::aggregator::problem_details::{ProblemDetailsConnExt, ProblemDocument};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -47,11 +47,21 @@ impl Handler for Error {
             Error::MessageDecode(_) => conn
                 .with_problem_document(&ProblemDocument::new_dap(DapProblemType::InvalidMessage)),
             Error::ResponseEncode(_) => conn.with_status(Status::InternalServerError),
-            Error::ReportRejected(task_id, _, _, reason) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::ReportRejected)
-                    .with_task_id(task_id)
-                    .with_detail(reason.detail()),
-            ),
+            Error::ReportRejected(rejection) => match rejection.reason() {
+                ReportRejectionReason::OutdatedHpkeConfig(_) => conn.with_problem_document(
+                    &ProblemDocument::new_dap(DapProblemType::OutdatedConfig)
+                        .with_task_id(rejection.task_id()),
+                ),
+                ReportRejectionReason::TooEarly => conn.with_problem_document(
+                    &ProblemDocument::new_dap(DapProblemType::ReportTooEarly)
+                        .with_task_id(rejection.task_id()),
+                ),
+                _ => conn.with_problem_document(
+                    &ProblemDocument::new_dap(DapProblemType::ReportRejected)
+                        .with_task_id(rejection.task_id())
+                        .with_detail(rejection.reason().detail()),
+                ),
+            },
             Error::InvalidMessage(task_id, _) => {
                 let mut doc = ProblemDocument::new_dap(DapProblemType::InvalidMessage);
                 if let Some(task_id) = task_id {
@@ -87,12 +97,6 @@ impl Handler for Error {
                 .with_collection_job_id(collection_job_id),
             ),
             Error::UnrecognizedCollectionJob(_) => conn.with_status(Status::NotFound),
-            Error::OutdatedHpkeConfig(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::OutdatedConfig).with_task_id(task_id),
-            ),
-            Error::ReportTooEarly(task_id, _, _) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::ReportTooEarly).with_task_id(task_id),
-            ),
             Error::UnauthorizedRequest(task_id) => conn.with_problem_document(
                 &ProblemDocument::new_dap(DapProblemType::UnauthorizedRequest)
                     .with_task_id(task_id),
@@ -688,7 +692,7 @@ mod tests {
             },
             collection_job_tests::setup_collection_job_test_case,
             empty_batch_aggregations,
-            error::{BatchMismatch, ReportRejectedReason},
+            error::{BatchMismatch, ReportRejectionReason},
             http_handlers::{
                 aggregator_handler, aggregator_handler_with_aggregator,
                 test_util::{decode_response_body, take_problem_details},
@@ -1202,7 +1206,7 @@ mod tests {
             "reportRejected",
             "Report could not be processed.",
             task.id(),
-            Some(ReportRejectedReason::TooOld.detail()),
+            Some(ReportRejectionReason::Expired.detail()),
         )
         .await;
 
@@ -1292,7 +1296,7 @@ mod tests {
             "reportRejected",
             "Report could not be processed.",
             task_expire_soon.id(),
-            Some(ReportRejectedReason::TaskExpired.detail()),
+            Some(ReportRejectionReason::TaskExpired.detail()),
         )
         .await;
 
@@ -1320,7 +1324,7 @@ mod tests {
             "reportRejected",
             "Report could not be processed.",
             leader_task.id(),
-            Some(ReportRejectedReason::PublicShareDecodeFailure.detail()),
+            Some(ReportRejectionReason::DecodeFailure.detail()),
         )
         .await;
 
@@ -1345,7 +1349,7 @@ mod tests {
             "reportRejected",
             "Report could not be processed.",
             leader_task.id(),
-            Some(ReportRejectedReason::LeaderDecryptFailure.detail()),
+            Some(ReportRejectionReason::DecryptFailure.detail()),
         )
         .await;
 
@@ -1385,7 +1389,7 @@ mod tests {
             "reportRejected",
             "Report could not be processed.",
             leader_task.id(),
-            Some(ReportRejectedReason::LeaderInputShareDecodeFailure.detail()),
+            Some(ReportRejectionReason::DecodeFailure.detail()),
         )
         .await;
 
