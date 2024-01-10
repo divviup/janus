@@ -546,6 +546,11 @@ impl<C: Clock> Transaction<'_, C> {
         Ok((version, description))
     }
 
+    /// Returns the clock used by this transaction.
+    pub fn clock(&self) -> &C {
+        self.clock
+    }
+
     /// Writes a task into the datastore.
     #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     pub async fn put_aggregator_task(&self, task: &AggregatorTask) -> Result<(), Error> {
