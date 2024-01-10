@@ -359,7 +359,7 @@ impl<V: vdaf::Client<16>> Client<V> {
             .to_batch_interval_start(&self.parameters.time_precision)
             .map_err(|_| Error::InvalidParameter("couldn't round time down to time_precision"))?;
         let report_metadata = ReportMetadata::new(report_id, time);
-        let encoded_public_share = public_share.get_encoded();
+        let encoded_public_share = public_share.get_encoded().unwrap();
 
         let (leader_encrypted_input_share, helper_encrypted_input_share) = [
             (&self.leader_hpke_config, &Role::Leader),
@@ -373,15 +373,17 @@ impl<V: vdaf::Client<16>> Client<V> {
                 &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, receiver_role),
                 &PlaintextInputShare::new(
                     Vec::new(), // No extensions supported yet.
-                    input_share.get_encoded(),
+                    input_share.get_encoded().unwrap(),
                 )
-                .get_encoded(),
+                .get_encoded()
+                .unwrap(),
                 &InputShareAad::new(
                     self.parameters.task_id,
                     report_metadata.clone(),
                     encoded_public_share.clone(),
                 )
-                .get_encoded(),
+                .get_encoded()
+                .unwrap(),
             )
         })
         .collect_tuple()
@@ -418,7 +420,7 @@ impl<V: vdaf::Client<16>> Client<V> {
     /// # use rand::random;
     /// #
     /// # async fn test() -> Result<(), Error> {
-    /// # let measurement = 1;
+    /// # let measurement = true;
     /// # let timestamp = 1_700_000_000;
     /// # let vdaf = Prio3::new_count(2).unwrap();
     /// let client = Client::new(
@@ -453,7 +455,7 @@ impl<V: vdaf::Client<16>> Client<V> {
                 self.http_client
                     .put(upload_endpoint.clone())
                     .header(CONTENT_TYPE, Report::MEDIA_TYPE)
-                    .body(report.get_encoded())
+                    .body(report.get_encoded().unwrap())
                     .send()
                     .await
             },
@@ -542,7 +544,7 @@ mod tests {
             .create_async()
             .await;
 
-        client.upload(&1).await.unwrap();
+        client.upload(&true).await.unwrap();
 
         mocked_upload.assert_async().await;
     }
@@ -578,7 +580,7 @@ mod tests {
             .await;
 
         assert_matches!(
-            client.upload(&1).await,
+            client.upload(&true).await,
             Err(Error::Http(error_response)) => {
                 assert_eq!(error_response.status(), StatusCode::NOT_IMPLEMENTED);
             }
@@ -611,7 +613,7 @@ mod tests {
             .await;
 
         assert_matches!(
-            client.upload(&1).await,
+            client.upload(&true).await,
             Err(Error::Http(error_response)) => {
                 assert_eq!(error_response.status(), StatusCode::BAD_REQUEST);
                 assert_eq!(
@@ -644,7 +646,7 @@ mod tests {
             generate_test_hpke_config_and_private_key().config().clone(),
         )
         .unwrap();
-        let result = client.upload(&1).await;
+        let result = client.upload(&true).await;
         assert_matches!(result, Err(Error::InvalidParameter(_)));
     }
 
@@ -658,7 +660,7 @@ mod tests {
         client.parameters.time_precision = Duration::from_seconds(100);
         assert_eq!(
             client
-                .prepare_report(&1, &Time::from_seconds_since_epoch(101))
+                .prepare_report(&true, &Time::from_seconds_since_epoch(101))
                 .unwrap()
                 .metadata()
                 .time(),
@@ -667,7 +669,7 @@ mod tests {
 
         assert_eq!(
             client
-                .prepare_report(&1, &Time::from_seconds_since_epoch(5200))
+                .prepare_report(&true, &Time::from_seconds_since_epoch(5200))
                 .unwrap()
                 .metadata()
                 .time(),
@@ -676,7 +678,7 @@ mod tests {
 
         assert_eq!(
             client
-                .prepare_report(&1, &Time::from_seconds_since_epoch(9814))
+                .prepare_report(&true, &Time::from_seconds_since_epoch(9814))
                 .unwrap()
                 .metadata()
                 .time(),
@@ -707,7 +709,7 @@ mod tests {
             )
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), HpkeConfigList::MEDIA_TYPE)
-            .with_body(hpke_config_list.get_encoded())
+            .with_body(hpke_config_list.get_encoded().unwrap())
             .expect(1)
             .create_async()
             .await;
@@ -745,7 +747,7 @@ mod tests {
         );
 
         let good_hpke_config = generate_test_hpke_config_and_private_key().config().clone();
-        let encoded_good_hpke_config = good_hpke_config.get_encoded();
+        let encoded_good_hpke_config = good_hpke_config.get_encoded().unwrap();
 
         let mut encoded_hpke_config_list = Vec::new();
         // HpkeConfigList length prefix
