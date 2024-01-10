@@ -66,7 +66,8 @@ mechanical protocol changes and was not implemented or deployed by anyone else.
 ### `draft-ietf-ppm-dap-07` errata
 
 There is a bug in Janus' `release/0.6` branch wherein `PrepareResp` messages are
-incorrectly encoded, making Janus incompatible with other DAP implementations.
+incorrectly encoded, making Janus incompatible with other DAP Aggregator
+implementations.
 See [issue #2389](https://github.com/divviup/janus/issues/2389) for details.
 
 ## Versioning and Stability
