@@ -18,7 +18,7 @@ use prio::{
         gadgets::{Mul, ParallelSum, ParallelSumMultithreaded},
         TypeWithNoise,
     },
-    vdaf::{xof::XofShake128, AggregatorWithNoise},
+    vdaf::{xof::XofTurboShake128, AggregatorWithNoise},
 };
 use serde::{Deserialize, Serialize};
 
@@ -130,7 +130,7 @@ where
 }
 
 impl AggregatorWithNoise<16, 16, NoDifferentialPrivacy>
-    for prio::vdaf::poplar1::Poplar1<XofShake128, 16>
+    for prio::vdaf::poplar1::Poplar1<XofTurboShake128, 16>
 {
     fn add_noise_to_agg_share(
         &self,
