@@ -11,7 +11,7 @@ use janus_aggregator_core::{
         },
         Error, Transaction,
     },
-    task::AggregatorTask,
+    task::{AggregatorTask, QueryType},
 };
 use janus_core::time::{Clock, IntervalExt};
 use janus_messages::{AggregationJobId, Interval, PrepareError, ReportId};
@@ -354,13 +354,12 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                         //
                         // See https://github.com/divviup/janus/issues/2464 for more detail.
                         if batch_op == Operation::Put {
-                            // Guard to ensure we are in the situation we think we're in:
-                            // `to_batch_interval` returns a value only for the time-interval query
-                            // type; this code effectively checks that the query type is
-                            // time-interval, and the batch interval is past the GC window.
-                            if !Q::to_batch_interval(batch_identifier)
-                                .map(|interval| interval.end() < tx.clock().now())
-                                .unwrap_or(false)
+                            // Guard to ensure we are in the situation we think we're in: we are in
+                            // a time-interval task, and the batch interval is past the GC window.
+                            if !matches!(self.task.query_type(), QueryType::TimeInterval)
+                                || !Q::to_batch_interval(batch_identifier)
+                                    .map(|interval| interval.end() < tx.clock().now())
+                                    .unwrap_or(false)
                             {
                                 error!(
                                     task_id = ?self.task.id(),

@@ -1918,60 +1918,60 @@ mod tests {
 
         let leader_task = task.leader_view().unwrap();
 
-        let first_time = OLDEST_ALLOWED_REPORT_TIMESTAMP
+        let gc_eligible_time = OLDEST_ALLOWED_REPORT_TIMESTAMP
             .sub(&Duration::from_seconds(3 * TIME_PRECISION.as_seconds()))
             .unwrap()
             .to_batch_interval_start(&TIME_PRECISION)
             .unwrap();
-        let first_batch_identifier =
-            TimeInterval::to_batch_identifier(&leader_task, &(), &first_time).unwrap();
-        let first_report_metadata = ReportMetadata::new(random(), first_time);
+        let gc_eligible_batch_identifier =
+            TimeInterval::to_batch_identifier(&leader_task, &(), &gc_eligible_time).unwrap();
+        let gc_eligible_report_metadata = ReportMetadata::new(random(), gc_eligible_time);
 
-        let second_time = OLDEST_ALLOWED_REPORT_TIMESTAMP
+        let gc_uneligible_time = OLDEST_ALLOWED_REPORT_TIMESTAMP
             .add(&Duration::from_seconds(3 * TIME_PRECISION.as_seconds()))
             .unwrap()
             .to_batch_interval_start(&TIME_PRECISION)
             .unwrap();
-        let second_batch_identifier =
-            TimeInterval::to_batch_identifier(&leader_task, &(), &second_time).unwrap();
-        let second_report_metadata = ReportMetadata::new(random(), second_time);
+        let gc_uneligible_batch_identifier =
+            TimeInterval::to_batch_identifier(&leader_task, &(), &gc_uneligible_time).unwrap();
+        let gc_uneligible_report_metadata = ReportMetadata::new(random(), gc_uneligible_time);
 
         let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
 
-        let first_transcript = run_vdaf(
+        let gc_eligible_transcript = run_vdaf(
             vdaf.as_ref(),
             verify_key.as_bytes(),
             &(),
-            first_report_metadata.id(),
+            gc_eligible_report_metadata.id(),
             &0,
         );
-        let second_transcript = run_vdaf(
+        let gc_uneligible_transcript = run_vdaf(
             vdaf.as_ref(),
             verify_key.as_bytes(),
             &(),
-            second_report_metadata.id(),
+            gc_uneligible_report_metadata.id(),
             &0,
         );
 
         let agg_auth_token = task.aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let first_report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
+        let gc_eligible_report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
             *task.id(),
-            first_report_metadata,
+            gc_eligible_report_metadata,
             helper_hpke_keypair.config(),
-            first_transcript.public_share.clone(),
+            gc_eligible_transcript.public_share.clone(),
             Vec::new(),
-            &first_transcript.leader_input_share,
-            &first_transcript.helper_input_share,
+            &gc_eligible_transcript.leader_input_share,
+            &gc_eligible_transcript.helper_input_share,
         );
-        let second_report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
+        let gc_uneligible_report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
             *task.id(),
-            second_report_metadata,
+            gc_uneligible_report_metadata,
             helper_hpke_keypair.config(),
-            second_transcript.public_share.clone(),
+            gc_uneligible_transcript.public_share.clone(),
             Vec::new(),
-            &second_transcript.leader_input_share,
-            &second_transcript.helper_input_share,
+            &gc_uneligible_transcript.leader_input_share,
+            &gc_uneligible_transcript.helper_input_share,
         );
 
         let aggregation_job_id = random();
@@ -1980,13 +1980,17 @@ mod tests {
             .run_unnamed_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let leader_task = leader_task.clone();
-                let first_report = first_report.clone();
-                let second_report = second_report.clone();
+                let gc_eligible_report = gc_eligible_report.clone();
+                let gc_uneligible_report = gc_uneligible_report.clone();
 
                 Box::pin(async move {
-                    tx.put_aggregator_task(&leader_task).await?;
-                    tx.put_client_report(vdaf.borrow(), &first_report).await?;
-                    tx.put_client_report(vdaf.borrow(), &second_report).await?;
+                    tx.put_aggregator_task(&leader_task).await.unwrap();
+                    tx.put_client_report(vdaf.borrow(), &gc_eligible_report)
+                        .await
+                        .unwrap();
+                    tx.put_client_report(vdaf.borrow(), &gc_uneligible_report)
+                        .await
+                        .unwrap();
 
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
@@ -1997,8 +2001,11 @@ mod tests {
                         aggregation_job_id,
                         (),
                         (),
-                        Interval::new(first_time, second_time.difference(&first_time).unwrap())
-                            .unwrap(),
+                        Interval::new(
+                            gc_eligible_time,
+                            gc_uneligible_time.difference(&gc_eligible_time).unwrap(),
+                        )
+                        .unwrap(),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
@@ -2008,8 +2015,8 @@ mod tests {
                         &ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
                             *leader_task.id(),
                             aggregation_job_id,
-                            *first_report.metadata().id(),
-                            *first_report.metadata().time(),
+                            *gc_eligible_report.metadata().id(),
+                            *gc_eligible_report.metadata().time(),
                             0,
                             None,
                             ReportAggregationState::Start,
@@ -2021,8 +2028,8 @@ mod tests {
                         &ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
                             *leader_task.id(),
                             aggregation_job_id,
-                            *second_report.metadata().id(),
-                            *second_report.metadata().time(),
+                            *gc_uneligible_report.metadata().id(),
+                            *gc_uneligible_report.metadata().time(),
                             1,
                             None,
                             ReportAggregationState::Start,
@@ -2033,21 +2040,21 @@ mod tests {
 
                     tx.put_batch(&Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
                         *leader_task.id(),
-                        first_batch_identifier,
+                        gc_eligible_batch_identifier,
                         (),
                         BatchState::Closing,
                         1,
-                        Interval::from_time(&first_time).unwrap(),
+                        Interval::from_time(&gc_eligible_time).unwrap(),
                     ))
                     .await
                     .unwrap();
                     tx.put_batch(&Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
                         *leader_task.id(),
-                        second_batch_identifier,
+                        gc_uneligible_batch_identifier,
                         (),
                         BatchState::Closing,
                         1,
-                        Interval::from_time(&second_time).unwrap(),
+                        Interval::from_time(&gc_uneligible_time).unwrap(),
                     ))
                     .await
                     .unwrap();
@@ -2073,19 +2080,19 @@ mod tests {
             PartialBatchSelector::new_time_interval(),
             Vec::from([PrepareInit::new(
                 ReportShare::new(
-                    second_report.metadata().clone(),
-                    second_report.public_share().get_encoded(),
-                    second_report.helper_encrypted_input_share().clone(),
+                    gc_uneligible_report.metadata().clone(),
+                    gc_uneligible_report.public_share().get_encoded(),
+                    gc_uneligible_report.helper_encrypted_input_share().clone(),
                 ),
-                second_transcript.leader_prepare_transitions[0]
+                gc_uneligible_transcript.leader_prepare_transitions[0]
                     .message
                     .clone(),
             )]),
         );
         let helper_response = AggregationJobResp::new(Vec::from([PrepareResp::new(
-            *second_report.metadata().id(),
+            *gc_uneligible_report.metadata().id(),
             PrepareStepResult::Continue {
-                message: second_transcript.helper_prepare_transitions[0]
+                message: gc_uneligible_transcript.helper_prepare_transitions[0]
                     .message
                     .clone(),
             },
@@ -2130,42 +2137,47 @@ mod tests {
                 aggregation_job_id,
                 (),
                 (),
-                Interval::new(first_time, second_time.difference(&first_time).unwrap()).unwrap(),
+                Interval::new(
+                    gc_eligible_time,
+                    gc_uneligible_time.difference(&gc_eligible_time).unwrap(),
+                )
+                .unwrap(),
                 AggregationJobState::Finished,
                 AggregationJobStep::from(1),
             );
 
-        let want_first_report_aggregation = ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
-            *task.id(),
-            aggregation_job_id,
-            *first_report.metadata().id(),
-            *first_report.metadata().time(),
-            0,
-            None,
-            ReportAggregationState::Failed(PrepareError::ReportDropped),
-        );
-        let want_second_report_aggregation =
+        let want_gc_eligible_report_aggregation =
             ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
                 *task.id(),
                 aggregation_job_id,
-                *second_report.metadata().id(),
-                *second_report.metadata().time(),
+                *gc_eligible_report.metadata().id(),
+                *gc_eligible_report.metadata().time(),
+                0,
+                None,
+                ReportAggregationState::Failed(PrepareError::ReportDropped),
+            );
+        let want_uneligible_report_aggregation =
+            ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
+                *task.id(),
+                aggregation_job_id,
+                *gc_uneligible_report.metadata().id(),
+                *gc_uneligible_report.metadata().time(),
                 1,
                 None,
                 ReportAggregationState::Finished,
             );
         let want_report_aggregations = Vec::from([
-            want_first_report_aggregation,
-            want_second_report_aggregation,
+            want_gc_eligible_report_aggregation,
+            want_uneligible_report_aggregation,
         ]);
 
         let want_batch = Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
             *task.id(),
-            second_batch_identifier,
+            gc_uneligible_batch_identifier,
             (),
             BatchState::Closing,
             0,
-            Interval::from_time(&second_time).unwrap(),
+            Interval::from_time(&gc_uneligible_time).unwrap(),
         );
         let want_batches = Vec::from([want_batch]);
 
