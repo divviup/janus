@@ -17,14 +17,12 @@ default = []
 fpvec_bounded_l2 = ["dep:fixed", "janus_core/fpvec_bounded_l2"]
 tokio-console = ["dep:console-subscriber"]
 otlp = [
-    "dep:git-version",
     "dep:opentelemetry-otlp",
     "dep:opentelemetry-semantic-conventions",
     "dep:opentelemetry_sdk",
     "dep:tracing-opentelemetry",
 ]
 prometheus = [
-    "dep:git-version",
     "dep:opentelemetry-prometheus",
     "dep:opentelemetry_sdk",
     "dep:prometheus",
@@ -52,7 +50,7 @@ deadpool-postgres = "0.12.1"
 derivative.workspace = true
 fixed = { version = "1.24", optional = true }
 futures = "0.3.30"
-git-version = { version = "0.3.9", optional = true }
+git-version = "0.3.9"
 hex = { version = "0.4.3", features = ["serde"], optional = true }
 http = "0.2.11"
 http-api-problem = "0.57.0"
