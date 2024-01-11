@@ -32,7 +32,7 @@ use {
 
 #[cfg(any(feature = "otlp", feature = "prometheus"))]
 use {
-    git_version::git_version,
+    crate::git_revision,
     janus_aggregator_core::datastore::TRANSACTION_RETRIES_METER_NAME,
     opentelemetry::{metrics::MetricsError, KeyValue},
     opentelemetry_sdk::{
@@ -282,17 +282,10 @@ fn resource() -> Resource {
     // Note that the implementation of `Default` pulls in attributes set via environment variables.
     let default_resource = Resource::default();
 
-    let mut git_revision = git_version!(fallback = "unknown");
-    if git_revision == "unknown" {
-        if let Some(value) = option_env!("GIT_REVISION") {
-            git_revision = value;
-        }
-    }
-
     let version_info_resource = Resource::new([
         KeyValue::new(
             "service.version",
-            format!("{}-{}", env!("CARGO_PKG_VERSION"), git_revision),
+            format!("{}-{}", env!("CARGO_PKG_VERSION"), git_revision()),
         ),
         KeyValue::new("process.runtime.name", "Rust"),
         KeyValue::new("process.runtime.version", env!("RUSTC_SEMVER")),

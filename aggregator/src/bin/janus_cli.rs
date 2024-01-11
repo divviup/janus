@@ -4,6 +4,7 @@ use clap::Parser;
 use janus_aggregator::{
     binary_utils::{database_pool, datastore, read_config, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
+    git_revision,
     metrics::{install_metrics_exporter, MetricsExporterHandle},
     trace::{install_trace_subscriber, TraceGuards},
 };
@@ -37,6 +38,9 @@ async fn main() -> Result<()> {
     info!(
         common_options = ?&command_line_options.common_options,
         config = ?config_file,
+        version = env!("CARGO_PKG_VERSION"),
+        git_revision = git_revision(),
+        rust_version = env!("RUSTC_SEMVER"),
         "Starting up"
     );
 
