@@ -166,8 +166,12 @@ where
     T: Encode + Sync + Send + 'static,
 {
     async fn run(&self, conn: Conn) -> Conn {
-        conn.with_header(KnownHeaderName::ContentType, self.media_type)
-            .ok(self.object.get_encoded())
+        match self.object.get_encoded() {
+            Ok(encoded) => conn
+                .with_header(KnownHeaderName::ContentType, self.media_type)
+                .ok(encoded),
+            Err(e) => Error::from(e).run(conn).await,
+        }
     }
 }
 
@@ -746,7 +750,7 @@ mod tests {
         topology::ping_pong::PingPongMessage,
         vdaf::{
             poplar1::{Poplar1, Poplar1AggregationParam},
-            xof::XofShake128,
+            xof::XofTurboShake128,
             Aggregator,
         },
     };
@@ -1146,7 +1150,7 @@ mod tests {
         for _ in 0..2 {
             let mut test_conn = put(task.report_upload_uri().unwrap().path())
                 .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-                .with_request_body(report.get_encoded())
+                .with_request_body(report.get_encoded().unwrap())
                 .run_async(&handler)
                 .await;
 
@@ -1165,7 +1169,7 @@ mod tests {
         );
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-            .with_request_body(duplicate_id_report.get_encoded())
+            .with_request_body(duplicate_id_report.get_encoded().unwrap())
             .run_async(&handler)
             .await;
         assert_eq!(test_conn.status(), Some(Status::Ok));
@@ -1187,7 +1191,7 @@ mod tests {
         );
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-            .with_request_body(gc_eligible_report.get_encoded())
+            .with_request_body(gc_eligible_report.get_encoded().unwrap())
             .run_async(&handler)
             .await;
         check_response(
@@ -1221,7 +1225,7 @@ mod tests {
         );
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-            .with_request_body(bad_report.get_encoded())
+            .with_request_body(bad_report.get_encoded().unwrap())
             .run_async(&handler)
             .await;
         check_response(
@@ -1249,7 +1253,7 @@ mod tests {
         );
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-            .with_request_body(bad_report.get_encoded())
+            .with_request_body(bad_report.get_encoded().unwrap())
             .run_async(&handler)
             .await;
         check_response(
@@ -1277,7 +1281,7 @@ mod tests {
         );
         let mut test_conn = put(task_expire_soon.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-            .with_request_body(report_2.get_encoded())
+            .with_request_body(report_2.get_encoded().unwrap())
             .run_async(&handler)
             .await;
         check_response(
@@ -1305,7 +1309,7 @@ mod tests {
         );
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-            .with_request_body(bad_public_share_report.get_encoded())
+            .with_request_body(bad_public_share_report.get_encoded().unwrap())
             .run_async(&handler)
             .await;
         check_response(
@@ -1330,7 +1334,7 @@ mod tests {
         );
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-            .with_request_body(undecryptable_report.get_encoded())
+            .with_request_body(undecryptable_report.get_encoded().unwrap())
             .run_async(&handler)
             .await;
         check_response(
@@ -1352,13 +1356,16 @@ mod tests {
                 leader_task.current_hpke_key().config(),
                 &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader),
                 // Some obviously wrong payload.
-                &PlaintextInputShare::new(Vec::new(), vec![0; 100]).get_encoded(),
+                &PlaintextInputShare::new(Vec::new(), vec![0; 100])
+                    .get_encoded()
+                    .unwrap(),
                 &InputShareAad::new(
                     *task.id(),
                     bad_leader_input_share_report.metadata().clone(),
                     bad_leader_input_share_report.public_share().to_vec(),
                 )
-                .get_encoded(),
+                .get_encoded()
+                .unwrap(),
             )
             .unwrap(),
             bad_leader_input_share_report
@@ -1367,7 +1374,7 @@ mod tests {
         );
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-            .with_request_body(bad_leader_input_share_report.get_encoded())
+            .with_request_body(bad_leader_input_share_report.get_encoded().unwrap())
             .run_async(&handler)
             .await;
         check_response(
@@ -1404,7 +1411,7 @@ mod tests {
         let test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::Origin, "https://example.com/")
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-            .with_request_body(report.get_encoded())
+            .with_request_body(report.get_encoded().unwrap())
             .run_async(&handler)
             .await;
         assert!(test_conn.status().unwrap().is_success());
@@ -1426,7 +1433,7 @@ mod tests {
 
         let mut test_conn = put(task.report_upload_uri().unwrap().path())
             .with_request_header(KnownHeaderName::ContentType, Report::MEDIA_TYPE)
-            .with_request_body(report.get_encoded())
+            .with_request_body(report.get_encoded().unwrap())
             .run_async(&handler)
             .await;
 
@@ -1555,7 +1562,7 @@ mod tests {
                 KnownHeaderName::ContentType,
                 AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_request_body(request.get_encoded());
+            .with_request_body(request.get_encoded().unwrap());
 
             if let Some(auth_token) = auth_token {
                 let (auth_header, auth_value) = auth_token.request_authentication();
@@ -1618,7 +1625,7 @@ mod tests {
         let prepare_init_1 = PrepareInit::new(
             ReportShare::new(
                 prepare_init_1.report_share().metadata().clone(),
-                transcript_1.public_share.get_encoded(),
+                transcript_1.public_share.get_encoded().unwrap(),
                 corrupted_input_share,
             ),
             prepare_init_1.message().clone(),
@@ -1627,19 +1634,20 @@ mod tests {
         // prepare_init_2 fails decoding due to an issue with the input share.
         let (prepare_init_2, transcript_2) = prep_init_generator.next(&measurement);
 
-        let mut input_share_bytes = transcript_2.helper_input_share.get_encoded();
+        let mut input_share_bytes = transcript_2.helper_input_share.get_encoded().unwrap();
         input_share_bytes.push(0); // can no longer be decoded.
         let report_share_2 = generate_helper_report_share_for_plaintext(
             prepare_init_2.report_share().metadata().clone(),
             hpke_key.config(),
-            transcript_2.public_share.get_encoded(),
+            transcript_2.public_share.get_encoded().unwrap(),
             &input_share_bytes,
             &InputShareAad::new(
                 *task.id(),
                 prepare_init_2.report_share().metadata().clone(),
-                transcript_2.public_share.get_encoded(),
+                transcript_2.public_share.get_encoded().unwrap(),
             )
-            .get_encoded(),
+            .get_encoded()
+            .unwrap(),
         );
 
         let prepare_init_2 = PrepareInit::new(report_share_2, prepare_init_2.message().clone());
@@ -1722,8 +1730,10 @@ mod tests {
             report_metadata_6.clone(),
             hpke_key.config(),
             public_share_6.clone(),
-            &transcript_6.helper_input_share.get_encoded(),
-            &InputShareAad::new(*task.id(), report_metadata_6, public_share_6).get_encoded(),
+            &transcript_6.helper_input_share.get_encoded().unwrap(),
+            &InputShareAad::new(*task.id(), report_metadata_6, public_share_6)
+                .get_encoded()
+                .unwrap(),
         );
 
         let prepare_init_6 = PrepareInit::new(
@@ -1870,7 +1880,7 @@ mod tests {
 
         let aggregation_param = dummy_vdaf::AggregationParam(0);
         let request = AggregationJobInitializeReq::new(
-            aggregation_param.get_encoded(),
+            aggregation_param.get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([
                 prepare_init_0.clone(),
@@ -2071,7 +2081,7 @@ mod tests {
         let aggregation_param = dummy_vdaf::AggregationParam(0);
         let batch_id = random();
         let request = AggregationJobInitializeReq::new(
-            aggregation_param.get_encoded(),
+            aggregation_param.get_encoded().unwrap(),
             PartialBatchSelector::new_fixed_size(batch_id),
             Vec::from([prepare_init.clone()]),
         );
@@ -2129,7 +2139,7 @@ mod tests {
             KnownHeaderName::ContentType,
             AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
         )
-        .with_request_body(request.get_encoded())
+        .with_request_body(request.get_encoded().unwrap())
         .run_async(&handler)
         .await;
 
@@ -2232,7 +2242,10 @@ mod tests {
                     .report_share()
                     .metadata()
                     .clone(),
-                transcript_same_id_corrupted.public_share.get_encoded(),
+                transcript_same_id_corrupted
+                    .public_share
+                    .get_encoded()
+                    .unwrap(),
                 corrupted_input_share,
             ),
             prepare_init_same_id_corrupted.message().clone(),
@@ -2302,7 +2315,10 @@ mod tests {
             encrypted_input_share.encapsulated_key().to_vec(),
             corrupted_payload,
         );
-        let encoded_public_share = transcript_different_id_corrupted.public_share.get_encoded();
+        let encoded_public_share = transcript_different_id_corrupted
+            .public_share
+            .get_encoded()
+            .unwrap();
 
         let prepare_init_different_id_corrupted = PrepareInit::new(
             ReportShare::new(
@@ -2317,7 +2333,7 @@ mod tests {
 
         let aggregation_job_id: AggregationJobId = random();
         let request = AggregationJobInitializeReq::new(
-            dummy_vdaf::AggregationParam(0).get_encoded(),
+            dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([
                 prepare_init_same_id.clone(),
@@ -2407,7 +2423,7 @@ mod tests {
         // Send another aggregate job re-using the same report ID but with a different timestamp. It
         // should be flagged as a replay.
         let request = AggregationJobInitializeReq::new(
-            other_aggregation_parameter.get_encoded(),
+            other_aggregation_parameter.get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([mutated_timestamp_prepare_init.clone()]),
         );
@@ -2475,7 +2491,7 @@ mod tests {
 
         let (prepare_init, _) = prep_init_generator.next(&());
         let request = AggregationJobInitializeReq::new(
-            dummy_vdaf::AggregationParam(0).get_encoded(),
+            dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([prepare_init.clone()]),
         );
@@ -2523,7 +2539,7 @@ mod tests {
 
         let (prepare_init, _) = prep_init_generator.next(&());
         let request = AggregationJobInitializeReq::new(
-            dummy_vdaf::AggregationParam(0).get_encoded(),
+            dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([prepare_init.clone()]),
         );
@@ -2571,7 +2587,7 @@ mod tests {
         let (prepare_init, _) = prep_init_generator.next(&());
 
         let request = AggregationJobInitializeReq::new(
-            dummy_vdaf::AggregationParam(0).get_encoded(),
+            dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([prepare_init.clone(), prepare_init]),
         );
@@ -2602,7 +2618,7 @@ mod tests {
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
         let helper_task = task.helper_view().unwrap();
 
-        let vdaf = Arc::new(Poplar1::<XofShake128, 16>::new(1));
+        let vdaf = Arc::new(Poplar1::<XofTurboShake128, 16>::new(1));
         let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
         let hpke_key = helper_task.current_hpke_key();
         let measurement = IdpfInput::from_bools(&[true]);
@@ -2626,7 +2642,7 @@ mod tests {
         );
         let helper_prep_state_0 = transcript_0.helper_prepare_transitions[0].prepare_state();
         let leader_prep_message_0 = &transcript_0.leader_prepare_transitions[1].message;
-        let report_share_0 = generate_helper_report_share::<Poplar1<XofShake128, 16>>(
+        let report_share_0 = generate_helper_report_share::<Poplar1<XofTurboShake128, 16>>(
             *task.id(),
             report_metadata_0.clone(),
             hpke_key.config(),
@@ -2652,7 +2668,7 @@ mod tests {
         );
 
         let helper_prep_state_1 = transcript_1.helper_prepare_transitions[0].prepare_state();
-        let report_share_1 = generate_helper_report_share::<Poplar1<XofShake128, 16>>(
+        let report_share_1 = generate_helper_report_share::<Poplar1<XofTurboShake128, 16>>(
             *task.id(),
             report_metadata_1.clone(),
             hpke_key.config(),
@@ -2681,7 +2697,7 @@ mod tests {
         );
         let helper_prep_state_2 = transcript_2.helper_prepare_transitions[0].prepare_state();
         let leader_prep_message_2 = &transcript_2.leader_prepare_transitions[1].message;
-        let report_share_2 = generate_helper_report_share::<Poplar1<XofShake128, 16>>(
+        let report_share_2 = generate_helper_report_share::<Poplar1<XofTurboShake128, 16>>(
             *task.id(),
             report_metadata_2.clone(),
             hpke_key.config(),
@@ -2721,7 +2737,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
@@ -2734,7 +2750,7 @@ mod tests {
                     ))
                     .await?;
 
-                    tx.put_report_aggregation::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
+                    tx.put_report_aggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
                         &ReportAggregation::new(
                             *task.id(),
                             aggregation_job_id,
@@ -2746,7 +2762,7 @@ mod tests {
                         ),
                     )
                     .await?;
-                    tx.put_report_aggregation::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
+                    tx.put_report_aggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
                         &ReportAggregation::new(
                             *task.id(),
                             aggregation_job_id,
@@ -2758,7 +2774,7 @@ mod tests {
                         ),
                     )
                     .await?;
-                    tx.put_report_aggregation::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
+                    tx.put_report_aggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
                         &ReportAggregation::new(
                             *task.id(),
                             aggregation_job_id,
@@ -2771,7 +2787,7 @@ mod tests {
                     )
                     .await?;
 
-                    tx.put_aggregate_share_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>(
+                    tx.put_aggregate_share_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(
                         &AggregateShareJob::new(
                             *task.id(),
                             Interval::new(
@@ -2821,7 +2837,7 @@ mod tests {
                 let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>(
+                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -2938,7 +2954,7 @@ mod tests {
         );
         let helper_prep_state_0 = transcript_0.helper_prepare_transitions[0].prepare_state();
         let ping_pong_leader_message_0 = &transcript_0.leader_prepare_transitions[1].message;
-        let report_share_0 = generate_helper_report_share::<Poplar1<XofShake128, 16>>(
+        let report_share_0 = generate_helper_report_share::<Poplar1<XofTurboShake128, 16>>(
             *task.id(),
             report_metadata_0.clone(),
             hpke_key.config(),
@@ -2965,7 +2981,7 @@ mod tests {
         );
         let helper_prep_state_1 = transcript_1.helper_prepare_transitions[0].prepare_state();
         let ping_pong_leader_message_1 = &transcript_1.leader_prepare_transitions[1].message;
-        let report_share_1 = generate_helper_report_share::<Poplar1<XofShake128, 16>>(
+        let report_share_1 = generate_helper_report_share::<Poplar1<XofTurboShake128, 16>>(
             *task.id(),
             report_metadata_1.clone(),
             hpke_key.config(),
@@ -2992,7 +3008,7 @@ mod tests {
         );
         let helper_prep_state_2 = transcript_2.helper_prepare_transitions[0].prepare_state();
         let ping_pong_leader_message_2 = &transcript_2.leader_prepare_transitions[1].message;
-        let report_share_2 = generate_helper_report_share::<Poplar1<XofShake128, 16>>(
+        let report_share_2 = generate_helper_report_share::<Poplar1<XofTurboShake128, 16>>(
             *task.id(),
             report_metadata_2.clone(),
             hpke_key.config(),
@@ -3017,14 +3033,17 @@ mod tests {
             *task.time_precision(),
         )
         .unwrap();
-        let second_batch_want_batch_aggregations =
-            empty_batch_aggregations::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>(
-                &helper_task,
-                BATCH_AGGREGATION_SHARD_COUNT,
-                &second_batch_identifier,
-                &aggregation_param,
-                &[],
-            );
+        let second_batch_want_batch_aggregations = empty_batch_aggregations::<
+            VERIFY_KEY_LENGTH,
+            TimeInterval,
+            Poplar1<XofTurboShake128, 16>,
+        >(
+            &helper_task,
+            BATCH_AGGREGATION_SHARD_COUNT,
+            &second_batch_identifier,
+            &aggregation_param,
+            &[],
+        );
 
         datastore
             .run_unnamed_tx(|tx| {
@@ -3058,7 +3077,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id_0,
@@ -3073,7 +3092,7 @@ mod tests {
 
                     tx.put_report_aggregation(&ReportAggregation::<
                         VERIFY_KEY_LENGTH,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id_0,
@@ -3086,7 +3105,7 @@ mod tests {
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
                         VERIFY_KEY_LENGTH,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id_0,
@@ -3099,7 +3118,7 @@ mod tests {
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
                         VERIFY_KEY_LENGTH,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id_0,
@@ -3115,7 +3134,7 @@ mod tests {
                         tx.put_batch(&Batch::<
                             VERIFY_KEY_LENGTH,
                             TimeInterval,
-                            Poplar1<XofShake128, 16>,
+                            Poplar1<XofTurboShake128, 16>,
                         >::new(
                             *task.id(),
                             batch_identifier,
@@ -3167,7 +3186,7 @@ mod tests {
                 Box::pin(async move {
                     TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         VERIFY_KEY_LENGTH,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                         _,
                     >(
                         tx,
@@ -3190,7 +3209,7 @@ mod tests {
             .unwrap()
             .into_iter()
             .map(|agg| {
-                BatchAggregation::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>::new(
+                BatchAggregation::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>::new(
                     *agg.task_id(),
                     *agg.batch_identifier(),
                     agg.aggregation_parameter().clone(),
@@ -3249,7 +3268,7 @@ mod tests {
                 Box::pin(async move {
                     TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         VERIFY_KEY_LENGTH,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                         _,
                     >(
                         tx,
@@ -3294,7 +3313,7 @@ mod tests {
         );
         let helper_prep_state_3 = transcript_3.helper_prepare_transitions[0].prepare_state();
         let ping_pong_leader_message_3 = &transcript_3.leader_prepare_transitions[1].message;
-        let report_share_3 = generate_helper_report_share::<Poplar1<XofShake128, 16>>(
+        let report_share_3 = generate_helper_report_share::<Poplar1<XofTurboShake128, 16>>(
             *task.id(),
             report_metadata_3.clone(),
             hpke_key.config(),
@@ -3321,7 +3340,7 @@ mod tests {
         );
         let helper_prep_state_4 = transcript_4.helper_prepare_transitions[0].prepare_state();
         let ping_pong_leader_message_4 = &transcript_4.leader_prepare_transitions[1].message;
-        let report_share_4 = generate_helper_report_share::<Poplar1<XofShake128, 16>>(
+        let report_share_4 = generate_helper_report_share::<Poplar1<XofTurboShake128, 16>>(
             *task.id(),
             report_metadata_4.clone(),
             hpke_key.config(),
@@ -3348,7 +3367,7 @@ mod tests {
         );
         let helper_prep_state_5 = transcript_5.helper_prepare_transitions[0].prepare_state();
         let ping_pong_leader_message_5 = &transcript_5.leader_prepare_transitions[1].message;
-        let report_share_5 = generate_helper_report_share::<Poplar1<XofShake128, 16>>(
+        let report_share_5 = generate_helper_report_share::<Poplar1<XofTurboShake128, 16>>(
             *task.id(),
             report_metadata_5.clone(),
             hpke_key.config(),
@@ -3385,7 +3404,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id_1,
@@ -3400,7 +3419,7 @@ mod tests {
 
                     tx.put_report_aggregation(&ReportAggregation::<
                         VERIFY_KEY_LENGTH,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id_1,
@@ -3413,7 +3432,7 @@ mod tests {
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
                         VERIFY_KEY_LENGTH,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id_1,
@@ -3426,7 +3445,7 @@ mod tests {
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
                         VERIFY_KEY_LENGTH,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id_1,
@@ -3470,7 +3489,7 @@ mod tests {
                 Box::pin(async move {
                     TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         VERIFY_KEY_LENGTH,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                         _,
                     >(
                         tx,
@@ -3493,7 +3512,7 @@ mod tests {
             .unwrap()
             .into_iter()
             .map(|agg| {
-                BatchAggregation::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>::new(
+                BatchAggregation::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>::new(
                     *agg.task_id(),
                     *agg.batch_identifier(),
                     agg.aggregation_parameter().clone(),
@@ -3557,7 +3576,7 @@ mod tests {
                 Box::pin(async move {
                     TimeInterval::get_batch_aggregations_for_collection_identifier::<
                         VERIFY_KEY_LENGTH,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                         _,
                     >(
                         tx,
@@ -3598,7 +3617,7 @@ mod tests {
         ]))
         .unwrap();
         let transcript = run_vdaf(
-            &Poplar1::new_shake128(1),
+            &Poplar1::new_turboshake128(1),
             task.vdaf_verify_key().unwrap().as_bytes(),
             &aggregation_param,
             &report_id,
@@ -3638,7 +3657,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<
                         16,
                         TimeInterval,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
@@ -3651,7 +3670,7 @@ mod tests {
                     ))
                     .await?;
                     tx.put_report_aggregation(
-                        &ReportAggregation::<16, Poplar1<XofShake128, 16>>::new(
+                        &ReportAggregation::<16, Poplar1<XofTurboShake128, 16>>::new(
                             *task.id(),
                             aggregation_job_id,
                             *report_metadata.id(),
@@ -3703,7 +3722,7 @@ mod tests {
         let task =
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 }).build();
         let helper_task = task.helper_view().unwrap();
-        let vdaf = Poplar1::new_shake128(1);
+        let vdaf = Poplar1::new_turboshake128(1);
         let report_id = random();
         let aggregation_param = Poplar1AggregationParam::try_from_prefixes(Vec::from([
             IdpfInput::from_bools(&[false]),
@@ -3718,7 +3737,7 @@ mod tests {
         );
         let aggregation_job_id = random();
         let report_metadata = ReportMetadata::new(report_id, Time::from_seconds_since_epoch(54321));
-        let helper_report_share = generate_helper_report_share::<Poplar1<XofShake128, 16>>(
+        let helper_report_share = generate_helper_report_share::<Poplar1<XofTurboShake128, 16>>(
             *task.id(),
             report_metadata.clone(),
             helper_task.current_hpke_key().config(),
@@ -3744,7 +3763,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<
                         16,
                         TimeInterval,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
@@ -3757,7 +3776,7 @@ mod tests {
                     ))
                     .await?;
                     tx.put_report_aggregation(
-                        &ReportAggregation::<16, Poplar1<XofShake128, 16>>::new(
+                        &ReportAggregation::<16, Poplar1<XofTurboShake128, 16>>::new(
                             *task.id(),
                             aggregation_job_id,
                             *report_metadata.id(),
@@ -3806,7 +3825,7 @@ mod tests {
                     (vdaf.clone(), task.clone(), report_metadata.clone());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<16, TimeInterval, Poplar1<XofShake128, 16>>(
+                        .get_aggregation_job::<16, TimeInterval, Poplar1<XofTurboShake128, 16>>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -3876,7 +3895,7 @@ mod tests {
         ]))
         .unwrap();
         let transcript = run_vdaf(
-            &Poplar1::new_shake128(1),
+            &Poplar1::new_turboshake128(1),
             task.vdaf_verify_key().unwrap().as_bytes(),
             &aggregation_param,
             &report_id,
@@ -3913,7 +3932,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<
                         16,
                         TimeInterval,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
@@ -3926,7 +3945,7 @@ mod tests {
                     ))
                     .await?;
                     tx.put_report_aggregation(
-                        &ReportAggregation::<16, Poplar1<XofShake128, 16>>::new(
+                        &ReportAggregation::<16, Poplar1<XofTurboShake128, 16>>::new(
                             *task.id(),
                             aggregation_job_id,
                             *report_metadata.id(),
@@ -3986,7 +4005,7 @@ mod tests {
         ]))
         .unwrap();
         let transcript_0 = run_vdaf(
-            &Poplar1::new_shake128(1),
+            &Poplar1::new_turboshake128(1),
             task.vdaf_verify_key().unwrap().as_bytes(),
             &aggregation_param,
             &report_id_0,
@@ -3996,7 +4015,7 @@ mod tests {
             ReportMetadata::new(report_id_0, Time::from_seconds_since_epoch(54321));
         let report_id_1 = random();
         let transcript_1 = run_vdaf(
-            &Poplar1::new_shake128(1),
+            &Poplar1::new_turboshake128(1),
             task.vdaf_verify_key().unwrap().as_bytes(),
             &aggregation_param,
             &report_id_1,
@@ -4058,7 +4077,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<
                         16,
                         TimeInterval,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
@@ -4071,24 +4090,25 @@ mod tests {
                     ))
                     .await?;
 
-                    tx.put_report_aggregation(
-                        &ReportAggregation::<16, Poplar1<XofShake128, 16>>::new(
-                            *task.id(),
-                            aggregation_job_id,
-                            *report_metadata_0.id(),
-                            *report_metadata_0.time(),
-                            0,
-                            None,
-                            ReportAggregationState::WaitingHelper(
-                                transcript_0.helper_prepare_transitions[0]
-                                    .prepare_state()
-                                    .clone(),
-                            ),
+                    tx.put_report_aggregation(&ReportAggregation::<
+                        16,
+                        Poplar1<XofTurboShake128, 16>,
+                    >::new(
+                        *task.id(),
+                        aggregation_job_id,
+                        *report_metadata_0.id(),
+                        *report_metadata_0.time(),
+                        0,
+                        None,
+                        ReportAggregationState::WaitingHelper(
+                            transcript_0.helper_prepare_transitions[0]
+                                .prepare_state()
+                                .clone(),
                         ),
-                    )
+                    ))
                     .await?;
                     tx.put_report_aggregation(
-                        &ReportAggregation::<16, Poplar1<XofShake128, 16>>::new(
+                        &ReportAggregation::<16, Poplar1<XofTurboShake128, 16>>::new(
                             *task.id(),
                             aggregation_job_id,
                             *report_metadata_1.id(),
@@ -4240,7 +4260,9 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            dummy_vdaf::AggregationParam::default().get_encoded(),
+            dummy_vdaf::AggregationParam::default()
+                .get_encoded()
+                .unwrap(),
         );
 
         let mut test_conn = test_case
@@ -4273,7 +4295,9 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            dummy_vdaf::AggregationParam::default().get_encoded(),
+            dummy_vdaf::AggregationParam::default()
+                .get_encoded()
+                .unwrap(),
         );
 
         let mut test_conn = test_case
@@ -4346,7 +4370,9 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            dummy_vdaf::AggregationParam::default().get_encoded(),
+            dummy_vdaf::AggregationParam::default()
+                .get_encoded()
+                .unwrap(),
         );
 
         let (header, value) = task.collector_auth_token().request_authentication();
@@ -4356,7 +4382,7 @@ mod tests {
                 KnownHeaderName::ContentType,
                 CollectionReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_request_body(request.get_encoded())
+            .with_request_body(request.get_encoded().unwrap())
             .run_async(&handler)
             .await;
 
@@ -4385,7 +4411,9 @@ mod tests {
         let collection_job_id: CollectionJobId = random();
         let req = CollectionReq::new(
             Query::new_time_interval(batch_interval),
-            dummy_vdaf::AggregationParam::default().get_encoded(),
+            dummy_vdaf::AggregationParam::default()
+                .get_encoded()
+                .unwrap(),
         );
 
         // Incorrect authentication token.
@@ -4457,7 +4485,9 @@ mod tests {
         let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
             Query::new_time_interval(batch_interval),
-            dummy_vdaf::AggregationParam::default().get_encoded(),
+            dummy_vdaf::AggregationParam::default()
+                .get_encoded()
+                .unwrap(),
         );
 
         let test_conn = test_case
@@ -4539,7 +4569,7 @@ mod tests {
         let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
             Query::new_time_interval(batch_interval),
-            aggregation_param.get_encoded(),
+            aggregation_param.get_encoded().unwrap(),
         );
 
         test_case
@@ -4615,7 +4645,7 @@ mod tests {
             .datastore
             .run_unnamed_tx(|tx| {
                 let task = test_case.task.clone();
-                let helper_aggregate_share_bytes = helper_aggregate_share.get_encoded();
+                let helper_aggregate_share_bytes = helper_aggregate_share.get_encoded().unwrap();
                 Box::pin(async move {
                     let encrypted_helper_aggregate_share = hpke::seal(
                         task.collector_hpke_keypair().config(),
@@ -4627,10 +4657,11 @@ mod tests {
                         &helper_aggregate_share_bytes,
                         &AggregateShareAad::new(
                             *task.id(),
-                            aggregation_param.get_encoded(),
+                            aggregation_param.get_encoded().unwrap(),
                             BatchSelector::new_time_interval(batch_interval),
                         )
-                        .get_encoded(),
+                        .get_encoded()
+                        .unwrap(),
                     )
                     .unwrap();
 
@@ -4676,10 +4707,11 @@ mod tests {
             collect_resp.leader_encrypted_aggregate_share(),
             &AggregateShareAad::new(
                 *test_case.task.id(),
-                aggregation_param.get_encoded(),
+                aggregation_param.get_encoded().unwrap(),
                 BatchSelector::new_time_interval(batch_interval),
             )
-            .get_encoded(),
+            .get_encoded()
+            .unwrap(),
         )
         .unwrap();
         assert_eq!(
@@ -4694,10 +4726,11 @@ mod tests {
             collect_resp.helper_encrypted_aggregate_share(),
             &AggregateShareAad::new(
                 *test_case.task.id(),
-                aggregation_param.get_encoded(),
+                aggregation_param.get_encoded().unwrap(),
                 BatchSelector::new_time_interval(batch_interval),
             )
-            .get_encoded(),
+            .get_encoded()
+            .unwrap(),
         )
         .unwrap();
         assert_eq!(
@@ -4767,7 +4800,7 @@ mod tests {
         // Sending this request will consume a query for [0, time_precision).
         let request = CollectionReq::new(
             Query::new_time_interval(interval),
-            dummy_vdaf::AggregationParam(0).get_encoded(),
+            dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
         );
 
         let test_conn = test_case.put_collection_job(&random(), &request).await;
@@ -4777,7 +4810,7 @@ mod tests {
         // This request will not be allowed due to the query count already being consumed.
         let invalid_request = CollectionReq::new(
             Query::new_time_interval(interval),
-            dummy_vdaf::AggregationParam(1).get_encoded(),
+            dummy_vdaf::AggregationParam(1).get_encoded().unwrap(),
         );
 
         let mut test_conn = test_case
@@ -4839,7 +4872,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            dummy_vdaf::AggregationParam(0).get_encoded(),
+            dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
         );
 
         let test_conn = test_case.put_collection_job(&random(), &request).await;
@@ -4849,7 +4882,7 @@ mod tests {
         // This request will not be allowed due to overlapping with the previous request.
         let invalid_request = CollectionReq::new(
             Query::new_time_interval(interval),
-            dummy_vdaf::AggregationParam(1).get_encoded(),
+            dummy_vdaf::AggregationParam(1).get_encoded().unwrap(),
         );
 
         let mut test_conn = test_case
@@ -4899,7 +4932,9 @@ mod tests {
         // Create a collection job
         let request = CollectionReq::new(
             Query::new_time_interval(batch_interval),
-            dummy_vdaf::AggregationParam::default().get_encoded(),
+            dummy_vdaf::AggregationParam::default()
+                .get_encoded()
+                .unwrap(),
         );
 
         let test_conn = test_case
@@ -4952,7 +4987,7 @@ mod tests {
                 KnownHeaderName::ContentType,
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_request_body(request.get_encoded())
+            .with_request_body(request.get_encoded().unwrap())
             .run_async(&handler)
             .await;
 
@@ -5004,7 +5039,7 @@ mod tests {
                 KnownHeaderName::ContentType,
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_request_body(request.get_encoded())
+            .with_request_body(request.get_encoded().unwrap())
             .run_async(&handler)
             .await;
 
@@ -5036,7 +5071,8 @@ mod tests {
                     0,
                     ReportIdChecksum::default(),
                 )
-                .get_encoded(),
+                .get_encoded()
+                .unwrap(),
             )
             .run_async(&handler)
             .await;
@@ -5061,7 +5097,7 @@ mod tests {
             BatchSelector::new_time_interval(
                 Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap(),
             ),
-            dummy_vdaf::AggregationParam(0).get_encoded(),
+            dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
             0,
             ReportIdChecksum::default(),
         );
@@ -5074,7 +5110,7 @@ mod tests {
                 KnownHeaderName::ContentType,
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_request_body(request.get_encoded())
+            .with_request_body(request.get_encoded().unwrap())
             .run_async(&handler)
             .await;
 
@@ -5246,7 +5282,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            dummy_vdaf::AggregationParam(0).get_encoded(),
+            dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
             5,
             ReportIdChecksum::default(),
         );
@@ -5257,7 +5293,7 @@ mod tests {
                 KnownHeaderName::ContentType,
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_request_body(request.get_encoded())
+            .with_request_body(request.get_encoded().unwrap())
             .run_async(&handler)
             .await;
 
@@ -5283,7 +5319,7 @@ mod tests {
                     )
                     .unwrap(),
                 ),
-                dummy_vdaf::AggregationParam(0).get_encoded(),
+                dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
                 10,
                 ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
             ),
@@ -5296,7 +5332,7 @@ mod tests {
                     )
                     .unwrap(),
                 ),
-                dummy_vdaf::AggregationParam(0).get_encoded(),
+                dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
                 20,
                 ReportIdChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
             ),
@@ -5308,7 +5344,7 @@ mod tests {
                     KnownHeaderName::ContentType,
                     AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
                 )
-                .with_request_body(misaligned_request.get_encoded())
+                .with_request_body(misaligned_request.get_encoded().unwrap())
                 .run_async(&handler)
                 .await;
 
@@ -5337,7 +5373,7 @@ mod tests {
                         )
                         .unwrap(),
                     ),
-                    dummy_vdaf::AggregationParam(0).get_encoded(),
+                    dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
                     10,
                     ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
                 ),
@@ -5353,7 +5389,7 @@ mod tests {
                         )
                         .unwrap(),
                     ),
-                    dummy_vdaf::AggregationParam(0).get_encoded(),
+                    dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
                     10,
                     ReportIdChecksum::get_decoded(&[8 ^ 4; 32]).unwrap(),
                 ),
@@ -5371,7 +5407,7 @@ mod tests {
                         KnownHeaderName::ContentType,
                         AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
                     )
-                    .with_request_body(request.get_encoded())
+                    .with_request_body(request.get_encoded().unwrap())
                     .run_async(&handler)
                     .await;
 
@@ -5397,10 +5433,11 @@ mod tests {
                     aggregate_share_resp.encrypted_aggregate_share(),
                     &AggregateShareAad::new(
                         *task.id(),
-                        dummy_vdaf::AggregationParam(0).get_encoded(),
+                        dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
                         request.batch_selector().clone(),
                     )
-                    .get_encoded(),
+                    .get_encoded()
+                    .unwrap(),
                 )
                 .unwrap();
 
@@ -5424,7 +5461,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            dummy_vdaf::AggregationParam(0).get_encoded(),
+            dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
             20,
             ReportIdChecksum::get_decoded(&[8 ^ 4 ^ 3 ^ 2; 32]).unwrap(),
         );
@@ -5435,7 +5472,7 @@ mod tests {
                 KnownHeaderName::ContentType,
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_request_body(all_batch_request.get_encoded())
+            .with_request_body(all_batch_request.get_encoded().unwrap())
             .run_async(&handler)
             .await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest));
@@ -5460,7 +5497,7 @@ mod tests {
                     )
                     .unwrap(),
                 ),
-                dummy_vdaf::AggregationParam(1).get_encoded(),
+                dummy_vdaf::AggregationParam(1).get_encoded().unwrap(),
                 10,
                 ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
             ),
@@ -5472,7 +5509,7 @@ mod tests {
                     )
                     .unwrap(),
                 ),
-                dummy_vdaf::AggregationParam(1).get_encoded(),
+                dummy_vdaf::AggregationParam(1).get_encoded().unwrap(),
                 10,
                 ReportIdChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
             ),
@@ -5484,7 +5521,7 @@ mod tests {
                     KnownHeaderName::ContentType,
                     AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
                 )
-                .with_request_body(query_count_violation_request.get_encoded())
+                .with_request_body(query_count_violation_request.get_encoded().unwrap())
                 .run_async(&handler)
                 .await;
             assert_eq!(test_conn.status(), Some(Status::BadRequest));

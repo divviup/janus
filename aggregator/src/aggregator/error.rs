@@ -330,6 +330,8 @@ pub(crate) fn handle_ping_pong_error(
             desc.to_string(),
             "vdaf_ping_pong_internal_error".to_string(),
         ),
+        // enum PingPongError is non_exhaustive so we need a catch-all case
+        error => panic!("unhandled PingPongError: {error:?}"),
     };
 
     info!(

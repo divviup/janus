@@ -229,7 +229,7 @@ impl CollectionJobDriver {
         // Send an aggregate share request to the helper.
         let req = AggregateShareReq::<Q>::new(
             BatchSelector::new(collection_job.batch_identifier().clone()),
-            collection_job.aggregation_parameter().get_encoded(),
+            collection_job.aggregation_parameter().get_encoded()?,
             report_count,
             checksum,
         );
@@ -944,7 +944,7 @@ mod tests {
 
         let leader_request = AggregateShareReq::new(
             BatchSelector::new_time_interval(batch_interval),
-            aggregation_param.get_encoded(),
+            aggregation_param.get_encoded().unwrap(),
             10,
             ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
         );
@@ -958,7 +958,7 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .match_body(leader_request.get_encoded())
+            .match_body(leader_request.get_encoded().unwrap())
             .with_status(500)
             .with_header("Content-Type", "application/problem+json")
             .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes\"}")
@@ -1015,10 +1015,10 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .match_body(leader_request.get_encoded())
+            .match_body(leader_request.get_encoded().unwrap())
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), AggregateShare::MEDIA_TYPE)
-            .with_body(helper_response.get_encoded())
+            .with_body(helper_response.get_encoded().unwrap())
             .create_async()
             .await;
 
@@ -1347,7 +1347,7 @@ mod tests {
             .mock("POST", task.aggregate_shares_uri().unwrap().path())
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), AggregateShare::MEDIA_TYPE)
-            .with_body(helper_response.get_encoded())
+            .with_body(helper_response.get_encoded().unwrap())
             .create_async()
             .await;
 
