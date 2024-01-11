@@ -1500,7 +1500,7 @@ mod tests {
         assert_matches!(
             error.downcast().unwrap(),
             Error::Http(error_response) => {
-                assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+                assert_eq!(error_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
                 assert_eq!(*error_response.dap_problem_type().unwrap(), DapProblemType::UnauthorizedRequest);
             }
         );
@@ -2072,7 +2072,7 @@ mod tests {
         assert_matches!(
             error.downcast().unwrap(),
             Error::Http(error_response) => {
-                assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+                assert_eq!(error_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
                 assert_eq!(*error_response.dap_problem_type().unwrap(), DapProblemType::UnauthorizedRequest);
             }
         );
@@ -2794,7 +2794,7 @@ mod tests {
         assert_matches!(
             error.downcast().unwrap(),
             Error::Http(error_response) => {
-                assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+                assert_eq!(error_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
                 assert_eq!(*error_response.dap_problem_type().unwrap(), DapProblemType::UnrecognizedTask);
             }
         );
@@ -3182,7 +3182,7 @@ mod tests {
         assert_matches!(
             error.downcast().unwrap(),
             Error::Http(error_response) => {
-                assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+                assert_eq!(error_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
                 assert_eq!(*error_response.dap_problem_type().unwrap(), DapProblemType::UnrecognizedTask);
             }
         );
