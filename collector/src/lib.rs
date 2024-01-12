@@ -1408,7 +1408,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_matches!(error, Error::Http(error_response) => {
-            assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(error_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
             assert!(error_response.dap_problem_type().is_none());
         });
 
@@ -1432,7 +1432,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_matches!(error, Error::Http(error_response) => {
-            assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(error_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
             assert_eq!(error_response.type_uri().unwrap(), "http://example.com/test_server_error");
             assert!(error_response.dap_problem_type().is_none());
         });
@@ -1461,7 +1461,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_matches!(error, Error::Http(error_response) => {
-            assert_eq!(*error_response.status().unwrap(), StatusCode::BAD_REQUEST);
+            assert_eq!(error_response.status(), StatusCode::BAD_REQUEST);
             assert_eq!(error_response.type_uri().unwrap(), "urn:ietf:params:ppm:dap:error:invalidMessage");
             assert_eq!(error_response.detail().unwrap(), "The message type for a response was incorrect or the payload was malformed.");
             assert_eq!(*error_response.dap_problem_type().unwrap(), DapProblemType::InvalidMessage);
@@ -1506,7 +1506,7 @@ mod tests {
             .unwrap();
         let error = collector.poll_once(&job).await.unwrap_err();
         assert_matches!(error, Error::Http(error_response) => {
-            assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(error_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
             assert!(error_response.dap_problem_type().is_none());
         });
 
@@ -1528,7 +1528,7 @@ mod tests {
 
         let error = collector.poll_once(&job).await.unwrap_err();
         assert_matches!(error, Error::Http(error_response) => {
-            assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(error_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
             assert_eq!(error_response.type_uri().unwrap(), "http://example.com/test_server_error");
             assert!(error_response.dap_problem_type().is_none());
         });
@@ -1552,7 +1552,7 @@ mod tests {
 
         let error = collector.poll_once(&job).await.unwrap_err();
         assert_matches!(error, Error::Http(error_response) => {
-            assert_eq!(*error_response.status().unwrap(), StatusCode::BAD_REQUEST);
+            assert_eq!(error_response.status(), StatusCode::BAD_REQUEST);
             assert_eq!(error_response.type_uri().unwrap(), "urn:ietf:params:ppm:dap:error:invalidMessage");
             assert_eq!(error_response.detail().unwrap(), "The message type for a response was incorrect or the payload was malformed.");
             assert_eq!(*error_response.dap_problem_type().unwrap(), DapProblemType::InvalidMessage);
@@ -1701,7 +1701,7 @@ mod tests {
             .await;
         let error = collector.poll_until_complete(&job).await.unwrap_err();
         assert_matches!(error, Error::Http(error_response) => {
-            assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(error_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
             assert!(error_response.dap_problem_type().is_none());
         });
         mock_collection_job_always_fail.assert_async().await;
@@ -1948,7 +1948,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_matches!(error, Error::Http(error_response) => {
-            assert_eq!(*error_response.status().unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(error_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         });
 
         mock_error.assert_async().await;
