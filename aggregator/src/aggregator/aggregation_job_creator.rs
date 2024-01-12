@@ -42,7 +42,6 @@ use trillium_tokio::{CloneCounterObserver, Stopper};
 
 use super::batch_creator::BatchCreator;
 
-// TODO(#680): add metrics to aggregation job creator.
 pub struct AggregationJobCreator<C: Clock> {
     // Dependencies.
     datastore: Datastore<C>,
@@ -87,7 +86,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     }
 
     pub async fn run(self: Arc<Self>, stopper: Stopper) {
-        // TODO(#224): add support for handling only a subset of tasks in a single job (i.e. sharding).
+        // TODO(#1393): add support for handling only a subset of tasks in a single job (i.e. sharding).
 
         // Create metric instruments.
         let task_update_time_histogram = self

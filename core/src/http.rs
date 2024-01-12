@@ -36,8 +36,9 @@ impl HttpErrorResponse {
     }
 
     /// The HTTP status code returned by the server.
-    pub fn status(&self) -> Option<&StatusCode> {
-        self.problem_details.status.as_ref()
+    pub fn status(&self) -> StatusCode {
+        // Unwrap safety: Self::from_response() always populates this field.
+        self.problem_details.status.unwrap()
     }
 
     /// A URI that identifies the problem type.

@@ -13,6 +13,7 @@ use janus_integration_tests::{
 };
 use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
+use std::time::Duration;
 use testcontainers::clients::Cli;
 
 async fn run_divviup_ts_integration_test(
@@ -20,7 +21,12 @@ async fn run_divviup_ts_integration_test(
     container_client: &Cli,
     vdaf: VdafInstance,
 ) {
-    let (task_parameters, task_builder) = test_task_builder(vdaf, QueryType::TimeInterval);
+    let (task_parameters, task_builder) = test_task_builder(
+        vdaf,
+        QueryType::TimeInterval,
+        Duration::from_millis(500),
+        Duration::from_secs(60),
+    );
     let task = task_builder.build();
     let network = generate_network_name();
     let leader =
@@ -43,7 +49,6 @@ async fn run_divviup_ts_integration_test(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divviup-ts does not currently support DAP-07 (issue #1669)"]
 async fn janus_divviup_ts_count() {
     install_test_trace_subscriber();
 
@@ -56,7 +61,6 @@ async fn janus_divviup_ts_count() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divviup-ts does not currently support DAP-07 (issue #1669)"]
 async fn janus_divviup_ts_sum() {
     install_test_trace_subscriber();
 
@@ -69,7 +73,6 @@ async fn janus_divviup_ts_sum() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divviup-ts does not currently support DAP-07 (issue #1669)"]
 async fn janus_divviup_ts_histogram() {
     install_test_trace_subscriber();
 
@@ -84,4 +87,18 @@ async fn janus_divviup_ts_histogram() {
     .await;
 }
 
-// TODO(https://github.com/divviup/divviup-ts/issues/100): Test CountVec once it is implemented.
+#[tokio::test(flavor = "multi_thread")]
+async fn janus_divviup_ts_sumvec() {
+    install_test_trace_subscriber();
+
+    run_divviup_ts_integration_test(
+        "janus_divviup_ts_sumvec",
+        &container_client(),
+        VdafInstance::Prio3SumVec {
+            bits: 16,
+            length: 15,
+            chunk_length: 16,
+        },
+    )
+    .await;
+}

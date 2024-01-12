@@ -152,18 +152,18 @@ impl Display for AeadAlgorithm {
 #[derive(Debug, Parser)]
 #[command(name = "hpke_keygen", about = "DAP-compatible HPKE keypair generator")]
 struct Options {
-    /// Numeric identifier of the HPKE configuration.
+    /// Numeric identifier of the HPKE configuration
     id: u8,
 
-    /// HPKE Key Encapsulation Mechanism algorithm.
+    /// HPKE Key Encapsulation Mechanism algorithm
     #[arg(long, default_value_t = KemAlgorithm::X25519HkdfSha256)]
     kem: KemAlgorithm,
 
-    /// HPKE Key Derivation Function algorithm.
+    /// HPKE Key Derivation Function algorithm
     #[arg(long, default_value_t = KdfAlgorithm::HkdfSha256)]
     kdf: KdfAlgorithm,
 
-    /// HPKE Authenticated Encryption with Associated Data algorithm.
+    /// HPKE Authenticated Encryption with Associated Data algorithm
     #[arg(long, default_value_t = AeadAlgorithm::Aes128Gcm)]
     aead: AeadAlgorithm,
 }

@@ -65,7 +65,7 @@ pub trait BinaryConfig: Debug + DeserializeOwned {
 #[derivative(Debug)]
 pub struct DbConfig {
     /// URL at which to connect to the database.
-    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
+    #[derivative(Debug(format_with = "format_database_url"))]
     pub url: Url,
 
     /// Timeout in seconds to apply when creating, waiting for, or recycling
@@ -91,6 +91,19 @@ impl DbConfig {
 
     fn default_check_schema_version() -> bool {
         true
+    }
+}
+
+/// Makes a best-effort attempt to redact the password from the database URL, so that it is safe
+/// to display in logs.
+fn format_database_url(url: &Url, fmt: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+    match url.password() {
+        Some(_) => {
+            let mut url = url.clone();
+            let _ = url.set_password(Some("REDACTED"));
+            fmt.write_str(url.as_str())
+        }
+        None => fmt.write_str(url.as_str()),
     }
 }
 

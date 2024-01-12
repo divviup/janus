@@ -315,7 +315,7 @@ async fn taskprov_aggregate_init() {
         let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
 
         assert_eq!(aggregate_resp.prepare_resps().len(), 1, "{}", name);
-        let prepare_step = aggregate_resp.prepare_resps().get(0).unwrap();
+        let prepare_step = aggregate_resp.prepare_resps().first().unwrap();
         assert_eq!(
             prepare_step.report_id(),
             report_share.metadata().id(),

@@ -86,10 +86,7 @@ where
         // reqwest::Response, which the caller may need in order to examine its body or headers.
         match request_fn().await {
             Ok(response) => {
-                if (response.status().is_server_error()
-                    && response.status() != StatusCode::NOT_IMPLEMENTED)
-                    || response.status() == StatusCode::TOO_MANY_REQUESTS
-                {
+                if is_retryable_http_status(response.status()) {
                     warn!(?response, "encountered retryable server error");
                     return Err(backoff::Error::transient(Ok(response)));
                 }
@@ -118,6 +115,11 @@ where
         }
     })
     .await
+}
+
+pub fn is_retryable_http_status(status: StatusCode) -> bool {
+    (status.is_server_error() && status != StatusCode::NOT_IMPLEMENTED)
+        || status == StatusCode::TOO_MANY_REQUESTS
 }
 
 #[cfg(test)]

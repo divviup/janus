@@ -213,8 +213,9 @@ impl BearerToken {
         &self.0
     }
 
-    /// Validate that a bearer token value matches the format in
-    /// https://datatracker.ietf.org/doc/html/rfc6750#section-2.1.
+    /// Validate that a bearer token value matches the format for [OAuth 2.0 bearer tokens][1].
+    ///
+    /// [1]: https://datatracker.ietf.org/doc/html/rfc6750#section-2.1
     fn validate(value: &str) -> Result<(), anyhow::Error> {
         static REGEX: OnceLock<Regex> = OnceLock::new();
 

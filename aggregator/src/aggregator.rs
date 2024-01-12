@@ -169,9 +169,11 @@ pub struct Aggregator<C: Clock> {
     task_aggregators: Mutex<HashMap<TaskId, Arc<TaskAggregator<C>>>>,
 
     // Metrics.
-    /// Counter tracking the number of failed decryptions while handling the /upload endpoint.
+    /// Counter tracking the number of failed decryptions while handling the
+    /// `tasks/{task-id}/reports` endpoint.
     upload_decrypt_failure_counter: Counter<u64>,
-    /// Counter tracking the number of failed message decodes while handling the /upload endpoint.
+    /// Counter tracking the number of failed message decodes while handling the
+    /// `tasks/{task-id}/reports` endpoint.
     upload_decode_failure_counter: Counter<u64>,
     /// Counters tracking the number of failures to step client reports through the aggregation
     /// process.
@@ -192,8 +194,8 @@ pub struct Config {
     pub max_upload_batch_size: usize,
 
     /// Defines the maximum delay before writing a batch of uploaded reports, even if it has not yet
-    /// reached `max_batch_upload_size`. This is the maximum delay added to the /upload endpoint due
-    /// to write-batching.
+    /// reached `max_batch_upload_size`. This is the maximum delay added to the
+    /// `tasks/{task-id}/reports` endpoint due to write-batching.
     pub max_upload_batch_write_delay: StdDuration,
 
     /// Defines the number of shards to break each batch aggregation into. Increasing this value
@@ -235,14 +237,18 @@ impl<C: Clock> Aggregator<C> {
 
         let upload_decrypt_failure_counter = meter
             .u64_counter("janus_upload_decrypt_failures")
-            .with_description("Number of decryption failures in the /upload endpoint.")
+            .with_description(
+                "Number of decryption failures in the tasks/{task-id}/reports endpoint.",
+            )
             .with_unit(Unit::new("{error}"))
             .init();
         upload_decrypt_failure_counter.add(0, &[]);
 
         let upload_decode_failure_counter = meter
             .u64_counter("janus_upload_decode_failures")
-            .with_description("Number of message decode failures in the /upload endpoint.")
+            .with_description(
+                "Number of message decode failures in the tasks/{task-id}/reports endpoint.",
+            )
             .with_unit(Unit::new("{error}"))
             .init();
         upload_decode_failure_counter.add(0, &[]);
@@ -781,8 +787,8 @@ impl<C: Clock> Aggregator<C> {
 }
 
 /// TaskAggregator provides aggregation functionality for a single task.
-// TODO(#224): refactor Aggregator to perform indepedent batched operations (e.g. report handling in
-// Aggregate requests) using a parallelized library like Rayon.
+// TODO(#1307): refactor Aggregator to perform indepedent batched operations (e.g. report handling
+// in Aggregate requests) using a parallelized library like Rayon.
 pub struct TaskAggregator<C: Clock> {
     /// The task being aggregated.
     task: Arc<AggregatorTask>,
@@ -1266,8 +1272,9 @@ impl VdafOps {
         }
     }
 
-    /// Implements the `/aggregate` endpoint for initialization requests for the helper, described
-    /// in §4.4.4.1 & §4.4.4.2 of draft-gpew-priv-ppm.
+    /// Implements [helper aggregate initialization][1].
+    ///
+    /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-helper-initialization
     #[tracing::instrument(
         skip(self, datastore, global_hpke_keypairs, aggregate_step_failure_counter, task, req_bytes),
         fields(task_id = ?task.id()),
@@ -1433,10 +1440,10 @@ impl VdafOps {
         }
 
         // Decode (and in the case of the leader input share, decrypt) the remaining fields of the
-        // report before storing them in the datastore. The spec does not require the /upload
-        // handler to do this, but it exercises HPKE decryption, saves us the trouble of storing
-        // reports we can't use, and lets the aggregation job handler assume the values it reads
-        // from the datastore are valid.
+        // report before storing them in the datastore. The spec does not require the
+        // `tasks/{task-id}/reports` handler to do this, but it exercises HPKE decryption, saves us
+        // the trouble of storing reports we can't use, and lets the aggregation job handler assume
+        // the values it reads from the datastore are valid.
         let public_share =
             match A::PublicShare::get_decoded_with_param(vdaf.as_ref(), report.public_share()) {
                 Ok(public_share) => public_share,
@@ -1613,8 +1620,9 @@ impl VdafOps {
         Ok(existing_aggregation_job.eq(incoming_aggregation_job))
     }
 
-    /// Implements the aggregate initialization request portion of the `/aggregate` endpoint for the
-    /// helper, described in §4.4.4.1 of draft-gpew-priv-ppm.
+    /// Implements [helper aggregate initialization][1].
+    ///
+    /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-helper-initialization
     async fn handle_aggregate_init_generic<const SEED_SIZE: usize, Q, A, C>(
         datastore: &Datastore<C>,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
@@ -2178,7 +2186,7 @@ impl VdafOps {
         }
 
         // TODO(#224): don't hold DB transaction open while computing VDAF updates?
-        // TODO(#224): don't do O(n) network round-trips (where n is the number of prepare steps)
+        // TODO(#1035): don't do O(n) network round-trips (where n is the number of prepare steps)
         Ok(datastore
             .run_tx("aggregate_continue", |tx| {
                 let (
@@ -2581,9 +2589,9 @@ impl VdafOps {
             .await?)
     }
 
-    /// Handle GET requests to a collection job URI obtained from the leader's `/collect` endpoint.
-    /// The return value is an encoded `CollectResp<Q>`.
-    /// https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.1
+    /// Handle GET requests to the leader's `tasks/{task-id}/collection_jobs/{collection-job-id}`
+    /// endpoint. The return value is an encoded `CollectResp<Q>`.
+    /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-collecting-results>
     #[tracing::instrument(skip(self, datastore, task), fields(task_id = ?task.id()), err)]
     async fn handle_get_collection_job<C: Clock>(
         &self,
@@ -2743,17 +2751,7 @@ impl VdafOps {
                     .get_encoded(),
                 ))
             }
-
-            CollectionJobState::Abandoned => {
-                // TODO(#248): decide how to respond for abandoned collection jobs.
-                warn!(
-                    %collection_job_id,
-                    task_id = %task.id(),
-                    "Attempting to collect abandoned collection job"
-                );
-                Ok(None)
-            }
-
+            CollectionJobState::Abandoned => Err(Error::AbandonedCollectionJob(*collection_job_id)),
             CollectionJobState::Deleted => Err(Error::DeletedCollectionJob(*collection_job_id)),
         }
     }
@@ -2836,7 +2834,7 @@ impl VdafOps {
         Ok(())
     }
 
-    /// Implements the `/aggregate_share` endpoint for the helper, described in §4.4.4.3
+    /// Implements the `tasks/{task-id}/aggregate_shares` endpoint for the helper.
     #[tracing::instrument(
         skip(self, datastore, clock, task, req_bytes),
         fields(task_id = ?task.id()),
@@ -3153,6 +3151,7 @@ async fn send_request_to_helper<T: Encode>(
     let domain = url.domain().unwrap_or_default().to_string();
     let request_body = request.get_encoded();
     let (auth_header, auth_value) = auth_token.request_authentication();
+    let method_string = method.as_str().to_string();
 
     let start = Instant::now();
     let response_result = http_client
@@ -3171,6 +3170,7 @@ async fn send_request_to_helper<T: Encode>(
                     KeyValue::new("status", "error"),
                     KeyValue::new("domain", domain),
                     KeyValue::new("endpoint", route_label),
+                    KeyValue::new("method", method_string),
                 ],
             );
             return Err(error.into());
@@ -3185,6 +3185,7 @@ async fn send_request_to_helper<T: Encode>(
                 KeyValue::new("status", "error"),
                 KeyValue::new("domain", domain),
                 KeyValue::new("endpoint", route_label),
+                KeyValue::new("method", method_string),
             ],
         );
         return Err(Error::Http(Box::new(
@@ -3200,6 +3201,7 @@ async fn send_request_to_helper<T: Encode>(
                     KeyValue::new("status", "success"),
                     KeyValue::new("domain", domain),
                     KeyValue::new("endpoint", route_label),
+                    KeyValue::new("method", method_string),
                 ],
             );
             Ok(response_body)
@@ -3211,6 +3213,7 @@ async fn send_request_to_helper<T: Encode>(
                     KeyValue::new("status", "error"),
                     KeyValue::new("domain", domain),
                     KeyValue::new("endpoint", route_label),
+                    KeyValue::new("method", method_string),
                 ],
             );
             Err(error.into())

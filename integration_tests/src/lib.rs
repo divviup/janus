@@ -4,6 +4,7 @@ use janus_aggregator_core::task::QueryType;
 use janus_collector::AuthenticationToken;
 use janus_core::{hpke::HpkeKeypair, vdaf::VdafInstance};
 use janus_messages::{Duration, TaskId};
+use std::time;
 use url::Url;
 
 pub mod client;
@@ -22,32 +23,42 @@ pub struct TaskParameters {
     pub time_precision: Duration,
     pub collector_hpke_keypair: HpkeKeypair,
     pub collector_auth_token: AuthenticationToken,
+    pub collector_max_interval: time::Duration,
+    pub collector_max_elapsed_time: time::Duration,
 }
 
-/// Components of one aggregator's DAP endpoint. The scheme is assumed to always be `http:`.
+/// Components of one aggregator's DAP endpoint.
 #[derive(Debug)]
 pub enum AggregatorEndpointFragments {
     /// The aggregator is in a virtual network, (a Docker network or a Kind cluster) so different
     /// URLs must be used depending on whether it is accessed from within the same virtual network
     /// or via a port forward on localhost. It is assumed that the port will always be 8080 within
-    /// the virtual network. The port number of forwarded ports will be supplied later.
+    /// the virtual network. The port number of forwarded ports will be supplied later. The scheme
+    /// is assumed to always be 'http:'.
     VirtualNetwork { host: String, path: String },
     /// The aggregator is running on localhost. No port forwarding is involved, so the same URL is
-    /// used in all circumstances. The port number will be supplied later.
+    /// used in all circumstances. The port number will be supplied later. The scheme is assumed to
+    /// always be 'http:'.
     Localhost { path: String },
+    /// The aggregator is running remotely, accessible at some URL. No port forwarding is involved,
+    /// and the remote port and scheme are set by the URL.
+    Remote { url: Url },
 }
 
 impl AggregatorEndpointFragments {
     /// Provides the URL for the aggregator's endpoint from the perspective of the host. If the
     /// aggregator is in a virtual network, this will use a port forward, with the provided port
     /// number. If the aggregator itself is running on the host, it will use the provided port
-    /// number as well.
+    /// number as well. If the aggregator is running remotely, the port number is ignored and the
+    /// URL is returned.
     pub fn endpoint_for_host(&self, port: u16) -> Url {
-        let path = match self {
-            AggregatorEndpointFragments::VirtualNetwork { path, .. } => path,
-            AggregatorEndpointFragments::Localhost { path } => path,
-        };
-        Url::parse(&format!("http://127.0.0.1:{port}{path}")).unwrap()
+        match self {
+            AggregatorEndpointFragments::VirtualNetwork { path, .. }
+            | AggregatorEndpointFragments::Localhost { path } => {
+                Url::parse(&format!("http://127.0.0.1:{port}{path}")).unwrap()
+            }
+            AggregatorEndpointFragments::Remote { url } => url.clone(),
+        }
     }
 
     /// Provides the URL for the aggregator's endpoint from the perspective of another protocol
@@ -63,6 +74,9 @@ impl AggregatorEndpointFragments {
                 "cannot combine an aggregator running on localhost with a client or leader running \
                  in a virtual network"
             ),
+            AggregatorEndpointFragments::Remote { .. } => {
+                panic!("Cannot connect to remote aggregator on virtual network")
+            }
         }
     }
 
@@ -73,6 +87,9 @@ impl AggregatorEndpointFragments {
                 path: self_path, ..
             }
             | AggregatorEndpointFragments::Localhost { path: self_path } => *self_path = path,
+            AggregatorEndpointFragments::Remote { .. } => {
+                panic!("cannot set path for remote aggregator")
+            }
         }
     }
 }

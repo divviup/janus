@@ -18,15 +18,14 @@ async-trait = "0.1"
 backoff = { version = "0.4.0", features = ["tokio"] }
 base64.workspace = true
 bytes = "1.5.0"
-chrono = "0.4"
+chrono.workspace = true
 deadpool = { version = "0.10.0", features = ["rt_tokio_1"] }
 deadpool-postgres = "0.12.1"
 derivative.workspace = true
-futures = "0.3.29"
+futures = "0.3.30"
 hex = { version = "0.4.3", features = ["serde"], optional = true }
 http = "0.2.11"
 http-api-problem = "0.57.0"
-hyper = "1.1.0"
 janus_core.workspace = true
 janus_messages.workspace = true
 k8s-openapi.workspace = true
@@ -37,7 +36,7 @@ postgres-types = { version = "0.2.6", features = ["derive", "array-impls"] }
 prio = { workspace = true, features = ["experimental"] }
 rand = { workspace = true, features = ["min_const_gen"] }
 regex = "1"
-reqwest = { version = "0.11.22", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.11.23", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.17.7"
 serde.workspace = true
 serde_json.workspace = true
@@ -50,19 +49,18 @@ tokio-postgres = { version = "0.7.10", features = ["with-chrono-0_4", "with-serd
 tracing = "0.1.40"
 tracing-log = "0.2.0"
 trillium.workspace = true
-trillium-macros = "0.0.4"
+trillium-macros = "0.0.5"
 trillium-router.workspace = true
-url = { version = "2.5.0", features = ["serde"] }
+url.workspace = true
 
 [dev-dependencies]
 assert_matches.workspace = true
-hyper = "1.1.0"
 janus_aggregator_core = { path = ".", features = ["test-util"] }
 janus_core = { workspace = true, features = ["test-util"] }
 rstest.workspace = true
 rstest_reuse = "0.6.0"
 serde_test.workspace = true
-tempfile = "3.8.1"
+tempfile = "3.9.0"
 tokio = { version = "1", features = ["test-util"] }  # ensure this remains compatible with the non-dev dependency
 
 [build-dependencies]

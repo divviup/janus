@@ -197,14 +197,15 @@ pub struct Options {
     #[clap(flatten)]
     pub common: CommonBinaryOptions,
 
-    /// Aggregator API authentication tokens.
+    /// Aggregator API authentication tokens
+    ///
+    /// API tokens are encoded in unpadded url-safe base64, then comma-separated.
     #[clap(
         long,
         env = "AGGREGATOR_API_AUTH_TOKENS",
         hide_env_values = true,
         num_args = 0..=1,
         use_value_delimiter = true,
-        help = "aggregator API auth tokens, encoded in base64 then comma-separated"
     )]
     pub aggregator_api_auth_tokens: Vec<String>,
 }
@@ -334,7 +335,6 @@ pub struct Config {
 
     /// Address on which this server should listen for connections to the DAP aggregator API and
     /// serve its API endpoints.
-    // TODO(#232): options for terminating TLS, unless that gets handled in a load balancer?
     pub listen_address: SocketAddr,
 
     /// How to serve the Janus aggregator API. If not set, the aggregator API is not served.

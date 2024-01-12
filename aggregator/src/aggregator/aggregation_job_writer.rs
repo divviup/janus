@@ -11,7 +11,7 @@ use janus_aggregator_core::{
         },
         Error, Transaction,
     },
-    task::AggregatorTask,
+    task::{AggregatorTask, QueryType},
 };
 use janus_core::time::{Clock, IntervalExt};
 use janus_messages::{AggregationJobId, Interval, PrepareError, ReportId};
@@ -22,6 +22,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::try_join;
+use tracing::{debug, error};
 
 /// AggregationJobWriter contains the logic used to write aggregation jobs, both initially &
 /// on updates. It is used only by the Leader.
@@ -300,7 +301,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
             .by_batch_identifier_index
             .iter()
             .flat_map(|(batch_identifier, by_aggregation_job_index)| {
-                let (operation, mut batch) = match batches.remove(batch_identifier) {
+                let (batch_op, mut batch) = match batches.remove(batch_identifier) {
                     Some(batch) => (Operation::Update, batch),
                     None => (
                         Operation::Put,
@@ -332,15 +333,52 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                 for (aggregation_job_id, report_aggregation_ords) in by_aggregation_job_index.iter()
                 {
                     // unwrap safety: index lookup
-                    let (op, agg_job, report_aggs) =
+                    let (agg_job_op, agg_job, report_aggs) =
                         by_aggregation_job.get(aggregation_job_id).unwrap();
-                    if op == &Operation::Put
+                    if agg_job_op == &Operation::Put
                         && matches!(agg_job.state(), AggregationJobState::InProgress)
                     {
                         outstanding_aggregation_jobs += 1;
-                    } else if op == &Operation::Update
+                    } else if agg_job_op == &Operation::Update
                         && !matches!(agg_job.state(), AggregationJobState::InProgress)
                     {
+                        // GC hack: if we are Putting the batch, that means that it does not exist
+                        // in the datastore. But since we first write the batch when an aggregation
+                        // job referencing that batch is created, and we are completing the
+                        // aggregation job here, we must have deleted the batch at some point
+                        // between creating & completing this aggregation job. This should only be
+                        // possible if the batch is GC'ed, as part of a time-interval task. In that
+                        // case, it is acceptable to skip writing the batch entirely; and indeed, we
+                        // must do so, since otherwise we might underflow the
+                        // outstanding_aggregation_jobs counter.
+                        //
+                        // See https://github.com/divviup/janus/issues/2464 for more detail.
+                        if batch_op == Operation::Put {
+                            // Guard to ensure we are in the situation we think we're in: we are in
+                            // a time-interval task, and the batch interval is past the GC window.
+                            if !matches!(self.task.query_type(), QueryType::TimeInterval)
+                                || !Q::to_batch_interval(batch_identifier)
+                                    .map(|interval| interval.end() < tx.clock().now())
+                                    .unwrap_or(false)
+                            {
+                                error!(
+                                    task_id = ?self.task.id(),
+                                    batch_id = ?batch_identifier,
+                                    ?aggregation_job_id,
+                                    "Unexpectedly missing batch while writing completed aggregation job"
+                                );
+                                panic!("Unexpectedly missing batch while writing completed aggregation job");
+                            }
+
+                            debug!(
+                                task_id = ?self.task.id(),
+                                batch_id = ?batch_identifier,
+                                ?aggregation_job_id,
+                                "Skipping batch write for GC'ed batch"
+                            );
+                            return None;
+                        }
+
                         outstanding_aggregation_jobs -= 1;
                     }
 
@@ -366,7 +404,7 @@ impl<const SEED_SIZE: usize, Q: CollectableQueryType, A: vdaf::Aggregator<SEED_S
                 Some(Ok((
                     batch_identifier,
                     (
-                        operation,
+                        batch_op,
                         batch
                             .with_outstanding_aggregation_jobs(outstanding_aggregation_jobs)
                             .with_client_timestamp_interval(client_timestamp_interval),

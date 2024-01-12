@@ -4,6 +4,7 @@ use clap::Parser;
 use janus_aggregator::{
     binary_utils::{database_pool, datastore, read_config, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
+    git_revision,
     metrics::{install_metrics_exporter, MetricsExporterHandle},
     trace::{install_trace_subscriber, TraceGuards},
 };
@@ -37,6 +38,9 @@ async fn main() -> Result<()> {
     info!(
         common_options = ?&command_line_options.common_options,
         config = ?config_file,
+        version = env!("CARGO_PKG_VERSION"),
+        git_revision = git_revision(),
+        rust_version = env!("RUSTC_SEMVER"),
         "Starting up"
     );
 
@@ -52,25 +56,26 @@ async fn main() -> Result<()> {
 
 #[derive(Debug, Parser)]
 enum Command {
-    /// Write a set of tasks identified in a file to the datastore.
+    /// Write a set of tasks identified in a file to the datastore
     ProvisionTasks {
         #[clap(flatten)]
         kubernetes_secret_options: KubernetesSecretOptions,
 
-        /// A YAML file containing a list of tasks to be written. Existing tasks (matching by task
-        /// ID) will be overwritten.
+        /// A YAML file containing a list of tasks to be written
+        ///
+        /// Existing tasks (matching by task ID) will be overwritten
         tasks_file: PathBuf,
 
-        /// If true, task parameters omitted from the YAML tasks file will be randomly generated.
+        /// If true, task parameters omitted from the YAML tasks file will be randomly generated
         #[clap(long, default_value = "false")]
         generate_missing_parameters: bool,
 
-        /// Write the YAML representation of the tasks that are written to stdout.
+        /// Write the YAML representation of the tasks that are written to stdout
         #[clap(long, default_value = "false")]
         echo_tasks: bool,
     },
 
-    /// Create a datastore key and write it to a Kubernetes secret.
+    /// Create a datastore key and write it to a Kubernetes secret
     CreateDatastoreKey {
         #[clap(flatten)]
         kubernetes_secret_options: KubernetesSecretOptions,
@@ -335,25 +340,22 @@ struct CommandLineOptions {
     #[clap(flatten)]
     common_options: CommonBinaryOptions,
 
-    /// When in dry-run mode, the tool will print out what it would do but will not make any real,
-    /// permanent changes.
+    /// Do not make permanent changes
+    ///
+    /// The tool will print out what it would do but will not make any real, permanent changes.
     #[clap(long, default_value = "false")]
     dry_run: bool,
 }
 
 #[derive(Debug, Parser)]
 struct KubernetesSecretOptions {
-    /// The Kubernetes namespace where secrets are stored.
-    #[clap(
-        long,
-        env = "SECRETS_K8S_NAMESPACE",
-        num_args = 1,
-        long_help = "Kubernetes namespace where the datastore key is stored. Required if \
-                     --datastore-keys is not set or if command is create-datastore-key."
-    )]
+    /// The Kubernetes namespace where secrets are stored
+    ///
+    /// Required if --datastore-keys is not set or if the command is `create-datastore-key`.
+    #[clap(long, env = "SECRETS_K8S_NAMESPACE", num_args = 1)]
     secrets_k8s_namespace: Option<String>,
 
-    /// Kubernetes secret containing the datastore key(s).
+    /// Kubernetes secret containing the datastore key(s)
     #[clap(
         long,
         env = "DATASTORE_KEYS_SECRET_NAME",
@@ -367,7 +369,6 @@ struct KubernetesSecretOptions {
         long,
         env = "DATASTORE_KEYS_SECRET_KEY",
         num_args = 1,
-        help = "Key into data of datastore key Kubernetes secret",
         default_value = "datastore_key"
     )]
     datastore_keys_secret_data_key: String,

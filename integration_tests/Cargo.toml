@@ -18,8 +18,8 @@ anyhow.workspace = true
 assert_matches.workspace = true
 backoff = { version = "0.4", features = ["tokio"] }
 base64.workspace = true
-divviup-client = { version = "0.1", features = ["admin"] }
-futures = "0.3.29"
+clap.workspace = true
+futures = "0.3.30"
 hex = "0.4"
 http = "0.2"
 itertools.workspace = true
@@ -35,14 +35,18 @@ kube = { workspace = true, optional = true }
 prio.workspace = true
 rand.workspace = true
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
-rstest.workspace = true
 serde.workspace = true
-serde_json = "1.0.108"
+serde_json = "1.0.111"
 testcontainers.workspace = true
 tokio.workspace = true
-url = { version = "2.5.0", features = ["serde"] }
 trillium-tokio.workspace = true
+url.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
+chrono.workspace = true
+divviup-client = { version = "0.1", features = ["admin"] }
 janus_collector = { workspace = true, features = ["test-util"] }
+rstest.workspace = true
 tempfile = "3"
+trillium-rustls.workspace = true

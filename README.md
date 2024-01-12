@@ -12,6 +12,19 @@ supported.
 
 Janus is currently in active development.
 
+<!--toc:start-->
+- [janus](#janus)
+  - [Draft versions and release branches](#draft-versions-and-release-branches)
+  - [Versioning and Stability](#versioning-and-stability)
+  - [Building](#building)
+    - [Container image](#container-image)
+  - [Minimum Supported Rust Version (MSRV)](#minimum-supported-rust-version-msrv)
+  - [Running tests](#running-tests)
+    - [inotify limits](#inotify-limits)
+  - [Deploying Janus](#deploying-janus)
+  - [Cargo features](#cargo-features)
+<!--toc:end-->
+
 ## Draft versions and release branches
 
 The `main` branch is under continuous development and will usually be partway
@@ -28,7 +41,8 @@ branch.
 | `release/0.4` | [`draft-ietf-ppm-dap-04`][dap-04] | Yes | Unmaintained as of May 24, 2023 |
 | `release/0.subscriber-01` | [`draft-ietf-ppm-dap-02`][dap-02] plus extensions | No | Unmaintained as of November 1, 2023 |
 | `release/0.5` | [`draft-ietf-ppm-dap-04`][dap-04] | Yes | Supported |
-| `main` | [`draft-ietf-ppm-dap-07`][dap-07] | Yes | Supported |
+| `release/0.6` | [`draft-ietf-ppm-dap-07`][dap-07] | Yes, [with errata](#draft-ietf-ppm-dap-07-errata) | Supported |
+| `main` | [`draft-ietf-ppm-dap-09`][dap-09] | [Partially](https://github.com/divviup/janus/issues/2389) | Supported |
 
 Note that no version of Janus supports `draft-ietf-ppm-dap-05` or `-06`. Draft
 05 was skipped because there were flaws in its usage of the new ping-pong
@@ -38,12 +52,47 @@ but was skipped because it was published from the wrong commit of
 `draft-ietf-ppm-dap-07` is effectively identical to draft 6, but with those bugs
 fixed.
 
+`draft-ietf-ppm-dap-08` was also skipped, since it contained only minor
+mechanical protocol changes and was not implemented or deployed by anyone else.
+
 [dap-01]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/01/
 [dap-02]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/02/
 [dap-03]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/03/
 [dap-04]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/04/
 [dap-07]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/07/
+[dap-09]: https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/09/
 [dap-gh]: https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap
+
+### `draft-ietf-ppm-dap-07` errata
+
+There is a bug in Janus' `release/0.6` branch wherein `PrepareResp` messages are
+incorrectly encoded, making Janus incompatible with other DAP Aggregator
+implementations.
+See [issue #2466](https://github.com/divviup/janus/issues/2466) for details.
+
+## Versioning and Stability
+
+Janus follows [semantic versioning](https://semver.org/). Because we are at major
+version 0, we increment the minor version number for breaking changes, and
+increment the patch version for new features and backwards-compatible bug fixes.
+
+What is considered a breaking change depends on the crate. The following crates
+are stable on their Rust API:
+- `janus_collector`
+- `janus_client`
+- `janus_messages`
+
+`janus_core` is published to crates.io, but has no stability guarantees. It
+should not be depended on directly. If you find yourself needing to depend
+on it directly while using any other Janus crates, open a bug report.
+
+The following crates are stable on their external configuration, CLI arguments,
+and HTTP API. Their Rust API may arbitrarily change and should not be depended 
+on. They are not published to crates.io.
+- `janus_aggregator`
+- `janus_tools`
+
+Any other crates not mentioned have no stability guarantees whatsoever.
 
 ## Building
 

@@ -19,17 +19,18 @@ edition = "2021"
 homepage = "https://divviup.org"
 license = "MPL-2.0"
 repository = "https://github.com/divviup/janus"
-rust-version = "1.71.0"
-version = "0.6.7"
+rust-version = "1.73.0"
+version = "0.6.9"
 
 [workspace.dependencies]
 anyhow = "1"
 assert_matches = "1"
-base64 = "0.21.5"
+base64 = "0.21.6"
 # Disable default features to disable compatibility with the old `time` crate, and we also don't
 # (yet) need other default features.
 # https://docs.rs/chrono/latest/chrono/#duration
 chrono = { version = "0.4", default-features = false }
+clap = { version = "4.4.14", features = ["cargo", "derive", "env"] }
 derivative = "2.2.0"
 itertools = "0.11"
 janus_aggregator = { version = "0.6", path = "aggregator" }
@@ -42,27 +43,30 @@ janus_integration_tests = { version = "0.6", path = "integration_tests" }
 janus_interop_binaries = { version = "0.6", path = "interop_binaries" }
 janus_messages = { version = "0.6", path = "messages" }
 k8s-openapi = { version = "0.20.0", features = ["v1_24"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
-kube = { version = "0.87.1", default-features = false, features = ["client", "rustls-tls"] }
+kube = { version = "0.87.2", default-features = false, features = ["client", "rustls-tls"] }
 opentelemetry = { version = "0.21", features = ["metrics"] }
 opentelemetry_sdk = { version = "0.21", features = ["metrics"] }
 prio = { version = "0.15.3", features = ["multithreaded", "experimental"] }
-serde = { version = "1.0.193", features = ["derive"] }
-serde_json = "1.0.108"
+serde = { version = "1.0.195", features = ["derive"] }
+serde_json = "1.0.111"
 serde_test = "1.0.175"
-serde_yaml = "0.9.27"
+serde_yaml = "0.9.30"
 rand = "0.8"
 rstest = "0.18.2"
 testcontainers = "0.15.0"
 thiserror = "1.0"
 tokio = { version = "1.35", features = ["full", "tracing"] }
-trillium = "0.2.11"
-trillium-api = { version = "0.2.0-rc.7", default-features = false }
-trillium-caching-headers = "0.2.1"
-trillium-head = "0.2.0"
+trillium = "0.2.13"
+trillium-api = { version = "0.2.0-rc.8", default-features = false }
+trillium-caching-headers = "0.2.2"
+trillium-head = "0.2.1"
 trillium-opentelemetry = "0.4.0"
-trillium-router = "0.3.5"
+trillium-router = "0.3.6"
+trillium-rustls = "0.4.2"
 trillium-testing = "0.5.0"
-trillium-tokio = "0.3.2"
+trillium-tokio = "0.3.4"
+url = { version = "2.5.0", features = ["serde"] }
+uuid = { version = "1.6.1", features = ["v4"] }
 
 [profile.ci]
 # Disabling debug info improves build speeds & reduces build artifact sizes, which helps CI caching.

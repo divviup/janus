@@ -123,8 +123,10 @@ impl ClientParameters {
         }
     }
 
-    /// URL from which the HPKE configuration for the server filling `role` may be fetched per
-    /// draft-gpew-priv-ppm §4.3.1
+    /// URL from which the HPKE configuration for the server filling `role` may be fetched, per
+    /// the [DAP specification][1].
+    ///
+    /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-hpke-configuration-request
     fn hpke_config_endpoint(&self, role: &Role) -> Result<Url, Error> {
         Ok(self.aggregator_endpoint(role)?.join("hpke_config")?)
     }
@@ -346,8 +348,8 @@ impl<V: vdaf::Client<16>> Client<V> {
         )
     }
 
-    /// Shard a measurement, encrypt its shares, and construct a [`janus_core::message::Report`]
-    /// to be uploaded.
+    /// Shard a measurement, encrypt its shares, and construct a [`janus_messages::Report`] to be
+    /// uploaded.
     fn prepare_report(&self, measurement: &V::Measurement, time: &Time) -> Result<Report, Error> {
         let report_id: ReportId = random();
         let (public_share, input_shares) = self.vdaf.shard(measurement, report_id.as_ref())?;
@@ -393,17 +395,21 @@ impl<V: vdaf::Client<16>> Client<V> {
         ))
     }
 
-    /// Upload a [`Report`] to the leader, per §4.3.2 of draft-gpew-priv-ppm. The provided
-    /// measurement is sharded into two shares and then uploaded to the leader.
+    /// Upload a [`Report`] to the leader, per the [DAP specification][1]. The provided measurement
+    /// is sharded into two shares and then uploaded to the leader.
+    ///
+    /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-uploading-reports
     #[tracing::instrument(skip(measurement), err)]
     pub async fn upload(&self, measurement: &V::Measurement) -> Result<(), Error> {
         self.upload_with_time(measurement, Clock::now(&RealClock::default()))
             .await
     }
 
-    /// Upload a [`Report`] to the leader, per §4.3.2 of draft-gpew-priv-ppm, and override the
-    /// report's timestamp. The provided measurement is sharded into two shares and then uploaded to
-    /// the leader.
+    /// Upload a [`Report`] to the leader, per the [DAP specification][1], and override the report's
+    /// timestamp. The provided measurement is sharded into two shares and then uploaded to the
+    /// leader.
+    ///
+    /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-uploading-reports
     ///
     /// ```no_run
     /// # use janus_client::{Client, Error};
@@ -574,7 +580,7 @@ mod tests {
         assert_matches!(
             client.upload(&1).await,
             Err(Error::Http(error_response)) => {
-                assert_eq!(*error_response.status().unwrap(), StatusCode::NOT_IMPLEMENTED);
+                assert_eq!(error_response.status(), StatusCode::NOT_IMPLEMENTED);
             }
         );
 
@@ -607,7 +613,7 @@ mod tests {
         assert_matches!(
             client.upload(&1).await,
             Err(Error::Http(error_response)) => {
-                assert_eq!(*error_response.status().unwrap(), StatusCode::BAD_REQUEST);
+                assert_eq!(error_response.status(), StatusCode::BAD_REQUEST);
                 assert_eq!(
                     error_response.type_uri().unwrap(),
                     "urn:ietf:params:ppm:dap:error:invalidMessage"

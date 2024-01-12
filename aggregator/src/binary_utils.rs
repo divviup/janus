@@ -4,6 +4,7 @@ pub mod job_driver;
 
 use crate::{
     config::{BinaryConfig, DbConfig},
+    git_revision,
     metrics::install_metrics_exporter,
     trace::{install_trace_subscriber, TraceReloadHandle},
 };
@@ -185,34 +186,25 @@ pub trait BinaryOptions: Parser + Debug {
 #[cfg_attr(doc, doc = "Common options that are used by all Janus binaries.")]
 #[derive(Default, Clone, Parser)]
 pub struct CommonBinaryOptions {
-    /// Path to configuration YAML.
-    #[clap(
-        long,
-        env = "CONFIG_FILE",
-        num_args = 1,
-        required(true),
-        help = "path to configuration file"
-    )]
+    /// Path to configuration YAML file
+    #[clap(long, env = "CONFIG_FILE", num_args = 1, required(true))]
     pub config_file: PathBuf,
 
-    /// Password for the PostgreSQL database connection. If specified, must not be specified in the
-    /// connection string.
-    #[clap(
-        long,
-        env = "PGPASSWORD",
-        hide_env_values = true,
-        help = "PostgreSQL password"
-    )]
+    /// Password for the PostgreSQL database connection
+    ///
+    /// If specified, it must not be specified in the connection string.
+    #[clap(long, env = "PGPASSWORD", hide_env_values = true)]
     pub database_password: Option<String>,
 
-    /// Datastore encryption keys.
+    /// Datastore encryption keys
+    ///
+    /// Keys are encoded in unpadded url-safe base64, then comma separated.
     #[clap(
         long,
         env = "DATASTORE_KEYS",
         hide_env_values = true,
         num_args = 1,
-        use_value_delimiter = true,
-        help = "datastore encryption keys, encoded in url-safe unpadded base64 then comma-separated"
+        use_value_delimiter = true
     )]
     pub datastore_keys: Vec<String>,
 }
@@ -260,7 +252,14 @@ where
     let stopper = Stopper::new();
     setup_signal_handler(stopper.clone()).context("failed to register SIGTERM signal handler")?;
 
-    info!(common_options = ?options.common_options(), ?config, "Starting up");
+    info!(
+        common_options = ?options.common_options(),
+        ?config,
+        version = env!("CARGO_PKG_VERSION"),
+        git_revision = git_revision(),
+        rust_version = env!("RUSTC_SEMVER"),
+        "Starting up"
+    );
 
     // Connect to database.
     let pool = database_pool(
@@ -344,9 +343,8 @@ async fn get_traceconfigz(
         })
 }
 
-/// Allows modifying the runtime tracing filter. Accepts a request with a body corresponding to
-/// [`TraceconfigzBody`]. If the `filter` field is empty, the filter will fallback to `error`.
-/// See [`EnvFilter::try_new`] for details.
+/// Allows modifying the runtime tracing filter. Accepts a request with a body containing a filter
+/// expression. See [`EnvFilter::try_new`] for details.
 async fn put_traceconfigz(
     conn: &mut trillium::Conn,
     (State(trace_reload_handle), request): (State<Arc<TraceReloadHandle>>, String),

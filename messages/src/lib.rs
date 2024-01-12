@@ -512,12 +512,13 @@ impl Role {
         matches!(self, Role::Leader | Role::Helper)
     }
 
-    /// If this [`Role`] is one of the aggregators, returns the index at which
-    /// that aggregator's message or data can be found in various lists, or
-    /// `None` if the role is not an aggregator.
+    /// Returns a VDAF aggregator ID if this [`Role`] is one of the aggregators, or `None` if the
+    /// role is not an aggregator. This is also used in [draft-wang-ppm-dap-taskprov-04][1] and earlier
+    /// to index into the `aggregator_endpoints` array.
+    ///
+    /// [1]: https://www.ietf.org/archive/id/draft-wang-ppm-dap-taskprov-04.html#section-3-4
     pub fn index(&self) -> Option<usize> {
         match self {
-            // draft-gpew-priv-ppm §4.2: the leader's endpoint MUST be the first
             Role::Leader => Some(0),
             Role::Helper => Some(1),
             _ => None,
@@ -2195,18 +2196,20 @@ impl PrepareInit {
 impl Encode for PrepareInit {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.report_share.encode(bytes);
-        self.message.encode(bytes);
+        let encoded_message = self.message.get_encoded();
+        encode_u32_items(bytes, &(), &encoded_message);
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        Some(self.report_share.encoded_len()? + self.message.encoded_len()?)
+        Some(self.report_share.encoded_len()? + 4 + self.message.encoded_len()?)
     }
 }
 
 impl Decode for PrepareInit {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let report_share = ReportShare::decode(bytes)?;
-        let message = PingPongMessage::decode(bytes)?;
+        let message_bytes = decode_u32_items(&(), bytes)?;
+        let message = PingPongMessage::get_decoded(&message_bytes)?;
 
         Ok(Self {
             report_share,
@@ -2279,7 +2282,8 @@ impl Encode for PrepareStepResult {
         match self {
             Self::Continue { message: prep_msg } => {
                 0u8.encode(bytes);
-                prep_msg.encode(bytes);
+                let encoded_prep_msg = prep_msg.get_encoded();
+                encode_u32_items(bytes, &(), &encoded_prep_msg);
             }
             Self::Finished => 1u8.encode(bytes),
             Self::Reject(error) => {
@@ -2291,7 +2295,7 @@ impl Encode for PrepareStepResult {
 
     fn encoded_len(&self) -> Option<usize> {
         match self {
-            Self::Continue { message: prep_msg } => Some(1 + prep_msg.encoded_len()?),
+            Self::Continue { message: prep_msg } => Some(1 + 4 + prep_msg.encoded_len()?),
             Self::Finished => Some(1),
             Self::Reject(error) => Some(1 + error.encoded_len()?),
         }
@@ -2303,7 +2307,8 @@ impl Decode for PrepareStepResult {
         let val = u8::decode(bytes)?;
         Ok(match val {
             0 => {
-                let prep_msg = PingPongMessage::decode(bytes)?;
+                let prep_msg_bytes = decode_u32_items(&(), bytes)?;
+                let prep_msg = PingPongMessage::get_decoded(&prep_msg_bytes)?;
                 Self::Continue { message: prep_msg }
             }
             1 => Self::Finished,
@@ -2375,18 +2380,20 @@ impl PrepareContinue {
 impl Encode for PrepareContinue {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.report_id.encode(bytes);
-        self.message.encode(bytes);
+        let encoded_message = self.message.get_encoded();
+        encode_u32_items(bytes, &(), &encoded_message);
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        Some(self.report_id.encoded_len()? + self.message.encoded_len()?)
+        Some(self.report_id.encoded_len()? + 4 + self.message.encoded_len()?)
     }
 }
 
 impl Decode for PrepareContinue {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let report_id = ReportId::decode(bytes)?;
-        let message = PingPongMessage::decode(bytes)?;
+        let message_bytes = decode_u32_items(&(), bytes)?;
+        let message = PingPongMessage::get_decoded(&message_bytes)?;
 
         Ok(Self { report_id, message })
     }
@@ -2899,7 +2906,8 @@ where
         let encoding = hex::decode(hex_encoding).unwrap();
         assert_eq!(
             encoded_val, encoding,
-            "Couldn't roundtrip (encoded value differs): {val:?}"
+            "Couldn't roundtrip (encoded value differs): {val:?}
+encoded:\t\t{encoded_val:02x?}\nexpected encoding:\t{encoding:02x?}"
         );
         let decoded_val = T::decode(&mut Cursor::new(&encoded_val)).unwrap();
         assert_eq!(
@@ -4163,9 +4171,10 @@ mod tests {
                     ),
                     concat!(
                         // message
-                        "00", // Message type
+                        "0000000b", // ping pong message length
+                        "00",       // ping pong message type
                         concat!(
-                            "00000006",     // length
+                            "00000006",     // prep_share length
                             "303132333435", // opaque data
                         )
                     )
@@ -4219,9 +4228,10 @@ mod tests {
                     ),
                     concat!(
                         // message
-                        "02", // Message type
+                        "00000005", // ping pong message length
+                        "02",       // ping pong message type
                         concat!(
-                            "00000000", // length
+                            "00000000", // prep_msg length
                             ""          // opaque data
                         )
                     )
@@ -4250,13 +4260,14 @@ mod tests {
                     "00",                               // prepare_step_result
                     concat!(
                         // message
-                        "01", // message type
+                        "00000013", // ping pong message length
+                        "01",       // ping pong message type
                         concat!(
-                            "00000006",     // length
+                            "00000006",     // prep_msg length
                             "303132333435", // opaque data
                         ),
                         concat!(
-                            "00000004", // length
+                            "00000004", // prep_share length
                             "36373839", // opaque data
                         )
                     ),
@@ -4360,7 +4371,7 @@ mod tests {
                 ),
                 concat!(
                     // prepare_inits
-                    "0000006E", // length
+                    "00000076", // length
                     concat!(
                         concat!(
                             // report_share
@@ -4391,9 +4402,10 @@ mod tests {
                         ),
                         concat!(
                             // message
-                            "00", // Message type
+                            "0000000b", // ping pong message length
+                            "00",       // ping pong message type
                             concat!(
-                                "00000006",     // length
+                                "00000006",     // prep_share length
                                 "303132333435", // opaque data
                             ),
                         )
@@ -4427,9 +4439,10 @@ mod tests {
                         ),
                         concat!(
                             // message
-                            "02", // Message type
+                            "00000005", // ping pong message length
+                            "02",       // ping pong message type
                             concat!(
-                                "00000000", // length
+                                "00000000", // prep_msg length
                                 ""          // opaque data
                             )
                         )
@@ -4499,7 +4512,7 @@ mod tests {
                 ),
                 concat!(
                     // prepare_inits
-                    "0000006E", // length
+                    "00000076", // length
                     concat!(
                         concat!(
                             // report_share
@@ -4530,9 +4543,10 @@ mod tests {
                         ),
                         concat!(
                             // payload
-                            "00", // Message type
+                            "0000000b", // ping pong message length
+                            "00",       // ping pong message type
                             concat!(
-                                "00000006",     // length
+                                "00000006",     // prep_share length
                                 "303132333435", // opaque data
                             )
                         ),
@@ -4566,7 +4580,8 @@ mod tests {
                         ),
                         concat!(
                             // payload
-                            "02", // Message type
+                            "00000005", // ping pong message length
+                            "02",       // ping pong message type
                             concat!(
                                 "00000000", // length
                                 "",         // opaque data
@@ -4606,14 +4621,15 @@ mod tests {
                 "A5A5", // step
                 concat!(
                     // prepare_steps
-                    "00000036", // length
+                    "0000003e", // length
                     concat!(
                         "0102030405060708090A0B0C0D0E0F10", // report_id
                         concat!(
                             // payload
-                            "00", // Message type
+                            "0000000b", // ping pong message length
+                            "00",       // ping pong message type
                             concat!(
-                                "00000006",     // length
+                                "00000006",     // prep_share length
                                 "303132333435", // opaque data
                             )
                         ),
@@ -4622,9 +4638,10 @@ mod tests {
                         "100F0E0D0C0B0A090807060504030201", // report_id
                         concat!(
                             // payload
-                            "00", // Message type
+                            "0000000b", // ping pong message length
+                            "00",       // ping pong message type
                             concat!(
-                                "00000006",     // length
+                                "00000006",     // prep_share length
                                 "303132333435", // opaque data
                             )
                         ),
@@ -4660,20 +4677,21 @@ mod tests {
             },
             concat!(concat!(
                 // prepare_steps
-                "00000035", // length
+                "00000039", // length
                 concat!(
                     "0102030405060708090A0B0C0D0E0F10", // report_id
                     "00",                               // prepare_step_result
                     concat!(
-                        "01", // Message type
+                        "00000013", // ping pong message length
+                        "01",       // ping pong message type
                         concat!(
                             // prep_msg
-                            "00000005",   // length
+                            "00000005",   // prep_msg length
                             "3031323334", // opaque data
                         ),
                         concat!(
                             // prep_share
-                            "00000005",   // length
+                            "00000005",   // prep_share length
                             "3536373839", // opaque data
                         )
                     ),

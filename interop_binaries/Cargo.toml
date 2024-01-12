@@ -9,7 +9,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-fpvec_bounded_l2 = ["dep:fixed", "dep:fixed-macro", "janus_core/fpvec_bounded_l2", "janus_aggregator/fpvec_bounded_l2", "prio/experimental"]
+fpvec_bounded_l2 = ["dep:fixed", "janus_core/fpvec_bounded_l2", "janus_aggregator/fpvec_bounded_l2", "prio/experimental"]
 test-util = [
     "dep:hex",
     "dep:futures",
@@ -22,11 +22,10 @@ testcontainer = ["test-util"]
 anyhow.workspace = true
 backoff = { version = "0.4", features = ["tokio"] }
 base64.workspace = true
-clap = "4.4.11"
+clap.workspace = true
 derivative.workspace = true
-futures = { version = "0.3.29", optional = true }
+futures = { version = "0.3.30", optional = true }
 fixed = { version = "1.24", optional = true }
-fixed-macro = { version = "1.1.1", optional = true }
 hex = { version = "0.4", optional = true }
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
 janus_aggregator.workspace = true
@@ -38,10 +37,10 @@ opentelemetry.workspace = true
 prio.workspace = true
 rand.workspace = true
 regex = { version = "1", optional = true }
-reqwest = { version = "0.11.22", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.11.23", default-features = false, features = ["rustls-tls"] }
 ring = "0.17.7"
 serde.workspace = true
-serde_json = "1.0.108"
+serde_json = "1.0.111"
 sqlx = { version = "0.7.3", features = ["runtime-tokio-rustls", "migrate", "postgres"] }
 testcontainers.workspace = true
 tokio.workspace = true
@@ -52,10 +51,11 @@ trillium.workspace = true
 trillium-api.workspace = true
 trillium-router.workspace = true
 trillium-tokio.workspace = true
-url = { version = "2.5.0", features = ["serde"] }
+url.workspace = true
 zstd = { version = "0.13", optional = true }
 
 [dev-dependencies]
+fixed-macro = "1.1.1"
 janus_interop_binaries = { path = ".", features = ["fpvec_bounded_l2", "test-util"] }
 janus_core = { workspace = true, features = ["test-util", "fpvec_bounded_l2"] }
-reqwest = { version = "0.11.22", default-features = false, features = ["json"] }
+reqwest = { version = "0.11.23", default-features = false, features = ["json"] }

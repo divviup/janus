@@ -1,0 +1,92 @@
+name: unused-dependencies
+
+on:
+  schedule:
+    - cron: "21 4 * * mon"
+  workflow_dispatch:
+
+jobs:
+  cargo-udeps:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: "read"
+      issues: "write"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-udeps
+        uses: taiki-e/install-action@cargo-udeps
+      - name: Run cargo-udeps, all features
+        shell: bash   # Set this explicitly for -o pipefail behavior
+        run: cargo +nightly udeps --all-features | tee log_all_features.txt
+      - name: Run cargo-udeps, default features
+        if: success() || failure()
+        shell: bash   # Set this explicitly for -o pipefail behavior
+        run: cargo +nightly udeps | tee log_default_features.txt
+      - name: Create issue
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            const tryReadFile = (file) => {
+              try {
+                return fs.readFileSync(file, 'utf8').toString();
+              } catch (err) {
+                console.log(`${file}: ${err}`);
+              }
+              return '';
+            };
+
+            const logAllFeatures = tryReadFile('log_all_features.txt');
+            const logDefaultFeatures = tryReadFile('log_default_features.txt');
+
+            let output;
+            if (logAllFeatures.length == 0 && logDefaultFeatures == 0) {
+              output = `### Unused dependencies
+
+              An error was encountered when checking for unused dependencies.
+
+              `;
+            } else {
+              output = `### Unused dependencies
+
+              Unused dependencies were detected in the Cargo workspace.
+
+              #### --all-features
+
+              <details><summary>Show output</summary>
+
+              \`\`\`
+              ${logAllFeatures}
+              \`\`\`
+
+              </details>
+
+              #### Default features
+
+              <details><summary>Show output</summary>
+
+              \`\`\`
+              ${logDefaultFeatures}
+              \`\`\`
+
+              </details>
+
+              `;
+            }
+            output += `#### Details
+            - Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            - Git SHA: ${{ github.sha }}
+            `;
+
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Unused dependencies',
+              body: output,
+            });
