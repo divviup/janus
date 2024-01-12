@@ -4,6 +4,7 @@ pub mod job_driver;
 
 use crate::{
     config::{BinaryConfig, DbConfig},
+    git_revision,
     metrics::install_metrics_exporter,
     trace::{install_trace_subscriber, TraceReloadHandle},
 };
@@ -251,7 +252,14 @@ where
     let stopper = Stopper::new();
     setup_signal_handler(stopper.clone()).context("failed to register SIGTERM signal handler")?;
 
-    info!(common_options = ?options.common_options(), ?config, "Starting up");
+    info!(
+        common_options = ?options.common_options(),
+        ?config,
+        version = env!("CARGO_PKG_VERSION"),
+        git_revision = git_revision(),
+        rust_version = env!("RUSTC_SEMVER"),
+        "Starting up"
+    );
 
     // Connect to database.
     let pool = database_pool(
