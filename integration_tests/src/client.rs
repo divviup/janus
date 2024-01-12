@@ -280,7 +280,7 @@ where
                 client.upload(measurement).await.map_err(Into::into)
             }
             ClientImplementation::Container(inner) => {
-                let task_id_encoded = URL_SAFE_NO_PAD.encode(inner.task_id.get_encoded());
+                let task_id_encoded = URL_SAFE_NO_PAD.encode(inner.task_id.get_encoded().unwrap());
                 let upload_response = inner
                     .http_client
                     .post(format!(
