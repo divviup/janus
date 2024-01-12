@@ -3129,7 +3129,8 @@ dependencies = [
 [[package]]
 name = "prio"
 version = "0.16.0"
-source = "git+https://github.com/divviup/libprio-rs?rev=66749e93cba94b33d6f90471189e12a54b603f63#66749e93cba94b33d6f90471189e12a54b603f63"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a16151e3c98087659ef5dc706040a415afa88294989e895c8987d9d0cdea83c"
 dependencies = [
  "aes",
  "bitvec",
@@ -3138,6 +3139,7 @@ dependencies = [
  "fiat-crypto",
  "fixed",
  "getrandom",
+ "hmac",
  "num-bigint",
  "num-integer",
  "num-iter",
@@ -3147,6 +3149,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "serde",
+ "sha2",
  "sha3",
  "subtle",
  "thiserror",
@@ -3936,9 +3939,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.10.7"
+version = "0.10.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "479fb9d862239e610720565ca91403019f2f00410f1864c5aa7479b950a76ed8"
+checksum = "793db75ad2bcafc3ffa7c68b215fee268f537982cd901d132f89c6343f3a3dc8"
 dependencies = [
  "cfg-if",
  "cpufeatures",
