@@ -957,7 +957,7 @@ checksum = "6f85ac7fb9a8e40b41680a6db2ba891f528b2f627eb4109e6561c543f72088be"
 dependencies = [
  "base64",
  "email_address",
- "janus_messages 0.6.8",
+ "janus_messages 0.6.9",
  "log",
  "pad-adapter",
  "serde",
@@ -2171,12 +2171,11 @@ dependencies = [
  "zstd",
 ]
 
-
 [[package]]
 name = "janus_messages"
 version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2cba01ea862d2da98602c73aa0f37f9eb834965cde2ca1320b2fe47f2658182"
+checksum = "1b4f80a209fb184b8d2854942914aaebe60c40d2f9a8849909059dacbab72b67"
 dependencies = [
  "anyhow",
  "base64",

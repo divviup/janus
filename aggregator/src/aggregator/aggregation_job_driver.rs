@@ -1947,14 +1947,14 @@ mod tests {
             verify_key.as_bytes(),
             &(),
             gc_eligible_report_metadata.id(),
-            &0,
+            &false,
         );
         let gc_uneligible_transcript = run_vdaf(
             vdaf.as_ref(),
             verify_key.as_bytes(),
             &(),
             gc_uneligible_report_metadata.id(),
-            &0,
+            &false,
         );
 
         let agg_auth_token = task.aggregator_auth_token();
@@ -2080,12 +2080,12 @@ mod tests {
 
         // Setup: prepare mocked HTTP response.
         let leader_request = AggregationJobInitializeReq::new(
-            ().get_encoded(),
+            ().get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([PrepareInit::new(
                 ReportShare::new(
                     gc_uneligible_report.metadata().clone(),
-                    gc_uneligible_report.public_share().get_encoded(),
+                    gc_uneligible_report.public_share().get_encoded().unwrap(),
                     gc_uneligible_report.helper_encrypted_input_share().clone(),
                 ),
                 gc_uneligible_transcript.leader_prepare_transitions[0]
@@ -2114,10 +2114,10 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .match_body(leader_request.get_encoded())
+            .match_body(leader_request.get_encoded().unwrap())
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-            .with_body(helper_response.get_encoded())
+            .with_body(helper_response.get_encoded().unwrap())
             .create_async()
             .await;
 
