@@ -580,7 +580,7 @@ mod tests {
         assert_matches!(
             client.upload(&1).await,
             Err(Error::Http(error_response)) => {
-                assert_eq!(*error_response.status().unwrap(), StatusCode::NOT_IMPLEMENTED);
+                assert_eq!(error_response.status(), StatusCode::NOT_IMPLEMENTED);
             }
         );
 
@@ -613,7 +613,7 @@ mod tests {
         assert_matches!(
             client.upload(&1).await,
             Err(Error::Http(error_response)) => {
-                assert_eq!(*error_response.status().unwrap(), StatusCode::BAD_REQUEST);
+                assert_eq!(error_response.status(), StatusCode::BAD_REQUEST);
                 assert_eq!(
                     error_response.type_uri().unwrap(),
                     "urn:ietf:params:ppm:dap:error:invalidMessage"
