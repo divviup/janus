@@ -3806,61 +3806,35 @@ impl<C: Clock> Transaction<'_, C> {
         ))
     }
 
-    /// Deletes an outstanding batch.
-    #[tracing::instrument(skip(self), err)]
-    pub async fn delete_outstanding_batch(
-        &self,
-        task_id: &TaskId,
-        batch_id: &BatchId,
-    ) -> Result<(), Error> {
-        let stmt = self
-            .prepare_cached(
-                "DELETE FROM outstanding_batches
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                  AND batch_id = $2",
-            )
-            .await?;
-
-        self.execute(
-            &stmt,
-            &[
-                /* task_id */ task_id.as_ref(),
-                /* batch_id */ batch_id.as_ref(),
-            ],
-        )
-        .await?;
-        Ok(())
-    }
-
     /// Retrieves an outstanding batch for the given task with at least the given number of
-    /// successfully-aggregated reports.
+    /// successfully-aggregated reports, removing it from the datastore.
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_filled_outstanding_batch(
+    pub async fn acquire_filled_outstanding_batch(
         &self,
         task_id: &TaskId,
         min_report_count: u64,
     ) -> Result<Option<BatchId>, Error> {
-        let stmt = self
-            .prepare_cached(
-                "WITH batches AS (
-                    SELECT
-                        outstanding_batches.batch_id AS batch_id,
-                        SUM(batch_aggregations.report_count) AS count
-                    FROM outstanding_batches
-                    JOIN tasks ON tasks.id = outstanding_batches.task_id
-                    JOIN batch_aggregations
-                      ON batch_aggregations.task_id = outstanding_batches.task_id
-                     AND batch_aggregations.batch_identifier = outstanding_batches.batch_id
-                    JOIN batches
-                      ON batches.task_id = outstanding_batches.task_id
-                     AND batches.batch_identifier = outstanding_batches.batch_id
-                    WHERE tasks.task_id = $1
-                      AND UPPER(batches.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
-                    GROUP BY outstanding_batches.batch_id
-                )
-                SELECT batch_id FROM batches WHERE count >= $2::BIGINT LIMIT 1",
+        let stmt = self.prepare_cached(
+            "WITH selected_outstanding_batch AS (
+                SELECT outstanding_batches.id
+                FROM outstanding_batches
+                JOIN tasks ON tasks.id = outstanding_batches.task_id
+                JOIN batch_aggregations
+                  ON batch_aggregations.task_id = outstanding_batches.task_id
+                 AND batch_aggregations.batch_identifier = outstanding_batches.batch_id
+                JOIN batches
+                  ON batches.task_id = outstanding_batches.task_id
+                 AND batches.batch_identifier = outstanding_batches.batch_id
+                WHERE tasks.task_id = $1
+                AND UPPER(batches.client_timestamp_interval) >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                GROUP BY outstanding_batches.id
+                HAVING SUM(batch_aggregations.report_count) >= $2::BIGINT
+                LIMIT 1
             )
-            .await?;
+            DELETE FROM outstanding_batches WHERE id IN (SELECT id FROM selected_outstanding_batch) RETURNING batch_id"
+        )
+        .await?;
+
         self.query_opt(
             &stmt,
             &[

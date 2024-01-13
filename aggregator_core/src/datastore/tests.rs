@@ -5305,19 +5305,30 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
                 let outstanding_batches_task_1 =
-                    tx.get_outstanding_batches(&task_id_1, &None).await?;
-                let outstanding_batch_1 = tx.get_filled_outstanding_batch(&task_id_1, 1).await?;
-                let outstanding_batch_2 = tx.get_filled_outstanding_batch(&task_id_1, 2).await?;
-                let outstanding_batch_3 = tx.get_filled_outstanding_batch(&task_id_1, 3).await?;
+                    tx.get_outstanding_batches(&task_id_1, &None).await.unwrap();
+                let outstanding_batch_1 = tx
+                    .acquire_filled_outstanding_batch(&task_id_1, 3)
+                    .await
+                    .unwrap();
+                let outstanding_batch_2 = tx
+                    .acquire_filled_outstanding_batch(&task_id_1, 2)
+                    .await
+                    .unwrap();
+                let outstanding_batch_3 = tx
+                    .acquire_filled_outstanding_batch(&task_id_1, 1)
+                    .await
+                    .unwrap();
                 let outstanding_batches_task_2 = tx
                     .get_outstanding_batches(&task_id_2, &Some(time_bucket_start))
-                    .await?;
+                    .await
+                    .unwrap();
                 let outstanding_batches_empty_time_bucket = tx
                     .get_outstanding_batches(
                         &task_id_2,
                         &Some(time_bucket_start.add(&Duration::from_hours(24)?)?),
                     )
-                    .await?;
+                    .await
+                    .unwrap();
                 Ok((
                     outstanding_batches_task_1,
                     outstanding_batch_1,
@@ -5338,9 +5349,9 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
             RangeInclusive::new(2, 4)
         )])
     );
-    assert_eq!(outstanding_batch_1, Some(batch_id_1));
+    assert_eq!(outstanding_batch_1, None); // min_report_count too large
     assert_eq!(outstanding_batch_2, Some(batch_id_1));
-    assert_eq!(outstanding_batch_3, None);
+    assert_eq!(outstanding_batch_3, None); // already retrieved
     assert_eq!(
         outstanding_batches_task_2,
         Vec::from([OutstandingBatch::new(
@@ -5355,24 +5366,6 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
     clock.advance(&REPORT_EXPIRY_AGE);
 
     // Verify that the batch is no longer available.
-    let outstanding_batches = ds
-        .run_unnamed_tx(|tx| {
-            Box::pin(async move { tx.get_outstanding_batches(&task_id_1, &None).await })
-        })
-        .await
-        .unwrap();
-    assert!(outstanding_batches.is_empty());
-
-    // Reset the clock to "un-expire" the written batches. (...don't try this in prod.)
-    clock.set(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-
-    // Delete the outstanding batch, then check that it is no longer available.
-    ds.run_unnamed_tx(|tx| {
-        Box::pin(async move { tx.delete_outstanding_batch(&task_id_1, &batch_id_1).await })
-    })
-    .await
-    .unwrap();
-
     let outstanding_batches = ds
         .run_unnamed_tx(|tx| {
             Box::pin(async move { tx.get_outstanding_batches(&task_id_1, &None).await })

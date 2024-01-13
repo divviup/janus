@@ -2655,15 +2655,13 @@ impl VdafOps {
                             )
                         })?;
 
-                    let (batches, _) = try_join!(
-                        Q::get_batches_for_collection_identifier(
-                            tx,
-                            &task,
-                            collection_job.batch_identifier(),
-                            collection_job.aggregation_parameter()
-                        ),
-                        Q::acknowledge_collection(tx, task.id(), collection_job.batch_identifier()),
-                    )?;
+                    let batches = Q::get_batches_for_collection_identifier(
+                        tx,
+                        &task,
+                        collection_job.batch_identifier(),
+                        collection_job.aggregation_parameter(),
+                    )
+                    .await?;
 
                     // Merge the intervals spanned by the constituent batch aggregations into the
                     // interval spanned by the collection.
@@ -2823,8 +2821,6 @@ impl VdafOps {
                                 Error::UnrecognizedCollectionJob(collection_job_id).into(),
                             )
                         })?;
-                    Q::acknowledge_collection(tx, task.id(), collection_job.batch_identifier())
-                        .await?;
                     if collection_job.state() != &CollectionJobState::Deleted {
                         tx.update_collection_job::<SEED_SIZE, Q, A>(
                             &collection_job.with_state(CollectionJobState::Deleted),

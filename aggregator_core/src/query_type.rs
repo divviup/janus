@@ -304,16 +304,6 @@ pub trait CollectableQueryType: AccumulableQueryType {
         .flatten()
         .collect::<Vec<_>>())
     }
-
-    /// Acknowledges that a collection attempt has been made, allowing any query-type specific
-    /// updates to be made. For exmaple, a task using fixed-size queries might remove the given
-    /// batch to be removed from the list of batches ready to be returned by a `current-batch`
-    /// query.
-    async fn acknowledge_collection<C: Clock>(
-        tx: &Transaction<'_, C>,
-        task_id: &TaskId,
-        batch_identifier: &Self::BatchIdentifier,
-    ) -> Result<(), datastore::Error>;
 }
 
 #[async_trait]
@@ -356,14 +346,6 @@ impl CollectableQueryType for TimeInterval {
     ) -> Result<u64, datastore::Error> {
         tx.count_client_reports_for_interval(task.id(), batch_interval)
             .await
-    }
-
-    async fn acknowledge_collection<C: Clock>(
-        _: &Transaction<'_, C>,
-        _: &TaskId,
-        _: &Self::BatchIdentifier,
-    ) -> Result<(), datastore::Error> {
-        Ok(()) // Purposeful no-op.
     }
 }
 
@@ -434,7 +416,7 @@ impl CollectableQueryType for FixedSize {
         match query.fixed_size_query() {
             FixedSizeQuery::ByBatchId { batch_id } => Ok(Some(*batch_id)),
             FixedSizeQuery::CurrentBatch => {
-                tx.get_filled_outstanding_batch(task.id(), task.min_batch_size())
+                tx.acquire_filled_outstanding_batch(task.id(), task.min_batch_size())
                     .await
             }
         }
@@ -458,14 +440,6 @@ impl CollectableQueryType for FixedSize {
     ) -> Result<u64, datastore::Error> {
         tx.count_client_reports_for_batch_id(task.id(), batch_id)
             .await
-    }
-
-    async fn acknowledge_collection<C: Clock>(
-        tx: &Transaction<'_, C>,
-        task_id: &TaskId,
-        batch_identifier: &Self::BatchIdentifier,
-    ) -> Result<(), datastore::Error> {
-        tx.delete_outstanding_batch(task_id, batch_identifier).await
     }
 }
 
