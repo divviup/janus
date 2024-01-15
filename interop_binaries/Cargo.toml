@@ -25,7 +25,7 @@ testcontainer = [
 [dependencies]
 anyhow.workspace = true
 backoff = { version = "0.4", features = ["tokio"] }
-base64 = "0.21.6"
+base64 = "0.21.7"
 clap = "4.4.14"
 derivative.workspace = true
 futures = { version = "0.3.30", optional = true }
