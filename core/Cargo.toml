@@ -42,7 +42,7 @@ futures = "0.3.30"
 hex = "0.4"
 hpke-dispatch = { version = "0.5.1", features = ["serde"] }
 http = "0.2.11"
-http-api-problem = "0.57.0"
+http-api-problem = "0.58.0"
 janus_messages.workspace = true
 kube = { workspace = true, optional = true, features = ["rustls-tls"] }
 k8s-openapi = { workspace = true, optional = true }
