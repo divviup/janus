@@ -1470,7 +1470,7 @@ impl VdafOps {
             report.public_share().to_vec(),
         )
         .get_encoded()
-        .map_err(|e| Arc::new(e.into()))?;
+        .map_err(|e| Arc::new(Error::ResponseEncode(e)))?;
         let try_hpke_open = |hpke_keypair: &HpkeKeypair| {
             hpke::open(
                 hpke_keypair,
@@ -1706,7 +1706,8 @@ impl VdafOps {
                 prepare_init.report_share().metadata().clone(),
                 prepare_init.report_share().public_share().to_vec(),
             )
-            .get_encoded()?;
+            .get_encoded()
+            .map_err(Error::ResponseEncode)?;
             let try_hpke_open = |hpke_keypair: &HpkeKeypair| {
                 hpke::open(
                     hpke_keypair,
@@ -2735,7 +2736,9 @@ impl VdafOps {
                         &Role::Leader,
                         &Role::Collector,
                     ),
-                    &leader_aggregate_share.get_encoded()?,
+                    &leader_aggregate_share
+                        .get_encoded()
+                        .map_err(Error::ResponseEncode)?,
                     &AggregateShareAad::new(
                         *collection_job.task_id(),
                         collection_job.aggregation_parameter().get_encoded()?,
@@ -2754,7 +2757,8 @@ impl VdafOps {
                         encrypted_leader_aggregate_share,
                         encrypted_helper_aggregate_share.clone(),
                     )
-                    .get_encoded()?,
+                    .get_encoded()
+                    .map_err(Error::ResponseEncode)?,
                 ))
             }
             CollectionJobState::Abandoned => Err(Error::AbandonedCollectionJob(*collection_job_id)),
@@ -3079,13 +3083,20 @@ impl VdafOps {
         let encrypted_aggregate_share = hpke::seal(
             collector_hpke_config,
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
-            &aggregate_share_job.helper_aggregate_share().get_encoded()?,
+            &aggregate_share_job
+                .helper_aggregate_share()
+                .get_encoded()
+                .map_err(Error::ResponseEncode)?,
             &AggregateShareAad::new(
                 *task.id(),
-                aggregate_share_job.aggregation_parameter().get_encoded()?,
+                aggregate_share_job
+                    .aggregation_parameter()
+                    .get_encoded()
+                    .map_err(Error::ResponseEncode)?,
                 aggregate_share_req.batch_selector().clone(),
             )
-            .get_encoded()?,
+            .get_encoded()
+            .map_err(Error::ResponseEncode)?,
         )?;
 
         Ok(AggregateShare::new(encrypted_aggregate_share))
@@ -3155,7 +3166,7 @@ async fn send_request_to_helper<T: Encode>(
     http_request_duration_histogram: &Histogram<f64>,
 ) -> Result<Bytes, Error> {
     let domain = url.domain().unwrap_or_default().to_string();
-    let request_body = request.get_encoded()?;
+    let request_body = request.get_encoded().map_err(Error::ResponseEncode)?;
     let (auth_header, auth_value) = auth_token.request_authentication();
     let method_string = method.as_str().to_string();
 
