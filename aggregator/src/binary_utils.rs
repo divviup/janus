@@ -76,7 +76,6 @@ pub async fn database_pool(db_config: &DbConfig, db_password: Option<&str>) -> R
     let conn_mgr = if let Some(ref path) = db_config.tls_trust_store_path {
         let root_store = load_pem_trust_store(path).context("failed to load TLS trust store")?;
         let rustls_config = rustls::ClientConfig::builder()
-            .with_safe_defaults()
             .with_root_certificates(root_store)
             .with_no_client_auth();
         Manager::new(database_config, MakeRustlsConnect::new(rustls_config))
@@ -172,7 +171,7 @@ fn load_pem_trust_store(path: impl AsRef<Path>) -> Result<RootCertStore, io::Err
     let mut buf_read = BufReader::new(File::open(path)?);
     let der_certs = rustls_pemfile::certs(&mut buf_read).collect::<Result<Vec<_>, _>>()?;
     let mut root_cert_store = RootCertStore::empty();
-    let (added, ignored) = root_cert_store.add_parsable_certificates(&der_certs);
+    let (added, ignored) = root_cert_store.add_parsable_certificates(der_certs);
     info!("loaded {added} root certificates for database connections, ignored {ignored}");
     Ok(root_cert_store)
 }
