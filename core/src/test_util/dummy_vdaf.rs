@@ -88,6 +88,10 @@ impl vdaf::Vdaf for Vdaf {
     type AggregateShare = AggregateShare;
 
     fn algorithm_id(&self) -> u32 {
+        // VDAF reserves the algorithm ID range 0xFFFF0000-0xFFFFFFFF for
+        // private use, such as this kind of test VDAF.
+        //
+        // https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-vdaf-08#section-10
         0xFFFF0000
     }
 
