@@ -46,6 +46,7 @@ impl Handler for Error {
             Error::InvalidConfiguration(_) => conn.with_status(Status::InternalServerError),
             Error::MessageDecode(_) => conn
                 .with_problem_document(&ProblemDocument::new_dap(DapProblemType::InvalidMessage)),
+            Error::ResponseEncode(_) => conn.with_status(Status::InternalServerError),
             Error::ReportRejected(task_id, _, _, reason) => conn.with_problem_document(
                 &ProblemDocument::new_dap(DapProblemType::ReportRejected)
                     .with_task_id(task_id)
@@ -170,7 +171,7 @@ where
             Ok(encoded) => conn
                 .with_header(KnownHeaderName::ContentType, self.media_type)
                 .ok(encoded),
-            Err(e) => Error::from(e).run(conn).await,
+            Err(e) => Error::ResponseEncode(e).run(conn).await,
         }
     }
 }

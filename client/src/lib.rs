@@ -359,7 +359,7 @@ impl<V: vdaf::Client<16>> Client<V> {
             .to_batch_interval_start(&self.parameters.time_precision)
             .map_err(|_| Error::InvalidParameter("couldn't round time down to time_precision"))?;
         let report_metadata = ReportMetadata::new(report_id, time);
-        let encoded_public_share = public_share.get_encoded().unwrap();
+        let encoded_public_share = public_share.get_encoded()?;
 
         let (leader_encrypted_input_share, helper_encrypted_input_share) = [
             (&self.leader_hpke_config, &Role::Leader),
@@ -445,7 +445,9 @@ impl<V: vdaf::Client<16>> Client<V> {
         T: TryInto<Time> + Debug,
         Error: From<<T as TryInto<Time>>::Error>,
     {
-        let report = self.prepare_report(measurement, &time.try_into()?)?;
+        let report = self
+            .prepare_report(measurement, &time.try_into()?)?
+            .get_encoded()?;
         let upload_endpoint = self
             .parameters
             .reports_resource_uri(&self.parameters.task_id)?;
@@ -455,7 +457,7 @@ impl<V: vdaf::Client<16>> Client<V> {
                 self.http_client
                     .put(upload_endpoint.clone())
                     .header(CONTENT_TYPE, Report::MEDIA_TYPE)
-                    .body(report.get_encoded().unwrap())
+                    .body(report.clone())
                     .send()
                     .await
             },
