@@ -32,6 +32,7 @@
 //!   store the report to the database. Note that, as currently implemented, this will wait for the
 //!   report batching timeout to expire, so the client's upload method won't return until the
 //!   leader's database transaction is complete.
+//! - GarbageCollector: Run the garbage collector once.
 //! - AggregationJobCreator: Run the aggregation job creator once. It may be necessary to re-run the
 //!   aggregation job creator multiple times per operation, or change the databas queries used,
 //!   because a `SKIP LOCKED` flag in an underlying database query may otherwise introduce
@@ -140,6 +141,7 @@ enum Op {
     Upload {
         report_time: Time,
     },
+    GarbageCollector,
     AggregationJobCreator,
     AggregationJobDriver,
     AggregationJobDriverRequestError,
@@ -280,6 +282,7 @@ fn run_simulation(input: Input) -> TestResult {
         match op {
             Op::AdvanceTime { amount } => state.clock.advance(amount),
             Op::Upload { report_time } => todo!(),
+            Op::GarbageCollector => todo!(),
             Op::AggregationJobCreator => todo!(),
             Op::AggregationJobDriver => todo!(),
             Op::AggregationJobDriverRequestError => todo!(),
