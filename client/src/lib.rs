@@ -373,18 +373,17 @@ impl<V: vdaf::Client<16>> Client<V> {
                 &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, receiver_role),
                 &PlaintextInputShare::new(
                     Vec::new(), // No extensions supported yet.
-                    input_share.get_encoded().unwrap(),
+                    input_share.get_encoded()?,
                 )
-                .get_encoded()
-                .unwrap(),
+                .get_encoded()?,
                 &InputShareAad::new(
                     self.parameters.task_id,
                     report_metadata.clone(),
                     encoded_public_share.clone(),
                 )
-                .get_encoded()
-                .unwrap(),
+                .get_encoded()?,
             )
+            .map_err(Error::Hpke)
         })
         .collect_tuple()
         .expect("iterator to yield two items"); // expect safety: iterator contains two items.

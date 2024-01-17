@@ -2741,10 +2741,14 @@ impl VdafOps {
                         .map_err(Error::ResponseEncode)?,
                     &AggregateShareAad::new(
                         *collection_job.task_id(),
-                        collection_job.aggregation_parameter().get_encoded()?,
+                        collection_job
+                            .aggregation_parameter()
+                            .get_encoded()
+                            .map_err(Error::ResponseEncode)?,
                         BatchSelector::<Q>::new(collection_job.batch_identifier().clone()),
                     )
-                    .get_encoded()?,
+                    .get_encoded()
+                    .map_err(Error::ResponseEncode)?,
                 )?;
 
                 Ok(Some(
