@@ -123,15 +123,15 @@ preceding minor versions.
 Tests require that [`docker`](https://www.docker.com) and
 [`kind`](https://kind.sigs.k8s.io) be installed on the machine running the tests
 and in the `PATH` of the test-runner's environment. The `docker` daemon must be
-running. CI tests currently use [`kind` 0.17.0][kind-release] and the
-corresponding Kubernetes 1.24 node image
-(kindest/node:v1.24.7@sha256:577c630ce8e509131eab1aea12c022190978dd2f745aac5eb1fe65c0807eb315).
+running. CI tests currently use [`kind` 0.20.0][kind-release] and the
+corresponding Kubernetes 1.26 node image
+(kindest/node:v1.26.6@sha256:6e2d8b28a5b601defe327b98bd1c2d1930b49e5d8c512e1895099e4504007adb).
 Using the same versions for local development is recommended.
 
 To run Janus tests, execute `cargo test`. To run tests on Docker images, execute
 `cargo xtask test-docker`.
 
-[kind-release]: https://github.com/kubernetes-sigs/kind/releases/tag/v0.17.0
+[kind-release]: https://github.com/kubernetes-sigs/kind/releases/tag/v0.20.0
 
 ### inotify limits
 
