@@ -424,7 +424,14 @@ async fn get_task_metrics(ephemeral_datastore: EphemeralDatastore) {
                             *report.metadata().time(),
                             ord.try_into().unwrap(),
                             None,
-                            ReportAggregationState::Start,
+                            ReportAggregationState::StartLeader {
+                                public_share: report.public_share().clone(),
+                                leader_extensions: report.leader_extensions().to_vec(),
+                                leader_input_share: report.leader_input_share().clone(),
+                                helper_encrypted_input_share: report
+                                    .helper_encrypted_input_share()
+                                    .clone(),
+                            },
                         )
                     })
                     .collect();
@@ -440,7 +447,14 @@ async fn get_task_metrics(ephemeral_datastore: EphemeralDatastore) {
                             *report.metadata().time(),
                             ord.try_into().unwrap(),
                             None,
-                            ReportAggregationState::Start,
+                            ReportAggregationState::StartLeader {
+                                public_share: report.public_share().clone(),
+                                leader_extensions: report.leader_extensions().to_vec(),
+                                leader_input_share: report.leader_input_share().clone(),
+                                helper_encrypted_input_share: report
+                                    .helper_encrypted_input_share()
+                                    .clone(),
+                            },
                         )
                     })
                     .collect();
@@ -456,7 +470,14 @@ async fn get_task_metrics(ephemeral_datastore: EphemeralDatastore) {
                             *report.metadata().time(),
                             ord.try_into().unwrap(),
                             None,
-                            ReportAggregationState::Start,
+                            ReportAggregationState::StartLeader {
+                                public_share: report.public_share().clone(),
+                                leader_extensions: report.leader_extensions().to_vec(),
+                                leader_input_share: report.leader_input_share().clone(),
+                                helper_encrypted_input_share: report
+                                    .helper_encrypted_input_share()
+                                    .clone(),
+                            },
                         )
                     })
                     .collect();
@@ -1167,7 +1188,14 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
                     *expired_report.metadata().time(),
                     0,
                     None,
-                    ReportAggregationState::Start,
+                    ReportAggregationState::StartLeader {
+                        public_share: expired_report.public_share().clone(),
+                        leader_extensions: expired_report.leader_extensions().to_vec(),
+                        leader_input_share: expired_report.leader_input_share().clone(),
+                        helper_encrypted_input_share: expired_report
+                            .helper_encrypted_input_share()
+                            .clone(),
+                    },
                 );
 
                 let aggregation_job_0 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
@@ -1188,7 +1216,14 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
                         *report_0.metadata().time(),
                         1,
                         None,
-                        ReportAggregationState::Start,
+                        ReportAggregationState::StartLeader {
+                            public_share: report_0.public_share().clone(),
+                            leader_extensions: report_0.leader_extensions().to_vec(),
+                            leader_input_share: report_0.leader_input_share().clone(),
+                            helper_encrypted_input_share: report_0
+                                .helper_encrypted_input_share()
+                                .clone(),
+                        },
                     );
                 let aggregation_job_0_report_aggregation_1 =
                     ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -1198,7 +1233,14 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
                         *report_1.metadata().time(),
                         2,
                         None,
-                        ReportAggregationState::Start,
+                        ReportAggregationState::StartLeader {
+                            public_share: report_1.public_share().clone(),
+                            leader_extensions: report_1.leader_extensions().to_vec(),
+                            leader_input_share: report_1.leader_input_share().clone(),
+                            helper_encrypted_input_share: report_1
+                                .helper_encrypted_input_share()
+                                .clone(),
+                        },
                     );
 
                 let aggregation_job_1 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
@@ -1219,7 +1261,14 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
                         *report_0.metadata().time(),
                         0,
                         None,
-                        ReportAggregationState::Start,
+                        ReportAggregationState::StartLeader {
+                            public_share: report_0.public_share().clone(),
+                            leader_extensions: report_0.leader_extensions().to_vec(),
+                            leader_input_share: report_0.leader_input_share().clone(),
+                            helper_encrypted_input_share: report_0
+                                .helper_encrypted_input_share()
+                                .clone(),
+                        },
                     );
                 let aggregation_job_1_report_aggregation_1 =
                     ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -1229,7 +1278,14 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
                         *report_1.metadata().time(),
                         1,
                         None,
-                        ReportAggregationState::Start,
+                        ReportAggregationState::StartLeader {
+                            public_share: report_1.public_share().clone(),
+                            leader_extensions: report_1.leader_extensions().to_vec(),
+                            leader_input_share: report_1.leader_input_share().clone(),
+                            helper_encrypted_input_share: report_1
+                                .helper_encrypted_input_share()
+                                .clone(),
+                        },
                     );
 
                 tx.put_client_report(&dummy_vdaf::Vdaf::new(), &expired_report)
@@ -2120,34 +2176,49 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
     );
 
     for (ord, (role, state)) in [
-        (Role::Leader, ReportAggregationState::Start),
-        (Role::Helper, ReportAggregationState::Start),
         (
             Role::Leader,
-            ReportAggregationState::WaitingLeader(
-                vdaf_transcript.leader_prepare_transitions[1]
+            ReportAggregationState::StartLeader {
+                public_share: vdaf_transcript.public_share.clone(),
+                leader_extensions: Vec::new(), // XXX: add some extensions
+                leader_input_share: vdaf_transcript.leader_input_share.clone(),
+                helper_encrypted_input_share: HpkeCiphertext::new(
+                    HpkeConfigId::from(13),
+                    Vec::from("encapsulated_context"),
+                    Vec::from("payload"),
+                ),
+            },
+        ),
+        (
+            Role::Leader,
+            ReportAggregationState::WaitingLeader {
+                transition: vdaf_transcript.leader_prepare_transitions[1]
                     .transition
                     .clone()
                     .unwrap(),
-            ),
+            },
         ),
         (
             Role::Helper,
-            ReportAggregationState::WaitingHelper(
-                vdaf_transcript.helper_prepare_transitions[0]
+            ReportAggregationState::WaitingHelper {
+                prepare_state: vdaf_transcript.helper_prepare_transitions[0]
                     .prepare_state()
                     .clone(),
-            ),
+            },
         ),
         (Role::Leader, ReportAggregationState::Finished),
         (Role::Helper, ReportAggregationState::Finished),
         (
             Role::Leader,
-            ReportAggregationState::Failed(PrepareError::VdafPrepError),
+            ReportAggregationState::Failed {
+                prepare_error: PrepareError::VdafPrepError,
+            },
         ),
         (
             Role::Helper,
-            ReportAggregationState::Failed(PrepareError::VdafPrepError),
+            ReportAggregationState::Failed {
+                prepare_error: PrepareError::VdafPrepError,
+            },
         ),
     ]
     .into_iter()
@@ -2409,7 +2480,7 @@ async fn check_other_report_aggregation_exists(ephemeral_datastore: EphemeralDat
                 OLDEST_ALLOWED_REPORT_TIMESTAMP,
                 0,
                 None,
-                ReportAggregationState::Start,
+                ReportAggregationState::Finished,
             );
             tx.put_report_aggregation(&report_aggregation).await?;
             Ok(())
@@ -2544,7 +2615,9 @@ async fn report_aggregation_not_found(ephemeral_datastore: EphemeralDatastore) {
                     Time::from_seconds_since_epoch(12345),
                     0,
                     None,
-                    ReportAggregationState::Failed(PrepareError::VdafPrepError),
+                    ReportAggregationState::Failed {
+                        prepare_error: PrepareError::VdafPrepError,
+                    },
                 ))
                 .await
             })
@@ -2615,14 +2688,25 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
 
                 let mut want_report_aggregations = Vec::new();
                 for (ord, state) in [
-                    ReportAggregationState::Start,
-                    ReportAggregationState::WaitingHelper(
-                        vdaf_transcript.helper_prepare_transitions[0]
+                    ReportAggregationState::StartLeader {
+                        public_share: vdaf_transcript.public_share.clone(),
+                        leader_extensions: Vec::new(),
+                        leader_input_share: vdaf_transcript.leader_input_share.clone(),
+                        helper_encrypted_input_share: HpkeCiphertext::new(
+                            HpkeConfigId::from(13),
+                            Vec::from("encapsulated_context"),
+                            Vec::from("payload"),
+                        ),
+                    },
+                    ReportAggregationState::WaitingHelper {
+                        prepare_state: vdaf_transcript.helper_prepare_transitions[0]
                             .prepare_state()
                             .clone(),
-                    ),
+                    },
                     ReportAggregationState::Finished,
-                    ReportAggregationState::Failed(PrepareError::VdafPrepError),
+                    ReportAggregationState::Failed {
+                        prepare_error: PrepareError::VdafPrepError,
+                    },
                 ]
                 .iter()
                 .enumerate()
@@ -3311,7 +3395,7 @@ async fn time_interval_collection_job_acquire_release_happy_path(
         *reports[0].metadata().time(),
         0,
         None,
-        ReportAggregationState::Start, // Doesn't matter what state the report aggregation is in
+        ReportAggregationState::Finished, // Doesn't matter what state the report aggregation is in
     )]);
 
     let collection_job_test_cases = Vec::from([CollectionJobTestCase::<TimeInterval> {
@@ -3447,7 +3531,7 @@ async fn fixed_size_collection_job_acquire_release_happy_path(
         *reports[0].metadata().time(),
         0,
         None,
-        ReportAggregationState::Start, // Doesn't matter what state the report aggregation is in
+        ReportAggregationState::Finished, // Doesn't matter what state the report aggregation is in
     )]);
 
     let collection_job_leases = run_collection_job_acquire_test_case(
@@ -3689,7 +3773,7 @@ async fn collection_job_acquire_report_shares_outside_interval(
         *reports[0].metadata().time(),
         0,
         None,
-        ReportAggregationState::Start, // Shouldn't matter what state the report aggregation is in
+        ReportAggregationState::Finished, // Shouldn't matter what state the report aggregation is in
     )]);
 
     run_collection_job_acquire_test_case(
@@ -3753,7 +3837,7 @@ async fn collection_job_acquire_release_job_finished(ephemeral_datastore: Epheme
         *reports[0].metadata().time(),
         0,
         None,
-        ReportAggregationState::Start,
+        ReportAggregationState::Finished,
     )]);
 
     let collection_job_test_cases = Vec::from([CollectionJobTestCase::<TimeInterval> {
@@ -3832,7 +3916,7 @@ async fn collection_job_acquire_release_aggregation_job_in_progress(
             *reports[0].metadata().time(),
             0,
             None,
-            ReportAggregationState::Start,
+            ReportAggregationState::Finished,
         ),
         ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
             task_id,
@@ -3841,7 +3925,7 @@ async fn collection_job_acquire_release_aggregation_job_in_progress(
             *reports[1].metadata().time(),
             0,
             None,
-            ReportAggregationState::Start,
+            ReportAggregationState::Finished,
         ),
     ]);
 
@@ -3915,7 +3999,7 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
             *reports[0].metadata().time(),
             0,
             None,
-            ReportAggregationState::Start,
+            ReportAggregationState::Finished,
         ),
         ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
             task_id,
@@ -3924,7 +4008,7 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
             *reports[0].metadata().time(),
             0,
             None,
-            ReportAggregationState::Start,
+            ReportAggregationState::Finished,
         ),
     ]);
 
@@ -4068,7 +4152,7 @@ async fn collection_job_acquire_state_filtering(ephemeral_datastore: EphemeralDa
             *reports[0].metadata().time(),
             0,
             None,
-            ReportAggregationState::Start,
+            ReportAggregationState::Finished,
         ),
         ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
             task_id,
@@ -4077,7 +4161,7 @@ async fn collection_job_acquire_state_filtering(ephemeral_datastore: EphemeralDa
             *reports[0].metadata().time(),
             0,
             None,
-            ReportAggregationState::Start,
+            ReportAggregationState::Finished,
         ),
         ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
             task_id,
@@ -4086,7 +4170,7 @@ async fn collection_job_acquire_state_filtering(ephemeral_datastore: EphemeralDa
             *reports[0].metadata().time(),
             0,
             None,
-            ReportAggregationState::Start,
+            ReportAggregationState::Finished,
         ),
     ]);
 
@@ -5064,6 +5148,8 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                 .unwrap();
                 tx.put_aggregator_task(&task_1).await?;
                 let batch_id_1 = random();
+                let report_1 =
+                    LeaderStoredReport::new_dummy(*task_1.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
                 tx.put_batch(&Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                     *task_1.id(),
@@ -5091,6 +5177,8 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                 .unwrap();
                 tx.put_aggregator_task(&task_2).await?;
                 let batch_id_2 = random();
+                let report_2 =
+                    LeaderStoredReport::new_dummy(*task_2.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
 
                 tx.put_batch(&Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                     *task_2.id(),
@@ -5124,7 +5212,15 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     clock.now(),
                     0,
                     None,
-                    ReportAggregationState::Start, // Counted among max_size.
+                    ReportAggregationState::StartLeader {
+                        // Counted among max_size.
+                        public_share: report_1.public_share().clone(),
+                        leader_extensions: report_1.leader_extensions().to_vec(),
+                        leader_input_share: report_1.leader_input_share().clone(),
+                        helper_encrypted_input_share: report_1
+                            .helper_encrypted_input_share()
+                            .clone(),
+                    },
                 );
 
                 let report_id_0_1 = random();
@@ -5144,9 +5240,9 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     1,
                     None,
                     // Counted among max_size.
-                    ReportAggregationState::WaitingLeader(
-                        transcript.helper_prepare_transitions[0].transition.clone(),
-                    ),
+                    ReportAggregationState::WaitingLeader {
+                        transition: transcript.helper_prepare_transitions[0].transition.clone(),
+                    },
                 );
                 let report_aggregation_0_2 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                     *task_1.id(),
@@ -5155,7 +5251,9 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     clock.now(),
                     2,
                     None,
-                    ReportAggregationState::Failed(PrepareError::VdafPrepError), // Not counted among min_size or max_size.
+                    ReportAggregationState::Failed {
+                        prepare_error: PrepareError::VdafPrepError,
+                    }, // Not counted among min_size or max_size.
                 );
 
                 let aggregation_job_1 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
@@ -5193,7 +5291,9 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     clock.now(),
                     2,
                     None,
-                    ReportAggregationState::Failed(PrepareError::VdafPrepError), // Not counted among min_size or max_size.
+                    ReportAggregationState::Failed {
+                        prepare_error: PrepareError::VdafPrepError,
+                    }, // Not counted among min_size or max_size.
                 );
 
                 let aggregation_job_2 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
@@ -5213,7 +5313,14 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     clock.now(),
                     0,
                     None,
-                    ReportAggregationState::Start,
+                    ReportAggregationState::StartLeader {
+                        public_share: report_2.public_share().clone(),
+                        leader_extensions: report_2.leader_extensions().to_vec(),
+                        leader_input_share: report_2.leader_input_share().clone(),
+                        helper_encrypted_input_share: report_2
+                            .helper_encrypted_input_share()
+                            .clone(),
+                    },
                 );
 
                 for aggregation_job in &[aggregation_job_0, aggregation_job_1, aggregation_job_2] {
@@ -5640,13 +5747,13 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
     ) {
         let batch_identifier = Q::batch_identifier_for_client_timestamps(client_timestamps);
 
-        let mut report_ids_and_timestamps = Vec::new();
+        let mut reports = Vec::new();
         for client_timestamp in client_timestamps {
             let report = LeaderStoredReport::new_dummy(*task_id, *client_timestamp);
             tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report)
                 .await
                 .unwrap();
-            report_ids_and_timestamps.push((*report.metadata().id(), *client_timestamp));
+            reports.push(report);
         }
 
         let min_client_timestamp = client_timestamps.iter().min().unwrap();
@@ -5672,15 +5779,20 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
         );
         tx.put_aggregation_job(&aggregation_job).await.unwrap();
 
-        for (ord, (report_id, client_timestamp)) in report_ids_and_timestamps.iter().enumerate() {
-            let report_aggregation = ReportAggregation::new(
+        for (ord, report) in reports.iter().enumerate() {
+            let report_aggregation = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                 *task_id,
                 *aggregation_job.id(),
-                *report_id,
-                *client_timestamp,
+                *report.metadata().id(),
+                *report.metadata().time(),
                 ord.try_into().unwrap(),
                 None,
-                ReportAggregationState::<0, dummy_vdaf::Vdaf>::Start,
+                ReportAggregationState::StartLeader {
+                    public_share: report.public_share().clone(),
+                    leader_extensions: report.leader_extensions().to_vec(),
+                    leader_input_share: report.leader_input_share().clone(),
+                    helper_encrypted_input_share: report.helper_encrypted_input_share().clone(),
+                },
             );
             tx.put_report_aggregation(&report_aggregation)
                 .await
@@ -5690,9 +5802,9 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
         (
             batch_identifier,
             *aggregation_job.id(),
-            report_ids_and_timestamps
+            reports
                 .into_iter()
-                .map(|(report_id, _)| report_id)
+                .map(|report| *report.metadata().id())
                 .collect(),
         )
     }
