@@ -295,8 +295,12 @@ impl AggregatorAddTaskRequest {
             min_batch_size: task.min_batch_size(),
             max_batch_size,
             time_precision: task.time_precision().as_seconds(),
-            collector_hpke_config: URL_SAFE_NO_PAD
-                .encode(task.collector_hpke_keypair().config().get_encoded()),
+            collector_hpke_config: URL_SAFE_NO_PAD.encode(
+                task.collector_hpke_keypair()
+                    .config()
+                    .get_encoded()
+                    .unwrap(),
+            ),
             task_expiration: task.task_expiration().map(Time::as_seconds_since_epoch),
         }
     }

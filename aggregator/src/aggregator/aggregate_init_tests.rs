@@ -35,7 +35,7 @@ use prio::{
     vdaf::{
         self,
         poplar1::{Poplar1, Poplar1AggregationParam},
-        xof::XofShake128,
+        xof::XofTurboShake128,
     },
 };
 use rand::random;
@@ -180,12 +180,12 @@ pub(super) async fn setup_aggregate_init_test() -> AggregationJobInitTestCase<0,
 }
 
 async fn setup_poplar1_aggregate_init_test(
-) -> AggregationJobInitTestCase<16, Poplar1<XofShake128, 16>> {
+) -> AggregationJobInitTestCase<16, Poplar1<XofTurboShake128, 16>> {
     let aggregation_param =
         Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[false])]))
             .unwrap();
     setup_aggregate_init_test_for_vdaf(
-        Poplar1::new_shake128(1),
+        Poplar1::new_turboshake128(1),
         VdafInstance::Poplar1 { bits: 1 },
         aggregation_param,
         IdpfInput::from_bools(&[true]),
@@ -279,7 +279,7 @@ async fn setup_aggregate_init_test_without_sending_request<
 
     let aggregation_job_id = random();
     let aggregation_job_init_req = AggregationJobInitializeReq::new(
-        aggregation_param.get_encoded(),
+        aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
         prepare_inits.clone(),
     );
@@ -312,7 +312,7 @@ pub(crate) async fn put_aggregation_job(
             KnownHeaderName::ContentType,
             AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
         )
-        .with_request_body(aggregation_job.get_encoded())
+        .with_request_body(aggregation_job.get_encoded().unwrap())
         .run_async(handler)
         .await
 }
@@ -343,7 +343,7 @@ async fn aggregation_job_init_authorization_dap_auth_token() {
         KnownHeaderName::ContentType,
         AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
     )
-    .with_request_body(test_case.aggregation_job_init_req.get_encoded())
+    .with_request_body(test_case.aggregation_job_init_req.get_encoded().unwrap())
     .run_async(&test_case.handler)
     .await;
 
@@ -381,7 +381,7 @@ async fn aggregation_job_init_malformed_authorization_header(#[case] header_valu
         KnownHeaderName::ContentType,
         AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
     )
-    .with_request_body(test_case.aggregation_job_init_req.get_encoded())
+    .with_request_body(test_case.aggregation_job_init_req.get_encoded().unwrap())
     .run_async(&test_case.handler)
     .await;
 
@@ -394,7 +394,7 @@ async fn aggregation_job_mutation_aggregation_job() {
 
     // Put the aggregation job again, but with a different aggregation parameter.
     let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
-        dummy_vdaf::AggregationParam(1).get_encoded(),
+        dummy_vdaf::AggregationParam(1).get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
         test_case.prepare_inits,
     );
@@ -434,7 +434,7 @@ async fn aggregation_job_mutation_report_shares() {
         test_case.prepare_inits.into_iter().rev().collect(),
     ] {
         let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
-            test_case.aggregation_param.get_encoded(),
+            test_case.aggregation_param.get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             mutated_prepare_inits,
         );
@@ -472,7 +472,7 @@ async fn aggregation_job_mutation_report_aggregations() {
         .collect();
 
     let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
-        test_case.aggregation_param.get_encoded(),
+        test_case.aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
         mutated_prepare_inits,
     );
@@ -515,7 +515,7 @@ async fn aggregation_job_init_wrong_query() {
     // setup_aggregate_init_test sets up a task with a time interval query. We send a fixed size
     // query which should yield an error.
     let wrong_query = AggregationJobInitializeReq::new(
-        test_case.aggregation_param.get_encoded(),
+        test_case.aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_fixed_size(random()),
         test_case.prepare_inits,
     );
@@ -535,7 +535,7 @@ async fn aggregation_job_init_wrong_query() {
         KnownHeaderName::ContentType,
         AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
     )
-    .with_request_body(wrong_query.get_encoded())
+    .with_request_body(wrong_query.get_encoded().unwrap())
     .run_async(&test_case.handler)
     .await;
     assert_eq!(

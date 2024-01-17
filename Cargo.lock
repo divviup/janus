@@ -457,9 +457,9 @@ checksum = "17febce684fd15d89027105661fec94afb475cb995fbc59d2865198446ba2eea"
 
 [[package]]
 name = "byteorder"
-version = "1.4.3"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14c189c53d098945499cdfa7ecc63567cf3886b3332b312a5b4585d8d3a6a610"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "bytes"
@@ -957,7 +957,7 @@ checksum = "6f85ac7fb9a8e40b41680a6db2ba891f528b2f627eb4109e6561c543f72088be"
 dependencies = [
  "base64",
  "email_address",
- "janus_messages 0.6.8",
+ "janus_messages 0.6.9",
  "log",
  "pad-adapter",
  "serde",
@@ -1116,9 +1116,9 @@ dependencies = [
 
 [[package]]
 name = "fiat-crypto"
-version = "0.2.1"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0870c84016d4b481be5c9f323c24f65e31e901ae618f0e80f4308fb00de1d2d"
+checksum = "27573eac26f4dd11e2b1916c3fe1baa56407c83c71a773a8ba17ec0bca03b6b7"
 
 [[package]]
 name = "filetime"
@@ -1367,9 +1367,9 @@ dependencies = [
 
 [[package]]
 name = "getrandom"
-version = "0.2.10"
+version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be4136b2a15dd319360be1c07d9933517ccf0be8f16bf62a3bee4f0d618df427"
+checksum = "190092ea657667030ac6a35e305e62fc4dd69fd98ac98631e5d3a2b1575a12b5"
 dependencies = [
  "cfg-if",
  "js-sys",
@@ -1831,7 +1831,7 @@ checksum = "af150ab688ff2122fcef229be89cb50dd66af9e01a4ff320cc137eecc9bacc38"
 
 [[package]]
 name = "janus_aggregator"
-version = "0.6.9"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -1856,7 +1856,7 @@ dependencies = [
  "janus_aggregator_api",
  "janus_aggregator_core",
  "janus_core",
- "janus_messages 0.6.9",
+ "janus_messages 0.7.0",
  "k8s-openapi",
  "kube",
  "mockito",
@@ -1867,7 +1867,7 @@ dependencies = [
  "opentelemetry_sdk",
  "postgres-protocol",
  "postgres-types",
- "prio",
+ "prio 0.16.0",
  "prometheus",
  "rand",
  "regex",
@@ -1912,7 +1912,7 @@ dependencies = [
 
 [[package]]
 name = "janus_aggregator_api"
-version = "0.6.9"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -1922,7 +1922,7 @@ dependencies = [
  "futures",
  "janus_aggregator_core",
  "janus_core",
- "janus_messages 0.6.9",
+ "janus_messages 0.7.0",
  "opentelemetry",
  "querystring",
  "rand",
@@ -1944,7 +1944,7 @@ dependencies = [
 
 [[package]]
 name = "janus_aggregator_core"
-version = "0.6.9"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -1962,13 +1962,13 @@ dependencies = [
  "http-api-problem",
  "janus_aggregator_core",
  "janus_core",
- "janus_messages 0.6.9",
+ "janus_messages 0.7.0",
  "k8s-openapi",
  "kube",
  "opentelemetry",
  "postgres-protocol",
  "postgres-types",
- "prio",
+ "prio 0.16.0",
  "rand",
  "regex",
  "reqwest",
@@ -1996,7 +1996,7 @@ dependencies = [
 
 [[package]]
 name = "janus_client"
-version = "0.6.9"
+version = "0.7.0"
 dependencies = [
  "assert_matches",
  "backoff",
@@ -2005,9 +2005,9 @@ dependencies = [
  "http",
  "itertools 0.11.0",
  "janus_core",
- "janus_messages 0.6.9",
+ "janus_messages 0.7.0",
  "mockito",
- "prio",
+ "prio 0.16.0",
  "rand",
  "reqwest",
  "thiserror",
@@ -2020,7 +2020,7 @@ dependencies = [
 
 [[package]]
 name = "janus_collector"
-version = "0.6.9"
+version = "0.7.0"
 dependencies = [
  "assert_matches",
  "backoff",
@@ -2032,9 +2032,9 @@ dependencies = [
  "hpke-dispatch",
  "janus_collector",
  "janus_core",
- "janus_messages 0.6.9",
+ "janus_messages 0.7.0",
  "mockito",
- "prio",
+ "prio 0.16.0",
  "rand",
  "reqwest",
  "retry-after",
@@ -2048,7 +2048,7 @@ dependencies = [
 
 [[package]]
 name = "janus_core"
-version = "0.6.9"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2063,11 +2063,11 @@ dependencies = [
  "http",
  "http-api-problem",
  "janus_core",
- "janus_messages 0.6.9",
+ "janus_messages 0.7.0",
  "k8s-openapi",
  "kube",
  "mockito",
- "prio",
+ "prio 0.16.0",
  "rand",
  "regex",
  "reqwest",
@@ -2092,7 +2092,7 @@ dependencies = [
 
 [[package]]
 name = "janus_integration_tests"
-version = "0.6.9"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2111,10 +2111,10 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_interop_binaries",
- "janus_messages 0.6.9",
+ "janus_messages 0.7.0",
  "k8s-openapi",
  "kube",
- "prio",
+ "prio 0.16.0",
  "rand",
  "reqwest",
  "rstest",
@@ -2131,7 +2131,7 @@ dependencies = [
 
 [[package]]
 name = "janus_interop_binaries"
-version = "0.6.9"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "backoff",
@@ -2148,9 +2148,9 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_interop_binaries",
- "janus_messages 0.6.9",
+ "janus_messages 0.7.0",
  "opentelemetry",
- "prio",
+ "prio 0.16.0",
  "rand",
  "regex",
  "reqwest",
@@ -2173,16 +2173,16 @@ dependencies = [
 
 [[package]]
 name = "janus_messages"
-version = "0.6.8"
+version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2cba01ea862d2da98602c73aa0f37f9eb834965cde2ca1320b2fe47f2658182"
+checksum = "1b4f80a209fb184b8d2854942914aaebe60c40d2f9a8849909059dacbab72b67"
 dependencies = [
  "anyhow",
  "base64",
  "derivative",
  "hex",
  "num_enum",
- "prio",
+ "prio 0.15.3",
  "rand",
  "serde",
  "thiserror",
@@ -2191,7 +2191,7 @@ dependencies = [
 
 [[package]]
 name = "janus_messages"
-version = "0.6.9"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2199,7 +2199,7 @@ dependencies = [
  "derivative",
  "hex",
  "num_enum",
- "prio",
+ "prio 0.16.0",
  "rand",
  "serde",
  "serde_test",
@@ -2209,7 +2209,7 @@ dependencies = [
 
 [[package]]
 name = "janus_tools"
-version = "0.6.9"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2220,8 +2220,8 @@ dependencies = [
  "fixed",
  "janus_collector",
  "janus_core",
- "janus_messages 0.6.9",
- "prio",
+ "janus_messages 0.7.0",
+ "prio 0.16.0",
  "rand",
  "reqwest",
  "serde_json",
@@ -2612,9 +2612,9 @@ dependencies = [
 
 [[package]]
 name = "num-traits"
-version = "0.2.16"
+version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f30b0abd723be7e2ffca1272140fac1a2f084c77ec3e123c192b66af1ee9e6c2"
+checksum = "39e3200413f237f41ab11ad6d161bc7239c84dcb631773ccd7de3dfe4b5c267c"
 dependencies = [
  "autocfg",
  "libm",
@@ -3107,10 +3107,8 @@ version = "0.15.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b3163d19b7d8bc08c7ab6b74510f5e048c0937509d14c28b8919d2baf8cb9387"
 dependencies = [
- "aes",
  "bitvec",
  "byteorder",
- "ctr",
  "fiat-crypto",
  "fixed",
  "getrandom",
@@ -3123,6 +3121,35 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "serde",
+ "sha3",
+ "subtle",
+ "thiserror",
+]
+
+[[package]]
+name = "prio"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a16151e3c98087659ef5dc706040a415afa88294989e895c8987d9d0cdea83c"
+dependencies = [
+ "aes",
+ "bitvec",
+ "byteorder",
+ "ctr",
+ "fiat-crypto",
+ "fixed",
+ "getrandom",
+ "hmac",
+ "num-bigint",
+ "num-integer",
+ "num-iter",
+ "num-rational",
+ "num-traits",
+ "rand",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "sha2",
  "sha3",
  "subtle",
  "thiserror",
@@ -3912,9 +3939,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.10.7"
+version = "0.10.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "479fb9d862239e610720565ca91403019f2f00410f1864c5aa7479b950a76ed8"
+checksum = "793db75ad2bcafc3ffa7c68b215fee268f537982cd901d132f89c6343f3a3dc8"
 dependencies = [
  "cfg-if",
  "cpufeatures",
@@ -5715,7 +5742,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.6.9"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "clap",

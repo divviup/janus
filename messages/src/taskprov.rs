@@ -80,12 +80,12 @@ impl TaskConfig {
 }
 
 impl Encode for TaskConfig {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        encode_u8_items(bytes, &(), &self.task_info);
-        encode_u16_items(bytes, &(), &self.aggregator_endpoints);
-        self.query_config.encode(bytes);
-        self.task_expiration.encode(bytes);
-        self.vdaf_config.encode(bytes);
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        encode_u8_items(bytes, &(), &self.task_info)?;
+        encode_u16_items(bytes, &(), &self.aggregator_endpoints)?;
+        self.query_config.encode(bytes)?;
+        self.task_expiration.encode(bytes)?;
+        self.vdaf_config.encode(bytes)
     }
 
     fn encoded_len(&self) -> Option<usize> {
@@ -179,18 +179,20 @@ impl QueryConfig {
 }
 
 impl Encode for QueryConfig {
-    fn encode(&self, bytes: &mut Vec<u8>) {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         match self.query {
-            Query::Reserved => Query::RESERVED.encode(bytes),
-            Query::TimeInterval => Query::TIME_INTERVAL.encode(bytes),
-            Query::FixedSize { .. } => Query::FIXED_SIZE.encode(bytes),
+            Query::Reserved => Query::RESERVED.encode(bytes)?,
+            Query::TimeInterval => Query::TIME_INTERVAL.encode(bytes)?,
+            Query::FixedSize { .. } => Query::FIXED_SIZE.encode(bytes)?,
         };
-        self.time_precision.encode(bytes);
-        self.max_batch_query_count.encode(bytes);
-        self.min_batch_size.encode(bytes);
+        self.time_precision.encode(bytes)?;
+        self.max_batch_query_count.encode(bytes)?;
+        self.min_batch_size.encode(bytes)?;
         if let Query::FixedSize { max_batch_size } = self.query {
-            max_batch_size.encode(bytes)
+            max_batch_size.encode(bytes)?;
         }
+
+        Ok(())
     }
 
     fn encoded_len(&self) -> Option<usize> {
@@ -277,9 +279,9 @@ impl VdafConfig {
 }
 
 impl Encode for VdafConfig {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.dp_config.encode(bytes);
-        self.vdaf_type.encode(bytes);
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        self.dp_config.encode(bytes)?;
+        self.vdaf_type.encode(bytes)
     }
 
     fn encoded_len(&self) -> Option<usize> {
@@ -336,34 +338,34 @@ impl VdafType {
 }
 
 impl Encode for VdafType {
-    fn encode(&self, bytes: &mut Vec<u8>) {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         match self {
             Self::Prio3Count => Self::PRIO3COUNT.encode(bytes),
             Self::Prio3Sum { bits } => {
-                Self::PRIO3SUM.encode(bytes);
-                bits.encode(bytes);
+                Self::PRIO3SUM.encode(bytes)?;
+                bits.encode(bytes)
             }
             Self::Prio3SumVec {
                 bits,
                 length,
                 chunk_length,
             } => {
-                Self::PRIO3SUMVEC.encode(bytes);
-                bits.encode(bytes);
-                length.encode(bytes);
-                chunk_length.encode(bytes);
+                Self::PRIO3SUMVEC.encode(bytes)?;
+                bits.encode(bytes)?;
+                length.encode(bytes)?;
+                chunk_length.encode(bytes)
             }
             Self::Prio3Histogram {
                 length,
                 chunk_length,
             } => {
-                Self::PRIO3HISTOGRAM.encode(bytes);
-                length.encode(bytes);
-                chunk_length.encode(bytes);
+                Self::PRIO3HISTOGRAM.encode(bytes)?;
+                length.encode(bytes)?;
+                chunk_length.encode(bytes)
             }
             Self::Poplar1 { bits } => {
-                Self::POPLAR1.encode(bytes);
-                bits.encode(bytes);
+                Self::POPLAR1.encode(bytes)?;
+                bits.encode(bytes)
             }
         }
     }
@@ -427,7 +429,7 @@ impl DpConfig {
 }
 
 impl Encode for DpConfig {
-    fn encode(&self, bytes: &mut Vec<u8>) {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.dp_mechanism.encode(bytes)
     }
 
@@ -458,7 +460,7 @@ impl DpMechanism {
 }
 
 impl Encode for DpMechanism {
-    fn encode(&self, bytes: &mut Vec<u8>) {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         match self {
             Self::Reserved => Self::RESERVED.encode(bytes),
             Self::None => Self::NONE.encode(bytes),

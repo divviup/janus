@@ -189,7 +189,8 @@ where
                 report.metadata().clone(),
                 report.public_share().to_vec(),
             )
-            .get_encoded(),
+            .get_encoded()
+            .unwrap(),
         )
         .expect("couldn't decrypt Leader's PlaintextInputShare");
         let leader_plaintext_input_share =
@@ -814,21 +815,23 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     /// Returns the encoded values for the various messages which might be included in a
     /// ReportAggregationState. The order of returned values is preparation state, preparation
     /// message, output share, transition error.
-    pub(super) fn encoded_values_from_state(&self) -> EncodedReportAggregationStateValues
+    pub(super) fn encoded_values_from_state(
+        &self,
+    ) -> Result<EncodedReportAggregationStateValues, Error>
     where
         A::PrepareState: Encode,
     {
-        match self {
+        Ok(match self {
             ReportAggregationState::Start => EncodedReportAggregationStateValues::default(),
             ReportAggregationState::WaitingLeader(transition) => {
                 EncodedReportAggregationStateValues {
-                    leader_prep_transition: Some(transition.get_encoded()),
+                    leader_prep_transition: Some(transition.get_encoded()?),
                     ..Default::default()
                 }
             }
             ReportAggregationState::WaitingHelper(prepare_state) => {
                 EncodedReportAggregationStateValues {
-                    helper_prep_state: Some(prepare_state.get_encoded()),
+                    helper_prep_state: Some(prepare_state.get_encoded()?),
                     ..Default::default()
                 }
             }
@@ -837,7 +840,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
                 prepare_err: Some(*prepare_err as i16),
                 ..Default::default()
             },
-        }
+        })
     }
 }
 

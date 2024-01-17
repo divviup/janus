@@ -251,8 +251,9 @@ macro_rules! vdaf_dispatch_impl_base {
             }
 
             ::janus_core::vdaf::VdafInstance::Poplar1 { bits } => {
-                let $vdaf = ::prio::vdaf::poplar1::Poplar1::new_shake128(*bits);
-                type $Vdaf = ::prio::vdaf::poplar1::Poplar1<::prio::vdaf::xof::XofShake128, 16>;
+                let $vdaf = ::prio::vdaf::poplar1::Poplar1::new_turboshake128(*bits);
+                type $Vdaf =
+                    ::prio::vdaf::poplar1::Poplar1<::prio::vdaf::xof::XofTurboShake128, 16>;
                 const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
                 let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;

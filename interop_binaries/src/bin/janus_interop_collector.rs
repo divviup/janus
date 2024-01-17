@@ -675,12 +675,16 @@ fn handler() -> anyhow::Result<impl Handler> {
                     State<Keyring>,
                     Json<AddTaskRequest>,
                 )| async move {
-                    match handle_add_task(&tasks.0, &keyring.0, request).await {
+                    match handle_add_task(&tasks.0, &keyring.0, request)
+                        .await
+                        .and_then(|config| {
+                            config.get_encoded().context("failed to encode HPKE config")
+                        }) {
                         Ok(collector_hpke_config) => Json(AddTaskResponse {
                             status: SUCCESS,
                             error: None,
                             collector_hpke_config: Some(
-                                URL_SAFE_NO_PAD.encode(collector_hpke_config.get_encoded()),
+                                URL_SAFE_NO_PAD.encode(collector_hpke_config),
                             ),
                         }),
                         Err(e) => Json(AddTaskResponse {

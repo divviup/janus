@@ -115,7 +115,7 @@ async fn handle_upload(
         VdafInstance::Prio3Count {} => {
             let measurement = parse_primitive_measurement::<u64>(request.measurement.clone())?;
             let vdaf = Prio3::new_count(2).context("failed to construct Prio3Count VDAF")?;
-            handle_upload_generic(http_client, vdaf, request, measurement).await?;
+            handle_upload_generic(http_client, vdaf, request, measurement != 0).await?;
         }
 
         VdafInstance::Prio3Sum { bits } => {

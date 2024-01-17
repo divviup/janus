@@ -26,6 +26,9 @@ pub enum Error {
     /// Error decoding an incoming message.
     #[error("message decoding failed: {0}")]
     MessageDecode(#[from] prio::codec::CodecError),
+    /// Error encoding a response to a request.
+    #[error("response encoding failed: {0}")]
+    ResponseEncode(prio::codec::CodecError),
     /// Error handling a message.
     #[error("invalid message: {0}")]
     Message(#[from] janus_messages::Error),
@@ -198,6 +201,7 @@ impl Error {
         match self {
             Error::InvalidConfiguration(_) => "invalid_configuration",
             Error::MessageDecode(_) => "message_decode",
+            Error::ResponseEncode(_) => "response_encode",
             Error::Message(_) => "message",
             Error::ReportRejected(_, _, _, _) => "report_rejected",
             Error::ReportTooEarly(_, _, _) => "report_too_early",
@@ -330,6 +334,8 @@ pub(crate) fn handle_ping_pong_error(
             desc.to_string(),
             "vdaf_ping_pong_internal_error".to_string(),
         ),
+        // enum PingPongError is non_exhaustive so we need a catch-all case
+        error => panic!("unhandled PingPongError: {error:?}"),
     };
 
     info!(

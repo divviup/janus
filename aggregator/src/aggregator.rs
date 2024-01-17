@@ -75,7 +75,7 @@ use prio::{
         self,
         poplar1::Poplar1,
         prio3::{Prio3, Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVecMultithreaded},
-        xof::XofShake128,
+        xof::XofTurboShake128,
     },
 };
 use reqwest::Client;
@@ -866,7 +866,7 @@ impl<C: Clock> TaskAggregator<C> {
             }
 
             VdafInstance::Poplar1 { bits } => {
-                let vdaf = Poplar1::new_shake128(*bits);
+                let vdaf = Poplar1::new_turboshake128(*bits);
                 let verify_key = task.vdaf_verify_key()?;
                 VdafOps::Poplar1(Arc::new(vdaf), verify_key)
             }
@@ -1088,7 +1088,10 @@ enum VdafOps {
         VerifyKey<VERIFY_KEY_LENGTH>,
         vdaf_ops_strategies::Prio3FixedPointBoundedL2VecSum,
     ),
-    Poplar1(Arc<Poplar1<XofShake128, 16>>, VerifyKey<VERIFY_KEY_LENGTH>),
+    Poplar1(
+        Arc<Poplar1<XofTurboShake128, 16>>,
+        VerifyKey<VERIFY_KEY_LENGTH>,
+    ),
     #[cfg(feature = "test-util")]
     Fake(Arc<dummy_vdaf::Vdaf>),
 }
@@ -1202,7 +1205,7 @@ macro_rules! vdaf_ops_dispatch {
             crate::aggregator::VdafOps::Poplar1(vdaf, verify_key) => {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
-                type $Vdaf = ::prio::vdaf::poplar1::Poplar1<::prio::vdaf::xof::XofShake128, 16>;
+                type $Vdaf = ::prio::vdaf::poplar1::Poplar1<::prio::vdaf::xof::XofTurboShake128, 16>;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
                 let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
@@ -1461,17 +1464,19 @@ impl VdafOps {
                 }
             };
 
+        let input_share_aad = InputShareAad::new(
+            *task.id(),
+            report.metadata().clone(),
+            report.public_share().to_vec(),
+        )
+        .get_encoded()
+        .map_err(|e| Arc::new(Error::ResponseEncode(e)))?;
         let try_hpke_open = |hpke_keypair: &HpkeKeypair| {
             hpke::open(
                 hpke_keypair,
                 &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, task.role()),
                 report.leader_encrypted_input_share(),
-                &InputShareAad::new(
-                    *task.id(),
-                    report.metadata().clone(),
-                    report.public_share().to_vec(),
-                )
-                .get_encoded(),
+                &input_share_aad,
             )
         };
 
@@ -1696,17 +1701,19 @@ impl VdafOps {
             }
 
             // If decryption fails, then the aggregator MUST fail with error `hpke-decrypt-error`. (§4.4.2.2)
+            let input_share_aad = InputShareAad::new(
+                *task.id(),
+                prepare_init.report_share().metadata().clone(),
+                prepare_init.report_share().public_share().to_vec(),
+            )
+            .get_encoded()
+            .map_err(Error::ResponseEncode)?;
             let try_hpke_open = |hpke_keypair: &HpkeKeypair| {
                 hpke::open(
                     hpke_keypair,
                     &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
                     prepare_init.report_share().encrypted_input_share(),
-                    &InputShareAad::new(
-                        *task.id(),
-                        prepare_init.report_share().metadata().clone(),
-                        prepare_init.report_share().public_share().to_vec(),
-                    )
-                    .get_encoded(),
+                    &input_share_aad,
                 )
             };
 
@@ -2729,13 +2736,19 @@ impl VdafOps {
                         &Role::Leader,
                         &Role::Collector,
                     ),
-                    &leader_aggregate_share.get_encoded(),
+                    &leader_aggregate_share
+                        .get_encoded()
+                        .map_err(Error::ResponseEncode)?,
                     &AggregateShareAad::new(
                         *collection_job.task_id(),
-                        collection_job.aggregation_parameter().get_encoded(),
+                        collection_job
+                            .aggregation_parameter()
+                            .get_encoded()
+                            .map_err(Error::ResponseEncode)?,
                         BatchSelector::<Q>::new(collection_job.batch_identifier().clone()),
                     )
-                    .get_encoded(),
+                    .get_encoded()
+                    .map_err(Error::ResponseEncode)?,
                 )?;
 
                 Ok(Some(
@@ -2748,7 +2761,8 @@ impl VdafOps {
                         encrypted_leader_aggregate_share,
                         encrypted_helper_aggregate_share.clone(),
                     )
-                    .get_encoded(),
+                    .get_encoded()
+                    .map_err(Error::ResponseEncode)?,
                 ))
             }
             CollectionJobState::Abandoned => Err(Error::AbandonedCollectionJob(*collection_job_id)),
@@ -3073,13 +3087,20 @@ impl VdafOps {
         let encrypted_aggregate_share = hpke::seal(
             collector_hpke_config,
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
-            &aggregate_share_job.helper_aggregate_share().get_encoded(),
+            &aggregate_share_job
+                .helper_aggregate_share()
+                .get_encoded()
+                .map_err(Error::ResponseEncode)?,
             &AggregateShareAad::new(
                 *task.id(),
-                aggregate_share_job.aggregation_parameter().get_encoded(),
+                aggregate_share_job
+                    .aggregation_parameter()
+                    .get_encoded()
+                    .map_err(Error::ResponseEncode)?,
                 aggregate_share_req.batch_selector().clone(),
             )
-            .get_encoded(),
+            .get_encoded()
+            .map_err(Error::ResponseEncode)?,
         )?;
 
         Ok(AggregateShare::new(encrypted_aggregate_share))
@@ -3149,7 +3170,7 @@ async fn send_request_to_helper<T: Encode>(
     http_request_duration_histogram: &Histogram<f64>,
 ) -> Result<Bytes, Error> {
     let domain = url.domain().unwrap_or_default().to_string();
-    let request_body = request.get_encoded();
+    let request_body = request.get_encoded().map_err(Error::ResponseEncode)?;
     let (auth_header, auth_value) = auth_token.request_authentication();
     let method_string = method.as_str().to_string();
 
@@ -3293,32 +3314,36 @@ mod tests {
         let vdaf = Prio3Count::new_count(2).unwrap();
         let report_metadata = ReportMetadata::new(id, report_timestamp);
 
-        let (public_share, measurements) = vdaf.shard(&1, id.as_ref()).unwrap();
+        let (public_share, measurements) = vdaf.shard(&true, id.as_ref()).unwrap();
 
         let associated_data = InputShareAad::new(
             *task.id(),
             report_metadata.clone(),
-            public_share.get_encoded(),
+            public_share.get_encoded().unwrap(),
         );
 
         let leader_ciphertext = hpke::seal(
             hpke_key.config(),
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader),
-            &PlaintextInputShare::new(Vec::new(), measurements[0].get_encoded()).get_encoded(),
-            &associated_data.get_encoded(),
+            &PlaintextInputShare::new(Vec::new(), measurements[0].get_encoded().unwrap())
+                .get_encoded()
+                .unwrap(),
+            &associated_data.get_encoded().unwrap(),
         )
         .unwrap();
         let helper_ciphertext = hpke::seal(
             hpke_key.config(),
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
-            &PlaintextInputShare::new(Vec::new(), measurements[1].get_encoded()).get_encoded(),
-            &associated_data.get_encoded(),
+            &PlaintextInputShare::new(Vec::new(), measurements[1].get_encoded().unwrap())
+                .get_encoded()
+                .unwrap(),
+            &associated_data.get_encoded().unwrap(),
         )
         .unwrap();
 
         Report::new(
             report_metadata,
-            public_share.get_encoded(),
+            public_share.get_encoded().unwrap(),
             leader_ciphertext,
             helper_ciphertext,
         )
@@ -3377,7 +3402,7 @@ mod tests {
         let report = create_report(&leader_task, clock.now());
 
         aggregator
-            .handle_upload(task.id(), &report.get_encoded())
+            .handle_upload(task.id(), &report.get_encoded().unwrap())
             .await
             .unwrap();
 
@@ -3395,7 +3420,7 @@ mod tests {
 
         // Report uploads are idempotent.
         aggregator
-            .handle_upload(task.id(), &report.get_encoded())
+            .handle_upload(task.id(), &report.get_encoded().unwrap())
             .await
             .unwrap();
 
@@ -3408,7 +3433,7 @@ mod tests {
             leader_task.current_hpke_key(),
         );
         aggregator
-            .handle_upload(task.id(), &mutated_report.get_encoded())
+            .handle_upload(task.id(), &mutated_report.get_encoded().unwrap())
             .await
             .unwrap();
 
@@ -3448,7 +3473,7 @@ mod tests {
         let aggregator = Arc::new(aggregator);
         try_join_all(reports.iter().map(|r| {
             let aggregator = Arc::clone(&aggregator);
-            let enc = r.get_encoded();
+            let enc = r.get_encoded().unwrap();
             let task_id = task.id();
             async move { aggregator.handle_upload(task_id, &enc).await }
         }))
@@ -3498,7 +3523,15 @@ mod tests {
             report.helper_encrypted_input_share().clone(),
         );
 
-        assert_matches!(aggregator.handle_upload(task.id(), &report.get_encoded()).await.unwrap_err().as_ref(), Error::OutdatedHpkeConfig(task_id, config_id) => {
+        assert_matches!(
+            aggregator.handle_upload(
+                task.id(),
+                &report.get_encoded().unwrap()
+            )
+            .await
+            .unwrap_err()
+            .as_ref(),
+            Error::OutdatedHpkeConfig(task_id, config_id) => {
             assert_eq!(task.id(), task_id);
             assert_eq!(config_id, &unused_hpke_config_id);
         });
@@ -3516,7 +3549,7 @@ mod tests {
         );
 
         aggregator
-            .handle_upload(task.id(), &report.get_encoded())
+            .handle_upload(task.id(), &report.get_encoded().unwrap())
             .await
             .unwrap();
 
@@ -3550,7 +3583,7 @@ mod tests {
         );
 
         let upload_error = aggregator
-            .handle_upload(task.id(), &report.get_encoded())
+            .handle_upload(task.id(), &report.get_encoded().unwrap())
             .await
             .unwrap_err();
 
@@ -3603,7 +3636,7 @@ mod tests {
 
         // Try to upload the report, verify that we get the expected error.
         let error = aggregator
-            .handle_upload(task.id(), &report.get_encoded())
+            .handle_upload(task.id(), &report.get_encoded().unwrap())
             .await
             .unwrap_err();
         assert_matches!(
@@ -3675,7 +3708,7 @@ mod tests {
             ),
         ] {
             aggregator
-                .handle_upload(task.id(), &report.get_encoded())
+                .handle_upload(task.id(), &report.get_encoded().unwrap())
                 .await
                 .unwrap();
 
@@ -3704,9 +3737,17 @@ mod tests {
         generate_helper_report_share_for_plaintext(
             report_metadata.clone(),
             cfg,
-            public_share.get_encoded(),
-            &PlaintextInputShare::new(extensions, input_share.get_encoded()).get_encoded(),
-            &InputShareAad::new(task_id, report_metadata, public_share.get_encoded()).get_encoded(),
+            public_share.get_encoded().unwrap(),
+            &PlaintextInputShare::new(extensions, input_share.get_encoded().unwrap())
+                .get_encoded()
+                .unwrap(),
+            &InputShareAad::new(
+                task_id,
+                report_metadata,
+                public_share.get_encoded().unwrap(),
+            )
+            .get_encoded()
+            .unwrap(),
         )
     }
 
