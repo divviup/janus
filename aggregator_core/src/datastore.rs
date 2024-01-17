@@ -1516,6 +1516,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// This method is intended for use by aggregators acting in the Leader role. Scrubbed reports
     /// can no longer be read, so this method should only be called once all aggregations over the
     /// report have stepped past their START state.
+    #[tracing::instrument(skip(self), err)]
     pub async fn scrub_client_report(
         &self,
         task_id: &TaskId,
