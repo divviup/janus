@@ -151,7 +151,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         observer.await;
     }
 
-    #[tracing::instrument(skip_all, err)]
+    #[tracing::instrument(name = "AggregationJobCreator::update_tasks", skip_all, err)]
     async fn update_tasks(
         self: &Arc<Self>,
         job_creation_task_shutdown_handles: &mut HashMap<TaskId, Stopper>,
@@ -207,7 +207,10 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         Ok(())
     }
 
-    #[tracing::instrument(skip(self, stopper, job_creation_time_histogram))]
+    #[tracing::instrument(
+        name = "AggregationJobCreator::run_for_task",
+        skip(self, stopper, job_creation_time_histogram)
+    )]
     async fn run_for_task(
         self: Arc<Self>,
         stopper: Stopper,
@@ -257,7 +260,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     }
 
     // Returns true if at least one aggregation job was created.
-    #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
+    #[tracing::instrument(
+        name = "AggregationJobCreator::create_aggregation_jobs_for_task",
+        skip(self, task),
+        fields(task_id = ?task.id()),
+        err
+    )]
     async fn create_aggregation_jobs_for_task(
         self: Arc<Self>,
         task: Arc<AggregatorTask>,
