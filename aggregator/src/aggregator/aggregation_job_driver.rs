@@ -935,7 +935,7 @@ impl AggregationJobDriver {
                             // that's the more interesting error for debugging purposes.
                             //
                             // If cancellation fails, the job will be picked up again. This isn't
-                            // a big deal, since stepping a collection job is idempotent. It would
+                            // a big deal, since stepping an aggregation job is idempotent. It would
                             // just be some wasted work next time around.
                             warn!(
                                 %attempts,
