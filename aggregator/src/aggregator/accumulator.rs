@@ -129,7 +129,7 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
     /// so, a set of unmergeable report IDs is returned; the contribution of the reports
     /// corresponding to these IDs was not written back to the datastore because it is too late to
     /// do so.
-    #[tracing::instrument(skip(self, tx), err)]
+    #[tracing::instrument(name = "Accumulator::flush_to_datastore", skip(self, tx), err)]
     pub async fn flush_to_datastore<C: Clock>(
         &self,
         tx: &Transaction<'_, C>,
