@@ -775,7 +775,7 @@ async fn report_not_found(ephemeral_datastore: EphemeralDatastore) {
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
-async fn get_unaggregated_client_report_ids_for_task(ephemeral_datastore: EphemeralDatastore) {
+async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
     let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
@@ -787,12 +787,12 @@ async fn get_unaggregated_client_report_ids_for_task(ephemeral_datastore: Epheme
         Duration::from_seconds(2),
     )
     .unwrap();
-    let task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Prio3Count)
+    let task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
         .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
         .build()
         .leader_view()
         .unwrap();
-    let unrelated_task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Prio3Count)
+    let unrelated_task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
         .build()
         .leader_view()
         .unwrap();
@@ -850,57 +850,54 @@ async fn get_unaggregated_client_report_ids_for_task(ephemeral_datastore: Epheme
     clock.advance(&REPORT_EXPIRY_AGE);
 
     // Verify that we can acquire both unaggregated reports.
-    let got_reports = HashSet::from_iter(
-        ds.run_tx("test-unaggregated-reports", |tx| {
+    let mut got_reports = ds
+        .run_tx("test-unaggregated-reports", |tx| {
             let task = task.clone();
             Box::pin(async move {
-                // At this point, first_unaggregated_report and second_unaggregated_report are
-                // both unaggregated.
-                assert!(
-                    tx.interval_has_unaggregated_reports(task.id(), &report_interval)
-                        .await?
-                );
-
-                tx.get_unaggregated_client_report_ids_for_task(task.id())
+                // At this point, first_unaggregated_report and second_unaggregated_report are both
+                // unaggregated.
+                assert!(tx
+                    .interval_has_unaggregated_reports(task.id(), &report_interval)
                     .await
+                    .unwrap());
+
+                Ok(tx
+                    .get_unaggregated_client_reports_for_task(&dummy_vdaf::Vdaf::new(), task.id())
+                    .await
+                    .unwrap())
             })
         })
         .await
-        .unwrap(),
-    );
+        .unwrap();
+    got_reports.sort_by_key(|report| *report.metadata().id());
 
-    assert_eq!(
-        got_reports,
-        HashSet::from([
-            (
-                *first_unaggregated_report.metadata().id(),
-                *first_unaggregated_report.metadata().time(),
-            ),
-            (
-                *second_unaggregated_report.metadata().id(),
-                *second_unaggregated_report.metadata().time(),
-            ),
-        ]),
-    );
+    let mut want_reports = Vec::from([
+        first_unaggregated_report.clone(),
+        second_unaggregated_report.clone(),
+    ]);
+    want_reports.sort_by_key(|report| *report.metadata().id());
+
+    assert_eq!(got_reports, want_reports);
 
     // Verify that attempting to acquire again does not return the reports.
-    let got_reports = HashSet::<(ReportId, Time)>::from_iter(
-        ds.run_tx("test-unaggregated-reports", |tx| {
+    let got_reports = ds
+        .run_tx("test-unaggregated-reports", |tx| {
             let task = task.clone();
             Box::pin(async move {
                 // At this point, all reports have started aggregation.
-                assert!(
-                    !tx.interval_has_unaggregated_reports(task.id(), &report_interval)
-                        .await?
-                );
-
-                tx.get_unaggregated_client_report_ids_for_task(task.id())
+                assert!(!tx
+                    .interval_has_unaggregated_reports(task.id(), &report_interval)
                     .await
+                    .unwrap());
+
+                Ok(tx
+                    .get_unaggregated_client_reports_for_task(&dummy_vdaf::Vdaf::new(), task.id())
+                    .await
+                    .unwrap())
             })
         })
         .await
-        .unwrap(),
-    );
+        .unwrap();
 
     assert!(got_reports.is_empty());
 
@@ -916,8 +913,8 @@ async fn get_unaggregated_client_report_ids_for_task(ephemeral_datastore: Epheme
     .unwrap();
 
     // Verify that we can retrieve the un-aggregated report again.
-    let got_reports = HashSet::from_iter(
-        ds.run_tx("test-unaggregated-reports", |tx| {
+    let got_reports = ds
+        .run_tx("test-unaggregated-reports", |tx| {
             let task = task.clone();
             Box::pin(async move {
                 // At this point, first_unaggregated_report is unaggregated.
@@ -926,21 +923,16 @@ async fn get_unaggregated_client_report_ids_for_task(ephemeral_datastore: Epheme
                         .await?
                 );
 
-                tx.get_unaggregated_client_report_ids_for_task(task.id())
+                Ok(tx
+                    .get_unaggregated_client_reports_for_task(&dummy_vdaf::Vdaf::new(), task.id())
                     .await
+                    .unwrap())
             })
         })
         .await
-        .unwrap(),
-    );
+        .unwrap();
 
-    assert_eq!(
-        got_reports,
-        HashSet::from([(
-            *first_unaggregated_report.metadata().id(),
-            *first_unaggregated_report.metadata().time(),
-        ),]),
-    );
+    assert_eq!(got_reports, Vec::from([first_unaggregated_report.clone()]),);
 
     ds.run_unnamed_tx(|tx| {
         let (first_unaggregated_report, second_unaggregated_report) = (

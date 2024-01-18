@@ -1167,21 +1167,28 @@ impl<C: Clock> Transaction<'_, C> {
         ))
     }
 
-    /// `get_unaggregated_client_report_ids_for_task` returns some report IDs corresponding to
-    /// unaggregated client reports for the task identified by the given task ID. Returned client
-    /// reports are marked as aggregation-started: the caller must either create an aggregation job
-    /// with, or call `mark_reports_unaggregated` on each returned report as part of the same
-    /// transaction.
+    /// `get_unaggregated_client_reports_for_task` returns some unaggregated client reports for the
+    /// task identified by the given task ID. Returned reports are marked as aggregation-started:
+    /// the caller must either create an aggregation job with, or call `mark_reports_unaggregated`
+    /// on each returned report as part of the same transaction.
     ///
     /// This should only be used with VDAFs that have an aggregation parameter of the unit type. It
     /// relies on this assumption to find relevant reports without consulting collection jobs. For
     /// VDAFs that do have a different aggregation parameter,
     /// `get_unaggregated_client_report_ids_by_collect_for_task` should be used instead.
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_unaggregated_client_report_ids_for_task(
+    pub async fn get_unaggregated_client_reports_for_task<
+        const SEED_SIZE: usize,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+    >(
         &self,
+        vdaf: &A,
         task_id: &TaskId,
-    ) -> Result<Vec<(ReportId, Time)>, Error> {
+    ) -> Result<Vec<LeaderStoredReport<SEED_SIZE, A>>, Error>
+    where
+        A::InputShare: PartialEq,
+        A::PublicShare: PartialEq,
+    {
         // TODO(#269): allow the number of returned results to be controlled?
         let stmt = self
             .prepare_cached(
@@ -1198,7 +1205,8 @@ impl<C: Clock> Transaction<'_, C> {
                 UPDATE client_reports SET
                     aggregation_started = TRUE, updated_at = $3, updated_by = $4
                 WHERE id IN (SELECT id FROM unaggregated_reports)
-                RETURNING report_id, client_timestamp",
+                RETURNING report_id, client_timestamp, extensions, public_share, leader_input_share,
+                          helper_encrypted_input_share",
             )
             .await?;
         let rows = self
@@ -1215,9 +1223,12 @@ impl<C: Clock> Transaction<'_, C> {
 
         rows.into_iter()
             .map(|row| {
-                let report_id = row.get_bytea_and_convert::<ReportId>("report_id")?;
-                let time = Time::from_naive_date_time(&row.get("client_timestamp"));
-                Ok((report_id, time))
+                Self::client_report_from_row(
+                    vdaf,
+                    *task_id,
+                    row.get_bytea_and_convert::<ReportId>("report_id")?,
+                    row,
+                )
             })
             .collect::<Result<Vec<_>, Error>>()
     }
