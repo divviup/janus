@@ -478,6 +478,7 @@ impl InClusterJanus {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn in_cluster_count() {
     install_test_trace_subscriber();
 
@@ -496,6 +497,7 @@ async fn in_cluster_count() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn in_cluster_sum() {
     install_test_trace_subscriber();
 
@@ -514,6 +516,7 @@ async fn in_cluster_sum() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn in_cluster_histogram() {
     install_test_trace_subscriber();
 

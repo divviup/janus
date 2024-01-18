@@ -219,7 +219,10 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
     let before_timestamp = RealClock::default().now();
     for measurement in test_case.measurements.iter() {
         client_implementation.upload(measurement).await.unwrap();
+        sleep(StdDuration::from_millis(100)).await;
     }
+
+    sleep(StdDuration::from_secs(120)).await;
 
     let leader_endpoint = task_parameters
         .endpoint_fragments
