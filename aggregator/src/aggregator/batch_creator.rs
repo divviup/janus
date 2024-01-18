@@ -3,14 +3,14 @@
 use futures::future::try_join_all;
 use janus_aggregator_core::datastore::{
     models::{
-        AggregationJob, AggregationJobState, OutstandingBatch, ReportAggregation,
-        ReportAggregationState,
+        AggregationJob, AggregationJobState, LeaderStoredReport, OutstandingBatch,
+        ReportAggregation, ReportAggregationState,
     },
     Error, Transaction,
 };
 use janus_core::time::{Clock, DurationExt, TimeExt};
 use janus_messages::{
-    query_type::FixedSize, AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskId, Time,
+    query_type::FixedSize, AggregationJobStep, BatchId, Duration, Interval, TaskId, Time,
 };
 use prio::{codec::Encode, vdaf::Aggregator};
 use rand::random;
@@ -35,7 +35,7 @@ where
 {
     properties: Properties,
     aggregation_job_writer: &'a mut AggregationJobWriter<SEED_SIZE, FixedSize, A>,
-    map: HashMap<Option<Time>, Bucket>,
+    map: HashMap<Option<Time>, Bucket<SEED_SIZE, A>>,
     new_batches: Vec<(BatchId, Option<Time>)>,
 }
 
@@ -57,6 +57,7 @@ where
     A::PrepareState: Encode,
 {
     pub fn new(
+        // XXX: why not just take a task instead of the first 6 params?
         min_aggregation_job_size: usize,
         max_aggregation_job_size: usize,
         task_id: TaskId,
@@ -83,8 +84,7 @@ where
     pub async fn add_report<C>(
         &mut self,
         tx: &Transaction<'_, C>,
-        report_id: &ReportId,
-        client_timestamp: &Time,
+        report: LeaderStoredReport<SEED_SIZE, A>,
     ) -> Result<(), Error>
     where
         C: Clock,
@@ -93,7 +93,10 @@ where
             .properties
             .task_batch_time_window_size
             .map(|batch_time_window_size| {
-                client_timestamp.to_batch_interval_start(&batch_time_window_size)
+                report
+                    .metadata()
+                    .time()
+                    .to_batch_interval_start(&batch_time_window_size)
             })
             .transpose()?;
         let mut map_entry = self.map.entry(time_bucket_start_opt);
@@ -111,9 +114,7 @@ where
         };
 
         // Add to the list of unaggregated reports for this combination of task and time bucket.
-        bucket
-            .unaggregated_report_ids
-            .push_back((*report_id, *client_timestamp));
+        bucket.unaggregated_reports.push_back(report);
 
         Self::process_batches(
             &self.properties,
@@ -141,14 +142,14 @@ where
         aggregation_job_writer: &mut AggregationJobWriter<SEED_SIZE, FixedSize, A>,
         new_batches: &mut Vec<(BatchId, Option<Time>)>,
         time_bucket_start: &Option<Time>,
-        bucket: &mut Bucket,
+        bucket: &mut Bucket<SEED_SIZE, A>,
         greedy: bool,
     ) -> Result<(), Error> {
         loop {
             // Consider creating aggregation jobs inside existing batches.
             while let Some(mut largest_outstanding_batch) = bucket.outstanding_batches.peek_mut() {
                 // Short-circuit if the reports are exhausted.
-                if bucket.unaggregated_report_ids.is_empty() {
+                if bucket.unaggregated_reports.is_empty() {
                     return Ok(());
                 }
                 // Discard any outstanding batches that do not currently have room for more reports.
@@ -160,7 +161,7 @@ where
                 if greedy {
                     let desired_aggregation_job_size = min(
                         min(
-                            bucket.unaggregated_report_ids.len(),
+                            bucket.unaggregated_reports.len(),
                             properties.max_aggregation_job_size,
                         ),
                         properties.task_max_batch_size - largest_outstanding_batch.max_size(),
@@ -183,7 +184,7 @@ where
                             properties.task_id,
                             *largest_outstanding_batch.id(),
                             desired_aggregation_job_size,
-                            &mut bucket.unaggregated_report_ids,
+                            &mut bucket.unaggregated_reports,
                             aggregation_job_writer,
                         )?;
                         largest_outstanding_batch.add_reports(desired_aggregation_job_size);
@@ -205,12 +206,12 @@ where
                         properties.max_aggregation_job_size,
                         properties.task_max_batch_size - largest_outstanding_batch.max_size(),
                     );
-                    if bucket.unaggregated_report_ids.len() >= desired_aggregation_job_size {
+                    if bucket.unaggregated_reports.len() >= desired_aggregation_job_size {
                         Self::create_aggregation_job(
                             properties.task_id,
                             *largest_outstanding_batch.id(),
                             desired_aggregation_job_size,
-                            &mut bucket.unaggregated_report_ids,
+                            &mut bucket.unaggregated_reports,
                             aggregation_job_writer,
                         )?;
                         largest_outstanding_batch.add_reports(desired_aggregation_job_size);
@@ -230,7 +231,7 @@ where
             };
             let desired_aggregation_job_size = min(
                 min(
-                    bucket.unaggregated_report_ids.len(),
+                    bucket.unaggregated_reports.len(),
                     properties.max_aggregation_job_size,
                 ),
                 properties.task_max_batch_size,
@@ -250,7 +251,7 @@ where
                     properties.task_id,
                     batch_id,
                     desired_aggregation_job_size,
-                    &mut bucket.unaggregated_report_ids,
+                    &mut bucket.unaggregated_reports,
                     aggregation_job_writer,
                 )?;
 
@@ -269,7 +270,7 @@ where
         task_id: TaskId,
         batch_id: BatchId,
         aggregation_job_size: usize,
-        unaggregated_report_ids: &mut VecDeque<(ReportId, Time)>,
+        unaggregated_reports: &mut VecDeque<LeaderStoredReport<SEED_SIZE, A>>,
         aggregation_job_writer: &mut AggregationJobWriter<SEED_SIZE, FixedSize, A>,
     ) -> Result<(), Error> {
         let aggregation_job_id = random();
@@ -282,9 +283,11 @@ where
         );
         let mut min_client_timestamp = None;
         let mut max_client_timestamp = None;
+
         let report_aggregations = (0u64..)
-            .zip(unaggregated_report_ids.drain(..aggregation_job_size))
-            .map(|(ord, (report_id, client_timestamp))| {
+            .zip(unaggregated_reports.drain(..aggregation_job_size))
+            .map(|(ord, report)| {
+                let client_timestamp = *report.metadata().time();
                 min_client_timestamp = Some(
                     min_client_timestamp.map_or(client_timestamp, |ts| min(ts, client_timestamp)),
                 );
@@ -294,11 +297,16 @@ where
                 ReportAggregation::new(
                     task_id,
                     aggregation_job_id,
-                    report_id,
+                    *report.metadata().id(),
                     client_timestamp,
                     ord,
                     None,
-                    ReportAggregationState::Start,
+                    ReportAggregationState::StartLeader {
+                        public_share: report.public_share().clone(),
+                        leader_extensions: report.leader_extensions().to_vec(),
+                        leader_input_share: report.leader_input_share().clone(),
+                        helper_encrypted_input_share: report.helper_encrypted_input_share().clone(),
+                    },
                 )
             })
             .collect();
@@ -348,9 +356,9 @@ where
             )?;
             unaggregated_report_ids.extend(
                 bucket
-                    .unaggregated_report_ids
+                    .unaggregated_reports
                     .into_iter()
-                    .map(|(report_id, _)| report_id),
+                    .map(|report| *report.metadata().id()),
             );
         }
 
@@ -381,19 +389,25 @@ where
 }
 
 /// Tracks reports and batches for one partition of a task.
-struct Bucket {
+struct Bucket<const SEED_SIZE: usize, A>
+where
+    A: Aggregator<SEED_SIZE, 16>,
+{
     outstanding_batches: BinaryHeap<UpdatedOutstandingBatch>,
-    unaggregated_report_ids: VecDeque<(ReportId, Time)>,
+    unaggregated_reports: VecDeque<LeaderStoredReport<SEED_SIZE, A>>,
 }
 
-impl Bucket {
+impl<const SEED_SIZE: usize, A> Bucket<SEED_SIZE, A>
+where
+    A: Aggregator<SEED_SIZE, 16>,
+{
     fn new(outstanding_batches: Vec<OutstandingBatch>) -> Self {
         Self {
             outstanding_batches: outstanding_batches
                 .into_iter()
                 .map(UpdatedOutstandingBatch::new)
                 .collect(),
-            unaggregated_report_ids: VecDeque::new(),
+            unaggregated_reports: VecDeque::new(),
         }
     }
 }

@@ -508,9 +508,11 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     where
         A: Send + Sync + 'static,
         A::AggregateShare: Send + Sync,
+        A::InputShare: Send + Sync + PartialEq, // XXX: is Send + Sync necessary?
         A::PrepareMessage: Send + Sync,
         A::PrepareShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
+        A::PublicShare: Send + Sync + PartialEq, // XXX: is Send + Sync necessary?
         A::OutputShare: Send + Sync,
     {
         Ok(self
@@ -522,20 +524,18 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
                 Box::pin(async move {
                     // Find some unaggregated client reports.
-                    let report_ids_and_times = tx
-                        .get_unaggregated_client_report_ids_for_task(task.id())
+                    let reports = tx
+                        .get_unaggregated_client_reports_for_task(vdaf.as_ref(), task.id())
                         .await?;
 
                     // Generate aggregation jobs & report aggregations based on the reports we read.
                     let mut aggregation_job_writer = AggregationJobWriter::new(Arc::clone(&task));
-                    for agg_job_reports in
-                        report_ids_and_times.chunks(this.max_aggregation_job_size)
-                    {
+                    for agg_job_reports in reports.chunks(this.max_aggregation_job_size) {
                         if agg_job_reports.len() < this.min_aggregation_job_size {
                             if !agg_job_reports.is_empty() {
                                 let report_ids: Vec<_> = agg_job_reports
                                     .iter()
-                                    .map(|(report_id, _)| *report_id)
+                                    .map(|report| *report.metadata().id())
                                     .collect();
                                 tx.mark_reports_unaggregated(task.id(), &report_ids).await?;
                             }
@@ -550,10 +550,16 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             "Creating aggregation job"
                         );
 
-                        let min_client_timestamp =
-                            agg_job_reports.iter().map(|(_, time)| time).min().unwrap(); // unwrap safety: agg_job_reports is non-empty
-                        let max_client_timestamp =
-                            agg_job_reports.iter().map(|(_, time)| time).max().unwrap(); // unwrap safety: agg_job_reports is non-empty
+                        let min_client_timestamp = agg_job_reports
+                            .iter()
+                            .map(|report| report.metadata().time())
+                            .min()
+                            .unwrap(); // unwrap safety: agg_job_reports is non-empty
+                        let max_client_timestamp = agg_job_reports
+                            .iter()
+                            .map(|report| report.metadata().time())
+                            .max()
+                            .unwrap(); // unwrap safety: agg_job_reports is non-empty
                         let client_timestamp_interval = Interval::new(
                             *min_client_timestamp,
                             max_client_timestamp
@@ -574,15 +580,22 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         let report_aggregations = agg_job_reports
                             .iter()
                             .enumerate()
-                            .map(|(ord, (report_id, time))| {
+                            .map(|(ord, report)| {
                                 Ok(ReportAggregation::<SEED_SIZE, A>::new(
                                     *task.id(),
                                     aggregation_job_id,
-                                    *report_id,
-                                    *time,
+                                    *report.metadata().id(),
+                                    *report.metadata().time(),
                                     ord.try_into()?,
                                     None,
-                                    ReportAggregationState::Start,
+                                    ReportAggregationState::StartLeader {
+                                        public_share: report.public_share().clone(),
+                                        leader_extensions: report.leader_extensions().to_vec(),
+                                        leader_input_share: report.leader_input_share().clone(),
+                                        helper_encrypted_input_share: report
+                                            .helper_encrypted_input_share()
+                                            .clone(),
+                                    },
                                 ))
                             })
                             .collect::<Result<_, datastore::Error>>()?;
@@ -611,9 +624,11 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     where
         A: Send + Sync + 'static,
         A::AggregateShare: Send + Sync,
+        A::InputShare: Send + Sync + PartialEq, // XXX: is Send + Sync necessary?
         A::PrepareMessage: Send + Sync,
         A::PrepareShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
+        A::PublicShare: Send + Sync + PartialEq, // XXX: is Send + Sync necessary?
         A::OutputShare: Send + Sync,
     {
         let (task_min_batch_size, task_max_batch_size) = (
@@ -629,8 +644,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
                 Box::pin(async move {
                     // Find unaggregated client reports.
-                    let unaggregated_report_ids = tx
-                        .get_unaggregated_client_report_ids_for_task(task.id())
+                    let unaggregated_reports = tx
+                        .get_unaggregated_client_reports_for_task(vdaf.as_ref(), task.id())
                         .await?;
 
                     let mut aggregation_job_writer =
@@ -645,10 +660,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         &mut aggregation_job_writer,
                     );
 
-                    for (report_id, client_timestamp) in unaggregated_report_ids {
-                        batch_creator
-                            .add_report(tx, &report_id, &client_timestamp)
-                            .await?;
+                    for report in unaggregated_reports {
+                        batch_creator.add_report(tx, report).await?;
                     }
                     batch_creator.finish(tx, vdaf).await?;
 
