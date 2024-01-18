@@ -311,6 +311,10 @@ fn register_database_pool_status_metrics(pool: Pool, meter: &Meter) -> Result<()
         .u64_observable_gauge("janus_database_pool_total_connections")
         .with_description("Total number of connections in the database connection pool.")
         .init();
+    let maximum_size_gauge = meter
+        .u64_observable_gauge("janus_database_pool_maximum_size_connections")
+        .with_description("Maximum size of the database connection pool.")
+        .init();
     let waiting_tasks_gauge = meter
         .u64_observable_gauge("janus_database_pool_waiting_tasks")
         .with_description(
@@ -321,6 +325,7 @@ fn register_database_pool_status_metrics(pool: Pool, meter: &Meter) -> Result<()
         &[
             available_connections_gauge.as_any(),
             total_connections_gauge.as_any(),
+            maximum_size_gauge.as_any(),
             waiting_tasks_gauge.as_any(),
         ],
         move |observer| {
@@ -333,6 +338,11 @@ fn register_database_pool_status_metrics(pool: Pool, meter: &Meter) -> Result<()
             observer.observe_u64(
                 &total_connections_gauge,
                 u64::try_from(status.size).unwrap_or(u64::MAX),
+                &[],
+            );
+            observer.observe_u64(
+                &maximum_size_gauge,
+                u64::try_from(status.max_size).unwrap_or(u64::MAX),
                 &[],
             );
             observer.observe_u64(
