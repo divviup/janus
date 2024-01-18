@@ -3,15 +3,15 @@ use crate::aggregator::{
     aggregation_job_writer::AggregationJobWriter, http_handlers::AGGREGATION_JOB_ROUTE,
     query_type::CollectableQueryType, send_request_to_helper,
 };
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Result};
 use derivative::Derivative;
-use futures::future::{try_join_all, BoxFuture, FutureExt};
+use futures::future::{try_join_all, BoxFuture};
 use janus_aggregator_core::{
     datastore::{
         self,
         models::{
-            AcquiredAggregationJob, AggregationJob, AggregationJobState, LeaderStoredReport, Lease,
-            ReportAggregation, ReportAggregationState,
+            AcquiredAggregationJob, AggregationJob, AggregationJobState, Lease, ReportAggregation,
+            ReportAggregationState,
         },
         Datastore,
     },
@@ -142,7 +142,7 @@ impl AggregationJobDriver {
         A::PublicShare: PartialEq + Send + Sync,
     {
         // Read all information about the aggregation job.
-        let (task, aggregation_job, report_aggregations, client_reports, verify_key) = datastore
+        let (task, aggregation_job, report_aggregations, verify_key) = datastore
             .run_tx("step_aggregation_job_1", |tx| {
                 let (lease, vdaf) = (Arc::clone(&lease), Arc::clone(&vdaf));
                 Box::pin(async move {
@@ -185,47 +185,10 @@ impl AggregationJobDriver {
                         )
                     })?;
 
-                    // Read client reports, but only for report aggregations in state START.
-                    // TODO(#224): create "get_client_reports_for_aggregation_job" datastore
-                    // operation to avoid needing to join many futures?
-                    let client_reports: HashMap<_, _> =
-                        try_join_all(report_aggregations.iter().filter_map(|report_aggregation| {
-                            if matches!(report_aggregation.state(), &ReportAggregationState::Start)
-                            {
-                                Some(
-                                    tx.get_client_report(
-                                        vdaf.as_ref(),
-                                        lease.leased().task_id(),
-                                        report_aggregation.report_id(),
-                                    )
-                                    .map(|rslt| {
-                                        rslt.context(format!(
-                                            "couldn't get report {} for task {}",
-                                            *report_aggregation.report_id(),
-                                            lease.leased().task_id(),
-                                        ))
-                                        .map(|report| {
-                                            report.map(|report| {
-                                                (*report_aggregation.report_id(), report)
-                                            })
-                                        })
-                                        .map_err(|err| datastore::Error::User(err.into()))
-                                    }),
-                                )
-                            } else {
-                                None
-                            }
-                        }))
-                        .await?
-                        .into_iter()
-                        .flatten()
-                        .collect();
-
                     Ok((
                         Arc::new(task),
                         aggregation_job,
                         report_aggregations,
-                        client_reports,
                         verify_key,
                     ))
                 })
@@ -236,15 +199,15 @@ impl AggregationJobDriver {
         let (mut saw_start, mut saw_waiting, mut saw_finished) = (false, false, false);
         for report_aggregation in &report_aggregations {
             match report_aggregation.state() {
-                ReportAggregationState::Start => saw_start = true,
-                ReportAggregationState::WaitingLeader(_) => saw_waiting = true,
-                ReportAggregationState::WaitingHelper(_) => {
+                ReportAggregationState::StartLeader { .. } => saw_start = true,
+                ReportAggregationState::WaitingLeader { .. } => saw_waiting = true,
+                ReportAggregationState::WaitingHelper { .. } => {
                     return Err(anyhow!(
                         "Leader encountered unexpected ReportAggregationState::WaitingHelper"
                     ));
                 }
                 ReportAggregationState::Finished => saw_finished = true,
-                ReportAggregationState::Failed(_) => (), // ignore failed aggregations
+                ReportAggregationState::Failed { .. } => (), // ignore failed aggregations
             }
         }
         match (saw_start, saw_waiting, saw_finished) {
@@ -257,7 +220,6 @@ impl AggregationJobDriver {
                     task,
                     aggregation_job,
                     report_aggregations,
-                    client_reports,
                     verify_key,
                 )
                 .await
@@ -300,31 +262,37 @@ impl AggregationJobDriver {
         task: Arc<AggregatorTask>,
         aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-        client_reports: HashMap<ReportId, LeaderStoredReport<SEED_SIZE, A>>,
         verify_key: VerifyKey<SEED_SIZE>,
     ) -> Result<()>
     where
         A: 'static,
         A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::AggregateShare: Send + Sync,
+        A::InputShare: PartialEq + Send + Sync,
         A::OutputShare: PartialEq + Eq + Send + Sync,
         A::PrepareState: PartialEq + Eq + Send + Sync + Encode,
         A::PrepareShare: PartialEq + Eq + Send + Sync,
         A::PrepareMessage: PartialEq + Eq + Send + Sync,
-        A::InputShare: PartialEq + Send + Sync,
         A::PublicShare: PartialEq + Send + Sync,
     {
         // We currently scrub all reports included in an aggregation job as part of completing the
         // first step. Once we support VDAFs which accept use an aggregation parameter &
         // permit/require multiple aggregations per report, we will need a more complicated strategy
         // where we only scrub a report as part of the _final_ aggregation over the report.
-        let report_ids_to_scrub = client_reports.keys().copied().collect();
+        let report_ids_to_scrub = report_aggregations
+            .iter()
+            .map(|ra| ra.report_id())
+            .copied()
+            .collect();
 
         // Only process non-failed report aggregations.
         let report_aggregations: Vec<_> = report_aggregations
             .into_iter()
             .filter(|report_aggregation| {
-                matches!(report_aggregation.state(), &ReportAggregationState::Start)
+                matches!(
+                    report_aggregation.state(),
+                    &ReportAggregationState::StartLeader { .. }
+                )
             })
             .collect();
 
@@ -334,34 +302,43 @@ impl AggregationJobDriver {
         let mut prepare_inits = Vec::new();
         let mut stepped_aggregations = Vec::new();
         for report_aggregation in report_aggregations {
-            // Look up report.
-            let report = if let Some(report) = client_reports.get(report_aggregation.report_id()) {
-                report
-            } else {
-                info!(report_id = %report_aggregation.report_id(), "Attempted to aggregate missing report (most likely garbage collected)");
-                self.aggregate_step_failure_counter
-                    .add(1, &[KeyValue::new("type", "missing_client_report")]);
-                report_aggregations_to_write.push(
-                    report_aggregation
-                        .with_state(ReportAggregationState::Failed(PrepareError::ReportDropped)),
-                );
-                continue;
-            };
+            // Extract report data from the report aggregation state.
+            let (public_share, leader_extensions, leader_input_share, helper_encrypted_input_share) =
+                match report_aggregation.state() {
+                    ReportAggregationState::StartLeader {
+                        public_share,
+                        leader_extensions,
+                        leader_input_share,
+                        helper_encrypted_input_share,
+                    } => (
+                        public_share,
+                        leader_extensions,
+                        leader_input_share,
+                        helper_encrypted_input_share,
+                    ),
+
+                    // Panic safety: this can't happen because we filter to only StartLeader-state
+                    // report aggregations before this loop.
+                    _ => panic!(
+                        "Unexpected report aggregation state: {:?}",
+                        report_aggregation.state()
+                    ),
+                };
 
             // Check for repeated extensions.
             let mut extension_types = HashSet::new();
-            if !report
-                .leader_extensions()
+            if leader_extensions
                 .iter()
                 .all(|extension| extension_types.insert(extension.extension_type()))
             {
                 debug!(report_id = %report_aggregation.report_id(), "Received report with duplicate extensions");
                 self.aggregate_step_failure_counter
                     .add(1, &[KeyValue::new("type", "duplicate_extension")]);
-                report_aggregations_to_write.push(
-                    report_aggregation
-                        .with_state(ReportAggregationState::Failed(PrepareError::InvalidMessage)),
-                );
+                report_aggregations_to_write.push(report_aggregation.with_state(
+                    ReportAggregationState::Failed {
+                        prepare_error: PrepareError::InvalidMessage,
+                    },
+                ));
                 continue;
             }
 
@@ -371,15 +348,15 @@ impl AggregationJobDriver {
                     verify_key.as_bytes(),
                     aggregation_job.aggregation_parameter(),
                     // DAP report ID is used as VDAF nonce
-                    report.metadata().id().as_ref(),
-                    report.public_share(),
-                    report.leader_input_share(),
+                    report_aggregation.report_id().as_ref(),
+                    public_share,
+                    leader_input_share,
                 )
                 .map_err(|ping_pong_error| {
                     handle_ping_pong_error(
                         task.id(),
                         Role::Leader,
-                        report.metadata().id(),
+                        report_aggregation.report_id(),
                         ping_pong_error,
                         &self.aggregate_step_failure_counter,
                     )
@@ -388,9 +365,9 @@ impl AggregationJobDriver {
                 Ok((ping_pong_state, ping_pong_message)) => {
                     prepare_inits.push(PrepareInit::new(
                         ReportShare::new(
-                            report.metadata().clone(),
-                            report.public_share().get_encoded(),
-                            report.helper_encrypted_input_share().clone(),
+                            report_aggregation.report_metadata(),
+                            public_share.get_encoded(),
+                            helper_encrypted_input_share.clone(),
                         ),
                         ping_pong_message,
                     ));
@@ -399,9 +376,10 @@ impl AggregationJobDriver {
                         leader_state: ping_pong_state,
                     });
                 }
-                Err(prep_error) => {
+                Err(prepare_error) => {
                     report_aggregations_to_write.push(
-                        report_aggregation.with_state(ReportAggregationState::Failed(prep_error)),
+                        report_aggregation
+                            .with_state(ReportAggregationState::Failed { prepare_error }),
                     );
                     continue;
                 }
@@ -473,10 +451,12 @@ impl AggregationJobDriver {
         A: 'static,
         A::AggregationParam: Send + Sync + PartialEq + Eq,
         A::AggregateShare: Send + Sync,
+        A::InputShare: Send + Sync,
         A::OutputShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
         A::PrepareShare: Send + Sync,
         A::PrepareMessage: Send + Sync,
+        A::PublicShare: Send + Sync,
     {
         // Visit the report aggregations, ignoring any that have already failed; compute our own
         // next step & transitions to send to the helper.
@@ -572,10 +552,12 @@ impl AggregationJobDriver {
         A: 'static,
         A::AggregationParam: Send + Sync + Eq + PartialEq,
         A::AggregateShare: Send + Sync,
+        A::InputShare: Send + Sync,
         A::OutputShare: Send + Sync,
         A::PrepareMessage: Send + Sync,
         A::PrepareShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
+        A::PublicShare: Send + Sync,
     {
         // Handle response, computing the new report aggregations to be stored.
         if stepped_aggregations.len() != helper_prep_resps.len() {
@@ -625,7 +607,7 @@ impl AggregationJobDriver {
                             // VDAF level (i.e., state may be PingPongState::Finished) but we cannot
                             // finish at the DAP layer and commit the output share until we get
                             // confirmation from the Helper that they finished, too.
-                            ReportAggregationState::WaitingLeader(transition)
+                            ReportAggregationState::WaitingLeader { transition }
                         }
                         Ok(PingPongContinuedValue::FinishedNoMessage { output_share }) => {
                             // We finished and have no outgoing message, meaning the Helper was
@@ -643,14 +625,14 @@ impl AggregationJobDriver {
                                 );
                                 self.aggregate_step_failure_counter
                                     .add(1, &[KeyValue::new("type", "accumulate_failure")]);
-                                ReportAggregationState::<SEED_SIZE, A>::Failed(
-                                    PrepareError::VdafPrepError,
-                                )
+                                ReportAggregationState::<SEED_SIZE, A>::Failed {
+                                    prepare_error: PrepareError::VdafPrepError,
+                                }
                             } else {
                                 ReportAggregationState::Finished
                             }
                         }
-                        Err(prepare_error) => ReportAggregationState::Failed(prepare_error),
+                        Err(prepare_error) => ReportAggregationState::Failed { prepare_error },
                     }
                 }
 
@@ -671,9 +653,9 @@ impl AggregationJobDriver {
                             );
                             self.aggregate_step_failure_counter
                                 .add(1, &[KeyValue::new("type", "accumulate_failure")]);
-                            ReportAggregationState::<SEED_SIZE, A>::Failed(
-                                PrepareError::VdafPrepError,
-                            )
+                            ReportAggregationState::<SEED_SIZE, A>::Failed {
+                                prepare_error: PrepareError::VdafPrepError,
+                            }
                         } else {
                             ReportAggregationState::Finished
                         }
@@ -684,7 +666,9 @@ impl AggregationJobDriver {
                         );
                         self.aggregate_step_failure_counter
                             .add(1, &[KeyValue::new("type", "finish_mismatch")]);
-                        ReportAggregationState::Failed(PrepareError::VdafPrepError)
+                        ReportAggregationState::Failed {
+                            prepare_error: PrepareError::VdafPrepError,
+                        }
                     }
                 }
 
@@ -698,7 +682,9 @@ impl AggregationJobDriver {
                     );
                     self.aggregate_step_failure_counter
                         .add(1, &[KeyValue::new("type", "helper_step_failure")]);
-                    ReportAggregationState::Failed(*err)
+                    ReportAggregationState::Failed {
+                        prepare_error: *err,
+                    }
                 }
             };
 
