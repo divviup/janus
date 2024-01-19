@@ -34,11 +34,7 @@ use prio::{
     vdaf,
 };
 use reqwest::Method;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::try_join;
 use tracing::{debug, info, trace_span, warn};
 
@@ -464,7 +460,8 @@ impl AggregationJobDriver {
         let mut prepare_continues = Vec::new();
         let mut stepped_aggregations = Vec::new();
         for report_aggregation in report_aggregations {
-            if let ReportAggregationState::WaitingLeader(transition) = report_aggregation.state() {
+            if let ReportAggregationState::WaitingLeader { transition } = report_aggregation.state()
+            {
                 let (prep_state, message) = match transition.evaluate(vdaf.as_ref()) {
                     Ok((state, message)) => (state, message),
                     Err(error) => {
@@ -477,7 +474,7 @@ impl AggregationJobDriver {
                         );
                         report_aggregations_to_write.push(
                             report_aggregation
-                                .with_state(ReportAggregationState::Failed(prepare_error)),
+                                .with_state(ReportAggregationState::Failed { prepare_error }),
                         );
                         continue;
                     }
@@ -790,9 +787,11 @@ impl AggregationJobDriver {
         A: Send + Sync + 'static,
         A::AggregateShare: Send + Sync,
         A::AggregationParam: Send + Sync + PartialEq + Eq,
-        A::PrepareMessage: Send + Sync,
+        A::InputShare: Send + Sync,
         A::OutputShare: Send + Sync,
+        A::PrepareMessage: Send + Sync,
         for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
+        A::PublicShare: Send + Sync,
     {
         let vdaf = Arc::new(vdaf);
         let lease = Arc::new(lease);
@@ -973,6 +972,9 @@ mod tests {
     use std::{borrow::Borrow, sync::Arc, time::Duration as StdDuration};
     use trillium_tokio::Stopper;
 
+    // XXX: remove client-report writes (or scrub them?) to validate the driver is now reading data from the report aggregation.
+    // XXX: convenience function to translate LeaderStoredReport -> ReportAggregationState::StartLeader?
+
     #[tokio::test]
     async fn aggregation_job_driver() {
         // This is a minimal test that AggregationJobDriver::run() will successfully find
@@ -1068,7 +1070,7 @@ mod tests {
                         *report.metadata().time(),
                         0,
                         None,
-                        ReportAggregationState::Start,
+                        ReportAggregationState::StartLeader { public_share: report.public_share().clone(), leader_extensions: report.leader_extensions().to_vec(), leader_input_share: report.leader_input_share().clone(), helper_encrypted_input_share: report.helper_encrypted_input_share().clone() },
                     ))
                     .await?;
 
@@ -1329,17 +1331,15 @@ mod tests {
             &transcript.leader_input_share,
             &transcript.helper_input_share,
         );
-        let missing_report_id = random();
         let aggregation_job_id = random();
 
         let lease = ds
             .run_unnamed_tx(|tx| {
-                let (vdaf, task, report, repeated_extension_report) = (
-                    vdaf.clone(),
-                    leader_task.clone(),
-                    report.clone(),
-                    repeated_extension_report.clone(),
-                );
+                let vdaf = Arc::clone(&vdaf);
+                let task = leader_task.clone();
+                let report = report.clone();
+                let repeated_extension_report = repeated_extension_report.clone();
+
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await?;
                     tx.put_client_report(vdaf.borrow(), &report).await?;
@@ -1369,7 +1369,7 @@ mod tests {
                             *report.metadata().time(),
                             0,
                             None,
-                            ReportAggregationState::Start,
+                            ReportAggregationState::StartLeader { public_share: report.public_share().clone(), leader_extensions: report.leader_extensions().to_vec(), leader_input_share: report.leader_input_share().clone(), helper_encrypted_input_share: report.helper_encrypted_input_share().clone() },
                         ),
                     )
                     .await?;
@@ -1381,19 +1381,7 @@ mod tests {
                             *repeated_extension_report.metadata().time(),
                             1,
                             None,
-                            ReportAggregationState::Start,
-                        ),
-                    )
-                    .await?;
-                    tx.put_report_aggregation(
-                        &ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
-                            *task.id(),
-                            aggregation_job_id,
-                            missing_report_id,
-                            time,
-                            2,
-                            None,
-                            ReportAggregationState::Start,
+                            ReportAggregationState::StartLeader { public_share: repeated_extension_report.public_share().clone(), leader_extensions: repeated_extension_report.leader_extensions().to_vec(), leader_input_share: repeated_extension_report.leader_input_share().clone(), helper_encrypted_input_share: repeated_extension_report.helper_encrypted_input_share().clone() },
                         ),
                     )
                     .await?;
@@ -1527,17 +1515,7 @@ mod tests {
                 *repeated_extension_report.metadata().time(),
                 1,
                 None,
-                ReportAggregationState::Failed(PrepareError::InvalidMessage),
-            );
-        let want_missing_report_report_aggregation =
-            ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
-                *task.id(),
-                aggregation_job_id,
-                missing_report_id,
-                time,
-                2,
-                None,
-                ReportAggregationState::Failed(PrepareError::ReportDropped),
+                ReportAggregationState::Failed{prepare_error: PrepareError::InvalidMessage},
             );
         let want_batch = Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
             *task.id(),
@@ -1552,7 +1530,6 @@ mod tests {
             got_aggregation_job,
             got_report_aggregation,
             got_repeated_extension_report_aggregation,
-            got_missing_report_report_aggregation,
             got_batch,
         ) = ds
             .run_unnamed_tx(|tx| {
@@ -1592,17 +1569,6 @@ mod tests {
                         )
                         .await?
                         .unwrap();
-                    let missing_report_report_aggregation = tx
-                        .get_report_aggregation(
-                            vdaf.as_ref(),
-                            &Role::Leader,
-                            task.id(),
-                            &aggregation_job_id,
-                            aggregation_job.aggregation_parameter(),
-                            &missing_report_id,
-                        )
-                        .await?
-                        .unwrap();
                     let batch = tx
                         .get_batch(task.id(), &batch_identifier, &())
                         .await?
@@ -1611,7 +1577,6 @@ mod tests {
                         aggregation_job,
                         report_aggregation,
                         repeated_extension_report_aggregation,
-                        missing_report_report_aggregation,
                         batch,
                     ))
                 })
@@ -1624,10 +1589,6 @@ mod tests {
         assert_eq!(
             want_repeated_extension_report_aggregation,
             got_repeated_extension_report_aggregation
-        );
-        assert_eq!(
-            want_missing_report_report_aggregation,
-            got_missing_report_report_aggregation
         );
         assert_eq!(want_batch, got_batch);
     }
@@ -1719,7 +1680,7 @@ mod tests {
                         *report.metadata().time(),
                         0,
                         None,
-                        ReportAggregationState::Start,
+                        ReportAggregationState::StartLeader { public_share: report.public_share().clone(), leader_extensions: report.leader_extensions().to_vec(), leader_input_share: report.leader_input_share().clone(), helper_encrypted_input_share: report.helper_encrypted_input_share().clone() },
                     ))
                     .await?;
 
@@ -1823,12 +1784,12 @@ mod tests {
                 *report.metadata().time(),
                 0,
                 None,
-                ReportAggregationState::WaitingLeader(
-                    transcript.leader_prepare_transitions[1]
+                ReportAggregationState::WaitingLeader{
+                    transition: transcript.leader_prepare_transitions[1]
                         .transition
                         .clone()
                         .unwrap(),
-                ),
+                },
             );
         let want_batch = Batch::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>::new(
             *task.id(),
@@ -2005,7 +1966,7 @@ mod tests {
                             *gc_eligible_report.metadata().time(),
                             0,
                             None,
-                            ReportAggregationState::Start,
+                            ReportAggregationState::StartLeader { public_share: gc_eligible_report.public_share().clone(), leader_extensions: gc_eligible_report.leader_extensions().to_vec(), leader_input_share: gc_eligible_report.leader_input_share().clone(), helper_encrypted_input_share: gc_eligible_report.helper_encrypted_input_share().clone() },
                         ),
                     )
                     .await
@@ -2018,7 +1979,7 @@ mod tests {
                             *gc_uneligible_report.metadata().time(),
                             1,
                             None,
-                            ReportAggregationState::Start,
+                            ReportAggregationState::StartLeader { public_share: gc_uneligible_report.public_share().clone(), leader_extensions: gc_uneligible_report.leader_extensions().to_vec(), leader_input_share: gc_uneligible_report.leader_input_share().clone(), helper_encrypted_input_share: gc_uneligible_report.helper_encrypted_input_share().clone() },
                         ),
                     )
                     .await
@@ -2140,7 +2101,7 @@ mod tests {
                 *gc_eligible_report.metadata().time(),
                 0,
                 None,
-                ReportAggregationState::Failed(PrepareError::ReportDropped),
+                ReportAggregationState::Failed{prepare_error: PrepareError::ReportDropped},
             );
         let want_uneligible_report_aggregation =
             ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
@@ -2285,7 +2246,7 @@ mod tests {
                             *report.metadata().time(),
                             0,
                             None,
-                            ReportAggregationState::Start,
+                            ReportAggregationState::StartLeader { public_share: report.public_share().clone(), leader_extensions: report.leader_extensions().to_vec(), leader_input_share: report.leader_input_share().clone(), helper_encrypted_input_share: report.helper_encrypted_input_share().clone() },
                         ),
                     )
                     .await?;
@@ -2548,7 +2509,7 @@ mod tests {
                         *report.metadata().time(),
                         0,
                         None,
-                        ReportAggregationState::Start,
+                        ReportAggregationState::StartLeader { public_share: report.public_share().clone(), leader_extensions: report.leader_extensions().to_vec(), leader_input_share: report.leader_input_share().clone(), helper_encrypted_input_share: report.helper_encrypted_input_share().clone() },
                     ))
                     .await?;
 
@@ -2652,12 +2613,12 @@ mod tests {
                 *report.metadata().time(),
                 0,
                 None,
-                ReportAggregationState::WaitingLeader(
-                    transcript.leader_prepare_transitions[1]
+                ReportAggregationState::WaitingLeader{
+                    transition: transcript.leader_prepare_transitions[1]
                         .transition
                         .clone()
                         .unwrap(),
-                ),
+                },
             );
         let want_batch = Batch::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofShake128, 16>>::new(
             *task.id(),
@@ -2699,169 +2660,6 @@ mod tests {
                         )
                         .await?
                         .unwrap();
-                    Ok((aggregation_job, report_aggregation, batch))
-                })
-            })
-            .await
-            .unwrap();
-
-        assert_eq!(want_aggregation_job, got_aggregation_job);
-        assert_eq!(want_report_aggregation, got_report_aggregation);
-        assert_eq!(want_batch, got_batch);
-    }
-
-    #[tokio::test]
-    async fn step_fixed_size_aggregation_job_init_missing_report() {
-        // Setup: insert a client report and add it to a new aggregation job.
-        install_test_trace_subscriber();
-        let server = mockito::Server::new_async().await;
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-        let vdaf = Arc::new(Prio3::new_count(2).unwrap());
-
-        let task = TaskBuilder::new(
-            QueryType::FixedSize {
-                max_batch_size: 10,
-                batch_time_window_size: None,
-            },
-            VdafInstance::Prio3Count,
-        )
-        .with_helper_aggregator_endpoint(server.url().parse().unwrap())
-        .build();
-
-        let leader_task = task.leader_view().unwrap();
-
-        // We make up a report ID & report_timestamp to place into the report aggregation, in order
-        // to simulate a report aggregation referring to a report which has been garbage collected.
-        let report_id = random();
-        let report_timestamp = clock
-            .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap();
-        let batch_id = random();
-        let aggregation_job_id = random();
-
-        let lease = ds
-            .run_unnamed_tx(|tx| {
-                let leader_task = leader_task.clone();
-
-                Box::pin(async move {
-                    tx.put_aggregator_task(&leader_task).await?;
-
-                    tx.put_aggregation_job(&AggregationJob::<
-                        VERIFY_KEY_LENGTH,
-                        FixedSize,
-                        Prio3Count,
-                    >::new(
-                        *leader_task.id(),
-                        aggregation_job_id,
-                        (),
-                        batch_id,
-                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                            .unwrap(),
-                        AggregationJobState::InProgress,
-                        AggregationJobStep::from(0),
-                    ))
-                    .await?;
-
-                    tx.put_report_aggregation(
-                        &ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
-                            *leader_task.id(),
-                            aggregation_job_id,
-                            report_id,
-                            report_timestamp,
-                            0,
-                            None,
-                            ReportAggregationState::Start,
-                        ),
-                    )
-                    .await?;
-
-                    tx.put_batch(&Batch::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
-                        *leader_task.id(),
-                        batch_id,
-                        (),
-                        BatchState::Open,
-                        1,
-                        Interval::from_time(&report_timestamp).unwrap(),
-                    ))
-                    .await?;
-
-                    Ok(tx
-                        .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
-                        .await?
-                        .remove(0))
-                })
-            })
-            .await
-            .unwrap();
-        assert_eq!(lease.leased().task_id(), task.id());
-        assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
-
-        // Run: create an aggregation job driver & try to step the aggregation we've created.
-        let aggregation_job_driver = AggregationJobDriver::new(
-            reqwest::Client::builder().build().unwrap(),
-            &noop_meter(),
-            32,
-        );
-        aggregation_job_driver
-            .step_aggregation_job(ds.clone(), Arc::new(lease))
-            .await
-            .unwrap();
-
-        let want_aggregation_job = AggregationJob::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
-            *task.id(),
-            aggregation_job_id,
-            (),
-            batch_id,
-            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
-            AggregationJobState::Finished,
-            AggregationJobStep::from(1),
-        );
-        let want_report_aggregation = ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
-            *task.id(),
-            aggregation_job_id,
-            report_id,
-            report_timestamp,
-            0,
-            None,
-            ReportAggregationState::Failed(PrepareError::ReportDropped),
-        );
-        let want_batch = Batch::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
-            *task.id(),
-            batch_id,
-            (),
-            BatchState::Open,
-            0,
-            Interval::from_time(&report_timestamp).unwrap(),
-        );
-
-        let (got_aggregation_job, got_report_aggregation, got_batch) = ds
-            .run_unnamed_tx(|tx| {
-                let vdaf = Arc::clone(&vdaf);
-                let task = task.clone();
-
-                Box::pin(async move {
-                    let aggregation_job = tx
-                        .get_aggregation_job::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>(
-                            task.id(),
-                            &aggregation_job_id,
-                        )
-                        .await?
-                        .unwrap();
-                    let report_aggregation = tx
-                        .get_report_aggregation(
-                            vdaf.as_ref(),
-                            &Role::Leader,
-                            task.id(),
-                            &aggregation_job_id,
-                            aggregation_job.aggregation_parameter(),
-                            &report_id,
-                        )
-                        .await?
-                        .unwrap();
-                    let batch = tx.get_batch(task.id(), &batch_id, &()).await?.unwrap();
                     Ok((aggregation_job, report_aggregation, batch))
                 })
             })
@@ -2980,12 +2778,12 @@ mod tests {
                         *report.metadata().time(),
                         0,
                         None,
-                        ReportAggregationState::WaitingLeader(
-                            transcript.leader_prepare_transitions[1]
+                        ReportAggregationState::WaitingLeader{
+                            transition: transcript.leader_prepare_transitions[1]
                                 .transition
                                 .clone()
                                 .unwrap(),
-                        ),
+                        },
                     ))
                     .await?;
 
@@ -3381,12 +3179,12 @@ mod tests {
                         *report.metadata().time(),
                         0,
                         None,
-                        ReportAggregationState::WaitingLeader(
-                            transcript.leader_prepare_transitions[1]
+                        ReportAggregationState::WaitingLeader{
+                            transition: transcript.leader_prepare_transitions[1]
                                 .transition
                                 .clone()
                                 .unwrap(),
-                        ),
+                        },
                     ))
                     .await?;
 
@@ -3690,7 +3488,7 @@ mod tests {
             *report.metadata().time(),
             0,
             None,
-            ReportAggregationState::Start,
+            ReportAggregationState::StartLeader { public_share: report.public_share().clone(), leader_extensions: report.leader_extensions().to_vec(), leader_input_share: report.leader_input_share().clone(), helper_encrypted_input_share: report.helper_encrypted_input_share().clone() },
         );
 
         let lease = ds
@@ -3905,7 +3703,7 @@ mod tests {
                         *report.metadata().time(),
                         0,
                         None,
-                        ReportAggregationState::Start,
+                        ReportAggregationState::StartLeader { public_share: report.public_share().clone(), leader_extensions: report.leader_extensions().to_vec(), leader_input_share: report.leader_input_share().clone(), helper_encrypted_input_share: report.helper_encrypted_input_share().clone() },
                     ),
                 )
                 .await?;

@@ -1376,7 +1376,7 @@ mod tests {
                     max_batch_size: MAX_BATCH_SIZE as u64,
                     batch_time_window_size: None,
                 },
-                VdafInstance::Prio3Count,
+                VdafInstance::Fake,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
             .build()
@@ -1456,10 +1456,13 @@ mod tests {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
                     let report_ids = tx
-                        .get_unaggregated_client_report_ids_for_task(task.id())
+                        .get_unaggregated_client_reports_for_task(
+                            &dummy_vdaf::Vdaf::new(),
+                            task.id(),
+                        )
                         .await?
                         .into_iter()
-                        .map(|(report_id, _)| report_id)
+                        .map(|report| *report.metadata().id())
                         .collect::<Vec<_>>();
                     tx.mark_reports_unaggregated(task.id(), &report_ids).await?;
                     Ok(report_ids.len())

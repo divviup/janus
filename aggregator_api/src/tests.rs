@@ -814,7 +814,14 @@ async fn get_task_metrics() {
                                     *report.metadata().time(),
                                     ord.try_into().unwrap(),
                                     None,
-                                    ReportAggregationState::Start,
+                                    ReportAggregationState::StartLeader {
+                                        public_share: report.public_share().clone(),
+                                        leader_extensions: report.leader_extensions().to_vec(),
+                                        leader_input_share: report.leader_input_share().clone(),
+                                        helper_encrypted_input_share: report
+                                            .helper_encrypted_input_share()
+                                            .clone(),
+                                    },
                                 ),
                             )
                             .await

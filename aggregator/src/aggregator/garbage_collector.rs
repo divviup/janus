@@ -260,7 +260,14 @@ mod tests {
                         client_timestamp,
                         0,
                         None,
-                        ReportAggregationState::Start,
+                        ReportAggregationState::StartLeader {
+                            public_share: report.public_share().clone(),
+                            leader_extensions: report.leader_extensions().to_vec(),
+                            leader_input_share: report.leader_input_share().clone(),
+                            helper_encrypted_input_share: report
+                                .helper_encrypted_input_share()
+                                .clone(),
+                        },
                     ))
                     .await
                     .unwrap();
@@ -448,7 +455,7 @@ mod tests {
                         client_timestamp,
                         0,
                         None,
-                        ReportAggregationState::Start,
+                        ReportAggregationState::Finished,
                     ))
                     .await
                     .unwrap();
@@ -631,7 +638,14 @@ mod tests {
                         client_timestamp,
                         0,
                         None,
-                        ReportAggregationState::Start,
+                        ReportAggregationState::StartLeader {
+                            public_share: report.public_share().clone(),
+                            leader_extensions: report.leader_extensions().to_vec(),
+                            leader_input_share: report.leader_input_share().clone(),
+                            helper_encrypted_input_share: report
+                                .helper_encrypted_input_share()
+                                .clone(),
+                        },
                     );
                     tx.put_report_aggregation(&report_aggregation)
                         .await
@@ -828,7 +842,7 @@ mod tests {
                         client_timestamp,
                         0,
                         None,
-                        ReportAggregationState::Start,
+                        ReportAggregationState::Finished,
                     );
                     tx.put_report_aggregation(&report_aggregation)
                         .await

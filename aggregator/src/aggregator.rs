@@ -1640,10 +1640,12 @@ impl VdafOps {
         C: Clock,
         A::AggregationParam: Send + Sync + PartialEq,
         A::AggregateShare: Send + Sync,
+        A::InputShare: Send + Sync,
         A::PrepareMessage: Send + Sync + PartialEq,
         A::PrepareShare: Send + Sync + PartialEq,
         for<'a> A::PrepareState:
             Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)> + PartialEq,
+        A::PublicShare: Send + Sync,
         A::OutputShare: Send + Sync + PartialEq,
     {
         // unwrap safety: SHA-256 computed by ring should always be 32 bytes
@@ -1861,12 +1863,12 @@ impl VdafOps {
             });
 
             let (report_aggregation_state, prepare_step_result) = match init_rslt {
-                Ok((PingPongState::Continued(prep_state), outgoing_message)) => {
+                Ok((PingPongState::Continued(prepare_state), outgoing_message)) => {
                     // Helper is not finished. Await the next message from the Leader to advance to
                     // the next step.
                     saw_continue = true;
                     (
-                        ReportAggregationState::WaitingHelper(prep_state),
+                        ReportAggregationState::WaitingHelper { prepare_state },
                         PrepareStepResult::Continue {
                             message: outgoing_message,
                         },
@@ -1889,7 +1891,7 @@ impl VdafOps {
                     )
                 }
                 Err(prepare_error) => (
-                    ReportAggregationState::Failed(prepare_error),
+                    ReportAggregationState::Failed { prepare_error },
                     PrepareStepResult::Reject(prepare_error),
                 ),
             };
@@ -1995,9 +1997,9 @@ impl VdafOps {
                                 rsd.report_aggregation = rsd
                                     .report_aggregation
                                     .clone()
-                                    .with_state(ReportAggregationState::Failed(
-                                        PrepareError::ReportReplayed,
-                                    ))
+                                    .with_state(ReportAggregationState::Failed {
+                                        prepare_error: PrepareError::ReportReplayed,
+                                    })
                                     .with_last_prep_resp(Some(PrepareResp::new(
                                         *rsd.report_share.metadata().id(),
                                         PrepareStepResult::Reject(PrepareError::ReportReplayed),
@@ -2006,9 +2008,9 @@ impl VdafOps {
                                 rsd.report_aggregation = rsd
                                     .report_aggregation
                                     .clone()
-                                    .with_state(ReportAggregationState::Failed(
-                                        PrepareError::BatchCollected,
-                                    ))
+                                    .with_state(ReportAggregationState::Failed {
+                                        prepare_error: PrepareError::BatchCollected,
+                                    })
                                     .with_last_prep_resp(Some(PrepareResp::new(
                                         *rsd.report_share.metadata().id(),
                                         PrepareStepResult::Reject(PrepareError::BatchCollected),
@@ -2065,9 +2067,9 @@ impl VdafOps {
                             rsd.report_aggregation = rsd
                                 .report_aggregation
                                 .clone()
-                                .with_state(ReportAggregationState::Failed(
-                                    PrepareError::BatchCollected,
-                                ))
+                                .with_state(ReportAggregationState::Failed {
+                                    prepare_error: PrepareError::BatchCollected,
+                                })
                                 .with_last_prep_resp(Some(PrepareResp::new(
                                     *rsd.report_share.metadata().id(),
                                     PrepareStepResult::Reject(PrepareError::BatchCollected),
@@ -2087,9 +2089,9 @@ impl VdafOps {
                                             rsd.report_aggregation = rsd
                                                 .report_aggregation
                                                 .clone()
-                                                .with_state(ReportAggregationState::Failed(
-                                                    PrepareError::ReportReplayed,
-                                                ))
+                                                .with_state(ReportAggregationState::Failed {
+                                                    prepare_error: PrepareError::ReportReplayed,
+                                                })
                                                 .with_last_prep_resp(Some(PrepareResp::new(
                                                     *rsd.report_share.metadata().id(),
                                                     PrepareStepResult::Reject(
@@ -2173,9 +2175,11 @@ impl VdafOps {
         A: 'static + Send + Sync,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
+        A::InputShare: Send + Sync,
         for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
         A::PrepareShare: Send + Sync,
         A::PrepareMessage: Send + Sync,
+        A::PublicShare: Send + Sync,
         A::OutputShare: Send + Sync,
     {
         if leader_aggregation_job.step() == AggregationJobStep::from(0) {
