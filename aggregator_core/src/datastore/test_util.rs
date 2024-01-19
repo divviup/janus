@@ -2,6 +2,7 @@ use crate::{
     datastore::{Crypter, Datastore, Transaction},
     test_util::noop_meter,
 };
+use backoff::{future::retry, ExponentialBackoffBuilder};
 use chrono::NaiveDateTime;
 use deadpool_postgres::{Manager, Pool};
 use janus_core::{
@@ -20,6 +21,7 @@ use std::{
     str::FromStr,
     sync::{Arc, Barrier, Weak},
     thread::{self, JoinHandle},
+    time::Duration,
 };
 use testcontainers::RunnableImage;
 use tokio::sync::{oneshot, Mutex};
@@ -178,9 +180,28 @@ pub async fn ephemeral_datastore_schema_version(schema_version: i64) -> Ephemera
     trace!("Creating ephemeral postgres datastore {db_name}");
 
     // Create Postgres DB.
-    let (client, conn) = connect(&db.connection_string("postgres"), NoTls)
-        .await
-        .unwrap();
+    //
+    // Since this is the first connection we're establishing since the container has been created,
+    // retry this a few times. The database may not be ready yet.
+    let backoff = ExponentialBackoffBuilder::new()
+        .with_initial_interval(Duration::from_millis(500))
+        .with_max_interval(Duration::from_millis(500))
+        .with_max_elapsed_time(Some(Duration::from_secs(5)))
+        .build();
+    let (client, conn) = retry(backoff, || {
+        let connection_string = db.connection_string("postgres");
+        async move {
+            connect(&connection_string, NoTls)
+                .await
+                .map_err(|err| backoff::Error::Transient {
+                    err,
+                    retry_after: None,
+                })
+        }
+    })
+    .await
+    .unwrap();
+
     tokio::spawn(async move { conn.await.unwrap() }); // automatically stops after Client is dropped
     client
         .batch_execute(&format!("CREATE DATABASE {db_name}"))
