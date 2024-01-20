@@ -160,6 +160,27 @@ where
         &self.helper_encrypted_input_share
     }
 
+    pub fn as_start_leader_report_aggregation(
+        &self,
+        aggregation_job_id: AggregationJobId,
+        ord: u64,
+    ) -> ReportAggregation<SEED_SIZE, A> {
+        ReportAggregation::new(
+            *self.task_id(),
+            aggregation_job_id,
+            *self.metadata().id(),
+            *self.metadata().time(),
+            ord,
+            None,
+            ReportAggregationState::StartLeader {
+                public_share: self.public_share().clone(),
+                leader_extensions: self.leader_extensions().to_vec(),
+                leader_input_share: self.leader_input_share().clone(),
+                helper_encrypted_input_share: self.helper_encrypted_input_share().clone(),
+            },
+        )
+    }
+
     #[cfg(feature = "test-util")]
     pub fn eq_report(
         &self,

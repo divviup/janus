@@ -253,22 +253,9 @@ mod tests {
                     .await
                     .unwrap();
 
-                    tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        *report.metadata().id(),
-                        client_timestamp,
-                        0,
-                        None,
-                        ReportAggregationState::StartLeader {
-                            public_share: report.public_share().clone(),
-                            leader_extensions: report.leader_extensions().to_vec(),
-                            leader_input_share: report.leader_input_share().clone(),
-                            helper_encrypted_input_share: report
-                                .helper_encrypted_input_share()
-                                .clone(),
-                        },
-                    ))
+                    tx.put_report_aggregation(
+                        &report.as_start_leader_report_aggregation(aggregation_job_id, 0),
+                    )
                     .await
                     .unwrap();
 
@@ -631,22 +618,8 @@ mod tests {
                     );
                     tx.put_aggregation_job(&aggregation_job).await.unwrap();
 
-                    let report_aggregation = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
-                        *task.id(),
-                        *aggregation_job.id(),
-                        *report.metadata().id(),
-                        client_timestamp,
-                        0,
-                        None,
-                        ReportAggregationState::StartLeader {
-                            public_share: report.public_share().clone(),
-                            leader_extensions: report.leader_extensions().to_vec(),
-                            leader_input_share: report.leader_input_share().clone(),
-                            helper_encrypted_input_share: report
-                                .helper_encrypted_input_share()
-                                .clone(),
-                        },
-                    );
+                    let report_aggregation =
+                        report.as_start_leader_report_aggregation(*aggregation_job.id(), 0);
                     tx.put_report_aggregation(&report_aggregation)
                         .await
                         .unwrap();

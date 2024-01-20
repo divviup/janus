@@ -2,10 +2,7 @@
 
 use futures::future::try_join_all;
 use janus_aggregator_core::datastore::{
-    models::{
-        AggregationJob, AggregationJobState, LeaderStoredReport, OutstandingBatch,
-        ReportAggregation, ReportAggregationState,
-    },
+    models::{AggregationJob, AggregationJobState, LeaderStoredReport, OutstandingBatch},
     Error, Transaction,
 };
 use janus_core::time::{Clock, DurationExt, TimeExt};
@@ -57,7 +54,6 @@ where
     A::PrepareState: Encode,
 {
     pub fn new(
-        // XXX: why not just take a task instead of the first 6 params?
         min_aggregation_job_size: usize,
         max_aggregation_job_size: usize,
         task_id: TaskId,
@@ -294,20 +290,8 @@ where
                 max_client_timestamp = Some(
                     max_client_timestamp.map_or(client_timestamp, |ts| max(ts, client_timestamp)),
                 );
-                ReportAggregation::new(
-                    task_id,
-                    aggregation_job_id,
-                    *report.metadata().id(),
-                    client_timestamp,
-                    ord,
-                    None,
-                    ReportAggregationState::StartLeader {
-                        public_share: report.public_share().clone(),
-                        leader_extensions: report.leader_extensions().to_vec(),
-                        leader_input_share: report.leader_input_share().clone(),
-                        helper_encrypted_input_share: report.helper_encrypted_input_share().clone(),
-                    },
-                )
+
+                report.as_start_leader_report_aggregation(aggregation_job_id, ord)
             })
             .collect();
 
