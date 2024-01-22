@@ -373,7 +373,7 @@ pub struct Config {
 }
 
 fn default_task_counter_shard_count() -> u64 {
-    1
+    32
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
