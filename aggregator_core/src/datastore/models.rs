@@ -210,7 +210,8 @@ where
                 report.metadata().clone(),
                 report.public_share().to_vec(),
             )
-            .get_encoded(),
+            .get_encoded()
+            .unwrap(),
         )
         .expect("couldn't decrypt Leader's PlaintextInputShare");
         let leader_plaintext_input_share =
@@ -848,11 +849,13 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     /// Returns the encoded values for the various messages which might be included in a
     /// ReportAggregationState. The order of returned values is preparation state, preparation
     /// message, output share, transition error.
-    pub(super) fn encoded_values_from_state(&self) -> EncodedReportAggregationStateValues
+    pub(super) fn encoded_values_from_state(
+        &self,
+    ) -> Result<EncodedReportAggregationStateValues, Error>
     where
         A::PrepareState: Encode,
     {
-        match self {
+        Ok(match self {
             ReportAggregationState::StartLeader {
                 public_share,
                 leader_extensions,
@@ -860,25 +863,25 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
                 helper_encrypted_input_share,
             } => {
                 let mut encoded_extensions = Vec::new();
-                encode_u16_items(&mut encoded_extensions, &(), leader_extensions);
+                encode_u16_items(&mut encoded_extensions, &(), leader_extensions).unwrap();
 
                 EncodedReportAggregationStateValues {
-                    public_share: Some(public_share.get_encoded()),
+                    public_share: Some(public_share.get_encoded()?),
                     leader_extensions: Some(encoded_extensions),
-                    leader_input_share: Some(leader_input_share.get_encoded()),
-                    helper_encrypted_input_share: Some(helper_encrypted_input_share.get_encoded()),
+                    leader_input_share: Some(leader_input_share.get_encoded()?),
+                    helper_encrypted_input_share: Some(helper_encrypted_input_share.get_encoded()?),
                     ..Default::default()
                 }
             }
             ReportAggregationState::WaitingLeader { transition } => {
                 EncodedReportAggregationStateValues {
-                    leader_prep_transition: Some(transition.get_encoded()),
+                    leader_prep_transition: Some(transition.get_encoded()?),
                     ..Default::default()
                 }
             }
             ReportAggregationState::WaitingHelper { prepare_state } => {
                 EncodedReportAggregationStateValues {
-                    helper_prep_state: Some(prepare_state.get_encoded()),
+                    helper_prep_state: Some(prepare_state.get_encoded()?),
                     ..Default::default()
                 }
             }
@@ -889,7 +892,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
                     ..Default::default()
                 }
             }
-        }
+        })
     }
 }
 

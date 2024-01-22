@@ -73,7 +73,7 @@ impl<C: Clock> GarbageCollector<C> {
         }
     }
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(name = "GarbageCollector::run", skip(self))]
     pub async fn run(&self) -> Result<()> {
         // TODO(#224): add support for handling only a subset of tasks in a single job (i.e. sharding).
 
@@ -113,7 +113,7 @@ impl<C: Clock> GarbageCollector<C> {
         Ok(())
     }
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(name = "GarbageCollector::gc_tasks", skip(self))]
     async fn gc_tasks(&self, task_ids: Vec<TaskId>) -> Result<()> {
         let task_ids = Arc::new(task_ids);
         let (client_reports_deleted, aggregation_jobs_deleted, batches_deleted) = self

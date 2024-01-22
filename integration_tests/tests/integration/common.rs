@@ -348,17 +348,17 @@ pub async fn submit_measurements_and_verify_aggregate(
         VdafInstance::Prio3Count => {
             let vdaf = Prio3::new_count(2).unwrap();
 
-            let num_nonzero_measurements = total_measurements / 2;
-            let num_zero_measurements = total_measurements - num_nonzero_measurements;
-            assert!(num_nonzero_measurements > 0 && num_zero_measurements > 0);
-            let measurements = iter::repeat(1)
-                .take(num_nonzero_measurements)
-                .interleave(iter::repeat(0).take(num_zero_measurements))
+            let num_true_measurements = total_measurements / 2;
+            let num_false_measurements = total_measurements - num_true_measurements;
+            assert!(num_true_measurements > 0 && num_false_measurements > 0);
+            let measurements = iter::repeat(true)
+                .take(num_true_measurements)
+                .interleave(iter::repeat(false).take(num_false_measurements))
                 .collect::<Vec<_>>();
             let test_case = AggregationTestCase {
                 measurements,
                 aggregation_parameter: (),
-                aggregate_result: num_nonzero_measurements.try_into().unwrap(),
+                aggregate_result: num_true_measurements.try_into().unwrap(),
             };
 
             let client_implementation = client_backend

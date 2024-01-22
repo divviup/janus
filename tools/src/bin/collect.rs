@@ -866,7 +866,8 @@ mod tests {
     #[tokio::test]
     async fn argument_handling() {
         let hpke_keypair = generate_test_hpke_config_and_private_key();
-        let encoded_hpke_config = URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded());
+        let encoded_hpke_config =
+            URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap());
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
 
         let task_id = random();
@@ -897,7 +898,7 @@ mod tests {
                 current_batch: false,
             },
         };
-        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
+        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
         let correct_arguments = [
             "collect",
             &format!("--task-id={task_id_encoded}"),
@@ -1109,12 +1110,13 @@ mod tests {
     #[test]
     fn batch_arguments() {
         let task_id: TaskId = random();
-        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
+        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
 
         let leader = Url::parse("https://example.com/dap/").unwrap();
 
         let hpke_keypair = generate_test_hpke_config_and_private_key();
-        let encoded_hpke_config = URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded());
+        let encoded_hpke_config =
+            URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap());
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
         let auth_token = AuthenticationToken::DapAuth(random());
 
@@ -1309,10 +1311,11 @@ mod tests {
     #[test]
     fn auth_arguments() {
         let task_id: TaskId = random();
-        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
+        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
 
         let hpke_keypair = generate_test_hpke_config_and_private_key();
-        let encoded_hpke_config = URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded());
+        let encoded_hpke_config =
+            URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap());
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
 
         let base_arguments = Vec::from([
@@ -1391,7 +1394,7 @@ mod tests {
         let collector_credential_file_path = collector_credential_file.into_temp_path();
 
         let task_id: TaskId = random();
-        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
+        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
         let bearer_token: BearerToken = random();
         let base_arguments = Vec::from([
             "collect".to_string(),
@@ -1468,7 +1471,7 @@ mod tests {
             serde_json::from_str::<PrivateCollectorCredential>(SAMPLE_COLLECTOR_CREDENTIAL)
                 .unwrap();
         let task_id: TaskId = random();
-        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
+        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
         let bearer_token: BearerToken = random();
 
         let base_arguments = Vec::from([
@@ -1498,10 +1501,11 @@ mod tests {
     #[test]
     fn hpke_config() {
         let task_id: TaskId = random();
-        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
+        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
         let leader = Url::parse("https://example.com/dap/").unwrap();
         let hpke_keypair = generate_test_hpke_config_and_private_key();
-        let encoded_hpke_config = URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded());
+        let encoded_hpke_config =
+            URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap());
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
         let auth_token = AuthenticationToken::DapAuth(random());
 
@@ -1567,7 +1571,8 @@ mod tests {
     #[test]
     fn subcommand_new_job_arguments() {
         let hpke_keypair = generate_test_hpke_config_and_private_key();
-        let encoded_hpke_config = URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded());
+        let encoded_hpke_config =
+            URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap());
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
 
         let task_id = random();
@@ -1600,7 +1605,7 @@ mod tests {
                 current_batch: false,
             },
         };
-        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
+        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
         let correct_arguments = [
             "collect",
             &format!("--task-id={task_id_encoded}"),
@@ -1653,7 +1658,8 @@ mod tests {
     #[test]
     fn subcommand_poll_job_arguments() {
         let hpke_keypair = generate_test_hpke_config_and_private_key();
-        let encoded_hpke_config = URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded());
+        let encoded_hpke_config =
+            URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded().unwrap());
         let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
 
         let task_id = random();
@@ -1684,7 +1690,7 @@ mod tests {
                 current_batch: false,
             },
         };
-        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
+        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
         let correct_arguments = [
             "collect",
             &format!("--task-id={task_id_encoded}"),

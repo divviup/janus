@@ -474,7 +474,8 @@ impl<V: vdaf::Collector> Collector<V> {
         aggregation_parameter: &V::AggregationParam,
     ) -> Result<CollectionJob<V::AggregationParam, Q>, Error> {
         let collect_request =
-            CollectionReq::new(query.clone(), aggregation_parameter.get_encoded());
+            CollectionReq::new(query.clone(), aggregation_parameter.get_encoded()?)
+                .get_encoded()?;
         let collection_job_url = self.collection_job_uri(collection_job_id)?;
 
         let response_res =
@@ -483,7 +484,7 @@ impl<V: vdaf::Collector> Collector<V> {
                 self.http_client
                     .put(collection_job_url.clone())
                     .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
-                    .body(collect_request.get_encoded())
+                    .body(collect_request.clone())
                     .header(auth_header, auth_value)
                     .send()
                     .await
@@ -588,13 +589,13 @@ impl<V: vdaf::Collector> Collector<V> {
                 encrypted_aggregate_share,
                 &AggregateShareAad::new(
                     self.task_id,
-                    job.aggregation_parameter.get_encoded(),
+                    job.aggregation_parameter.get_encoded()?,
                     BatchSelector::<Q>::new(Q::batch_identifier_for_collection(
                         &job.query,
                         &collect_response,
                     )),
                 )
-                .get_encoded(),
+                .get_encoded()?,
             )?;
             V::AggregateShare::get_decoded_with_param(
                 &(&self.vdaf, &job.aggregation_parameter),
@@ -812,7 +813,7 @@ mod tests {
     ) -> CollectionMessage<TimeInterval> {
         let associated_data = AggregateShareAad::new(
             collector.task_id,
-            aggregation_parameter.get_encoded(),
+            aggregation_parameter.get_encoded().unwrap(),
             BatchSelector::new_time_interval(batch_interval),
         );
         CollectionMessage::new(
@@ -822,15 +823,15 @@ mod tests {
             hpke::seal(
                 collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
-                &transcript.leader_aggregate_share.get_encoded(),
-                &associated_data.get_encoded(),
+                &transcript.leader_aggregate_share.get_encoded().unwrap(),
+                &associated_data.get_encoded().unwrap(),
             )
             .unwrap(),
             hpke::seal(
                 collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
-                &transcript.helper_aggregate_share.get_encoded(),
-                &associated_data.get_encoded(),
+                &transcript.helper_aggregate_share.get_encoded().unwrap(),
+                &associated_data.get_encoded().unwrap(),
             )
             .unwrap(),
         )
@@ -847,7 +848,7 @@ mod tests {
     ) -> CollectionMessage<FixedSize> {
         let associated_data = AggregateShareAad::new(
             collector.task_id,
-            aggregation_parameter.get_encoded(),
+            aggregation_parameter.get_encoded().unwrap(),
             BatchSelector::new_fixed_size(batch_id),
         );
         CollectionMessage::new(
@@ -857,15 +858,15 @@ mod tests {
             hpke::seal(
                 collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
-                &transcript.leader_aggregate_share.get_encoded(),
-                &associated_data.get_encoded(),
+                &transcript.leader_aggregate_share.get_encoded().unwrap(),
+                &associated_data.get_encoded().unwrap(),
             )
             .unwrap(),
             hpke::seal(
                 collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
-                &transcript.helper_aggregate_share.get_encoded(),
-                &associated_data.get_encoded(),
+                &transcript.helper_aggregate_share.get_encoded().unwrap(),
+                &associated_data.get_encoded().unwrap(),
             )
             .unwrap(),
         )
@@ -905,7 +906,7 @@ mod tests {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
-        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &1);
+        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &true);
         let collector = setup_collector(&mut server, vdaf);
         let (auth_header, auth_value) = collector.authentication.request_authentication();
 
@@ -974,7 +975,7 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 CollectionMessage::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_body(collect_resp.get_encoded())
+            .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()
             .await;
@@ -1049,7 +1050,7 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 CollectionMessage::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_body(collect_resp.get_encoded())
+            .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()
             .await;
@@ -1120,7 +1121,7 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 CollectionMessage::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_body(collect_resp.get_encoded())
+            .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()
             .await;
@@ -1200,7 +1201,7 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 CollectionMessage::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_body(collect_resp.get_encoded())
+            .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()
             .await;
@@ -1229,7 +1230,7 @@ mod tests {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
-        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &1);
+        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &true);
         let collector = setup_collector(&mut server, vdaf);
 
         let batch_id = random();
@@ -1272,7 +1273,7 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 CollectionMessage::<FixedSize>::MEDIA_TYPE,
             )
-            .with_body(collect_resp.get_encoded())
+            .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()
             .await;
@@ -1299,7 +1300,7 @@ mod tests {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_count(2).unwrap();
-        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &1);
+        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &true);
         let server_url = Url::parse(&server.url()).unwrap();
         let hpke_keypair = generate_test_hpke_config_and_private_key();
         let collector = Collector::builder(
@@ -1355,7 +1356,7 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 CollectionMessage::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_body(collect_resp.get_encoded())
+            .with_body(collect_resp.get_encoded().unwrap())
             .expect(1)
             .create_async()
             .await;
@@ -1600,7 +1601,8 @@ mod tests {
                         Vec::new(),
                     ),
                 )
-                .get_encoded(),
+                .get_encoded()
+                .unwrap(),
             )
             .expect_at_least(1)
             .create_async()
@@ -1613,7 +1615,7 @@ mod tests {
 
         let associated_data = AggregateShareAad::new(
             collector.task_id,
-            ().get_encoded(),
+            ().get_encoded().unwrap(),
             BatchSelector::new_time_interval(batch_interval),
         );
         let collect_resp = CollectionMessage::new(
@@ -1624,14 +1626,14 @@ mod tests {
                 collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
                 b"bad",
-                &associated_data.get_encoded(),
+                &associated_data.get_encoded().unwrap(),
             )
             .unwrap(),
             hpke::seal(
                 collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
                 b"bad",
-                &associated_data.get_encoded(),
+                &associated_data.get_encoded().unwrap(),
             )
             .unwrap(),
         );
@@ -1642,7 +1644,7 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 CollectionMessage::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_body(collect_resp.get_encoded())
+            .with_body(collect_resp.get_encoded().unwrap())
             .expect_at_least(1)
             .create_async()
             .await;
@@ -1660,8 +1662,9 @@ mod tests {
                 collector.hpke_keypair.config(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
                 &AggregateShare::from(OutputShare::from(Vec::from([Field64::from(0)])))
-                    .get_encoded(),
-                &associated_data.get_encoded(),
+                    .get_encoded()
+                    .unwrap(),
+                &associated_data.get_encoded().unwrap(),
             )
             .unwrap(),
             hpke::seal(
@@ -1671,8 +1674,9 @@ mod tests {
                     Field64::from(0),
                     Field64::from(0),
                 ])))
-                .get_encoded(),
-                &associated_data.get_encoded(),
+                .get_encoded()
+                .unwrap(),
+                &associated_data.get_encoded().unwrap(),
             )
             .unwrap(),
         );
@@ -1683,7 +1687,7 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 CollectionMessage::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_body(collect_resp.get_encoded())
+            .with_body(collect_resp.get_encoded().unwrap())
             .expect_at_least(1)
             .create_async()
             .await;

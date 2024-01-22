@@ -599,7 +599,10 @@ impl<C: Clock> Transaction<'_, C> {
                     /* tolerable_clock_skew */
                     &i64::try_from(task.tolerable_clock_skew().as_seconds())?,
                     /* collector_hpke_config */
-                    &task.collector_hpke_config().map(|cfg| cfg.get_encoded()),
+                    &task
+                        .collector_hpke_config()
+                        .map(|cfg| cfg.get_encoded())
+                        .transpose()?,
                     /* vdaf_verify_key */
                     &self.crypter.encrypt(
                         "tasks",
@@ -665,7 +668,7 @@ impl<C: Clock> Transaction<'_, C> {
             )?;
 
             hpke_config_ids.push(u8::from(*hpke_keypair.config().id()) as i16);
-            hpke_configs.push(hpke_keypair.config().get_encoded());
+            hpke_configs.push(hpke_keypair.config().get_encoded()?);
             hpke_private_keys.push(encrypted_hpke_private_key);
         }
         let stmt = self
@@ -1244,7 +1247,10 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         report_ids: &[ReportId],
     ) -> Result<(), Error> {
-        let report_ids: Vec<_> = report_ids.iter().map(ReportId::get_encoded).collect();
+        let report_ids: Vec<_> = report_ids
+            .iter()
+            .map(ReportId::get_encoded)
+            .collect::<Result<Vec<_>, _>>()?;
         let stmt = self
             .prepare_cached(
                 "UPDATE client_reports
@@ -1295,7 +1301,7 @@ impl<C: Clock> Transaction<'_, C> {
             &stmt,
             &[
                 /* task_id */ task_id.as_ref(),
-                /* report_id */ &report_id.get_encoded(),
+                /* report_id */ &report_id.get_encoded()?,
                 /* now */ &self.clock.now().as_naive_date_time()?,
                 /* updated_at */ &self.clock.now().as_naive_date_time()?,
                 /* updated_by */ &self.name,
@@ -1398,7 +1404,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* task_id */ task_id.as_ref(),
-                    /* batch_id */ &batch_id.get_encoded(),
+                    /* batch_id */ &batch_id.get_encoded()?,
                     /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
             )
@@ -1424,11 +1430,11 @@ impl<C: Clock> Transaction<'_, C> {
         A::InputShare: PartialEq,
         A::PublicShare: PartialEq,
     {
-        let encoded_public_share = new_report.public_share().get_encoded();
-        let encoded_leader_share = new_report.leader_input_share().get_encoded();
-        let encoded_helper_share = new_report.helper_encrypted_input_share().get_encoded();
+        let encoded_public_share = new_report.public_share().get_encoded()?;
+        let encoded_leader_share = new_report.leader_input_share().get_encoded()?;
+        let encoded_helper_share = new_report.helper_encrypted_input_share().get_encoded()?;
         let mut encoded_extensions = Vec::new();
-        encode_u16_items(&mut encoded_extensions, &(), new_report.leader_extensions());
+        encode_u16_items(&mut encoded_extensions, &(), new_report.leader_extensions())?;
 
         let stmt = self
             .prepare_cached(
@@ -1521,6 +1527,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// This method is intended for use by aggregators acting in the Leader role. Scrubbed reports
     /// can no longer be read, so this method should only be called once all aggregations over the
     /// report have stepped past their START state.
+    #[tracing::instrument(skip(self), err)]
     pub async fn scrub_client_report(
         &self,
         task_id: &TaskId,
@@ -1589,7 +1596,7 @@ impl<C: Clock> Transaction<'_, C> {
             self.execute(
                 &stmt,
                 &[
-                    /* task_id */ &task_id.get_encoded(),
+                    /* task_id */ &task_id.get_encoded()?,
                     /* report_id */ &report_share.metadata().id().as_ref(),
                     /* client_timestamp */
                     &report_share.metadata().time().as_naive_date_time()?,
@@ -1859,9 +1866,9 @@ impl<C: Clock> Transaction<'_, C> {
                     /* task_id */ &aggregation_job.task_id().as_ref(),
                     /* aggregation_job_id */ &aggregation_job.id().as_ref(),
                     /* aggregation_param */
-                    &aggregation_job.aggregation_parameter().get_encoded(),
+                    &aggregation_job.aggregation_parameter().get_encoded()?,
                     /* batch_id */
-                    &aggregation_job.partial_batch_identifier().get_encoded(),
+                    &aggregation_job.partial_batch_identifier().get_encoded()?,
                     /* client_timestamp_interval */
                     &SqlInterval::from(aggregation_job.client_timestamp_interval()),
                     /* state */ &aggregation_job.state(),
@@ -1980,7 +1987,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* task_id */ &task_id.as_ref(),
                     /* report_id */ &report_id.as_ref(),
-                    /* aggregation_param */ &aggregation_param.get_encoded(),
+                    /* aggregation_param */ &aggregation_param.get_encoded()?,
                     /* aggregation_job_id */ &aggregation_job_id.as_ref(),
                     /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
@@ -2325,10 +2332,11 @@ impl<C: Clock> Transaction<'_, C> {
     where
         A::PrepareState: Encode,
     {
-        let encoded_state_values = report_aggregation.state().encoded_values_from_state();
+        let encoded_state_values = report_aggregation.state().encoded_values_from_state()?;
         let encoded_last_prep_resp: Option<Vec<u8>> = report_aggregation
             .last_prep_resp()
-            .map(PrepareResp::get_encoded);
+            .map(PrepareResp::get_encoded)
+            .transpose()?;
 
         let stmt = self
             .prepare_cached(
@@ -2385,10 +2393,11 @@ impl<C: Clock> Transaction<'_, C> {
     where
         A::PrepareState: Encode,
     {
-        let encoded_state_values = report_aggregation.state().encoded_values_from_state();
+        let encoded_state_values = report_aggregation.state().encoded_values_from_state()?;
         let encoded_last_prep_resp: Option<Vec<u8>> = report_aggregation
             .last_prep_resp()
-            .map(PrepareResp::get_encoded);
+            .map(PrepareResp::get_encoded)
+            .transpose()?;
 
         let stmt = self
             .prepare_cached(
@@ -2631,7 +2640,7 @@ impl<C: Clock> Transaction<'_, C> {
             &stmt,
             &[
                 /* task_id */ task_id.as_ref(),
-                /* batch_id */ &batch_id.get_encoded(),
+                /* batch_id */ &batch_id.get_encoded()?,
                 /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
@@ -2794,10 +2803,10 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* collection_job_id */ collection_job.id().as_ref(),
                     /* task_id */ collection_job.task_id().as_ref(),
-                    /* query */ &collection_job.query().get_encoded(),
+                    /* query */ &collection_job.query().get_encoded()?,
                     /* aggregation_param */
-                    &collection_job.aggregation_parameter().get_encoded(),
-                    /* batch_identifier */ &collection_job.batch_identifier().get_encoded(),
+                    &collection_job.aggregation_parameter().get_encoded()?,
+                    /* batch_identifier */ &collection_job.batch_identifier().get_encoded()?,
                     /* batch_interval */ &batch_interval,
                     /* state */
                     &collection_job.state().collection_job_state_code(),
@@ -2974,8 +2983,8 @@ impl<C: Clock> Transaction<'_, C> {
             } => {
                 let report_count: Option<i64> = Some(i64::try_from(*report_count)?);
                 let leader_aggregate_share: Option<Vec<u8>> =
-                    Some(leader_aggregate_share.get_encoded());
-                let helper_aggregate_share = Some(encrypted_helper_aggregate_share.get_encoded());
+                    Some(leader_aggregate_share.get_encoded()?);
+                let helper_aggregate_share = Some(encrypted_helper_aggregate_share.get_encoded()?);
 
                 (report_count, leader_aggregate_share, helper_aggregate_share)
             }
@@ -3056,8 +3065,8 @@ impl<C: Clock> Transaction<'_, C> {
             &stmt,
             &[
                 /* task_id */ &task_id.as_ref(),
-                /* batch_identifier */ &batch_identifier.get_encoded(),
-                /* aggregation_param */ &aggregation_parameter.get_encoded(),
+                /* batch_identifier */ &batch_identifier.get_encoded()?,
+                /* aggregation_param */ &aggregation_parameter.get_encoded()?,
                 /* ord */ &TryInto::<i64>::try_into(ord)?,
                 /* now */ &self.clock.now().as_naive_date_time()?,
             ],
@@ -3111,8 +3120,8 @@ impl<C: Clock> Transaction<'_, C> {
             &stmt,
             &[
                 /* task_id */ &task_id.as_ref(),
-                /* batch_identifier */ &batch_identifier.get_encoded(),
-                /* aggregation_param */ &aggregation_parameter.get_encoded(),
+                /* batch_identifier */ &batch_identifier.get_encoded()?,
+                /* aggregation_param */ &aggregation_parameter.get_encoded()?,
                 /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
@@ -3259,19 +3268,22 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* task_id */ &batch_aggregation.task_id().as_ref(),
                     /* batch_identifier */
-                    &batch_aggregation.batch_identifier().get_encoded(),
+                    &batch_aggregation.batch_identifier().get_encoded()?,
                     /* batch_interval */ &batch_interval,
                     /* aggregation_param */
-                    &batch_aggregation.aggregation_parameter().get_encoded(),
+                    &batch_aggregation.aggregation_parameter().get_encoded()?,
                     /* ord */ &i64::try_from(batch_aggregation.ord())?,
                     /* state */ &batch_aggregation.state(),
                     /* aggregate_share */
-                    &batch_aggregation.aggregate_share().map(Encode::get_encoded),
+                    &batch_aggregation
+                        .aggregate_share()
+                        .map(Encode::get_encoded)
+                        .transpose()?,
                     /* report_count */
                     &i64::try_from(batch_aggregation.report_count())?,
                     /* client_timestamp_interval */
                     &SqlInterval::from(batch_aggregation.client_timestamp_interval()),
-                    /* checksum */ &batch_aggregation.checksum().get_encoded(),
+                    /* checksum */ &batch_aggregation.checksum().get_encoded()?,
                     /* created_at */ &self.clock.now().as_naive_date_time()?,
                     /* updated_at */ &self.clock.now().as_naive_date_time()?,
                     /* updated_by */ &self.name,
@@ -3301,9 +3313,9 @@ impl<C: Clock> Transaction<'_, C> {
                     &[
                         /* task_id */ &batch_aggregation.task_id().as_ref(),
                         /* batch_identifier */
-                        &batch_aggregation.batch_identifier().get_encoded(),
+                        &batch_aggregation.batch_identifier().get_encoded()?,
                         /* aggregation_param */
-                        &batch_aggregation.aggregation_parameter().get_encoded(),
+                        &batch_aggregation.aggregation_parameter().get_encoded()?,
                         /* ord */ &i64::try_from(batch_aggregation.ord())?,
                     ],
                 )
@@ -3359,18 +3371,21 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* state */ &batch_aggregation.state(),
                     /* aggregate_share */
-                    &batch_aggregation.aggregate_share().map(Encode::get_encoded),
+                    &batch_aggregation
+                        .aggregate_share()
+                        .map(Encode::get_encoded)
+                        .transpose()?,
                     /* report_count */ &i64::try_from(batch_aggregation.report_count())?,
                     /* client_timestamp_interval */
                     &SqlInterval::from(batch_aggregation.client_timestamp_interval()),
-                    /* checksum */ &batch_aggregation.checksum().get_encoded(),
+                    /* checksum */ &batch_aggregation.checksum().get_encoded()?,
                     /* updated_at */ &self.clock.now().as_naive_date_time()?,
                     /* updated_by */ &self.name,
                     /* task_id */ &batch_aggregation.task_id().as_ref(),
                     /* batch_identifier */
-                    &batch_aggregation.batch_identifier().get_encoded(),
+                    &batch_aggregation.batch_identifier().get_encoded()?,
                     /* aggregation_param */
-                    &batch_aggregation.aggregation_parameter().get_encoded(),
+                    &batch_aggregation.aggregation_parameter().get_encoded()?,
                     /* ord */ &TryInto::<i64>::try_into(batch_aggregation.ord())?,
                     /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
@@ -3410,8 +3425,8 @@ impl<C: Clock> Transaction<'_, C> {
             &stmt,
             &[
                 /* task_id */ &task_id.as_ref(),
-                /* batch_identifier */ &batch_identifier.get_encoded(),
-                /* aggregation_param */ &aggregation_parameter.get_encoded(),
+                /* batch_identifier */ &batch_identifier.get_encoded()?,
+                /* aggregation_param */ &aggregation_parameter.get_encoded()?,
                 /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
@@ -3560,7 +3575,7 @@ impl<C: Clock> Transaction<'_, C> {
             &stmt,
             &[
                 /* task_id */ &task_id.as_ref(),
-                /* batch_id */ &batch_id.get_encoded(),
+                /* batch_id */ &batch_id.get_encoded()?,
                 /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
@@ -3673,14 +3688,14 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* task_id */ &aggregate_share_job.task_id().as_ref(),
                     /* batch_identifier */
-                    &aggregate_share_job.batch_identifier().get_encoded(),
+                    &aggregate_share_job.batch_identifier().get_encoded()?,
                     /* batch_interval */ &batch_interval,
                     /* aggregation_param */
-                    &aggregate_share_job.aggregation_parameter().get_encoded(),
+                    &aggregate_share_job.aggregation_parameter().get_encoded()?,
                     /* helper_aggregate_share */
-                    &aggregate_share_job.helper_aggregate_share().get_encoded(),
+                    &aggregate_share_job.helper_aggregate_share().get_encoded()?,
                     /* report_count */ &i64::try_from(aggregate_share_job.report_count())?,
-                    /* checksum */ &aggregate_share_job.checksum().get_encoded(),
+                    /* checksum */ &aggregate_share_job.checksum().get_encoded()?,
                     /* created_at */ &self.clock.now().as_naive_date_time()?,
                     /* updated_by */ &self.name,
                     /* now */ &self.clock.now().as_naive_date_time()?,
@@ -3708,9 +3723,9 @@ impl<C: Clock> Transaction<'_, C> {
                     &[
                         /* task_id */ aggregate_share_job.task_id().as_ref(),
                         /* batch_identifier */
-                        &aggregate_share_job.batch_identifier().get_encoded(),
+                        &aggregate_share_job.batch_identifier().get_encoded()?,
                         /* aggregation_param */
-                        &aggregate_share_job.aggregation_parameter().get_encoded(),
+                        &aggregate_share_job.aggregation_parameter().get_encoded()?,
                     ],
                 )
                 .await?;
@@ -3965,10 +3980,10 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* task_id */ &batch.task_id().as_ref(),
-                    /* batch_identifier */ &batch.batch_identifier().get_encoded(),
+                    /* batch_identifier */ &batch.batch_identifier().get_encoded()?,
                     /* batch_interval */
                     &Q::to_batch_interval(batch.batch_identifier()).map(SqlInterval::from),
-                    /* aggregation_param */ &batch.aggregation_parameter().get_encoded(),
+                    /* aggregation_param */ &batch.aggregation_parameter().get_encoded()?,
                     /* state */ &batch.state(),
                     /* outstanding_aggregation_jobs */
                     &i64::try_from(batch.outstanding_aggregation_jobs())?,
@@ -4001,8 +4016,9 @@ impl<C: Clock> Transaction<'_, C> {
                     &stmt,
                     &[
                         /* task_id */ &batch.task_id().as_ref(),
-                        /* batch_identifier */ &batch.batch_identifier().get_encoded(),
-                        /* aggregation_param */ &batch.aggregation_parameter().get_encoded(),
+                        /* batch_identifier */ &batch.batch_identifier().get_encoded()?,
+                        /* aggregation_param */
+                        &batch.aggregation_parameter().get_encoded()?,
                     ],
                 )
                 .await?;
@@ -4050,8 +4066,8 @@ impl<C: Clock> Transaction<'_, C> {
                     /* updated_at */ &self.clock.now().as_naive_date_time()?,
                     /* updated_by */ &self.name,
                     /* task_id */ &batch.task_id().as_ref(),
-                    /* batch_identifier */ &batch.batch_identifier().get_encoded(),
-                    /* aggregation_param */ &batch.aggregation_parameter().get_encoded(),
+                    /* batch_identifier */ &batch.batch_identifier().get_encoded()?,
+                    /* aggregation_param */ &batch.aggregation_parameter().get_encoded()?,
                     /* now */ &self.clock.now().as_naive_date_time()?,
                 ],
             )
@@ -4086,8 +4102,8 @@ impl<C: Clock> Transaction<'_, C> {
             &stmt,
             &[
                 /* task_id */ task_id.as_ref(),
-                /* batch_identifier */ &batch_identifier.get_encoded(),
-                /* aggregation_param */ &aggregation_parameter.get_encoded(),
+                /* batch_identifier */ &batch_identifier.get_encoded()?,
+                /* aggregation_param */ &aggregation_parameter.get_encoded()?,
                 /* now */ &self.clock.now().as_naive_date_time()?,
             ],
         )
@@ -4190,7 +4206,7 @@ impl<C: Clock> Transaction<'_, C> {
         self.execute(
             &stmt,
             &[
-                /* task_id */ &task_id.get_encoded(),
+                /* task_id */ &task_id.get_encoded()?,
                 /* now */ &self.clock.now().as_naive_date_time()?,
                 /* limit */ &i64::try_from(limit)?,
             ],
@@ -4232,7 +4248,7 @@ impl<C: Clock> Transaction<'_, C> {
         self.execute(
             &stmt,
             &[
-                /* task_id */ &task_id.get_encoded(),
+                /* task_id */ &task_id.get_encoded()?,
                 /* now */ &self.clock.now().as_naive_date_time()?,
                 /* limit */ &i64::try_from(limit)?,
             ],
@@ -4316,7 +4332,7 @@ impl<C: Clock> Transaction<'_, C> {
         self.execute(
             &stmt,
             &[
-                /* task_id */ &task_id.get_encoded(),
+                /* task_id */ &task_id.get_encoded()?,
                 /* now */ &self.clock.now().as_naive_date_time()?,
                 /* limit */ &i64::try_from(limit)?,
             ],
@@ -4421,7 +4437,7 @@ impl<C: Clock> Transaction<'_, C> {
     #[tracing::instrument(skip(self), err)]
     pub async fn put_global_hpke_keypair(&self, hpke_keypair: &HpkeKeypair) -> Result<(), Error> {
         let hpke_config_id = u8::from(*hpke_keypair.config().id()) as i16;
-        let hpke_config = hpke_keypair.config().get_encoded();
+        let hpke_config = hpke_keypair.config().get_encoded()?;
         let encrypted_hpke_private_key = self.crypter.encrypt(
             "global_hpke_keys",
             &u8::from(*hpke_keypair.config().id()).to_be_bytes(),
@@ -4617,7 +4633,7 @@ impl<C: Clock> Transaction<'_, C> {
 
                     let mut row_id = Vec::new();
                     row_id.extend_from_slice(endpoint_bytes);
-                    row_id.extend_from_slice(&role.as_role().get_encoded());
+                    row_id.extend_from_slice(&role.as_role().get_encoded()?);
                     row_id.extend_from_slice(&ord.to_be_bytes());
 
                     auth_token_type.as_authentication(&self.crypter.decrypt(
@@ -4688,7 +4704,7 @@ impl<C: Clock> Transaction<'_, C> {
                         .map(i64::try_from)
                         .transpose()?,
                     /* collector_hpke_config */
-                    &peer_aggregator.collector_hpke_config().get_encoded(),
+                    &peer_aggregator.collector_hpke_config().get_encoded()?,
                     /* created_at */ &self.clock.now().as_naive_date_time()?,
                     /* updated_by */
                     &self.name,
@@ -4706,7 +4722,7 @@ impl<C: Clock> Transaction<'_, C> {
 
                 let mut row_id = Vec::new();
                 row_id.extend_from_slice(endpoint.as_ref());
-                row_id.extend_from_slice(&role.as_role().get_encoded());
+                row_id.extend_from_slice(&role.as_role().get_encoded()?);
                 row_id.extend_from_slice(&ord.to_be_bytes());
 
                 let encrypted_auth_token =

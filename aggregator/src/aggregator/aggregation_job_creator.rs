@@ -149,7 +149,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         observer.await;
     }
 
-    #[tracing::instrument(skip_all, err)]
+    #[tracing::instrument(name = "AggregationJobCreator::update_tasks", skip_all, err)]
     async fn update_tasks(
         self: &Arc<Self>,
         job_creation_task_shutdown_handles: &mut HashMap<TaskId, Stopper>,
@@ -205,7 +205,10 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         Ok(())
     }
 
-    #[tracing::instrument(skip(self, stopper, job_creation_time_histogram))]
+    #[tracing::instrument(
+        name = "AggregationJobCreator::run_for_task",
+        skip(self, stopper, job_creation_time_histogram)
+    )]
     async fn run_for_task(
         self: Arc<Self>,
         stopper: Stopper,
@@ -255,7 +258,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     }
 
     // Returns true if at least one aggregation job was created.
-    #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
+    #[tracing::instrument(
+        name = "AggregationJobCreator::create_aggregation_jobs_for_task",
+        skip(self, task),
+        fields(task_id = ?task.id()),
+        err
+    )]
     async fn create_aggregation_jobs_for_task(
         self: Arc<Self>,
         task: Arc<AggregatorTask>,
@@ -735,7 +743,7 @@ mod tests {
             leader_task.vdaf_verify_key().unwrap().as_bytes(),
             &(),
             leader_report_metadata.id(),
-            &0,
+            &false,
         );
         let leader_report = Arc::new(generate_report(
             *leader_task.id(),
@@ -913,7 +921,7 @@ mod tests {
                     task.vdaf_verify_key().unwrap().as_bytes(),
                     &(),
                     report_metadata.id(),
-                    &0,
+                    &false,
                 );
                 generate_report(
                     *task.id(),
@@ -1055,7 +1063,7 @@ mod tests {
             task.vdaf_verify_key().unwrap().as_bytes(),
             &(),
             first_report_metadata.id(),
-            &0,
+            &false,
         );
         let first_report = Arc::new(generate_report(
             *task.id(),
@@ -1071,7 +1079,7 @@ mod tests {
             task.vdaf_verify_key().unwrap().as_bytes(),
             &(),
             second_report_metadata.id(),
-            &0,
+            &false,
         );
         let second_report = Arc::new(generate_report(
             *task.id(),
@@ -1258,7 +1266,7 @@ mod tests {
                     task.vdaf_verify_key().unwrap().as_bytes(),
                     &(),
                     report_metadata.id(),
-                    &0,
+                    &false,
                 );
                 generate_report(
                     *task.id(),
@@ -1427,7 +1435,7 @@ mod tests {
                     task.vdaf_verify_key().unwrap().as_bytes(),
                     &(),
                     report_metadata.id(),
-                    &0,
+                    &false,
                 );
                 generate_report(
                     *task.id(),
@@ -1634,7 +1642,7 @@ mod tests {
                     task.vdaf_verify_key().unwrap().as_bytes(),
                     &(),
                     report_metadata.id(),
-                    &0,
+                    &false,
                 );
                 generate_report(
                     *task.id(),
@@ -1791,7 +1799,7 @@ mod tests {
                     task.vdaf_verify_key().unwrap().as_bytes(),
                     &(),
                     report_metadata.id(),
-                    &0,
+                    &false,
                 );
                 generate_report(
                     *task.id(),
@@ -1902,7 +1910,7 @@ mod tests {
             task.vdaf_verify_key().unwrap().as_bytes(),
             &(),
             last_report_metadata.id(),
-            &0,
+            &false,
         );
         let last_report = Arc::new(generate_report(
             *task.id(),
@@ -2053,7 +2061,7 @@ mod tests {
                     task.vdaf_verify_key().unwrap().as_bytes(),
                     &(),
                     report_metadata.id(),
-                    &0,
+                    &false,
                 );
                 generate_report(
                     *task.id(),
@@ -2167,7 +2175,7 @@ mod tests {
                     task.vdaf_verify_key().unwrap().as_bytes(),
                     &(),
                     report_metadata.id(),
-                    &0,
+                    &false,
                 );
                 generate_report(
                     *task.id(),
@@ -2324,7 +2332,7 @@ mod tests {
                     task.vdaf_verify_key().unwrap().as_bytes(),
                     &(),
                     report_metadata.id(),
-                    &0,
+                    &false,
                 );
                 generate_report(
                     *task.id(),
@@ -2344,7 +2352,7 @@ mod tests {
                     task.vdaf_verify_key().unwrap().as_bytes(),
                     &(),
                     report_metadata.id(),
-                    &0,
+                    &false,
                 );
                 generate_report(
                     *task.id(),

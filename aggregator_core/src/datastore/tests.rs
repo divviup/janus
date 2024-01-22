@@ -44,7 +44,7 @@ use prio::{
     vdaf::{
         poplar1::{Poplar1, Poplar1AggregationParam},
         prio3::Prio3Count,
-        xof::XofShake128,
+        xof::XofTurboShake128,
     },
 };
 use rand::{distributions::Standard, random, thread_rng, Rng};
@@ -2044,7 +2044,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
     let report_id = random();
-    let vdaf = Arc::new(Poplar1::new_shake128(1));
+    let vdaf = Arc::new(Poplar1::new_turboshake128(1));
     let verify_key: [u8; VERIFY_KEY_LENGTH] = random();
     let aggregation_param =
         Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[false])]))
@@ -2132,7 +2132,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
@@ -2520,7 +2520,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
     let ds = ephemeral_datastore.datastore(clock.clone()).await;
 
     let report_id = random();
-    let vdaf = Arc::new(Poplar1::new_shake128(1));
+    let vdaf = Arc::new(Poplar1::new_turboshake128(1));
     let verify_key: [u8; VERIFY_KEY_LENGTH] = random();
     let aggregation_param =
         Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[false])]))
@@ -2557,7 +2557,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                 tx.put_aggregation_job(&AggregationJob::<
                     VERIFY_KEY_LENGTH,
                     TimeInterval,
-                    Poplar1<XofShake128, 16>,
+                    Poplar1<XofTurboShake128, 16>,
                 >::new(
                     *task.id(),
                     aggregation_job_id,
@@ -2809,10 +2809,11 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
                 &[0, 1, 2, 3, 4, 5],
                 &AggregateShareAad::new(
                     *task.id(),
-                    ().get_encoded(),
+                    ().get_encoded().unwrap(),
                     BatchSelector::new_time_interval(first_batch_interval),
                 )
-                .get_encoded(),
+                .get_encoded()
+                .unwrap(),
             )
             .unwrap();
 
@@ -6136,9 +6137,9 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
             return (
                 Some(*collection_job.id()),
                 None,
-                Some((*task.id(), batch_identifier.get_encoded())),
+                Some((*task.id(), batch_identifier.get_encoded().unwrap())),
                 outstanding_batch_id,
-                Some((*task.id(), batch_identifier.get_encoded())),
+                Some((*task.id(), batch_identifier.get_encoded().unwrap())),
                 time_bucket_start,
             );
         } else {
@@ -6155,10 +6156,10 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
 
             return (
                 None,
-                Some((*task.id(), batch_identifier.get_encoded())),
-                Some((*task.id(), batch_identifier.get_encoded())),
+                Some((*task.id(), batch_identifier.get_encoded().unwrap())),
+                Some((*task.id(), batch_identifier.get_encoded().unwrap())),
                 None,
-                Some((*task.id(), batch_identifier.get_encoded())),
+                Some((*task.id(), batch_identifier.get_encoded().unwrap())),
                 None,
             );
         }
@@ -6695,7 +6696,12 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|batch| (*batch.task_id(), batch.batch_identifier().get_encoded()));
+                    .map(|batch| {
+                        (
+                            *batch.task_id(),
+                            batch.batch_identifier().get_encoded().unwrap(),
+                        )
+                    });
                 let helper_time_interval_batch_ids = tx
                     .get_batches_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &helper_time_interval_task_id,
@@ -6703,7 +6709,12 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|batch| (*batch.task_id(), batch.batch_identifier().get_encoded()));
+                    .map(|batch| {
+                        (
+                            *batch.task_id(),
+                            batch.batch_identifier().get_encoded().unwrap(),
+                        )
+                    });
                 let leader_fixed_size_batch_ids = tx
                     .get_batches_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
                         &leader_fixed_size_task_id,
@@ -6711,7 +6722,12 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|batch| (*batch.task_id(), batch.batch_identifier().get_encoded()));
+                    .map(|batch| {
+                        (
+                            *batch.task_id(),
+                            batch.batch_identifier().get_encoded().unwrap(),
+                        )
+                    });
                 let helper_fixed_size_batch_ids = tx
                     .get_batches_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
                         &helper_fixed_size_task_id,
@@ -6719,7 +6735,12 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|batch| (*batch.task_id(), batch.batch_identifier().get_encoded()));
+                    .map(|batch| {
+                        (
+                            *batch.task_id(),
+                            batch.batch_identifier().get_encoded().unwrap(),
+                        )
+                    });
                 let leader_fixed_size_time_bucketed_batch_ids = tx
                     .get_batches_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
                         &leader_fixed_size_time_bucketed_task_id,
@@ -6727,13 +6748,23 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|batch| (*batch.task_id(), batch.batch_identifier().get_encoded()));
+                    .map(|batch| {
+                        (
+                            *batch.task_id(),
+                            batch.batch_identifier().get_encoded().unwrap(),
+                        )
+                    });
                 let other_task_batch_ids = tx
                     .get_batches_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(&other_task_id)
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|batch| (*batch.task_id(), batch.batch_identifier().get_encoded()));
+                    .map(|batch| {
+                        (
+                            *batch.task_id(),
+                            batch.batch_identifier().get_encoded().unwrap(),
+                        )
+                    });
                 let got_batch_ids = leader_time_interval_batch_ids
                     .chain(helper_time_interval_batch_ids)
                     .chain(leader_fixed_size_batch_ids)
@@ -6812,7 +6843,12 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|job| (*job.task_id(), job.batch_identifier().get_encoded()));
+                    .map(|job| {
+                        (
+                            *job.task_id(),
+                            job.batch_identifier().get_encoded().unwrap(),
+                        )
+                    });
                 let helper_time_interval_aggregate_share_job_ids = tx
                     .get_aggregate_share_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &vdaf,
@@ -6821,7 +6857,12 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|job| (*job.task_id(), job.batch_identifier().get_encoded()));
+                    .map(|job| {
+                        (
+                            *job.task_id(),
+                            job.batch_identifier().get_encoded().unwrap(),
+                        )
+                    });
                 let leader_fixed_size_aggregate_share_job_ids = tx
                     .get_aggregate_share_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
                         &vdaf,
@@ -6830,7 +6871,12 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|job| (*job.task_id(), job.batch_identifier().get_encoded()));
+                    .map(|job| {
+                        (
+                            *job.task_id(),
+                            job.batch_identifier().get_encoded().unwrap(),
+                        )
+                    });
                 let helper_fixed_size_aggregate_share_job_ids = tx
                     .get_aggregate_share_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
                         &vdaf,
@@ -6839,7 +6885,12 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|job| (*job.task_id(), job.batch_identifier().get_encoded()));
+                    .map(|job| {
+                        (
+                            *job.task_id(),
+                            job.batch_identifier().get_encoded().unwrap(),
+                        )
+                    });
                 let leader_fixed_size_time_bucketed_aggregate_share_job_ids = tx
                     .get_aggregate_share_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
                         &vdaf,
@@ -6848,7 +6899,12 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|job| (*job.task_id(), job.batch_identifier().get_encoded()));
+                    .map(|job| {
+                        (
+                            *job.task_id(),
+                            job.batch_identifier().get_encoded().unwrap(),
+                        )
+                    });
                 let other_task_aggregate_share_job_ids = tx
                     .get_aggregate_share_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &vdaf,
@@ -6857,7 +6913,12 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|job| (*job.task_id(), job.batch_identifier().get_encoded()));
+                    .map(|job| {
+                        (
+                            *job.task_id(),
+                            job.batch_identifier().get_encoded().unwrap(),
+                        )
+                    });
                 let got_aggregate_share_job_ids = leader_time_interval_aggregate_share_job_ids
                     .chain(helper_time_interval_aggregate_share_job_ids)
                     .chain(leader_fixed_size_aggregate_share_job_ids)
@@ -6927,7 +6988,12 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|agg| (*agg.task_id(), agg.batch_identifier().get_encoded()));
+                    .map(|agg| {
+                        (
+                            *agg.task_id(),
+                            agg.batch_identifier().get_encoded().unwrap(),
+                        )
+                    });
                 let helper_time_interval_batch_aggregation_ids = tx
                     .get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &vdaf,
@@ -6936,7 +7002,12 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|agg| (*agg.task_id(), agg.batch_identifier().get_encoded()));
+                    .map(|agg| {
+                        (
+                            *agg.task_id(),
+                            agg.batch_identifier().get_encoded().unwrap(),
+                        )
+                    });
                 let leader_fixed_size_batch_aggregation_ids = tx
                     .get_batch_aggregations_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
                         &vdaf,
@@ -6945,7 +7016,12 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|agg| (*agg.task_id(), agg.batch_identifier().get_encoded()));
+                    .map(|agg| {
+                        (
+                            *agg.task_id(),
+                            agg.batch_identifier().get_encoded().unwrap(),
+                        )
+                    });
                 let helper_fixed_size_batch_aggregation_ids = tx
                     .get_batch_aggregations_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
                         &vdaf,
@@ -6954,7 +7030,12 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|agg| (*agg.task_id(), agg.batch_identifier().get_encoded()));
+                    .map(|agg| {
+                        (
+                            *agg.task_id(),
+                            agg.batch_identifier().get_encoded().unwrap(),
+                        )
+                    });
                 let leader_fixed_size_time_bucketed_batch_aggregation_ids = tx
                     .get_batch_aggregations_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
                         &vdaf,
@@ -6963,7 +7044,12 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|agg| (*agg.task_id(), agg.batch_identifier().get_encoded()));
+                    .map(|agg| {
+                        (
+                            *agg.task_id(),
+                            agg.batch_identifier().get_encoded().unwrap(),
+                        )
+                    });
                 let other_task_batch_aggregation_ids = tx
                     .get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
                         &vdaf,
@@ -6972,7 +7058,12 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                     .await
                     .unwrap()
                     .into_iter()
-                    .map(|agg| (*agg.task_id(), agg.batch_identifier().get_encoded()));
+                    .map(|agg| {
+                        (
+                            *agg.task_id(),
+                            agg.batch_identifier().get_encoded().unwrap(),
+                        )
+                    });
                 let got_batch_aggregation_ids = leader_time_interval_batch_aggregation_ids
                     .chain(helper_time_interval_batch_aggregation_ids)
                     .chain(leader_fixed_size_batch_aggregation_ids)

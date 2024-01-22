@@ -25,14 +25,19 @@ where
     let encrypted_helper_input_share = hpke::seal(
         helper_hpke_config,
         &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
-        &PlaintextInputShare::new(Vec::new(), transcript.helper_input_share.get_encoded())
-            .get_encoded(),
+        &PlaintextInputShare::new(
+            Vec::new(),
+            transcript.helper_input_share.get_encoded().unwrap(),
+        )
+        .get_encoded()
+        .unwrap(),
         &InputShareAad::new(
             task_id,
             report_metadata.clone(),
-            transcript.public_share.get_encoded(),
+            transcript.public_share.get_encoded().unwrap(),
         )
-        .get_encoded(),
+        .get_encoded()
+        .unwrap(),
     )
     .unwrap();
 

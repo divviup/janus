@@ -124,7 +124,7 @@ async fn run(
     let collector_auth_token = URL_SAFE_NO_PAD.encode(random::<[u8; 16]>());
     let vdaf_verify_key = rand::random::<[u8; VERIFY_KEY_LENGTH]>();
 
-    let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
+    let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded().unwrap());
     let vdaf_verify_key_encoded = URL_SAFE_NO_PAD.encode(vdaf_verify_key);
 
     // Endpoints, from the POV of this test (i.e. the Docker host).

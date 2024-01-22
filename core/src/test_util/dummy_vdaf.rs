@@ -79,8 +79,6 @@ impl Default for Vdaf {
 }
 
 impl vdaf::Vdaf for Vdaf {
-    const ID: u32 = 0xFFFF0000;
-
     type Measurement = ();
     type AggregateResult = ();
     type AggregationParam = AggregationParam;
@@ -88,6 +86,14 @@ impl vdaf::Vdaf for Vdaf {
     type InputShare = InputShare;
     type OutputShare = OutputShare;
     type AggregateShare = AggregateShare;
+
+    fn algorithm_id(&self) -> u32 {
+        // VDAF reserves the algorithm ID range 0xFFFF0000-0xFFFFFFFF for
+        // private use, such as this kind of test VDAF.
+        //
+        // https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-vdaf-08#section-10
+        0xFFFF0000
+    }
 
     fn num_aggregators(&self) -> usize {
         2
@@ -178,7 +184,7 @@ impl vdaf::Collector for Vdaf {
 pub struct InputShare(pub u8);
 
 impl Encode for InputShare {
-    fn encode(&self, bytes: &mut Vec<u8>) {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.0.encode(bytes)
     }
 
@@ -197,8 +203,8 @@ impl Decode for InputShare {
 pub struct AggregationParam(pub u8);
 
 impl Encode for AggregationParam {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.0.encode(bytes);
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        self.0.encode(bytes)
     }
 
     fn encoded_len(&self) -> Option<usize> {
@@ -222,7 +228,9 @@ impl Decode for OutputShare {
 }
 
 impl Encode for OutputShare {
-    fn encode(&self, _: &mut Vec<u8>) {}
+    fn encode(&self, _: &mut Vec<u8>) -> Result<(), CodecError> {
+        Ok(())
+    }
 
     fn encoded_len(&self) -> Option<usize> {
         Some(0)
@@ -233,8 +241,8 @@ impl Encode for OutputShare {
 pub struct PrepareState(pub u8);
 
 impl Encode for PrepareState {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.0.encode(bytes);
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        self.0.encode(bytes)
     }
 
     fn encoded_len(&self) -> Option<usize> {
@@ -279,7 +287,7 @@ impl Decode for AggregateShare {
 }
 
 impl Encode for AggregateShare {
-    fn encode(&self, bytes: &mut Vec<u8>) {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.0.encode(bytes)
     }
 

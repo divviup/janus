@@ -362,7 +362,7 @@ impl AggregationJobDriver {
                     prepare_inits.push(PrepareInit::new(
                         ReportShare::new(
                             report_aggregation.report_metadata(),
-                            public_share.get_encoded(),
+                            public_share.get_encoded()?,
                             helper_encrypted_input_share.clone(),
                         ),
                         ping_pong_message,
@@ -387,7 +387,7 @@ impl AggregationJobDriver {
             // TODO(#235): abandon work immediately on "terminal" failures from helper, or other
             // unexpected cases such as unknown/unexpected content type.
             let req = AggregationJobInitializeReq::<Q>::new(
-                aggregation_job.aggregation_parameter().get_encoded(),
+                aggregation_job.aggregation_parameter().get_encoded()?,
                 PartialBatchSelector::new(aggregation_job.partial_batch_identifier().clone()),
                 prepare_inits,
             );
@@ -960,7 +960,7 @@ mod tests {
         vdaf::{
             poplar1::{Poplar1, Poplar1AggregationParam},
             prio3::{Prio3, Prio3Count},
-            xof::XofShake128,
+            xof::XofTurboShake128,
             Aggregator,
         },
     };
@@ -983,7 +983,7 @@ mod tests {
         let mut runtime_manager = TestRuntimeManager::new();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-        let vdaf = Arc::new(Poplar1::new_shake128(1));
+        let vdaf = Arc::new(Poplar1::new_turboshake128(1));
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 })
             .with_helper_aggregator_endpoint(server.url().parse().unwrap())
             .build();
@@ -1012,7 +1012,7 @@ mod tests {
 
         let agg_auth_token = task.aggregator_auth_token().clone();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
+        let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -1043,7 +1043,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
@@ -1065,7 +1065,7 @@ mod tests {
                     tx.put_batch(&Batch::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         batch_identifier,
@@ -1080,7 +1080,7 @@ mod tests {
                     let collection_job = CollectionJob::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         random(),
@@ -1109,7 +1109,8 @@ mod tests {
                         message: transcript.helper_prepare_transitions[0].message.clone(),
                     },
                 )]))
-                .get_encoded(),
+                .get_encoded()
+                .unwrap(),
             ),
             (
                 "POST",
@@ -1119,7 +1120,8 @@ mod tests {
                     *report.metadata().id(),
                     PrepareStepResult::Finished,
                 )]))
-                .get_encoded(),
+                .get_encoded()
+                .unwrap(),
             ),
         ]);
         let mocked_aggregates = join_all(helper_responses.iter().map(
@@ -1185,7 +1187,7 @@ mod tests {
         }
 
         let want_aggregation_job =
-            AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>::new(
+            AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>::new(
                 *task.id(),
                 aggregation_job_id,
                 aggregation_param.clone(),
@@ -1196,7 +1198,7 @@ mod tests {
                 AggregationJobStep::from(2),
             );
         let want_report_aggregation =
-            ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>::new(
+            ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>::new(
                 *task.id(),
                 aggregation_job_id,
                 *report.metadata().id(),
@@ -1205,14 +1207,15 @@ mod tests {
                 None,
                 ReportAggregationState::Finished,
             );
-        let want_batch = Batch::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>::new(
-            *task.id(),
-            batch_identifier,
-            aggregation_param.clone(),
-            BatchState::Closed,
-            0,
-            Interval::from_time(&time).unwrap(),
-        );
+        let want_batch =
+            Batch::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>::new(
+                *task.id(),
+                batch_identifier,
+                aggregation_param.clone(),
+                BatchState::Closed,
+                0,
+                Interval::from_time(&time).unwrap(),
+            );
         let want_collection_job = collection_job.with_state(CollectionJobState::Collectable);
 
         let (got_aggregation_job, got_report_aggregation, got_batch, got_collection_job) = ds
@@ -1224,7 +1227,7 @@ mod tests {
 
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>(
+                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -1294,7 +1297,7 @@ mod tests {
             verify_key.as_bytes(),
             &(),
             report_metadata.id(),
-            &0,
+            &false,
         );
 
         let agg_auth_token = task.aggregator_auth_token();
@@ -1397,12 +1400,12 @@ mod tests {
         // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
         // verification -- but mockito does not expose this functionality at time of writing.)
         let leader_request = AggregationJobInitializeReq::new(
-            ().get_encoded(),
+            ().get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([PrepareInit::new(
                 ReportShare::new(
                     report.metadata().clone(),
-                    report.public_share().get_encoded(),
+                    report.public_share().get_encoded().unwrap(),
                     report.helper_encrypted_input_share().clone(),
                 ),
                 transcript.leader_prepare_transitions[0].message.clone(),
@@ -1439,10 +1442,10 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .match_body(leader_request.get_encoded())
+            .match_body(leader_request.get_encoded().unwrap())
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-            .with_body(helper_response.get_encoded())
+            .with_body(helper_response.get_encoded().unwrap())
             .create_async()
             .await;
 
@@ -1592,7 +1595,7 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-        let vdaf = Arc::new(Poplar1::new_shake128(1));
+        let vdaf = Arc::new(Poplar1::new_turboshake128(1));
 
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 })
             .with_helper_aggregator_endpoint(server.url().parse().unwrap())
@@ -1622,7 +1625,7 @@ mod tests {
 
         let agg_auth_token = task.aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
+        let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -1649,7 +1652,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
@@ -1672,7 +1675,7 @@ mod tests {
                     tx.put_batch(&Batch::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         batch_identifier,
@@ -1701,12 +1704,12 @@ mod tests {
         // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
         // verification -- but mockito does not expose this functionality at time of writing.)
         let leader_request = AggregationJobInitializeReq::new(
-            aggregation_param.get_encoded(),
+            aggregation_param.get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([PrepareInit::new(
                 ReportShare::new(
                     report.metadata().clone(),
-                    report.public_share().get_encoded(),
+                    report.public_share().get_encoded().unwrap(),
                     report.helper_encrypted_input_share().clone(),
                 ),
                 transcript.leader_prepare_transitions[0].message.clone(),
@@ -1731,10 +1734,10 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .match_body(leader_request.get_encoded())
+            .match_body(leader_request.get_encoded().unwrap())
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-            .with_body(helper_response.get_encoded())
+            .with_body(helper_response.get_encoded().unwrap())
             .create_async()
             .await;
 
@@ -1753,7 +1756,7 @@ mod tests {
         mocked_aggregate_success.assert_async().await;
 
         let want_aggregation_job =
-            AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>::new(
+            AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>::new(
                 *task.id(),
                 aggregation_job_id,
                 aggregation_param.clone(),
@@ -1764,7 +1767,7 @@ mod tests {
                 AggregationJobStep::from(1),
             );
         let want_report_aggregation =
-            ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>::new(
+            ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>::new(
                 *task.id(),
                 aggregation_job_id,
                 *report.metadata().id(),
@@ -1778,14 +1781,15 @@ mod tests {
                         .unwrap(),
                 },
             );
-        let want_batch = Batch::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>::new(
-            *task.id(),
-            batch_identifier,
-            aggregation_param,
-            BatchState::Closing,
-            1,
-            Interval::from_time(&time).unwrap(),
-        );
+        let want_batch =
+            Batch::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>::new(
+                *task.id(),
+                batch_identifier,
+                aggregation_param,
+                BatchState::Closing,
+                1,
+                Interval::from_time(&time).unwrap(),
+            );
 
         let (got_aggregation_job, got_report_aggregation, got_batch) = ds
             .run_unnamed_tx(|tx| {
@@ -1793,7 +1797,7 @@ mod tests {
                     (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>(
+                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -1878,14 +1882,14 @@ mod tests {
             verify_key.as_bytes(),
             &(),
             gc_eligible_report_metadata.id(),
-            &0,
+            &false,
         );
         let gc_ineligible_transcript = run_vdaf(
             vdaf.as_ref(),
             verify_key.as_bytes(),
             &(),
             gc_ineligible_report_metadata.id(),
-            &0,
+            &false,
         );
 
         let agg_auth_token = task.aggregator_auth_token();
@@ -2005,13 +2009,13 @@ mod tests {
 
         // Setup: prepare mocked HTTP response.
         let leader_request = AggregationJobInitializeReq::new(
-            ().get_encoded(),
+            ().get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([
                 PrepareInit::new(
                     ReportShare::new(
                         gc_eligible_report.metadata().clone(),
-                        gc_eligible_report.public_share().get_encoded(),
+                        gc_eligible_report.public_share().get_encoded().unwrap(),
                         gc_eligible_report.helper_encrypted_input_share().clone(),
                     ),
                     gc_eligible_transcript.leader_prepare_transitions[0]
@@ -2021,7 +2025,7 @@ mod tests {
                 PrepareInit::new(
                     ReportShare::new(
                         gc_ineligible_report.metadata().clone(),
-                        gc_ineligible_report.public_share().get_encoded(),
+                        gc_ineligible_report.public_share().get_encoded().unwrap(),
                         gc_ineligible_report.helper_encrypted_input_share().clone(),
                     ),
                     gc_ineligible_transcript.leader_prepare_transitions[0]
@@ -2061,10 +2065,10 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .match_body(leader_request.get_encoded())
+            .match_body(leader_request.get_encoded().unwrap())
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-            .with_body(helper_response.get_encoded())
+            .with_body(helper_response.get_encoded().unwrap())
             .create_async()
             .await;
 
@@ -2202,7 +2206,7 @@ mod tests {
             verify_key.as_bytes(),
             &(),
             report_metadata.id(),
-            &0,
+            &false,
         );
 
         let agg_auth_token = task.aggregator_auth_token();
@@ -2278,12 +2282,12 @@ mod tests {
         // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
         // verification -- but mockito does not expose this functionality at time of writing.)
         let leader_request = AggregationJobInitializeReq::new(
-            ().get_encoded(),
+            ().get_encoded().unwrap(),
             PartialBatchSelector::new_fixed_size(batch_id),
             Vec::from([PrepareInit::new(
                 ReportShare::new(
                     report.metadata().clone(),
-                    report.public_share().get_encoded(),
+                    report.public_share().get_encoded().unwrap(),
                     report.helper_encrypted_input_share().clone(),
                 ),
                 transcript.leader_prepare_transitions[0].message.clone(),
@@ -2320,10 +2324,10 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
             )
-            .match_body(leader_request.get_encoded())
+            .match_body(leader_request.get_encoded().unwrap())
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-            .with_body(helper_response.get_encoded())
+            .with_body(helper_response.get_encoded().unwrap())
             .create_async()
             .await;
 
@@ -2429,7 +2433,7 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-        let vdaf = Arc::new(Poplar1::new_shake128(1));
+        let vdaf = Arc::new(Poplar1::new_turboshake128(1));
 
         let task = TaskBuilder::new(
             QueryType::FixedSize {
@@ -2466,7 +2470,7 @@ mod tests {
 
         let agg_auth_token = task.aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
+        let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -2494,7 +2498,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
                         FixedSize,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
@@ -2517,7 +2521,7 @@ mod tests {
                     tx.put_batch(&Batch::<
                         VERIFY_KEY_LENGTH,
                         FixedSize,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         batch_id,
@@ -2546,12 +2550,12 @@ mod tests {
         // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
         // verification -- but mockito does not expose this functionality at time of writing.)
         let leader_request = AggregationJobInitializeReq::new(
-            aggregation_param.get_encoded(),
+            aggregation_param.get_encoded().unwrap(),
             PartialBatchSelector::new_fixed_size(batch_id),
             Vec::from([PrepareInit::new(
                 ReportShare::new(
                     report.metadata().clone(),
-                    report.public_share().get_encoded(),
+                    report.public_share().get_encoded().unwrap(),
                     report.helper_encrypted_input_share().clone(),
                 ),
                 transcript.leader_prepare_transitions[0].message.clone(),
@@ -2576,10 +2580,10 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
             )
-            .match_body(leader_request.get_encoded())
+            .match_body(leader_request.get_encoded().unwrap())
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-            .with_body(helper_response.get_encoded())
+            .with_body(helper_response.get_encoded().unwrap())
             .create_async()
             .await;
 
@@ -2598,7 +2602,7 @@ mod tests {
         mocked_aggregate_success.assert_async().await;
 
         let want_aggregation_job =
-            AggregationJob::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofShake128, 16>>::new(
+            AggregationJob::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofTurboShake128, 16>>::new(
                 *task.id(),
                 aggregation_job_id,
                 aggregation_param.clone(),
@@ -2609,7 +2613,7 @@ mod tests {
                 AggregationJobStep::from(1),
             );
         let want_report_aggregation =
-            ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>::new(
+            ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>::new(
                 *task.id(),
                 aggregation_job_id,
                 *report.metadata().id(),
@@ -2623,7 +2627,7 @@ mod tests {
                         .unwrap(),
                 },
             );
-        let want_batch = Batch::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofShake128, 16>>::new(
+        let want_batch = Batch::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofTurboShake128, 16>>::new(
             *task.id(),
             batch_id,
             aggregation_param.clone(),
@@ -2638,7 +2642,7 @@ mod tests {
                     (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofShake128, 16>>(
+                        .get_aggregation_job::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofTurboShake128, 16>>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -2683,7 +2687,7 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-        let vdaf = Arc::new(Poplar1::new_shake128(1));
+        let vdaf = Arc::new(Poplar1::new_turboshake128(1));
 
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 1 })
             .with_helper_aggregator_endpoint(server.url().parse().unwrap())
@@ -2725,7 +2729,7 @@ mod tests {
 
         let agg_auth_token = task.aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
+        let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -2760,7 +2764,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
@@ -2776,7 +2780,7 @@ mod tests {
 
                     tx.put_report_aggregation(&ReportAggregation::<
                         VERIFY_KEY_LENGTH,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
@@ -2797,7 +2801,7 @@ mod tests {
                     tx.put_batch(&Batch::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         active_batch_identifier,
@@ -2811,7 +2815,7 @@ mod tests {
                     tx.put_batch(&Batch::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         other_batch_identifier,
@@ -2826,7 +2830,7 @@ mod tests {
                     let collection_job = CollectionJob::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         random(),
@@ -2888,10 +2892,10 @@ mod tests {
             )
             .match_header(header, value.as_str())
             .match_header(CONTENT_TYPE.as_str(), AggregationJobContinueReq::MEDIA_TYPE)
-            .match_body(leader_request.get_encoded())
+            .match_body(leader_request.get_encoded().unwrap())
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-            .with_body(helper_response.get_encoded())
+            .with_body(helper_response.get_encoded().unwrap())
             .create_async()
             .await;
 
@@ -2922,7 +2926,7 @@ mod tests {
         mocked_aggregate_success.assert_async().await;
 
         let want_aggregation_job =
-            AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>::new(
+            AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>::new(
                 *task.id(),
                 aggregation_job_id,
                 aggregation_param.clone(),
@@ -2933,7 +2937,7 @@ mod tests {
                 AggregationJobStep::from(2),
             );
         let want_report_aggregation =
-            ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>::new(
+            ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>::new(
                 *task.id(),
                 aggregation_job_id,
                 *report.metadata().id(),
@@ -2951,7 +2955,7 @@ mod tests {
         let want_batch_aggregations = Vec::from([BatchAggregation::<
             VERIFY_KEY_LENGTH,
             TimeInterval,
-            Poplar1<XofShake128, 16>,
+            Poplar1<XofTurboShake128, 16>,
         >::new(
             *task.id(),
             Interval::new(batch_interval_start, *task.time_precision()).unwrap(),
@@ -2964,7 +2968,7 @@ mod tests {
             ReportIdChecksum::for_report_id(report.metadata().id()),
         )]);
         let want_active_batch =
-            Batch::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>::new(
+            Batch::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>::new(
                 *task.id(),
                 active_batch_identifier,
                 aggregation_param.clone(),
@@ -2973,7 +2977,7 @@ mod tests {
                 Interval::from_time(report.metadata().time()).unwrap(),
             );
         let want_other_batch =
-            Batch::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>::new(
+            Batch::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>::new(
                 *task.id(),
                 other_batch_identifier,
                 aggregation_param.clone(),
@@ -3000,7 +3004,7 @@ mod tests {
                 );
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>(
+                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -3020,7 +3024,7 @@ mod tests {
                     let batch_aggregations =
                         TimeInterval::get_batch_aggregations_for_collection_identifier::<
                             VERIFY_KEY_LENGTH,
-                            Poplar1<XofShake128, 16>,
+                            Poplar1<XofTurboShake128, 16>,
                             _,
                         >(
                             tx,
@@ -3099,7 +3103,7 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-        let vdaf = Arc::new(Poplar1::new_shake128(1));
+        let vdaf = Arc::new(Poplar1::new_turboshake128(1));
 
         let task = TaskBuilder::new(
             QueryType::FixedSize {
@@ -3135,7 +3139,7 @@ mod tests {
 
         let agg_auth_token = task.aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
+        let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -3167,7 +3171,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
                         FixedSize,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
@@ -3183,7 +3187,7 @@ mod tests {
 
                     tx.put_report_aggregation(&ReportAggregation::<
                         VERIFY_KEY_LENGTH,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
@@ -3204,7 +3208,7 @@ mod tests {
                     tx.put_batch(&Batch::<
                         VERIFY_KEY_LENGTH,
                         FixedSize,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         batch_id,
@@ -3219,7 +3223,7 @@ mod tests {
                     let collection_job = CollectionJob::<
                         VERIFY_KEY_LENGTH,
                         FixedSize,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         random(),
@@ -3281,10 +3285,10 @@ mod tests {
             )
             .match_header(header, value.as_str())
             .match_header(CONTENT_TYPE.as_str(), AggregationJobContinueReq::MEDIA_TYPE)
-            .match_body(leader_request.get_encoded())
+            .match_body(leader_request.get_encoded().unwrap())
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
-            .with_body(helper_response.get_encoded())
+            .with_body(helper_response.get_encoded().unwrap())
             .create_async()
             .await;
 
@@ -3315,7 +3319,7 @@ mod tests {
         mocked_aggregate_success.assert_async().await;
 
         let want_aggregation_job =
-            AggregationJob::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofShake128, 16>>::new(
+            AggregationJob::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofTurboShake128, 16>>::new(
                 *task.id(),
                 aggregation_job_id,
                 aggregation_param.clone(),
@@ -3326,7 +3330,7 @@ mod tests {
                 AggregationJobStep::from(2),
             );
         let want_report_aggregation =
-            ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>::new(
+            ReportAggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>::new(
                 *task.id(),
                 aggregation_job_id,
                 *report.metadata().id(),
@@ -3338,7 +3342,7 @@ mod tests {
         let want_batch_aggregations = Vec::from([BatchAggregation::<
             VERIFY_KEY_LENGTH,
             FixedSize,
-            Poplar1<XofShake128, 16>,
+            Poplar1<XofTurboShake128, 16>,
         >::new(
             *task.id(),
             batch_id,
@@ -3350,7 +3354,7 @@ mod tests {
             Interval::from_time(report.metadata().time()).unwrap(),
             ReportIdChecksum::for_report_id(report.metadata().id()),
         )]);
-        let want_batch = Batch::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofShake128, 16>>::new(
+        let want_batch = Batch::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofTurboShake128, 16>>::new(
             *task.id(),
             batch_id,
             aggregation_param.clone(),
@@ -3377,7 +3381,7 @@ mod tests {
                 );
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofShake128, 16>>(
+                        .get_aggregation_job::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofTurboShake128, 16>>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -3397,7 +3401,7 @@ mod tests {
                     let batch_aggregations =
                         FixedSize::get_batch_aggregations_for_collection_identifier::<
                             VERIFY_KEY_LENGTH,
-                            Poplar1<XofShake128, 16>,
+                            Poplar1<XofTurboShake128, 16>,
                             _,
                         >(tx, &task, &vdaf, &batch_id, &aggregation_param)
                         .await.unwrap();
@@ -3472,7 +3476,7 @@ mod tests {
             verify_key.as_bytes(),
             &(),
             report_metadata.id(),
-            &0,
+            &false,
         );
 
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
@@ -3637,7 +3641,13 @@ mod tests {
             .unwrap();
         let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
-        let transcript = run_vdaf(&vdaf, verify_key.as_bytes(), &(), report_metadata.id(), &0);
+        let transcript = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &(),
+            report_metadata.id(),
+            &false,
+        );
         let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
             *task.id(),
             report_metadata,

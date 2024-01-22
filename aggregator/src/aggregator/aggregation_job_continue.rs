@@ -325,7 +325,7 @@ pub mod test_util {
                 KnownHeaderName::ContentType,
                 AggregationJobContinueReq::MEDIA_TYPE,
             )
-            .with_request_body(request.get_encoded())
+            .with_request_body(request.get_encoded().unwrap())
             .run_async(handler)
             .await
     }
@@ -425,7 +425,7 @@ mod tests {
         idpf::IdpfInput,
         vdaf::{
             poplar1::{Poplar1, Poplar1AggregationParam},
-            xof::XofShake128,
+            xof::XofTurboShake128,
             Aggregator,
         },
     };
@@ -450,7 +450,7 @@ mod tests {
     /// Set up a helper with an aggregation job in step 0
     #[allow(clippy::unit_arg)]
     async fn setup_aggregation_job_continue_test(
-    ) -> AggregationJobContinueTestCase<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>> {
+    ) -> AggregationJobContinueTestCase<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>> {
         // Prepare datastore & request.
         install_test_trace_subscriber();
 
@@ -470,7 +470,7 @@ mod tests {
         let prepare_init_generator = PrepareInitGenerator::new(
             clock.clone(),
             helper_task.clone(),
-            Poplar1::new_shake128(1),
+            Poplar1::new_turboshake128(1),
             aggregation_param.clone(),
         );
 
@@ -495,7 +495,7 @@ mod tests {
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
                         TimeInterval,
-                        Poplar1<XofShake128, 16>,
+                        Poplar1<XofTurboShake128, 16>,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
@@ -508,7 +508,7 @@ mod tests {
                     .await
                     .unwrap();
 
-                    tx.put_report_aggregation::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
+                    tx.put_report_aggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
                         &ReportAggregation::new(
                             *task.id(),
                             aggregation_job_id,
@@ -565,7 +565,7 @@ mod tests {
     /// Set up a helper with an aggregation job in step 1.
     #[allow(clippy::unit_arg)]
     async fn setup_aggregation_job_continue_step_recovery_test(
-    ) -> AggregationJobContinueTestCase<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>> {
+    ) -> AggregationJobContinueTestCase<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>> {
         let mut test_case = setup_aggregation_job_continue_test().await;
 
         let first_continue_response = post_aggregation_job_and_decode(
@@ -658,7 +658,7 @@ mod tests {
                         .unwrap();
 
                     let aggregation_job = tx
-                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>(
+                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(
                             &task_id,
                             &aggregation_job_id,
                         )
@@ -666,8 +666,8 @@ mod tests {
                         .unwrap();
 
                     let report_aggregations = tx
-                        .get_report_aggregations_for_aggregation_job::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
-                            &Poplar1::new_shake128(1),
+                        .get_report_aggregations_for_aggregation_job::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
+                            &Poplar1::new_turboshake128(1),
                             &Role::Helper,
                             &task_id,
                             &aggregation_job_id,
@@ -710,7 +710,7 @@ mod tests {
                     (*test_case.task.id(), test_case.aggregation_job_id);
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>(
+                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(
                             &task_id,
                             &aggregation_job_id,
                         )
@@ -718,8 +718,8 @@ mod tests {
                         .unwrap();
 
                     let report_aggregations = tx
-                        .get_report_aggregations_for_aggregation_job::<VERIFY_KEY_LENGTH, Poplar1<XofShake128, 16>>(
-                            &Poplar1::new_shake128(1),
+                        .get_report_aggregations_for_aggregation_job::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
+                            &Poplar1::new_turboshake128(1),
                             &Role::Helper,
                             &task_id,
                             &aggregation_job_id,
@@ -752,7 +752,7 @@ mod tests {
                     // step mismatch error instead of tripping the check for a request to continue
                     // to step 0.
                     let aggregation_job = tx
-                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofShake128, 16>>(
+                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(
                             &task_id,
                             &aggregation_job_id,
                         )

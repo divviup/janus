@@ -78,7 +78,7 @@ impl CollectionJobTestCase {
                 KnownHeaderName::ContentType,
                 CollectionReq::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_request_body(request.get_encoded())
+            .with_request_body(request.get_encoded().unwrap())
             .run_async(&self.handler)
             .await
     }
@@ -278,7 +278,7 @@ async fn collection_job_success_fixed_size() {
     let aggregation_param = dummy_vdaf::AggregationParam::default();
     let request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
-        aggregation_param.get_encoded(),
+        aggregation_param.get_encoded().unwrap(),
     );
 
     for _ in 0..2 {
@@ -298,7 +298,7 @@ async fn collection_job_success_fixed_size() {
             .run_unnamed_tx(|tx| {
                 let task = test_case.task.clone();
                 let vdaf = vdaf.clone();
-                let helper_aggregate_share_bytes = helper_aggregate_share.get_encoded();
+                let helper_aggregate_share_bytes = helper_aggregate_share.get_encoded().unwrap();
                 Box::pin(async move {
                     let collection_job = tx
                         .get_collection_job::<0, FixedSize, dummy_vdaf::Vdaf>(
@@ -321,10 +321,11 @@ async fn collection_job_success_fixed_size() {
                         &helper_aggregate_share_bytes,
                         &AggregateShareAad::new(
                             *task.id(),
-                            aggregation_param.get_encoded(),
+                            aggregation_param.get_encoded().unwrap(),
                             BatchSelector::new_fixed_size(batch_id),
                         )
-                        .get_encoded(),
+                        .get_encoded()
+                        .unwrap(),
                     )
                     .unwrap();
 
@@ -372,10 +373,11 @@ async fn collection_job_success_fixed_size() {
             collect_resp.leader_encrypted_aggregate_share(),
             &AggregateShareAad::new(
                 *test_case.task.id(),
-                aggregation_param.get_encoded(),
+                aggregation_param.get_encoded().unwrap(),
                 BatchSelector::new_fixed_size(batch_id),
             )
-            .get_encoded(),
+            .get_encoded()
+            .unwrap(),
         )
         .unwrap();
         assert_eq!(
@@ -390,10 +392,11 @@ async fn collection_job_success_fixed_size() {
             collect_resp.helper_encrypted_aggregate_share(),
             &AggregateShareAad::new(
                 *test_case.task.id(),
-                aggregation_param.get_encoded(),
+                aggregation_param.get_encoded().unwrap(),
                 BatchSelector::new_fixed_size(batch_id),
             )
-            .get_encoded(),
+            .get_encoded()
+            .unwrap(),
         )
         .unwrap();
         assert_eq!(
@@ -437,7 +440,7 @@ async fn collection_job_put_idempotence_time_interval() {
             )
             .unwrap(),
         ),
-        AggregationParam::default().get_encoded(),
+        AggregationParam::default().get_encoded().unwrap(),
     );
 
     for _ in 0..2 {
@@ -488,7 +491,7 @@ async fn collection_job_put_idempotence_time_interval_varied_collection_id() {
             )
             .unwrap(),
         ),
-        AggregationParam::default().get_encoded(),
+        AggregationParam::default().get_encoded().unwrap(),
     );
 
     for collection_job_id in &collection_job_ids {
@@ -542,7 +545,7 @@ async fn collection_job_put_idempotence_fixed_size_varied_collection_id() {
     let collection_job_ids = HashSet::from(random::<[CollectionJobId; 2]>());
     let request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
-        AggregationParam::default().get_encoded(),
+        AggregationParam::default().get_encoded().unwrap(),
     );
 
     for collection_job_id in &collection_job_ids {
@@ -596,7 +599,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
             )
             .unwrap(),
         ),
-        AggregationParam::default().get_encoded(),
+        AggregationParam::default().get_encoded().unwrap(),
     );
 
     let response = test_case
@@ -612,7 +615,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
             )
             .unwrap(),
         ),
-        AggregationParam::default().get_encoded(),
+        AggregationParam::default().get_encoded().unwrap(),
     );
 
     let response = test_case
@@ -634,7 +637,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param()
             )
             .unwrap(),
         ),
-        AggregationParam(0).get_encoded(),
+        AggregationParam(0).get_encoded().unwrap(),
     );
 
     let response = test_case
@@ -650,7 +653,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param()
             )
             .unwrap(),
         ),
-        AggregationParam(1).get_encoded(),
+        AggregationParam(1).get_encoded().unwrap(),
     );
 
     let response = test_case
@@ -667,7 +670,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch() {
     let collection_job_id = random();
     let request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
-        AggregationParam(0).get_encoded(),
+        AggregationParam(0).get_encoded().unwrap(),
     );
     let mut seen_batch_id = None;
 
@@ -718,7 +721,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch_mutate_aggregat
     let collection_job_id = random();
     let request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
-        AggregationParam(0).get_encoded(),
+        AggregationParam(0).get_encoded().unwrap(),
     );
 
     let response = test_case
@@ -729,7 +732,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch_mutate_aggregat
 
     let mutated_request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
-        AggregationParam(1).get_encoded(),
+        AggregationParam(1).get_encoded().unwrap(),
     );
 
     let response = test_case
@@ -747,7 +750,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch_no_extra_report
     let collection_job_id_2 = random();
     let request = Arc::new(CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
-        AggregationParam(0).get_encoded(),
+        AggregationParam(0).get_encoded().unwrap(),
     ));
 
     // Create the first collection job.
@@ -823,7 +826,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id() {
 
     let request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
-        AggregationParam(0).get_encoded(),
+        AggregationParam(0).get_encoded().unwrap(),
     );
 
     for _ in 0..2 {
@@ -884,7 +887,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_batch_id()
                 Query::new_fixed_size(FixedSizeQuery::ByBatchId {
                     batch_id: first_batch_id,
                 }),
-                AggregationParam(0).get_encoded(),
+                AggregationParam(0).get_encoded().unwrap(),
             ),
         )
         .await;
@@ -897,7 +900,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_batch_id()
                 Query::new_fixed_size(FixedSizeQuery::ByBatchId {
                     batch_id: second_batch_id,
                 }),
-                AggregationParam(0).get_encoded(),
+                AggregationParam(0).get_encoded().unwrap(),
             ),
         )
         .await;
@@ -952,7 +955,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_aggregatio
             &collection_job_id,
             &CollectionReq::new(
                 Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
-                first_aggregation_param.get_encoded(),
+                first_aggregation_param.get_encoded().unwrap(),
             ),
         )
         .await;
@@ -963,7 +966,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_aggregatio
             &collection_job_id,
             &CollectionReq::new(
                 Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
-                second_aggregation_param.get_encoded(),
+                second_aggregation_param.get_encoded().unwrap(),
             ),
         )
         .await;

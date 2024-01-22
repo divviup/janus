@@ -54,7 +54,7 @@ use prio::{
     idpf::IdpfInput,
     vdaf::{
         poplar1::{Poplar1, Poplar1AggregationParam},
-        xof::XofShake128,
+        xof::XofTurboShake128,
     },
 };
 use rand::random;
@@ -68,7 +68,7 @@ use trillium_testing::{
 };
 use url::Url;
 
-type TestVdaf = Poplar1<XofShake128, 16>;
+type TestVdaf = Poplar1<XofTurboShake128, 16>;
 
 pub struct TaskprovTestCase {
     _ephemeral_datastore: EphemeralDatastore,
@@ -153,7 +153,7 @@ impl TaskprovTestCase {
         )
         .unwrap();
 
-        let task_config_encoded = task_config.get_encoded();
+        let task_config_encoded = task_config.get_encoded().unwrap();
 
         // We use a real VDAF since taskprov doesn't have any allowance for a test VDAF, and we use
         // Poplar1 so that the VDAF wil take more than one step, so we can exercise aggregation
@@ -230,7 +230,7 @@ async fn taskprov_aggregate_init() {
     let (transcript_1, report_share_1, aggregation_param_1) = test.next_report_share();
     let batch_id_1 = random();
     let request_1 = AggregationJobInitializeReq::new(
-        aggregation_param_1.get_encoded(),
+        aggregation_param_1.get_encoded().unwrap(),
         PartialBatchSelector::new_fixed_size(batch_id_1),
         Vec::from([PrepareInit::new(
             report_share_1.clone(),
@@ -242,7 +242,7 @@ async fn taskprov_aggregate_init() {
     let (transcript_2, report_share_2, aggregation_param_2) = test.next_report_share();
     let batch_id_2 = random();
     let request_2 = AggregationJobInitializeReq::new(
-        aggregation_param_2.get_encoded(),
+        aggregation_param_2.get_encoded().unwrap(),
         PartialBatchSelector::new_fixed_size(batch_id_2),
         Vec::from([PrepareInit::new(
             report_share_2.clone(),
@@ -272,9 +272,9 @@ async fn taskprov_aggregate_init() {
         )
         .with_request_header(
             TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
         )
-        .with_request_body(request.get_encoded())
+        .with_request_body(request.get_encoded().unwrap())
         .run_async(&test.handler)
         .await;
         assert_eq!(test_conn.status(), Some(Status::BadRequest), "{}", name);
@@ -301,9 +301,9 @@ async fn taskprov_aggregate_init() {
         )
         .with_request_header(
             TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
         )
-        .with_request_body(request.get_encoded())
+        .with_request_body(request.get_encoded().unwrap())
         .run_async(&test.handler)
         .await;
 
@@ -376,7 +376,7 @@ async fn taskprov_opt_out_task_expired() {
 
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
-        ().get_encoded(),
+        ().get_encoded().unwrap(),
         PartialBatchSelector::new_fixed_size(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
@@ -406,9 +406,9 @@ async fn taskprov_opt_out_task_expired() {
     )
     .with_request_header(
         TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
+        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
     )
-    .with_request_body(request.get_encoded())
+    .with_request_body(request.get_encoded().unwrap())
     .run_async(&test.handler)
     .await;
     assert_eq!(test_conn.status(), Some(Status::BadRequest));
@@ -430,7 +430,7 @@ async fn taskprov_opt_out_mismatched_task_id() {
     let (transcript, report_share, _) = test.next_report_share();
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
-        ().get_encoded(),
+        ().get_encoded().unwrap(),
         PartialBatchSelector::new_fixed_size(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
@@ -488,9 +488,9 @@ async fn taskprov_opt_out_mismatched_task_id() {
     .with_request_header(
         TASKPROV_HEADER,
         // Use a different task than the URL's.
-        URL_SAFE_NO_PAD.encode(another_task_config.get_encoded()),
+        URL_SAFE_NO_PAD.encode(another_task_config.get_encoded().unwrap()),
     )
-    .with_request_body(request.get_encoded())
+    .with_request_body(request.get_encoded().unwrap())
     .run_async(&test.handler)
     .await;
     assert_eq!(test_conn.status(), Some(Status::BadRequest));
@@ -512,7 +512,7 @@ async fn taskprov_opt_out_missing_aggregator() {
     let (transcript, report_share, _) = test.next_report_share();
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
-        ().get_encoded(),
+        ().get_encoded().unwrap(),
         PartialBatchSelector::new_fixed_size(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
@@ -547,7 +547,7 @@ async fn taskprov_opt_out_missing_aggregator() {
         .unwrap(),
     )
     .unwrap();
-    let another_task_config_encoded = another_task_config.get_encoded();
+    let another_task_config_encoded = another_task_config.get_encoded().unwrap();
     let another_task_id: TaskId = digest(&SHA256, &another_task_config_encoded)
         .as_ref()
         .try_into()
@@ -570,7 +570,7 @@ async fn taskprov_opt_out_missing_aggregator() {
         TASKPROV_HEADER,
         URL_SAFE_NO_PAD.encode(another_task_config_encoded),
     )
-    .with_request_body(request.get_encoded())
+    .with_request_body(request.get_encoded().unwrap())
     .run_async(&test.handler)
     .await;
     assert_eq!(test_conn.status(), Some(Status::BadRequest));
@@ -592,7 +592,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
     let (transcript, report_share, _) = test.next_report_share();
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
-        ().get_encoded(),
+        ().get_encoded().unwrap(),
         PartialBatchSelector::new_fixed_size(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
@@ -630,7 +630,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
         .unwrap(),
     )
     .unwrap();
-    let another_task_config_encoded = another_task_config.get_encoded();
+    let another_task_config_encoded = another_task_config.get_encoded().unwrap();
     let another_task_id: TaskId = digest(&SHA256, &another_task_config_encoded)
         .as_ref()
         .try_into()
@@ -653,7 +653,7 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
         TASKPROV_HEADER,
         URL_SAFE_NO_PAD.encode(another_task_config_encoded),
     )
-    .with_request_body(request.get_encoded())
+    .with_request_body(request.get_encoded().unwrap())
     .run_async(&test.handler)
     .await;
     assert_eq!(test_conn.status(), Some(Status::BadRequest));
@@ -675,7 +675,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
     let (transcript, report_share, _) = test.next_report_share();
     let batch_id = random();
     let request = AggregationJobInitializeReq::new(
-        ().get_encoded(),
+        ().get_encoded().unwrap(),
         PartialBatchSelector::new_fixed_size(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
@@ -713,7 +713,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
         .unwrap(),
     )
     .unwrap();
-    let another_task_config_encoded = another_task_config.get_encoded();
+    let another_task_config_encoded = another_task_config.get_encoded().unwrap();
     let another_task_id: TaskId = digest(&SHA256, &another_task_config_encoded)
         .as_ref()
         .try_into()
@@ -736,7 +736,7 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
         TASKPROV_HEADER,
         URL_SAFE_NO_PAD.encode(another_task_config_encoded),
     )
-    .with_request_body(request.get_encoded())
+    .with_request_body(request.get_encoded().unwrap())
     .run_async(&test.handler)
     .await;
     assert_eq!(test_conn.status(), Some(Status::BadRequest));
@@ -845,9 +845,9 @@ async fn taskprov_aggregate_continue() {
     )
     .with_request_header(
         TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
+        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
     )
-    .with_request_body(request.get_encoded())
+    .with_request_body(request.get_encoded().unwrap())
     .run_async(&test.handler)
     .await;
     assert_eq!(test_conn.status(), Some(Status::BadRequest));
@@ -872,10 +872,10 @@ async fn taskprov_aggregate_continue() {
         KnownHeaderName::ContentType,
         AggregationJobContinueReq::MEDIA_TYPE,
     )
-    .with_request_body(request.get_encoded())
+    .with_request_body(request.get_encoded().unwrap())
     .with_request_header(
         TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
+        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
     )
     .run_async(&test.handler)
     .await;
@@ -946,7 +946,7 @@ async fn taskprov_aggregate_share() {
 
     let request = AggregateShareReq::new(
         BatchSelector::new_fixed_size(batch_id),
-        aggregation_param.get_encoded(),
+        aggregation_param.get_encoded().unwrap(),
         1,
         ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
     );
@@ -965,9 +965,9 @@ async fn taskprov_aggregate_share() {
         )
         .with_request_header(
             TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
         )
-        .with_request_body(request.get_encoded())
+        .with_request_body(request.get_encoded().unwrap())
         .run_async(&test.handler)
         .await;
     assert_eq!(test_conn.status(), Some(Status::BadRequest));
@@ -987,10 +987,10 @@ async fn taskprov_aggregate_share() {
             KnownHeaderName::ContentType,
             AggregateShareReq::<FixedSize>::MEDIA_TYPE,
         )
-        .with_request_body(request.get_encoded())
+        .with_request_body(request.get_encoded().unwrap())
         .with_request_header(
             TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
         )
         .run_async(&test.handler)
         .await;
@@ -1008,10 +1008,11 @@ async fn taskprov_aggregate_share() {
         aggregate_share_resp.encrypted_aggregate_share(),
         &AggregateShareAad::new(
             test.task_id,
-            aggregation_param.get_encoded(),
+            aggregation_param.get_encoded().unwrap(),
             request.batch_selector().clone(),
         )
-        .get_encoded(),
+        .get_encoded()
+        .unwrap(),
     )
     .unwrap();
 }
@@ -1031,7 +1032,7 @@ async fn end_to_end() {
 
     let (transcript, report_share, aggregation_param) = test.next_report_share();
     let aggregation_job_init_request = AggregationJobInitializeReq::new(
-        aggregation_param.get_encoded(),
+        aggregation_param.get_encoded().unwrap(),
         PartialBatchSelector::new_fixed_size(batch_id),
         Vec::from([PrepareInit::new(
             report_share.clone(),
@@ -1051,9 +1052,9 @@ async fn end_to_end() {
     )
     .with_request_header(
         TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
+        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
     )
-    .with_request_body(aggregation_job_init_request.get_encoded())
+    .with_request_body(aggregation_job_init_request.get_encoded().unwrap())
     .run_async(&test.handler)
     .await;
 
@@ -1091,9 +1092,9 @@ async fn end_to_end() {
     )
     .with_request_header(
         TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
+        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
     )
-    .with_request_body(aggregation_job_continue_request.get_encoded())
+    .with_request_body(aggregation_job_continue_request.get_encoded().unwrap())
     .run_async(&test.handler)
     .await;
 
@@ -1109,7 +1110,7 @@ async fn end_to_end() {
     let checksum = ReportIdChecksum::for_report_id(report_share.metadata().id());
     let aggregate_share_request = AggregateShareReq::new(
         BatchSelector::new_fixed_size(batch_id),
-        aggregation_param.get_encoded(),
+        aggregation_param.get_encoded().unwrap(),
         1,
         checksum,
     );
@@ -1122,9 +1123,9 @@ async fn end_to_end() {
         )
         .with_request_header(
             TASKPROV_HEADER,
-            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded()),
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
         )
-        .with_request_body(aggregate_share_request.get_encoded())
+        .with_request_body(aggregate_share_request.get_encoded().unwrap())
         .run_async(&test.handler)
         .await;
 
@@ -1138,11 +1139,15 @@ async fn end_to_end() {
         aggregate_share_resp.encrypted_aggregate_share(),
         &AggregateShareAad::new(
             test.task_id,
-            aggregation_param.get_encoded(),
+            aggregation_param.get_encoded().unwrap(),
             aggregate_share_request.batch_selector().clone(),
         )
-        .get_encoded(),
+        .get_encoded()
+        .unwrap(),
     )
     .unwrap();
-    assert_eq!(plaintext, transcript.helper_aggregate_share.get_encoded());
+    assert_eq!(
+        plaintext,
+        transcript.helper_aggregate_share.get_encoded().unwrap()
+    );
 }

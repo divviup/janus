@@ -46,7 +46,7 @@ fn main() -> Result<()> {
     writeln!(
         writer,
         "{}",
-        URL_SAFE_NO_PAD.encode(keypair.config().get_encoded())
+        URL_SAFE_NO_PAD.encode(keypair.config().get_encoded()?)
     )?;
 
     Ok(())
