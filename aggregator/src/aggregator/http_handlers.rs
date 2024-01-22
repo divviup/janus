@@ -4109,21 +4109,22 @@ mod tests {
                     ))
                     .await?;
 
-                    tx.put_report_aggregation(
-                        &ReportAggregation::<16, Poplar1<XofTurboShake128, 16>>::new(
-                            *task.id(),
-                            aggregation_job_id,
-                            *report_metadata_0.id(),
-                            *report_metadata_0.time(),
-                            0,
-                            None,
-                            ReportAggregationState::WaitingHelper {
-                                prepare_state: transcript_0.helper_prepare_transitions[0]
-                                    .prepare_state()
-                                    .clone(),
-                            },
-                        ),
-                    )
+                    tx.put_report_aggregation(&ReportAggregation::<
+                        16,
+                        Poplar1<XofTurboShake128, 16>,
+                    >::new(
+                        *task.id(),
+                        aggregation_job_id,
+                        *report_metadata_0.id(),
+                        *report_metadata_0.time(),
+                        0,
+                        None,
+                        ReportAggregationState::WaitingHelper {
+                            prepare_state: transcript_0.helper_prepare_transitions[0]
+                                .prepare_state()
+                                .clone(),
+                        },
+                    ))
                     .await?;
                     tx.put_report_aggregation(
                         &ReportAggregation::<16, Poplar1<XofTurboShake128, 16>>::new(
