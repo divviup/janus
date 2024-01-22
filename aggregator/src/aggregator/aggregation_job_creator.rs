@@ -2614,10 +2614,12 @@ mod tests {
                                 .into_iter()
                                 .map(|ra| {
                                     let want_ra_state =
-                                        want_ra_states.get(ra.report_id()).unwrap_or_else(|| panic!(
-                                            "found report aggregation for unknown report {}",
-                                            ra.report_id()
-                                        ));
+                                        want_ra_states.get(ra.report_id()).unwrap_or_else(|| {
+                                            panic!(
+                                                "found report aggregation for unknown report {}",
+                                                ra.report_id()
+                                            )
+                                        });
                                     assert_eq!(want_ra_state, ra.state());
 
                                     *ra.report_id()

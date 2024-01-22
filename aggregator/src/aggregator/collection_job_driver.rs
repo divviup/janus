@@ -425,29 +425,27 @@ impl CollectionJobDriver {
         datastore: Arc<Datastore<C>>,
         maximum_attempts_before_failure: usize,
     ) -> impl Fn(Lease<AcquiredCollectionJob>) -> BoxFuture<'static, Result<(), super::Error>> {
-        move |collection_job_lease: Lease<AcquiredCollectionJob>| {
+        move |lease: Lease<AcquiredCollectionJob>| {
             let (this, datastore) = (Arc::clone(&self), Arc::clone(&datastore));
-            let collection_job_lease = Arc::new(collection_job_lease);
+            let lease = Arc::new(lease);
             Box::pin(async move {
-                let attempts = collection_job_lease.lease_attempts();
-                if collection_job_lease.lease_attempts() > maximum_attempts_before_failure {
+                let attempts = lease.lease_attempts();
+                if attempts > maximum_attempts_before_failure {
                     warn!(
-                        attempts = %attempts,
+                        %attempts,
                         max_attempts = %maximum_attempts_before_failure,
                         "Abandoning job due to too many failed attempts"
                     );
                     this.metrics.jobs_abandoned_counter.add(1, &[]);
-                    return this
-                        .abandon_collection_job(datastore, collection_job_lease)
-                        .await;
+                    return this.abandon_collection_job(datastore, lease).await;
                 }
 
-                if collection_job_lease.lease_attempts() > 1 {
+                if attempts > 1 {
                     this.metrics.job_steps_retried_counter.add(1, &[]);
                 }
 
                 match this
-                    .step_collection_job(Arc::clone(&datastore), Arc::clone(&collection_job_lease))
+                    .step_collection_job(Arc::clone(&datastore), Arc::clone(&lease))
                     .await
                 {
                     Ok(_) => Ok(()),
@@ -466,12 +464,11 @@ impl CollectionJobDriver {
                             warn!(
                                 attempts = %attempts,
                                 max_attempts = %maximum_attempts_before_failure,
+                                ?error,
                                 "Abandoning job due to fatal error"
                             );
                             this.metrics.jobs_abandoned_counter.add(1, &[]);
-                            if let Err(error) = this
-                                .abandon_collection_job(datastore, collection_job_lease)
-                                .await
+                            if let Err(error) = this.abandon_collection_job(datastore, lease).await
                             {
                                 error!(error = ?error, "Failed to abandon job");
                             }
