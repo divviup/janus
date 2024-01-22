@@ -4147,13 +4147,7 @@ mod tests {
             .unwrap();
         let batch_identifier = TimeInterval::to_batch_identifier(&leader_task, &(), &time).unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
-        let transcript = run_vdaf(
-            &vdaf,
-            verify_key.as_bytes(),
-            &(),
-            report_metadata.id(),
-            &false,
-        );
+        let transcript = run_vdaf(&vdaf, verify_key.as_bytes(), &(), report_metadata.id(), &0);
         let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
             *task.id(),
             report_metadata,
