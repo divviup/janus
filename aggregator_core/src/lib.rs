@@ -23,9 +23,6 @@ pub mod datastore;
 pub mod query_type;
 pub mod task;
 pub mod taskprov;
-#[cfg(feature = "test-util")]
-#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
-pub mod test_util;
 
 /// A secret byte array. Its implementation of [`std::fmt::Debug`] does not log the contents to
 /// avoid accidental inclusion in logs.
@@ -88,5 +85,14 @@ impl<H: Handler> InstrumentedHandler<H> {
         } else {
             self.0.before_send(conn).await
         }
+    }
+}
+
+#[cfg(feature = "test-util")]
+pub mod test_util {
+    use opentelemetry::metrics::{noop::NoopMeterProvider, Meter, MeterProvider};
+
+    pub fn noop_meter() -> Meter {
+        NoopMeterProvider::new().meter("janus_aggregator")
     }
 }

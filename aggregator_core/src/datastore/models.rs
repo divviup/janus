@@ -229,6 +229,49 @@ where
             && self.leader_extensions() == leader_plaintext_input_share.extensions()
             && self.leader_input_share() == &leader_input_share
     }
+
+    #[cfg(feature = "test-util")]
+    pub fn generate(
+        task_id: TaskId,
+        report_metadata: ReportMetadata,
+        helper_hpke_config: &janus_messages::HpkeConfig,
+        extensions: Vec<Extension>,
+        transcript: &janus_core::test_util::VdafTranscript<SEED_SIZE, A>,
+    ) -> Self
+    where
+        A: vdaf::Client<16>,
+    {
+        use janus_core::hpke::{self, HpkeApplicationInfo, Label};
+        use janus_messages::{InputShareAad, PlaintextInputShare};
+
+        let encrypted_helper_input_share = hpke::seal(
+            helper_hpke_config,
+            &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
+            &PlaintextInputShare::new(
+                Vec::new(),
+                transcript.helper_input_share.get_encoded().unwrap(),
+            )
+            .get_encoded()
+            .unwrap(),
+            &InputShareAad::new(
+                task_id,
+                report_metadata.clone(),
+                transcript.public_share.get_encoded().unwrap(),
+            )
+            .get_encoded()
+            .unwrap(),
+        )
+        .unwrap();
+
+        LeaderStoredReport::new(
+            task_id,
+            report_metadata,
+            transcript.public_share.clone(),
+            extensions,
+            transcript.leader_input_share.clone(),
+            encrypted_helper_input_share,
+        )
+    }
 }
 
 impl<const SEED_SIZE: usize, A> PartialEq for LeaderStoredReport<SEED_SIZE, A>

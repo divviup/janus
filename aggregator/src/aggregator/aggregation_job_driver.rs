@@ -982,13 +982,13 @@ mod tests {
             models::{
                 AggregationJob, AggregationJobState, Batch, BatchAggregation,
                 BatchAggregationState, BatchState, CollectionJob, CollectionJobState,
-                ReportAggregation, ReportAggregationState,
+                LeaderStoredReport, ReportAggregation, ReportAggregationState,
             },
             test_util::ephemeral_datastore,
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
         task::{test_util::TaskBuilder, QueryType, VerifyKey},
-        test_util::{generate_report, noop_meter},
+        test_util::noop_meter,
     };
     use janus_core::{
         hpke::test_util::generate_test_hpke_config_and_private_key,
@@ -1064,7 +1064,7 @@ mod tests {
 
         let agg_auth_token = task.aggregator_auth_token().clone();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
+        let report = LeaderStoredReport::generate(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -1354,14 +1354,14 @@ mod tests {
 
         let agg_auth_token = task.aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
+        let report = LeaderStoredReport::generate(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
             Vec::new(),
             &transcript,
         );
-        let repeated_extension_report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
+        let repeated_extension_report = LeaderStoredReport::generate(
             *task.id(),
             ReportMetadata::new(random(), time),
             helper_hpke_keypair.config(),
@@ -1677,7 +1677,7 @@ mod tests {
 
         let agg_auth_token = task.aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
+        let report = LeaderStoredReport::generate(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -1946,14 +1946,14 @@ mod tests {
 
         let agg_auth_token = task.aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let gc_eligible_report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
+        let gc_eligible_report = LeaderStoredReport::generate(
             *task.id(),
             gc_eligible_report_metadata,
             helper_hpke_keypair.config(),
             Vec::new(),
             &gc_eligible_transcript,
         );
-        let gc_ineligible_report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
+        let gc_ineligible_report = LeaderStoredReport::generate(
             *task.id(),
             gc_ineligible_report_metadata,
             helper_hpke_keypair.config(),
@@ -2263,7 +2263,7 @@ mod tests {
 
         let agg_auth_token = task.aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
+        let report = LeaderStoredReport::generate(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -2522,7 +2522,7 @@ mod tests {
 
         let agg_auth_token = task.aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
+        let report = LeaderStoredReport::generate(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -2781,7 +2781,7 @@ mod tests {
 
         let agg_auth_token = task.aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
+        let report = LeaderStoredReport::generate(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -3191,7 +3191,7 @@ mod tests {
 
         let agg_auth_token = task.aggregator_auth_token();
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
+        let report = LeaderStoredReport::generate(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -3532,7 +3532,7 @@ mod tests {
         );
 
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
+        let report = LeaderStoredReport::generate(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -3700,7 +3700,7 @@ mod tests {
             report_metadata.id(),
             &false,
         );
-        let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
+        let report = LeaderStoredReport::generate(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
@@ -3925,7 +3925,7 @@ mod tests {
             report_metadata.id(),
             &false,
         );
-        let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
+        let report = LeaderStoredReport::generate(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),

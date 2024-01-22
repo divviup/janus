@@ -681,7 +681,7 @@ mod tests {
         },
         query_type::AccumulableQueryType,
         task::{test_util::TaskBuilder, QueryType as TaskQueryType},
-        test_util::{generate_report, noop_meter},
+        test_util::noop_meter,
     };
     use janus_core::{
         hpke::test_util::generate_test_hpke_config_and_private_key,
@@ -745,7 +745,7 @@ mod tests {
             leader_report_metadata.id(),
             &false,
         );
-        let leader_report = Arc::new(generate_report(
+        let leader_report = Arc::new(LeaderStoredReport::generate(
             *leader_task.id(),
             leader_report_metadata,
             helper_hpke_keypair.config(),
@@ -923,7 +923,7 @@ mod tests {
                     report_metadata.id(),
                     &false,
                 );
-                generate_report(
+                LeaderStoredReport::generate(
                     *task.id(),
                     report_metadata,
                     helper_hpke_keypair.config(),
@@ -1065,7 +1065,7 @@ mod tests {
             first_report_metadata.id(),
             &false,
         );
-        let first_report = Arc::new(generate_report(
+        let first_report = Arc::new(LeaderStoredReport::generate(
             *task.id(),
             first_report_metadata,
             helper_hpke_keypair.config(),
@@ -1081,7 +1081,7 @@ mod tests {
             second_report_metadata.id(),
             &false,
         );
-        let second_report = Arc::new(generate_report(
+        let second_report = Arc::new(LeaderStoredReport::generate(
             *task.id(),
             second_report_metadata,
             helper_hpke_keypair.config(),
@@ -1268,7 +1268,7 @@ mod tests {
                     report_metadata.id(),
                     &false,
                 );
-                generate_report(
+                LeaderStoredReport::generate(
                     *task.id(),
                     report_metadata,
                     helper_hpke_keypair.config(),
@@ -1437,7 +1437,7 @@ mod tests {
                     report_metadata.id(),
                     &false,
                 );
-                generate_report(
+                LeaderStoredReport::generate(
                     *task.id(),
                     report_metadata,
                     helper_hpke_keypair.config(),
@@ -1644,7 +1644,7 @@ mod tests {
                     report_metadata.id(),
                     &false,
                 );
-                generate_report(
+                LeaderStoredReport::generate(
                     *task.id(),
                     report_metadata,
                     helper_hpke_keypair.config(),
@@ -1801,7 +1801,7 @@ mod tests {
                     report_metadata.id(),
                     &false,
                 );
-                generate_report(
+                LeaderStoredReport::generate(
                     *task.id(),
                     report_metadata,
                     helper_hpke_keypair.config(),
@@ -1912,7 +1912,7 @@ mod tests {
             last_report_metadata.id(),
             &false,
         );
-        let last_report = Arc::new(generate_report(
+        let last_report = Arc::new(LeaderStoredReport::generate(
             *task.id(),
             last_report_metadata,
             helper_hpke_keypair.config(),
@@ -2063,7 +2063,7 @@ mod tests {
                     report_metadata.id(),
                     &false,
                 );
-                generate_report(
+                LeaderStoredReport::generate(
                     *task.id(),
                     report_metadata,
                     helper_hpke_keypair.config(),
@@ -2177,7 +2177,7 @@ mod tests {
                     report_metadata.id(),
                     &false,
                 );
-                generate_report(
+                LeaderStoredReport::generate(
                     *task.id(),
                     report_metadata,
                     helper_hpke_keypair.config(),
@@ -2334,7 +2334,7 @@ mod tests {
                     report_metadata.id(),
                     &false,
                 );
-                generate_report(
+                LeaderStoredReport::generate(
                     *task.id(),
                     report_metadata,
                     helper_hpke_keypair.config(),
@@ -2354,7 +2354,7 @@ mod tests {
                     report_metadata.id(),
                     &false,
                 );
-                generate_report(
+                LeaderStoredReport::generate(
                     *task.id(),
                     report_metadata,
                     helper_hpke_keypair.config(),
