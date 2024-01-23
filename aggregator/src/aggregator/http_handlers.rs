@@ -79,25 +79,40 @@ impl Handler for Error {
             Error::MissingTaskId => {
                 conn.with_problem_document(&ProblemDocument::new_dap(DapProblemType::MissingTaskId))
             }
-            Error::UnrecognizedAggregationJob(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::UnrecognizedAggregationJob)
-                    .with_task_id(task_id),
-            ),
-            Error::DeletedCollectionJob(_) => conn.with_status(Status::NoContent),
-            Error::AbandonedCollectionJob(collection_job_id) => conn.with_problem_document(
-                &ProblemDocument::new(
-                    "https://docs.divviup.org/references/janus-errors#collection-job-abandoned",
-                    "The collection job has been abandoned.",
-                    Status::InternalServerError,
-                )
-                .with_detail(concat!(
+            Error::UnrecognizedAggregationJob(task_id, aggregation_job_id) => conn
+                .with_problem_document(
+                    &ProblemDocument::new_dap(DapProblemType::UnrecognizedAggregationJob)
+                        .with_task_id(task_id)
+                        .with_aggregation_job_id(aggregation_job_id),
+                ),
+            Error::DeletedAggregationJob(task_id, aggregation_job_id) => conn
+                .with_problem_document(
+                    &ProblemDocument::new(
+                        "https://docs.divviup.org/references/janus-errors#aggregation-job-deleted",
+                        "The aggregation job has been deleted.",
+                        Status::Gone,
+                    )
+                    .with_task_id(task_id)
+                    .with_aggregation_job_id(aggregation_job_id),
+                ),
+            Error::DeletedCollectionJob(_, _) => conn.with_status(Status::NoContent),
+            Error::AbandonedCollectionJob(task_id, collection_job_id) => conn
+                .with_problem_document(
+                    &ProblemDocument::new(
+                        "https://docs.divviup.org/references/janus-errors#collection-job-abandoned",
+                        "The collection job has been abandoned.",
+                        Status::InternalServerError,
+                    )
+                    .with_detail(concat!(
                     "An internal problem has caused the server to stop processing this collection ",
                     "job. The job is no longer collectable. Contact the server operators for ",
                     "assistance."
-                ))
-                .with_collection_job_id(collection_job_id),
-            ),
-            Error::UnrecognizedCollectionJob(_) => conn.with_status(Status::NotFound),
+                    ))
+                    .with_task_id(task_id)
+                    .with_collection_job_id(collection_job_id),
+                ),
+            Error::UnrecognizedCollectionJob(_, _) => conn.with_status(Status::NotFound),
+
             Error::UnauthorizedRequest(task_id) => conn.with_problem_document(
                 &ProblemDocument::new_dap(DapProblemType::UnauthorizedRequest)
                     .with_task_id(task_id),
@@ -297,6 +312,10 @@ async fn aggregator_handler_with_aggregator<C: Clock>(
                 AGGREGATION_JOB_ROUTE,
                 instrumented(api(aggregation_jobs_post::<C>)),
             )
+            .delete(
+                AGGREGATION_JOB_ROUTE,
+                instrumented(api(aggregation_jobs_delete::<C>)),
+            )
             .put(
                 COLLECTION_JOB_ROUTE,
                 instrumented(api(collection_jobs_put::<C>)),
@@ -467,6 +486,30 @@ async fn aggregation_jobs_post<C: Clock>(
         .await?;
 
     Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))
+}
+
+/// API handler for the "/tasks/.../aggregation_jobs/..." DELETE endpoint.
+async fn aggregation_jobs_delete<C: Clock>(
+    conn: &mut Conn,
+    (State(aggregator), State(captures)): (
+        State<Arc<Aggregator<C>>>,
+        State<Captures<'static, 'static>>,
+    ),
+) -> Result<Status, Error> {
+    let task_id = parse_task_id(&captures)?;
+    let aggregation_job_id = parse_aggregation_job_id(&captures)?;
+    let auth_token = parse_auth_token(&task_id, conn)?;
+    let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
+
+    aggregator
+        .handle_aggregate_delete(
+            &task_id,
+            &aggregation_job_id,
+            auth_token,
+            taskprov_task_config.as_ref(),
+        )
+        .await?;
+    Ok(Status::NoContent)
 }
 
 /// API handler for the "/tasks/.../collection_jobs/..." PUT endpoint.
@@ -663,8 +706,22 @@ fn parse_taskprov_header<C: Clock>(
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
+    use super::aggregator_handler;
+    use crate::aggregator::test_util::default_aggregator_config;
+    use janus_aggregator_core::{
+        datastore::{
+            test_util::{ephemeral_datastore, EphemeralDatastore},
+            Datastore,
+        },
+        test_util::noop_meter,
+    };
+    use janus_core::{
+        test_util::{install_test_trace_subscriber, runtime::TestRuntime},
+        time::MockClock,
+    };
     use janus_messages::codec::Decode;
-    use std::borrow::Cow;
+    use std::{borrow::Cow, sync::Arc};
+    use trillium::Handler;
     use trillium_testing::{assert_headers, TestConn};
 
     pub async fn take_response_body(test_conn: &mut TestConn) -> Cow<'_, [u8]> {
@@ -684,6 +741,32 @@ pub mod test_util {
         assert_headers!(&test_conn, "content-type" => "application/problem+json");
         serde_json::from_slice(&take_response_body(test_conn).await).unwrap()
     }
+
+    /// Returns structures necessary for completing an HTTP handler test. The returned
+    /// [`EphemeralDatastore`] should be given a variable binding to prevent it being prematurely
+    /// dropped.
+    pub async fn setup_http_handler_test() -> (
+        MockClock,
+        EphemeralDatastore,
+        Arc<Datastore<MockClock>>,
+        impl Handler,
+    ) {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let handler = aggregator_handler(
+            datastore.clone(),
+            clock.clone(),
+            TestRuntime::default(),
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
+
+        (clock, ephemeral_datastore, datastore, handler)
+    }
 }
 
 #[cfg(test)]
@@ -701,7 +784,7 @@ mod tests {
             error::{BatchMismatch, ReportRejectionReason},
             http_handlers::{
                 aggregator_handler, aggregator_handler_with_aggregator,
-                test_util::{decode_response_body, take_problem_details},
+                test_util::{decode_response_body, setup_http_handler_test, take_problem_details},
             },
             test_util::{default_aggregator_config, BATCH_AGGREGATION_SHARD_COUNT},
             tests::{
@@ -715,14 +798,10 @@ mod tests {
     use assert_matches::assert_matches;
     use futures::future::try_join_all;
     use janus_aggregator_core::{
-        datastore::{
-            models::{
-                AggregateShareJob, AggregationJob, AggregationJobState, Batch, BatchAggregation,
-                BatchAggregationState, BatchState, CollectionJob, CollectionJobState, HpkeKeyState,
-                ReportAggregation, ReportAggregationState,
-            },
-            test_util::{ephemeral_datastore, EphemeralDatastore},
-            Datastore,
+        datastore::models::{
+            AggregateShareJob, AggregationJob, AggregationJobState, Batch, BatchAggregation,
+            BatchAggregationState, BatchState, CollectionJob, CollectionJobState, HpkeKeyState,
+            ReportAggregation, ReportAggregationState,
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
         task::{test_util::TaskBuilder, QueryType, VerifyKey},
@@ -770,38 +849,12 @@ mod tests {
     use rand::random;
     use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
-    use trillium::{Handler, KnownHeaderName, Status};
+    use trillium::{KnownHeaderName, Status};
     use trillium_testing::{
         assert_headers,
         prelude::{delete, get, post, put},
         TestConn,
     };
-
-    /// Returns structures necessary for completing an HTTP handler test. The returned
-    /// [`EphemeralDatastore`] should be given a variable binding to prevent it being prematurely
-    /// dropped.
-    async fn setup_http_handler_test() -> (
-        MockClock,
-        EphemeralDatastore,
-        Arc<Datastore<MockClock>>,
-        impl Handler,
-    ) {
-        install_test_trace_subscriber();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
-        let handler = aggregator_handler(
-            datastore.clone(),
-            clock.clone(),
-            TestRuntime::default(),
-            &noop_meter(),
-            default_aggregator_config(),
-        )
-        .await
-        .unwrap();
-
-        (clock, ephemeral_datastore, datastore, handler)
-    }
 
     #[tokio::test]
     async fn hpke_config() {
@@ -4022,6 +4075,7 @@ mod tests {
             Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:invalidMessage",
             "The message type for a response was incorrect or the payload was malformed.",
+            None,
         )
         .await;
     }
@@ -4192,6 +4246,7 @@ mod tests {
             Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:invalidMessage",
             "The message type for a response was incorrect or the payload was malformed.",
+            None,
         )
         .await;
     }
@@ -4280,6 +4335,7 @@ mod tests {
             Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:invalidMessage",
             "The message type for a response was incorrect or the payload was malformed.",
+            None,
         )
         .await;
     }

@@ -31,6 +31,7 @@ prometheus = [
 test-util = [
     "janus_core/test-util",
     "janus_messages/test-util",
+    "dep:assert_matches",
     "dep:hex",
     "dep:testcontainers",
     "dep:trillium-testing",
@@ -38,6 +39,7 @@ test-util = [
 
 [dependencies]
 anyhow.workspace = true
+assert_matches = { workspace = true, optional = true }
 async-trait = "0.1"
 backoff = { version = "0.4.0", features = ["tokio"] }
 base64.workspace = true
@@ -106,7 +108,6 @@ trillium-tokio.workspace = true
 url.workspace = true
 
 [dev-dependencies]
-assert_matches.workspace = true
 janus_aggregator = { path = ".", features = ["fpvec_bounded_l2", "test-util"] }
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
 mockito = "1.2.0"

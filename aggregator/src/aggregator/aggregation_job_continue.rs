@@ -305,6 +305,7 @@ impl VdafOps {
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use crate::aggregator::http_handlers::test_util::{decode_response_body, take_problem_details};
+    use assert_matches::assert_matches;
     use janus_aggregator_core::task::test_util::Task;
     use janus_messages::{AggregationJobContinueReq, AggregationJobId, AggregationJobResp};
     use prio::codec::Encode;
@@ -365,6 +366,7 @@ pub mod test_util {
         want_status: Status,
         want_error_type: &str,
         want_error_title: &str,
+        want_aggregation_job_id: Option<&AggregationJobId>,
     ) {
         let mut test_conn = post_aggregation_job_expecting_status(
             task,
@@ -375,14 +377,22 @@ pub mod test_util {
         )
         .await;
 
+        let mut expected_problem_details = json!({
+            "status": want_status as u16,
+            "type": want_error_type,
+            "title": want_error_title,
+            "taskid": format!("{}", task.id()),
+        });
+
+        if let Some(job_id) = want_aggregation_job_id {
+            assert_matches!(expected_problem_details, serde_json::Value::Object(ref mut map) => {
+                map.insert("aggregation_job_id".into(), format!("{}", job_id).into());
+            });
+        }
+
         assert_eq!(
             take_problem_details(&mut test_conn).await,
-            json!({
-                "status": want_status as u16,
-                "type": want_error_type,
-                "title": want_error_title,
-                "taskid": format!("{}", task.id()),
-            })
+            expected_problem_details,
         );
     }
 }
@@ -390,12 +400,15 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use crate::aggregator::{
-        aggregate_init_tests::PrepareInitGenerator,
+        aggregate_init_tests::{put_aggregation_job, PrepareInitGenerator},
         aggregation_job_continue::test_util::{
             post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
             post_aggregation_job_expecting_status,
         },
-        http_handlers::aggregator_handler,
+        http_handlers::{
+            aggregator_handler,
+            test_util::{setup_http_handler_test, take_problem_details},
+        },
         test_util::default_aggregator_config,
     };
     use janus_aggregator_core::{
@@ -418,10 +431,12 @@ mod tests {
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
     };
     use janus_messages::{
-        query_type::TimeInterval, AggregationJobContinueReq, AggregationJobId, AggregationJobResp,
-        AggregationJobStep, Interval, PrepareContinue, PrepareResp, PrepareStepResult, Role,
+        query_type::TimeInterval, AggregationJobContinueReq, AggregationJobId,
+        AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep, Interval,
+        PartialBatchSelector, PrepareContinue, PrepareResp, PrepareStepResult, Role,
     };
     use prio::{
+        codec::Encode,
         idpf::IdpfInput,
         vdaf::{
             poplar1::{Poplar1, Poplar1AggregationParam},
@@ -430,8 +445,10 @@ mod tests {
         },
     };
     use rand::random;
+    use serde_json::json;
     use std::sync::Arc;
     use trillium::{Handler, Status};
+    use trillium_testing::prelude::delete;
 
     struct AggregationJobContinueTestCase<
         const VERIFY_KEY_LENGTH: usize,
@@ -441,6 +458,7 @@ mod tests {
         datastore: Arc<Datastore<MockClock>>,
         prepare_init_generator: PrepareInitGenerator<VERIFY_KEY_LENGTH, V>,
         aggregation_job_id: AggregationJobId,
+        aggregation_parameter: V::AggregationParam,
         first_continue_request: AggregationJobContinueReq,
         first_continue_response: Option<AggregationJobResp>,
         handler: Box<dyn Handler>,
@@ -463,7 +481,7 @@ mod tests {
         let meter = noop_meter();
         let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
-        let aggregation_param = Poplar1AggregationParam::try_from_prefixes(Vec::from([
+        let aggregation_parameter = Poplar1AggregationParam::try_from_prefixes(Vec::from([
             IdpfInput::from_bools(&[false]),
         ]))
         .unwrap();
@@ -471,7 +489,7 @@ mod tests {
             clock.clone(),
             helper_task.clone(),
             Poplar1::new_turboshake128(1),
-            aggregation_param.clone(),
+            aggregation_parameter.clone(),
         );
 
         let (prepare_init, transcript) =
@@ -481,7 +499,7 @@ mod tests {
             .run_unnamed_tx(|tx| {
                 let (task, aggregation_param, prepare_init, transcript) = (
                     helper_task.clone(),
-                    aggregation_param.clone(),
+                    aggregation_parameter.clone(),
                     prepare_init.clone(),
                     transcript.clone(),
                 );
@@ -556,6 +574,7 @@ mod tests {
             datastore,
             prepare_init_generator,
             aggregation_job_id,
+            aggregation_parameter,
             first_continue_request,
             first_continue_response: None,
             handler: Box::new(handler),
@@ -595,6 +614,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn leader_rejects_aggregation_job_post() {
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
+        datastore
+            .put_aggregator_task(&task.leader_view().unwrap())
+            .await
+            .unwrap();
+
+        let request = AggregationJobContinueReq::new(AggregationJobStep::from(1), Vec::new());
+        let aggregation_job_id = random();
+
+        post_aggregation_job_expecting_error(
+            &task,
+            &aggregation_job_id,
+            &request,
+            &handler,
+            Status::BadRequest,
+            "urn:ietf:params:ppm:dap:error:unrecognizedTask",
+            "An endpoint received a message with an unknown task ID.",
+            None,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn leader_rejects_aggregation_job_delete() {
+        let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
+        datastore
+            .put_aggregator_task(&task.leader_view().unwrap())
+            .await
+            .unwrap();
+
+        let aggregation_job_id: AggregationJobId = random();
+
+        let (header, value) = task.aggregator_auth_token().request_authentication();
+        let mut test_conn = delete(
+            task.aggregation_job_uri(&aggregation_job_id)
+                .unwrap()
+                .path(),
+        )
+        .with_request_header(header, value)
+        .run_async(&handler)
+        .await;
+
+        assert_eq!(
+            take_problem_details(&mut test_conn).await,
+            json!({
+                "status": Status::BadRequest as u16,
+                "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
+                "title": "An endpoint received a message with an unknown task ID.",
+                "taskid": format!("{}", task.id()),
+            })
+        );
+    }
+
+    #[tokio::test]
     async fn aggregation_job_continue_step_zero() {
         let test_case = setup_aggregation_job_continue_test().await;
 
@@ -613,6 +691,7 @@ mod tests {
             Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:invalidMessage",
             "The message type for a response was incorrect or the payload was malformed.",
+            None,
         )
         .await;
     }
@@ -784,6 +863,7 @@ mod tests {
             Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:stepMismatch",
             "The leader and helper are not on the same step of VDAF preparation.",
+            None,
         )
         .await;
     }
@@ -807,6 +887,96 @@ mod tests {
             Status::BadRequest,
             "urn:ietf:params:ppm:dap:error:stepMismatch",
             "The leader and helper are not on the same step of VDAF preparation.",
+            None,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn aggregation_job_deletion() {
+        let test_case = setup_aggregation_job_continue_test().await;
+
+        // Delete the aggregation job. This should be idempotent.
+        let (header, value) = test_case
+            .task
+            .aggregator_auth_token()
+            .request_authentication();
+        for _ in 0..2 {
+            let test_conn = delete(
+                test_case
+                    .task
+                    .aggregation_job_uri(&test_case.aggregation_job_id)
+                    .unwrap()
+                    .path(),
+            )
+            .with_request_header(header, value.clone())
+            .run_async(&test_case.handler)
+            .await;
+
+            assert_eq!(test_conn.status(), Some(Status::NoContent),);
+        }
+
+        test_case
+            .datastore
+            .run_unnamed_tx(|tx| {
+                let (task_id, aggregation_job_id) =
+                    (*test_case.task.id(), test_case.aggregation_job_id);
+                Box::pin(async move {
+                    let aggregation_job = tx
+                        .get_aggregation_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(
+                            &task_id,
+                            &aggregation_job_id,
+                        )
+                        .await
+                        .unwrap()
+                        .unwrap();
+
+                    assert_eq!(*aggregation_job.state(), AggregationJobState::Deleted);
+
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        // Subsequent attempts to initialize the job should fail.
+        let (prep_init, _) = test_case
+            .prepare_init_generator
+            .next(&IdpfInput::from_bools(&[true]));
+        let init_req = AggregationJobInitializeReq::new(
+            test_case.aggregation_parameter.get_encoded().unwrap(),
+            PartialBatchSelector::new_time_interval(),
+            Vec::from([prep_init]),
+        );
+        let mut test_conn = put_aggregation_job(
+            &test_case.task,
+            &test_case.aggregation_job_id,
+            &init_req,
+            &test_case.handler,
+        )
+        .await;
+
+        assert_eq!(
+            take_problem_details(&mut test_conn).await,
+            json!({
+                "status": Status::Gone as u16,
+                "type": "https://docs.divviup.org/references/janus-errors#aggregation-job-deleted",
+                "title": "The aggregation job has been deleted.",
+                "taskid": format!("{}", test_case.task.id()),
+                "aggregation_job_id": format!("{}", test_case.aggregation_job_id),
+            })
+        );
+
+        // Subsequent attempts to continue the job should fail.
+        post_aggregation_job_expecting_error(
+            &test_case.task,
+            &test_case.aggregation_job_id,
+            &test_case.first_continue_request,
+            &test_case.handler,
+            Status::Gone,
+            "https://docs.divviup.org/references/janus-errors#aggregation-job-deleted",
+            "The aggregation job has been deleted.",
+            Some(&test_case.aggregation_job_id),
         )
         .await;
     }

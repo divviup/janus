@@ -1,4 +1,4 @@
-use janus_messages::{problem_type::DapProblemType, CollectionJobId, TaskId};
+use janus_messages::{problem_type::DapProblemType, AggregationJobId, CollectionJobId, TaskId};
 use serde::Serialize;
 use trillium::{Conn, KnownHeaderName, Status};
 use trillium_api::ApiConnExt;
@@ -37,6 +37,8 @@ pub struct ProblemDocument<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     detail: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    aggregation_job_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     collection_job_id: Option<String>,
 }
 
@@ -54,6 +56,7 @@ impl<'a> ProblemDocument<'a> {
             status: status.into(),
             taskid: None,
             detail: None,
+            aggregation_job_id: None,
             collection_job_id: None,
         }
     }
@@ -77,6 +80,13 @@ impl<'a> ProblemDocument<'a> {
     pub fn with_detail(self, detail: &'a str) -> Self {
         Self {
             detail: Some(detail),
+            ..self
+        }
+    }
+
+    pub fn with_aggregation_job_id(self, aggregation_job_id: &AggregationJobId) -> Self {
+        Self {
+            aggregation_job_id: Some(aggregation_job_id.to_string()),
             ..self
         }
     }
@@ -109,8 +119,9 @@ impl ProblemDetailsConnExt for Conn {
 #[cfg(test)]
 mod tests {
     use crate::aggregator::{
+        error::{BatchMismatch, ReportRejectedReason},
         error::{BatchMismatch, ReportRejection, ReportRejectionReason},
-        send_request_to_helper, Error,
+        send_request_to_helper, send_request_to_helper, Error, Error, RequestBody,
     };
     use assert_matches::assert_matches;
     use futures::future::join_all;
@@ -305,8 +316,10 @@ mod tests {
                         Method::POST,
                         server.url().parse().unwrap(),
                         "test",
-                        "text/plain",
-                        (),
+                        Some(RequestBody {
+                            content_type: "text/plain",
+                            request: (),
+                        }),
                         &random(),
                         &request_histogram,
                     )

@@ -1,4 +1,4 @@
-use super::{error::handle_ping_pong_error, Error};
+use super::{error::handle_ping_pong_error, Error, RequestBody};
 use crate::aggregator::{
     accumulator::Accumulator, aggregate_step_failure_counter,
     aggregation_job_writer::AggregationJobWriter, http_handlers::AGGREGATION_JOB_ROUTE,
@@ -381,7 +381,7 @@ impl AggregationJobDriver {
 
         let resp = if !prepare_inits.is_empty() {
             // Construct request, send it to the helper, and process the response.
-            let req = AggregationJobInitializeReq::<Q>::new(
+            let request = AggregationJobInitializeReq::<Q>::new(
                 aggregation_job.aggregation_parameter().get_encoded()?,
                 PartialBatchSelector::new(aggregation_job.partial_batch_identifier().clone()),
                 prepare_inits,
@@ -397,8 +397,10 @@ impl AggregationJobDriver {
                         )
                     })?,
                 AGGREGATION_JOB_ROUTE,
-                AggregationJobInitializeReq::<Q>::MEDIA_TYPE,
-                req,
+                Some(RequestBody {
+                    content_type: AggregationJobInitializeReq::<Q>::MEDIA_TYPE,
+                    request,
+                }),
                 // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
                 // case, and Janus never acts as the leader with taskprov enabled.
                 task.aggregator_auth_token().ok_or_else(|| {
@@ -492,7 +494,7 @@ impl AggregationJobDriver {
         }
 
         // Construct request, send it to the helper, and process the response.
-        let req = AggregationJobContinueReq::new(aggregation_job.step(), prepare_continues);
+        let request = AggregationJobContinueReq::new(aggregation_job.step(), prepare_continues);
 
         let resp_bytes = send_request_to_helper(
             &self.http_client,
@@ -502,8 +504,10 @@ impl AggregationJobDriver {
                     Error::InvalidConfiguration("task is not leader and has no aggregate share URI")
                 })?,
             AGGREGATION_JOB_ROUTE,
-            AggregationJobContinueReq::MEDIA_TYPE,
-            req,
+            Some(RequestBody {
+                content_type: AggregationJobContinueReq::MEDIA_TYPE,
+                request,
+            }),
             // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
             // case, and Janus never acts as the leader with taskprov enabled.
             task.aggregator_auth_token()
@@ -796,7 +800,7 @@ impl AggregationJobDriver {
         A::PublicShare: Send + Sync,
     {
         let vdaf = Arc::new(vdaf);
-        datastore
+        let (aggregation_job_uri, aggregator_auth_token) = datastore
             .run_tx("cancel_aggregation_job", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let lease = Arc::clone(&lease);
@@ -832,6 +836,7 @@ impl AggregationJobDriver {
                             )
                         })?
                         .with_state(AggregationJobState::Abandoned);
+
                     let report_aggregations = tx
                         .get_report_aggregations_for_aggregation_job(
                             vdaf.as_ref(),
@@ -841,6 +846,10 @@ impl AggregationJobDriver {
                         )
                         .await?;
 
+                    let aggregation_job_uri =
+                        task.aggregation_job_uri(lease.leased().aggregation_job_id());
+                    let aggregator_auth_token = task.aggregator_auth_token().cloned();
+
                     let mut aggregation_job_writer = AggregationJobWriter::new(Arc::new(task));
                     aggregation_job_writer.update(aggregation_job, report_aggregations)?;
 
@@ -848,10 +857,33 @@ impl AggregationJobDriver {
                         aggregation_job_writer.write(tx, vdaf),
                         tx.release_aggregation_job(&lease)
                     )?;
-                    Ok(())
+
+                    Ok((aggregation_job_uri, aggregator_auth_token))
                 })
             })
             .await?;
+
+        // We are giving up on the aggregation job. Delete in the helper so they can clean up
+        // resources, too. Because DAP aggregators are not required to implement DELETE on
+        // aggregation jobs, we don't check whether this succeeds, though failures will still show
+        // up in the HTTP request duration histogram.
+        //
+        // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#section-4.5.2.2-20
+        let _ = send_request_to_helper(
+            &self.http_client,
+            Method::DELETE,
+            aggregation_job_uri?.ok_or_else(|| {
+                Error::InvalidConfiguration("task is not leader and has no aggregation job URI")
+            })?,
+            AGGREGATION_JOB_ROUTE,
+            None as Option<RequestBody<u8>>,
+            // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
+            // case, and Janus never acts as the leader with taskprov enabled.
+            &aggregator_auth_token
+                .ok_or_else(|| Error::InvalidConfiguration("task has no aggregator auth token"))?,
+            &self.http_request_duration_histogram,
+        )
+        .await;
         Ok(())
     }
 
@@ -980,14 +1012,16 @@ mod tests {
     use janus_aggregator_core::{
         datastore::{
             models::{
-                AggregationJob, AggregationJobState, Batch, BatchAggregation,
-                BatchAggregationState, BatchState, CollectionJob, CollectionJobState,
-                LeaderStoredReport, ReportAggregation, ReportAggregationState,
+                AcquiredAggregationJob, AggregationJob, AggregationJobState, Batch,
+                BatchAggregation, BatchAggregationState, BatchState, CollectionJob,
+                CollectionJobState, LeaderStoredReport, Lease, ReportAggregation,
+                ReportAggregationState,
             },
-            test_util::ephemeral_datastore,
+            test_util::{ephemeral_datastore, EphemeralDatastore},
+            Datastore,
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
-        task::{test_util::TaskBuilder, QueryType, VerifyKey},
+        task::{test_util::TaskBuilder, AggregatorTask, QueryType, VerifyKey},
         test_util::noop_meter,
     };
     use janus_core::{
@@ -1001,11 +1035,13 @@ mod tests {
     use janus_messages::{
         problem_type::DapProblemType,
         query_type::{FixedSize, TimeInterval},
-        AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
-        AggregationJobStep, Duration, Extension, ExtensionType, FixedSizeQuery, Interval,
-        PartialBatchSelector, PrepareContinue, PrepareError, PrepareInit, PrepareResp,
-        PrepareStepResult, Query, ReportIdChecksum, ReportMetadata, ReportShare, Role, Time,
+        AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq,
+        AggregationJobResp, AggregationJobStep, Duration, Extension, ExtensionType, FixedSizeQuery,
+        HpkeConfig, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
+        PrepareContinue, PrepareError, PrepareInit, PrepareResp, PrepareStepResult, Query,
+        ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time,
     };
+    use mockito::ServerGuard;
     use prio::{
         codec::Encode,
         idpf::IdpfInput,
@@ -3502,6 +3538,122 @@ mod tests {
         assert_eq!(want_collection_job, got_collection_job);
     }
 
+    struct CancelAggregationJobTestCase {
+        task: AggregatorTask,
+        aggregation_job_id: AggregationJobId,
+        _ephemeral_datastore: EphemeralDatastore,
+        datastore: Arc<Datastore<MockClock>>,
+        lease: Lease<AcquiredAggregationJob>,
+        mock_helper: ServerGuard,
+    }
+
+    async fn setup_cancel_aggregation_job_test() -> CancelAggregationJobTestCase {
+        // Setup: insert a client report and add it to a new aggregation job.
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let vdaf = Arc::new(Prio3::new_count(2).unwrap());
+        let mock_helper = mockito::Server::new_async().await;
+
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            .with_helper_aggregator_endpoint(mock_helper.url().parse().unwrap())
+            .build()
+            .leader_view()
+            .unwrap();
+        let time = clock
+            .now()
+            .to_batch_interval_start(task.time_precision())
+            .unwrap();
+        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &time).unwrap();
+        let report_metadata = ReportMetadata::new(random(), time);
+        let verify_key: VerifyKey<VERIFY_KEY_LENGTH> = task.vdaf_verify_key().unwrap();
+
+        let transcript = run_vdaf(
+            vdaf.as_ref(),
+            verify_key.as_bytes(),
+            &(),
+            report_metadata.id(),
+            &false,
+        );
+
+        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+        let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
+            *task.id(),
+            report_metadata,
+            helper_hpke_keypair.config(),
+            transcript.public_share,
+            Vec::new(),
+            &transcript.leader_input_share,
+            &transcript.helper_input_share,
+        );
+        let aggregation_job_id = random();
+
+        let aggregation_job = AggregationJob::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+            *task.id(),
+            aggregation_job_id,
+            (),
+            (),
+            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
+            AggregationJobState::InProgress,
+            AggregationJobStep::from(0),
+        );
+        let report_aggregation = ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
+            *task.id(),
+            aggregation_job_id,
+            *report.metadata().id(),
+            *report.metadata().time(),
+            0,
+            None,
+            ReportAggregationState::Start,
+        );
+
+        let lease = datastore
+            .run_unnamed_tx(|tx| {
+                let (vdaf, task, report, aggregation_job, report_aggregation) = (
+                    vdaf.clone(),
+                    task.clone(),
+                    report.clone(),
+                    aggregation_job.clone(),
+                    report_aggregation.clone(),
+                );
+                Box::pin(async move {
+                    tx.put_aggregator_task(&task).await?;
+                    tx.put_client_report(vdaf.borrow(), &report).await?;
+                    tx.put_aggregation_job(&aggregation_job).await?;
+                    tx.put_report_aggregation(&report_aggregation).await?;
+
+                    tx.put_batch(&Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
+                        *task.id(),
+                        batch_identifier,
+                        (),
+                        BatchState::Open,
+                        1,
+                        Interval::from_time(report.metadata().time()).unwrap(),
+                    ))
+                    .await?;
+
+                    Ok(tx
+                        .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
+                        .await?
+                        .remove(0))
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(lease.leased().task_id(), task.id());
+        assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+
+        CancelAggregationJobTestCase {
+            task,
+            aggregation_job_id,
+            _ephemeral_datastore: ephemeral_datastore,
+            datastore,
+            lease,
+            mock_helper,
+        }
+    }
+
     #[tokio::test]
     async fn cancel_aggregation_job() {
         // Setup: insert a client report and add it to a new aggregation job.
@@ -3510,8 +3662,10 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
+        let mut mock_helper = mockito::Server::new_async().await;
 
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            .with_helper_aggregator_endpoint(mock_helper.url().parse().unwrap())
             .build()
             .leader_view()
             .unwrap();
@@ -3595,7 +3749,21 @@ mod tests {
         assert_eq!(lease.leased().task_id(), task.id());
         assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
 
-        // Run: create an aggregation job driver & cancel the aggregation job.
+        // Run: create an aggregation job driver & cancel the aggregation job. Mock the helper to
+        // verify that we instruct it to delete the aggregation job.
+        // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#section-4.5.2.2-20
+        let mocked_aggregation_job_delete = mock_helper
+            .mock(
+                "DELETE",
+                task.aggregation_job_uri(&aggregation_job_id)
+                    .unwrap()
+                    .unwrap()
+                    .path(),
+            )
+            .with_status(204)
+            .create_async()
+            .await;
+
         let aggregation_job_driver = AggregationJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
             &noop_meter(),
@@ -3605,6 +3773,8 @@ mod tests {
             .abandon_aggregation_job(Arc::clone(&ds), Arc::new(lease))
             .await
             .unwrap();
+
+        mocked_aggregation_job_delete.assert_async().await;
 
         // Verify: check that the datastore state is updated as expected (the aggregation job is
         // abandoned, the report aggregation is untouched) and sanity-check that the job can no
@@ -3663,6 +3833,43 @@ mod tests {
         assert_eq!(want_report_aggregation, got_report_aggregation);
         assert_eq!(want_batch, got_batch);
         assert!(got_leases.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancel_aggregation_job_helper_aggregation_job_deletion_fails() {
+        let mut test_case = setup_cancel_aggregation_job_test().await;
+
+        // DAP does not require that aggregation jobs be deletable and having the leader delete
+        // aggregation jobs in the helper on abandonment is merely a SHOULD.
+        // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#section-4.5.2.2-20
+        // Mock the helper response so that it fails to respond to the delete request. This should
+        // not cause the leader to fail.
+        let mocked_aggregation_job_delete = test_case
+            .mock_helper
+            .mock(
+                "DELETE",
+                test_case
+                    .task
+                    .aggregation_job_uri(&test_case.aggregation_job_id)
+                    .unwrap()
+                    .unwrap()
+                    .path(),
+            )
+            .with_status(400)
+            .create_async()
+            .await;
+
+        let aggregation_job_driver = AggregationJobDriver::new(
+            reqwest::Client::builder().build().unwrap(),
+            &noop_meter(),
+            32,
+        );
+        aggregation_job_driver
+            .abandon_aggregation_job(Arc::clone(&test_case.datastore), Arc::new(test_case.lease))
+            .await
+            .unwrap();
+
+        mocked_aggregation_job_delete.assert_async().await;
     }
 
     #[tokio::test]

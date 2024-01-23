@@ -196,7 +196,8 @@ CREATE INDEX client_reports_task_and_timestamp_index ON client_reports(task_id, 
 CREATE TYPE AGGREGATION_JOB_STATE AS ENUM(
     'IN_PROGRESS', -- at least one included report is in a non-terminal (START, WAITING) state, processing can continue
     'FINISHED',    -- all reports have reached a terminal state (FINISHED, FAILED, INVALID)
-    'ABANDONED'    -- we have given up on the aggregation job entirely
+    'ABANDONED',   -- we have given up on the aggregation job entirely
+    'DELETED'      -- this aggregation job has been deleted
 );
 
 -- An aggregation job, representing the aggregation of a number of client reports.

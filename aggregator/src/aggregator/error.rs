@@ -61,15 +61,18 @@ pub enum Error {
     /// An attempt was made to act on an unknown aggregation job.
     #[error("task {0}: unrecognized aggregation job: {1}")]
     UnrecognizedAggregationJob(TaskId, AggregationJobId),
+    /// An attempt was made to act on a known but deleted aggregation job.
+    #[error("task {0}: deleted aggregation job: {1}")]
+    DeletedAggregationJob(TaskId, AggregationJobId),
     /// An attempt was made to act on an unknown collection job.
     #[error("unrecognized collection job: {0}")]
-    UnrecognizedCollectionJob(CollectionJobId),
+    UnrecognizedCollectionJob(TaskId, CollectionJobId),
     /// An attempt was made to act on a known but deleted collection job.
-    #[error("deleted collection job: {0}")]
-    DeletedCollectionJob(CollectionJobId),
+    #[error("task {0}: deleted collection job: {1}")]
+    DeletedCollectionJob(TaskId, CollectionJobId),
     /// An attempt was made to act on a collection job that has been abandoned by the aggregator.
-    #[error("abandoned collection job: {0}")]
-    AbandonedCollectionJob(CollectionJobId),
+    #[error("task {0}: abandoned collection job: {1}")]
+    AbandonedCollectionJob(TaskId, CollectionJobId),
     /// Corresponds to `unauthorizedRequest` in DAP.
     #[error("task {0}: unauthorized request")]
     UnauthorizedRequest(TaskId),
@@ -280,9 +283,10 @@ impl Error {
             Error::UnrecognizedTask(_) => "unrecognized_task",
             Error::MissingTaskId => "missing_task_id",
             Error::UnrecognizedAggregationJob(_, _) => "unrecognized_aggregation_job",
-            Error::DeletedCollectionJob(_) => "deleted_collection_job",
-            Error::AbandonedCollectionJob(_) => "abandoned_collection_job",
-            Error::UnrecognizedCollectionJob(_) => "unrecognized_collection_job",
+            Error::DeletedAggregationJob(_, _) => "deleted_aggregation_job",
+            Error::DeletedCollectionJob(_, _) => "deleted_collection_job",
+            Error::AbandonedCollectionJob(_, _) => "abandoned_collection_job",
+            Error::UnrecognizedCollectionJob(_, _) => "unrecognized_collection_job",
             Error::UnauthorizedRequest(_) => "unauthorized_request",
             Error::Datastore(_) => "datastore",
             Error::Vdaf(_) => "vdaf",
