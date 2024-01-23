@@ -2934,7 +2934,7 @@ mod tests {
         AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
         AggregationJobStep, BatchId, BatchSelector, Collection, CollectionReq, Duration, Extension,
         ExtensionType, FixedSize, FixedSizeQuery, HpkeAeadId, HpkeCiphertext, HpkeConfig,
-        HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, InputShareAad, Interval,
+        HpkeConfigId, HpkeConfigList, HpkeKdfId, HpkeKemId, HpkePublicKey, InputShareAad, Interval,
         PartialBatchSelector, PlaintextInputShare, PrepareContinue, PrepareError, PrepareInit,
         PrepareResp, PrepareStepResult, Query, Report, ReportId, ReportIdChecksum, ReportMetadata,
         ReportShare, Role, TaskId, Time, TimeInterval, Url,
@@ -3350,6 +3350,53 @@ mod tests {
                 ),
             ),
         ])
+    }
+
+    #[test]
+    fn roundtrip_hpke_config_list() {
+        roundtrip_encoding(&[(
+            HpkeConfigList::new(Vec::from([
+                HpkeConfig::new(
+                    HpkeConfigId::from(12),
+                    HpkeKemId::P256HkdfSha256,
+                    HpkeKdfId::HkdfSha512,
+                    HpkeAeadId::Aes256Gcm,
+                    HpkePublicKey::from(Vec::new()),
+                ),
+                HpkeConfig::new(
+                    HpkeConfigId::from(12),
+                    HpkeKemId::P256HkdfSha256,
+                    HpkeKdfId::HkdfSha512,
+                    HpkeAeadId::Other(0x9999),
+                    HpkePublicKey::from(Vec::new()),
+                ),
+            ])),
+            concat!(
+                "0012",
+                concat!(
+                    "0C",   // id
+                    "0010", // kem_id
+                    "0003", // kdf_id
+                    "0002", // aead_id
+                    concat!(
+                        // public_key
+                        "0000", // length
+                        "",     // opaque data
+                    )
+                ),
+                concat!(
+                    "0C",   // id
+                    "0010", // kem_id
+                    "0003", // kdf_id
+                    "9999", // aead_id
+                    concat!(
+                        // public_key
+                        "0000", // length
+                        "",     // opaque data
+                    )
+                ),
+            ),
+        )]);
     }
 
     #[test]
