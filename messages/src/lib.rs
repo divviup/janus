@@ -2327,6 +2327,7 @@ pub enum PrepareError {
     BatchSaturated = 6,
     TaskExpired = 7,
     InvalidMessage = 8,
+    ReportTooEarly = 9,
 }
 
 impl Encode for PrepareError {
@@ -4298,6 +4299,10 @@ mod tests {
             (PrepareError::HpkeUnknownConfigId, "03"),
             (PrepareError::HpkeDecryptError, "04"),
             (PrepareError::VdafPrepError, "05"),
+            (PrepareError::BatchSaturated, "06"),
+            (PrepareError::TaskExpired, "07"),
+            (PrepareError::InvalidMessage, "08"),
+            (PrepareError::ReportTooEarly, "09"),
         ])
     }
 
