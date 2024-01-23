@@ -20,7 +20,7 @@ homepage = "https://divviup.org"
 license = "MPL-2.0"
 repository = "https://github.com/divviup/janus"
 rust-version = "1.73.0"
-version = "0.7.0"
+version = "0.7.0-prerelease-1"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -33,15 +33,15 @@ chrono = { version = "0.4", default-features = false }
 clap = { version = "4.4.17", features = ["cargo", "derive", "env"] }
 derivative = "2.2.0"
 itertools = "0.11"
-janus_aggregator = { version = "0.7", path = "aggregator" }
-janus_aggregator_api = { version = "0.7", path = "aggregator_api" }
-janus_aggregator_core = { version = "0.7", path = "aggregator_core" }
-janus_client = { version = "0.7", path = "client" }
-janus_collector = { version = "0.7", path = "collector" }
-janus_core = { version = "0.7", path = "core" }
-janus_integration_tests = { version = "0.7", path = "integration_tests" }
-janus_interop_binaries = { version = "0.7", path = "interop_binaries" }
-janus_messages = { version = "0.7", path = "messages" }
+janus_aggregator = { version = "0.7.0-prerelease-1", path = "aggregator" }
+janus_aggregator_api = { version = "0.7.0-prerelease-1", path = "aggregator_api" }
+janus_aggregator_core = { version = "0.7.0-prerelease-1", path = "aggregator_core" }
+janus_client = { version = "0.7.0-prerelease-1", path = "client" }
+janus_collector = { version = "0.7.0-prerelease-1", path = "collector" }
+janus_core = { version = "0.7.0-prerelease-1", path = "core" }
+janus_integration_tests = { version = "0.7.0-prerelease-1", path = "integration_tests" }
+janus_interop_binaries = { version = "0.7.0-prerelease-1", path = "interop_binaries" }
+janus_messages = { version = "0.7.0-prerelease-1", path = "messages" }
 k8s-openapi = { version = "0.20.0", features = ["v1_26"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
 kube = { version = "0.87.2", default-features = false, features = ["client", "rustls-tls"] }
 opentelemetry = { version = "0.21", features = ["metrics"] }
