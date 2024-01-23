@@ -2413,7 +2413,7 @@ impl VdafOps {
         A::OutputShare: Send + Sync,
     {
         Ok(datastore
-            .run_tx("delete aggregation job", |tx| {
+            .run_tx("delete_aggregation_job", |tx| {
                 let (task_id, aggregation_job_id) = (*task.id(), *aggregation_job_id);
                 Box::pin(async move {
                     let aggregation_job = tx
