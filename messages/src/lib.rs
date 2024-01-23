@@ -2196,6 +2196,7 @@ pub enum ReportShareError {
     BatchSaturated = 6,
     TaskExpired = 7,
     UnrecognizedMessage = 8,
+    ReportTooEarly = 9,
 }
 
 impl Encode for ReportShareError {
@@ -3824,6 +3825,10 @@ mod tests {
             (ReportShareError::HpkeUnknownConfigId, "03"),
             (ReportShareError::HpkeDecryptError, "04"),
             (ReportShareError::VdafPrepError, "05"),
+            (ReportShareError::BatchSaturated, "06"),
+            (ReportShareError::TaskExpired, "07"),
+            (ReportShareError::UnrecognizedMessage, "08"),
+            (ReportShareError::ReportTooEarly, "09"),
         ])
     }
 
