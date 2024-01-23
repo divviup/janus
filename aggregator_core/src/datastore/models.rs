@@ -1915,3 +1915,18 @@ pub enum TaskUploadIncrementor {
     /// A report was submitted to the task after the task's expiry.
     TaskExpired,
 }
+
+impl TaskUploadIncrementor {
+    pub(crate) fn column(&self) -> &'static str {
+        match self {
+            TaskUploadIncrementor::IntervalCollected => "interval_collected",
+            TaskUploadIncrementor::ReportDecodeFailure => "report_decode_failure",
+            TaskUploadIncrementor::ReportDecryptFailure => "report_decrypt_failure",
+            TaskUploadIncrementor::ReportExpired => "report_expired",
+            TaskUploadIncrementor::ReportOutdatedKey => "report_outdated_key",
+            TaskUploadIncrementor::ReportSuccess => "report_success",
+            TaskUploadIncrementor::ReportTooEarly => "report_too_early",
+            TaskUploadIncrementor::TaskExpired => "task_expired",
+        }
+    }
+}
