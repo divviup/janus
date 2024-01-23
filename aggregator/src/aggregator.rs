@@ -221,7 +221,7 @@ impl Default for Config {
             max_upload_batch_size: 1,
             max_upload_batch_write_delay: StdDuration::ZERO,
             batch_aggregation_shard_count: 1,
-            task_counter_shard_count: 1,
+            task_counter_shard_count: 32,
             global_hpke_configs_refresh_interval: GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
             taskprov_config: TaskprovConfig::default(),
         }
