@@ -4839,39 +4839,45 @@ impl<C: Clock> Transaction<'_, C> {
         check_single_row_mutation(self.execute(&stmt, &[&aggregator_url, &role]).await?)
     }
 
-    /// Get the [`TaskUploadCounter`] for a task. This is aggregated across all shards.
+    /// Get the [`TaskUploadCounter`] for a task. This is aggregated across all shards. Returns
+    /// `None` if the task doesn't exist.
     #[tracing::instrument(skip(self), err)]
     pub async fn get_task_upload_counter(
         &self,
         task_id: &TaskId,
-    ) -> Result<TaskUploadCounter, Error> {
+    ) -> Result<Option<TaskUploadCounter>, Error> {
         let stmt = self
             .prepare_cached(
                 "SELECT
-                    COALESCE(SUM(interval_collected)::BIGINT, 0) AS interval_collected,
-                    COALESCE(SUM(report_decode_failure)::BIGINT, 0) AS report_decode_failure,
-                    COALESCE(SUM(report_decrypt_failure)::BIGINT, 0) AS report_decrypt_failure,
-                    COALESCE(SUM(report_expired)::BIGINT, 0) AS report_expired,
-                    COALESCE(SUM(report_outdated_key)::BIGINT, 0) AS report_outdated_key,
-                    COALESCE(SUM(report_success)::BIGINT, 0) AS report_success,
-                    COALESCE(SUM(report_too_early)::BIGINT, 0) AS report_too_early,
-                    COALESCE(SUM(task_expired)::BIGINT, 0) AS task_expired
+                    SUM(interval_collected)::BIGINT AS interval_collected,
+                    SUM(report_decode_failure)::BIGINT AS report_decode_failure,
+                    SUM(report_decrypt_failure)::BIGINT AS report_decrypt_failure,
+                    SUM(report_expired)::BIGINT AS report_expired,
+                    SUM(report_outdated_key)::BIGINT AS report_outdated_key,
+                    SUM(report_success)::BIGINT AS report_success,
+                    SUM(report_too_early)::BIGINT AS report_too_early,
+                    SUM(task_expired)::BIGINT AS task_expired
                 FROM task_upload_counters
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             )
             .await?;
 
         let row = self.query_one(&stmt, &[task_id.as_ref()]).await?;
-        Ok(TaskUploadCounter {
-            task_id: *task_id,
-            interval_collected: row.get_bigint_and_convert("interval_collected")?,
-            report_decode_failure: row.get_bigint_and_convert("report_decode_failure")?,
-            report_decrypt_failure: row.get_bigint_and_convert("report_decrypt_failure")?,
-            report_expired: row.get_bigint_and_convert("report_expired")?,
-            report_outdated_key: row.get_bigint_and_convert("report_outdated_key")?,
-            report_success: row.get_bigint_and_convert("report_success")?,
-            report_too_early: row.get_bigint_and_convert("report_too_early")?,
-            task_expired: row.get_bigint_and_convert("task_expired")?,
+        let interval_collected = row.get_nullable_bigint_and_convert("interval_collected")?;
+        Ok(match interval_collected {
+            Some(interval_collected) => Some(TaskUploadCounter {
+                interval_collected,
+                // The remaining columns should exist if the first one did, due to a DEFAULT 0
+                // clause, so we don't need to treat these as nullable.
+                report_decode_failure: row.get_bigint_and_convert("report_decode_failure")?,
+                report_decrypt_failure: row.get_bigint_and_convert("report_decrypt_failure")?,
+                report_expired: row.get_bigint_and_convert("report_expired")?,
+                report_outdated_key: row.get_bigint_and_convert("report_outdated_key")?,
+                report_success: row.get_bigint_and_convert("report_success")?,
+                report_too_early: row.get_bigint_and_convert("report_too_early")?,
+                task_expired: row.get_bigint_and_convert("task_expired")?,
+            }),
+            None => None,
         })
     }
 
