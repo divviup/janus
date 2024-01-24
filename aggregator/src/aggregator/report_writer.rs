@@ -58,7 +58,7 @@ impl<C: Clock> ReportWriteBatcher<C> {
         Self { report_tx }
     }
 
-    /// Save a [`ReportRejection`] to the database.
+    /// Save a report rejection to the database.
     ///
     /// This function does not wait for the result of the batch write, because we do not want
     /// clients to retry bad reports, even due to server error.
