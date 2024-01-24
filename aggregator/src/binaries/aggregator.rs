@@ -429,7 +429,7 @@ impl Config {
             ),
             batch_aggregation_shard_count: self.batch_aggregation_shard_count,
             task_counter_shard_count: self.task_counter_shard_count,
-            taskprov_config: self.taskprov_config.clone(),
+            taskprov_config: self.taskprov_config,
             global_hpke_configs_refresh_interval: match self.global_hpke_configs_refresh_interval {
                 Some(duration) => Duration::from_millis(duration),
                 None => GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
