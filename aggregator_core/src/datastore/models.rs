@@ -852,8 +852,10 @@ where
 pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
     StartLeader {
         /// Public share for this report.
+        #[derivative(Debug = "ignore")]
         public_share: A::PublicShare,
         /// The sequence of extensions from the Leader's input share for this report.
+        #[derivative(Debug = "ignore")]
         leader_extensions: Vec<Extension>,
         /// The Leader's input share for this report.
         #[derivative(Debug = "ignore")]
@@ -864,10 +866,12 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED
     },
     WaitingLeader {
         /// Most recent transition for this report aggregation.
+        #[derivative(Debug = "ignore")]
         transition: PingPongTransition<SEED_SIZE, 16, A>,
     },
     WaitingHelper {
         /// Helper's current preparation state
+        #[derivative(Debug = "ignore")]
         prepare_state: A::PrepareState,
     },
     Finished,
