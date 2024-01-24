@@ -35,6 +35,8 @@ use std::{sync::Arc, time::Duration};
 use tokio::try_join;
 use tracing::{error, info, warn};
 
+use super::RequestBody;
+
 /// Drives a collection job.
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -155,6 +157,7 @@ impl CollectionJobDriver {
                         .ok_or_else(|| {
                             datastore::Error::User(
                                 Error::UnrecognizedCollectionJob(
+                                    *task.id(),
                                     *lease.leased().collection_job_id(),
                                 )
                                 .into(),
@@ -227,7 +230,7 @@ impl CollectionJobDriver {
         .map_err(Error::DifferentialPrivacy)?;
 
         // Send an aggregate share request to the helper.
-        let req = AggregateShareReq::<Q>::new(
+        let request = AggregateShareReq::<Q>::new(
             BatchSelector::new(collection_job.batch_identifier().clone()),
             collection_job.aggregation_parameter().get_encoded()?,
             report_count,
@@ -241,8 +244,10 @@ impl CollectionJobDriver {
                 Error::InvalidConfiguration("task is not leader and has no aggregate share URI")
             })?,
             AGGREGATE_SHARES_ROUTE,
-            AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
-            req,
+            Some(RequestBody {
+                content_type: AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
+                request,
+            }),
             // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
             // case, and Janus never acts as the leader with taskprov enabled.
             task.aggregator_auth_token()
@@ -272,11 +277,18 @@ impl CollectionJobDriver {
 
                 Box::pin(async move {
                     let maybe_updated_collection_job = tx
-                        .get_collection_job::<SEED_SIZE, Q, A>(vdaf.as_ref(), lease.leased().task_id(), collection_job.id())
+                        .get_collection_job::<SEED_SIZE, Q, A>(
+                            vdaf.as_ref(),
+                            lease.leased().task_id(),
+                            collection_job.id(),
+                        )
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
-                                Error::UnrecognizedCollectionJob(*collection_job.id()).into(),
+                                Error::UnrecognizedCollectionJob(
+                                    *lease.leased().task_id(),
+                                    *collection_job.id(),
+                                ).into(),
                             )
                         })?;
 

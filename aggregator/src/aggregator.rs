@@ -475,6 +475,41 @@ impl<C: Clock> Aggregator<C> {
             .await
     }
 
+    async fn handle_aggregate_delete(
+        &self,
+        task_id: &TaskId,
+        aggregation_job_id: &AggregationJobId,
+        auth_token: Option<AuthenticationToken>,
+        taskprov_task_config: Option<&TaskConfig>,
+    ) -> Result<(), Error> {
+        let task_aggregator = self
+            .task_aggregator_for(task_id)
+            .await?
+            .ok_or(Error::UnrecognizedTask(*task_id))?;
+        if task_aggregator.task.role() != &Role::Helper {
+            return Err(Error::UnrecognizedTask(*task_id));
+        }
+
+        if self.cfg.taskprov_config.enabled && taskprov_task_config.is_some() {
+            self.taskprov_authorize_request(
+                &Role::Leader,
+                task_id,
+                taskprov_task_config.unwrap(),
+                auth_token.as_ref(),
+            )
+            .await?;
+        } else if !task_aggregator
+            .task
+            .check_aggregator_auth_token(auth_token.as_ref())
+        {
+            return Err(Error::UnauthorizedRequest(*task_id));
+        }
+
+        task_aggregator
+            .handle_aggregate_delete(&self.datastore, aggregation_job_id)
+            .await
+    }
+
     /// Handle a collection job creation request. Only supported by the leader. `req_bytes` is an
     /// encoded [`CollectionReq`].
     async fn handle_create_collection_job(
@@ -993,6 +1028,16 @@ impl<C: Clock> TaskAggregator<C> {
             .await
     }
 
+    async fn handle_aggregate_delete(
+        &self,
+        datastore: &Datastore<C>,
+        aggregation_job_id: &AggregationJobId,
+    ) -> Result<(), Error> {
+        self.vdaf_ops
+            .handle_aggregate_delete(datastore, Arc::clone(&self.task), aggregation_job_id)
+            .await
+    }
+
     async fn handle_create_collection_job(
         &self,
         datastore: &Datastore<C>,
@@ -1388,6 +1433,35 @@ impl VdafOps {
         }
     }
 
+    #[tracing::instrument(skip(self, datastore), fields(task_id = ?task.id()), err)]
+    async fn handle_aggregate_delete<C: Clock>(
+        &self,
+        datastore: &Datastore<C>,
+        task: Arc<AggregatorTask>,
+        aggregation_job_id: &AggregationJobId,
+    ) -> Result<(), Error> {
+        match task.query_type() {
+            task::QueryType::TimeInterval => {
+                vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
+                    Self::handle_aggregate_delete_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
+                        datastore,
+                        task,
+                        aggregation_job_id,
+                    ).await
+                })
+            }
+            task::QueryType::FixedSize { .. } => {
+                vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
+                    Self::handle_aggregate_delete_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
+                        datastore,
+                        task,
+                        aggregation_job_id,
+                    ).await
+                })
+            }
+        }
+    }
+
     async fn handle_upload_generic<const SEED_SIZE: usize, Q, A, C>(
         vdaf: Arc<A>,
         clock: &C,
@@ -1627,6 +1701,13 @@ impl VdafOps {
                     incoming_aggregation_job.id()
                 )
             });
+
+        if *existing_aggregation_job.state() == AggregationJobState::Deleted {
+            return Err(Error::DeletedAggregationJob(
+                *task.id(),
+                *incoming_aggregation_job.id(),
+            ));
+        }
 
         Ok(existing_aggregation_job.eq(incoming_aggregation_job))
     }
@@ -2239,6 +2320,14 @@ impl VdafOps {
                         )
                     })?;
 
+                    // Deleted aggregation jobs cannot be stepped
+                    if *helper_aggregation_job.state() == AggregationJobState::Deleted {
+                        return Err(datastore::Error::User(
+                            Error::DeletedAggregationJob(*task.id(), *helper_aggregation_job.id())
+                                .into(),
+                        ));
+                    }
+
                     // If the leader's request is on the same step as our stored aggregation job,
                     // then we probably have already received this message and computed this step,
                     // but the leader never got our response and so retried stepping the job.
@@ -2298,6 +2387,49 @@ impl VdafOps {
                         aggregate_step_failure_counter,
                     )
                     .await
+                })
+            })
+            .await?)
+    }
+
+    /// Handle requests to the helper to delete an aggregation job.
+    async fn handle_aggregate_delete_generic<
+        const SEED_SIZE: usize,
+        Q: AccumulableQueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        C: Clock,
+    >(
+        datastore: &Datastore<C>,
+        task: Arc<AggregatorTask>,
+        aggregation_job_id: &AggregationJobId,
+    ) -> Result<(), Error>
+    where
+        A: 'static + Send + Sync,
+        A::AggregationParam: Send + Sync,
+        A::AggregateShare: Send + Sync,
+        for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
+        A::PrepareShare: Send + Sync,
+        A::PrepareMessage: Send + Sync,
+        A::OutputShare: Send + Sync,
+    {
+        Ok(datastore
+            .run_tx("delete_aggregation_job", |tx| {
+                let (task_id, aggregation_job_id) = (*task.id(), *aggregation_job_id);
+                Box::pin(async move {
+                    let aggregation_job = tx
+                        .get_aggregation_job::<SEED_SIZE, Q, A>(&task_id, &aggregation_job_id)
+                        .await?
+                        .ok_or_else(|| {
+                            datastore::Error::User(
+                                Error::UnrecognizedAggregationJob(task_id, aggregation_job_id)
+                                    .into(),
+                            )
+                        })?
+                        .with_state(AggregationJobState::Deleted);
+
+                    tx.update_aggregation_job(&aggregation_job).await?;
+
+                    Ok(())
                 })
             })
             .await?)
@@ -2668,7 +2800,8 @@ impl VdafOps {
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
-                                Error::UnrecognizedCollectionJob(collection_job_id).into(),
+                                Error::UnrecognizedCollectionJob(*task.id(), collection_job_id)
+                                    .into(),
                             )
                         })?;
 
@@ -2775,8 +2908,13 @@ impl VdafOps {
                     .map_err(Error::ResponseEncode)?,
                 ))
             }
-            CollectionJobState::Abandoned => Err(Error::AbandonedCollectionJob(*collection_job_id)),
-            CollectionJobState::Deleted => Err(Error::DeletedCollectionJob(*collection_job_id)),
+            CollectionJobState::Abandoned => Err(Error::AbandonedCollectionJob(
+                *task.id(),
+                *collection_job_id,
+            )),
+            CollectionJobState::Deleted => {
+                Err(Error::DeletedCollectionJob(*task.id(), *collection_job_id))
+            }
         }
     }
 
@@ -2842,7 +2980,8 @@ impl VdafOps {
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
-                                Error::UnrecognizedCollectionJob(collection_job_id).into(),
+                                Error::UnrecognizedCollectionJob(*task.id(), collection_job_id)
+                                    .into(),
                             )
                         })?;
                     if collection_job.state() != &CollectionJobState::Deleted {
@@ -3156,13 +3295,18 @@ fn empty_batch_aggregations<
     .collect()
 }
 
+struct RequestBody<T> {
+    content_type: &'static str,
+    request: T,
+}
+
 /// Convenience method to perform an HTTP request to the helper. This includes common
 /// metrics and error handling functionality.
 #[tracing::instrument(
     skip(
         http_client,
         url,
-        request,
+        request_body,
         auth_token,
         http_request_duration_histogram,
     ),
@@ -3174,24 +3318,31 @@ async fn send_request_to_helper<T: Encode>(
     method: Method,
     url: Url,
     route_label: &'static str,
-    content_type: &str,
-    request: T,
+    request_body: Option<RequestBody<T>>,
     auth_token: &AuthenticationToken,
     http_request_duration_histogram: &Histogram<f64>,
 ) -> Result<Bytes, Error> {
     let domain = url.domain().unwrap_or_default().to_string();
-    let request_body = request.get_encoded().map_err(Error::ResponseEncode)?;
     let (auth_header, auth_value) = auth_token.request_authentication();
     let method_string = method.as_str().to_string();
 
     let start = Instant::now();
-    let response_result = http_client
+    let mut request = http_client
         .request(method, url)
-        .header(CONTENT_TYPE, content_type)
-        .header(auth_header, auth_value)
-        .body(request_body)
-        .send()
-        .await;
+        .header(auth_header, auth_value);
+
+    if let Some(request_body) = request_body {
+        request = request
+            .header(CONTENT_TYPE, request_body.content_type)
+            .body(
+                request_body
+                    .request
+                    .get_encoded()
+                    .map_err(Error::ResponseEncode)?,
+            )
+    };
+
+    let response_result = request.send().await;
     let response = match response_result {
         Ok(response) => response,
         Err(error) => {
@@ -3252,7 +3403,8 @@ async fn send_request_to_helper<T: Encode>(
     }
 }
 
-#[cfg(test)]
+#[cfg(feature = "test-util")]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub(crate) mod test_util {
     use std::time::Duration;
 

@@ -515,6 +515,8 @@ pub enum AggregationJobState {
     Finished,
     #[postgres(name = "ABANDONED")]
     Abandoned,
+    #[postgres(name = "DELETED")]
+    Deleted,
 }
 
 /// LeaseToken represents an opaque value used to determine the identity of a lease.
