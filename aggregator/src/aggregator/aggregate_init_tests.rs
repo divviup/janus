@@ -21,7 +21,9 @@ use janus_aggregator_core::{
 };
 use janus_core::{
     auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
-    test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf, VdafTranscript},
+    test_util::{
+        dummy_vdaf, install_test_trace_subscriber, run_vdaf, runtime::TestRuntime, VdafTranscript,
+    },
     time::{Clock, MockClock, TimeExt as _},
     vdaf::VdafInstance,
 };
@@ -259,6 +261,7 @@ async fn setup_aggregate_init_test_without_sending_request<
     let handler = aggregator_handler(
         Arc::clone(&datastore),
         clock.clone(),
+        TestRuntime::default(),
         &noop_meter(),
         Config::default(),
     )

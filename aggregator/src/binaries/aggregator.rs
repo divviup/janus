@@ -9,7 +9,7 @@ use clap::Parser;
 use derivative::Derivative;
 use janus_aggregator_api::{self, aggregator_api_handler};
 use janus_aggregator_core::datastore::Datastore;
-use janus_core::{auth_tokens::AuthenticationToken, time::RealClock};
+use janus_core::{auth_tokens::AuthenticationToken, time::RealClock, TokioRuntime};
 use opentelemetry::metrics::Meter;
 use serde::{de, Deserialize, Deserializer, Serialize};
 use std::{
@@ -63,6 +63,7 @@ async fn run_aggregator(
         aggregator_handler(
             Arc::clone(&datastore),
             clock,
+            TokioRuntime,
             &meter,
             config.aggregator_config(),
         )

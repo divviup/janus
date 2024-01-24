@@ -8,6 +8,7 @@ use janus_core::{
     http::extract_bearer_token,
     taskprov::TASKPROV_HEADER,
     time::Clock,
+    Runtime,
 };
 use janus_messages::{
     codec::Decode, problem_type::DapProblemType, query_type::TimeInterval, taskprov::TaskConfig,
@@ -244,13 +245,18 @@ pub(crate) static COLLECTION_JOB_ROUTE: &str = "tasks/:task_id/collection_jobs/:
 pub(crate) static AGGREGATE_SHARES_ROUTE: &str = "tasks/:task_id/aggregate_shares";
 
 /// Constructs a Trillium handler for the aggregator.
-pub async fn aggregator_handler<C: Clock>(
+pub async fn aggregator_handler<C, R>(
     datastore: Arc<Datastore<C>>,
     clock: C,
+    runtime: R,
     meter: &Meter,
     cfg: Config,
-) -> Result<impl Handler, Error> {
-    let aggregator = Arc::new(Aggregator::new(datastore, clock, meter, cfg).await?);
+) -> Result<impl Handler, Error>
+where
+    C: Clock,
+    R: Runtime + Send + Sync + 'static,
+{
+    let aggregator = Arc::new(Aggregator::new(datastore, clock, runtime, meter, cfg).await?);
     aggregator_handler_with_aggregator(aggregator, meter).await
 }
 
@@ -736,6 +742,7 @@ mod tests {
         test_util::{
             dummy_vdaf::{self, AggregationParam, OutputShare},
             install_test_trace_subscriber, run_vdaf,
+            runtime::TestRuntime,
         },
         time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
@@ -786,6 +793,7 @@ mod tests {
         let handler = aggregator_handler(
             datastore.clone(),
             clock.clone(),
+            TestRuntime::default(),
             &noop_meter(),
             default_aggregator_config(),
         )
@@ -881,6 +889,7 @@ mod tests {
             crate::aggregator::Aggregator::new(
                 datastore.clone(),
                 clock.clone(),
+                TestRuntime::default(),
                 &noop_meter(),
                 Config::default(),
             )
@@ -1029,6 +1038,7 @@ mod tests {
             crate::aggregator::Aggregator::new(
                 datastore.clone(),
                 clock.clone(),
+                TestRuntime::default(),
                 &noop_meter(),
                 cfg,
             )
@@ -2214,6 +2224,7 @@ mod tests {
         let handler = aggregator_handler(
             datastore.clone(),
             clock.clone(),
+            TestRuntime::default(),
             &noop_meter(),
             default_aggregator_config(),
         )

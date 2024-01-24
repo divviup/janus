@@ -6,7 +6,7 @@ use janus_aggregator_core::datastore::{
     models::{LeaderStoredReport, TaskUploadIncrementor},
     Datastore, Transaction,
 };
-use janus_core::time::Clock;
+use janus_core::{time::Clock, Runtime};
 use janus_messages::TaskId;
 use prio::vdaf;
 use rand::{thread_rng, Rng};
@@ -27,22 +27,26 @@ type ResultSender = oneshot::Sender<Result<(), Arc<Error>>>;
 type ReportWriteBatcherSender<C> = mpsc::Sender<(ReportResult<C>, Option<ResultSender>)>;
 type ReportWriteBatcherReceiver<C> = mpsc::Receiver<(ReportResult<C>, Option<ResultSender>)>;
 
-pub struct ReportWriteBatcher<C: Clock> {
+pub struct ReportWriteBatcher<C> {
     report_tx: ReportWriteBatcherSender<C>,
 }
 
 impl<C: Clock> ReportWriteBatcher<C> {
-    pub fn new(
+    pub fn new<R: Runtime + Send + Sync + 'static>(
         ds: Arc<Datastore<C>>,
+        runtime: R,
         counter_shard_count: u64,
         max_batch_size: usize,
         max_batch_write_delay: Duration,
     ) -> Self {
         let (report_tx, report_rx) = mpsc::channel(1);
 
-        tokio::spawn(async move {
+        let runtime = Arc::new(runtime);
+        let runtime_clone = Arc::clone(&runtime);
+        runtime.spawn(async move {
             Self::run_upload_batcher(
                 ds,
+                runtime_clone,
                 report_rx,
                 counter_shard_count,
                 max_batch_size,
@@ -86,9 +90,13 @@ impl<C: Clock> ReportWriteBatcher<C> {
         result_rx.await.unwrap()
     }
 
-    #[tracing::instrument(name = "ReportWriteBatcher::run_upload_batcher", skip(ds, report_rx))]
-    async fn run_upload_batcher(
+    #[tracing::instrument(
+        name = "ReportWriteBatcher::run_upload_batcher",
+        skip(ds, runtime, report_rx)
+    )]
+    async fn run_upload_batcher<R: Runtime + Send + Sync>(
         ds: Arc<Datastore<C>>,
+        runtime: Arc<R>,
         mut report_rx: ReportWriteBatcherReceiver<C>,
         counter_shard_count: u64,
         max_batch_size: usize,
@@ -131,7 +139,7 @@ impl<C: Clock> ReportWriteBatcher<C> {
                 let ds = Arc::clone(&ds);
                 let report_results =
                     replace(&mut report_results, Vec::with_capacity(max_batch_size));
-                tokio::spawn(async move {
+                runtime.spawn(async move {
                     Self::write_batch(ds, counter_shard_count, report_results).await;
                 });
             }

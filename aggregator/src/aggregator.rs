@@ -48,6 +48,7 @@ use janus_core::{
     http::HttpErrorResponse,
     time::{Clock, DurationExt, IntervalExt, TimeExt},
     vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
+    Runtime,
 };
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
@@ -229,14 +230,16 @@ impl Default for Config {
 }
 
 impl<C: Clock> Aggregator<C> {
-    async fn new(
+    async fn new<R: Runtime + Send + Sync + 'static>(
         datastore: Arc<Datastore<C>>,
         clock: C,
+        runtime: R,
         meter: &Meter,
         cfg: Config,
     ) -> Result<Self, Error> {
         let report_writer = Arc::new(ReportWriteBatcher::new(
             Arc::clone(&datastore),
+            runtime,
             cfg.task_counter_shard_count,
             cfg.max_upload_batch_size,
             cfg.max_upload_batch_write_delay,
@@ -3290,9 +3293,13 @@ mod tests {
             self, test_util::generate_test_hpke_config_and_private_key_with_id,
             HpkeApplicationInfo, HpkeKeypair, Label,
         },
-        test_util::install_test_trace_subscriber,
+        test_util::{
+            install_test_trace_subscriber,
+            runtime::{TestRuntime, TestRuntimeManager},
+        },
         time::{Clock, MockClock, TimeExt},
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
+        Runtime,
     };
     use janus_messages::{
         query_type::TimeInterval, Duration, Extension, HpkeCiphertext, HpkeConfig, HpkeConfigId,
@@ -3305,7 +3312,6 @@ mod tests {
     };
     use rand::random;
     use std::{collections::HashSet, iter, sync::Arc, time::Duration as StdDuration};
-    use tokio::time::sleep;
 
     pub(super) fn create_report_custom(
         task: &AggregatorTask,
@@ -3367,6 +3373,23 @@ mod tests {
         Arc<Datastore<MockClock>>,
         EphemeralDatastore,
     ) {
+        setup_upload_test_with_runtime(TestRuntime::default(), cfg).await
+    }
+
+    async fn setup_upload_test_with_runtime<R>(
+        runtime: R,
+        cfg: Config,
+    ) -> (
+        Prio3Count,
+        Aggregator<MockClock>,
+        MockClock,
+        Task,
+        Arc<Datastore<MockClock>>,
+        EphemeralDatastore,
+    )
+    where
+        R: Runtime + Send + Sync + 'static,
+    {
         let clock = MockClock::default();
         let vdaf = Prio3Count::new_count(2).unwrap();
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
@@ -3378,9 +3401,15 @@ mod tests {
 
         datastore.put_aggregator_task(&leader_task).await.unwrap();
 
-        let aggregator = Aggregator::new(Arc::clone(&datastore), clock.clone(), &noop_meter(), cfg)
-            .await
-            .unwrap();
+        let aggregator = Aggregator::new(
+            Arc::clone(&datastore),
+            clock.clone(),
+            runtime,
+            &noop_meter(),
+            cfg,
+        )
+        .await
+        .unwrap();
 
         (
             vdaf,
@@ -3527,9 +3556,13 @@ mod tests {
     async fn upload_wrong_hpke_config_id() {
         install_test_trace_subscriber();
 
-        let config = default_aggregator_config();
+        let mut runtime_manager = TestRuntimeManager::new();
         let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test(config).await;
+            setup_upload_test_with_runtime(
+                runtime_manager.with_label("aggregator"),
+                default_aggregator_config(),
+            )
+            .await;
         let leader_task = task.leader_view().unwrap();
         let report = create_report(&leader_task, clock.now());
 
@@ -3565,8 +3598,10 @@ mod tests {
             })
         });
 
-        // Wait out the batch write delay so the report status can be flushed to the DB.
-        sleep(config.max_upload_batch_write_delay * 2).await;
+        // Wait for the report writer to have completed one write task.
+        runtime_manager
+            .wait_for_completed_tasks("aggregator", 1)
+            .await;
 
         let got_counters = datastore
             .run_unnamed_tx(|tx| {
@@ -3625,9 +3660,13 @@ mod tests {
     #[tokio::test]
     async fn upload_report_in_the_future_past_clock_skew() {
         install_test_trace_subscriber();
-        let config = default_aggregator_config();
+        let mut runtime_manager = TestRuntimeManager::new();
         let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test(config).await;
+            setup_upload_test_with_runtime(
+                runtime_manager.with_label("aggregator"),
+                default_aggregator_config(),
+            )
+            .await;
         let report = create_report(
             &task.leader_view().unwrap(),
             clock
@@ -3649,8 +3688,10 @@ mod tests {
             assert_matches!(rejection.reason(), ReportRejectionReason::TooEarly);
         });
 
-        // Wait out the batch write delay so the report status can be flushed to the DB.
-        sleep(config.max_upload_batch_write_delay * 2).await;
+        // Wait for the report writer to have completed one write task.
+        runtime_manager
+            .wait_for_completed_tasks("aggregator", 1)
+            .await;
 
         let got_counters = datastore
             .run_unnamed_tx(|tx| {
@@ -3669,9 +3710,13 @@ mod tests {
     async fn upload_report_for_collected_batch() {
         install_test_trace_subscriber();
 
-        let config = default_aggregator_config();
+        let mut runtime_manager = TestRuntimeManager::new();
         let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test(config).await;
+            setup_upload_test_with_runtime(
+                runtime_manager.with_label("aggregator"),
+                default_aggregator_config(),
+            )
+            .await;
         let report = create_report(&task.leader_view().unwrap(), clock.now());
 
         // Insert a collection job for the batch interval including our report.
@@ -3721,8 +3766,10 @@ mod tests {
             }
         );
 
-        // Wait out the batch write delay so the report status can be flushed to the DB.
-        sleep(config.max_upload_batch_write_delay * 2).await;
+        // Wait for the report writer to have completed one write task.
+        runtime_manager
+            .wait_for_completed_tasks("aggregator", 1)
+            .await;
 
         let got_counters = datastore
             .run_unnamed_tx(|tx| {
@@ -3817,9 +3864,13 @@ mod tests {
     #[tokio::test]
     async fn upload_report_task_expired() {
         install_test_trace_subscriber();
-        let config = default_aggregator_config();
+        let mut runtime_manager = TestRuntimeManager::new();
         let (_, aggregator, clock, _, datastore, _ephemeral_datastore) =
-            setup_upload_test(config).await;
+            setup_upload_test_with_runtime(
+                runtime_manager.with_label("aggregator"),
+                default_aggregator_config(),
+            )
+            .await;
 
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
             .with_task_expiration(Some(clock.now()))
@@ -3847,8 +3898,10 @@ mod tests {
             }
         );
 
-        // Wait out the batch write delay so the report status can be flushed to the DB.
-        sleep(config.max_upload_batch_write_delay * 2).await;
+        // Wait for the report writer to have completed one write task.
+        runtime_manager
+            .wait_for_completed_tasks("aggregator", 1)
+            .await;
 
         let got_counters = datastore
             .run_unnamed_tx(|tx| {
@@ -3866,9 +3919,13 @@ mod tests {
     #[tokio::test]
     async fn upload_report_report_expired() {
         install_test_trace_subscriber();
-        let config = default_aggregator_config();
+        let mut runtime_manager = TestRuntimeManager::new();
         let (_, aggregator, clock, _, datastore, _ephemeral_datastore) =
-            setup_upload_test(config).await;
+            setup_upload_test_with_runtime(
+                runtime_manager.with_label("aggregator"),
+                default_aggregator_config(),
+            )
+            .await;
 
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
             .with_report_expiry_age(Some(Duration::from_seconds(60)))
@@ -3897,8 +3954,10 @@ mod tests {
             }
         );
 
-        // Wait out the batch write delay so the report status can be flushed to the DB.
-        sleep(config.max_upload_batch_write_delay * 2).await;
+        // Wait for the report writer to have completed one write task.
+        runtime_manager
+            .wait_for_completed_tasks("aggregator", 1)
+            .await;
 
         let got_counters = datastore
             .run_unnamed_tx(|tx| {
@@ -3916,9 +3975,13 @@ mod tests {
     #[tokio::test]
     async fn upload_report_faulty_encryption() {
         install_test_trace_subscriber();
-        let config = default_aggregator_config();
+        let mut runtime_manager = TestRuntimeManager::new();
         let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test(config).await;
+            setup_upload_test_with_runtime(
+                runtime_manager.with_label("aggregator"),
+                default_aggregator_config(),
+            )
+            .await;
 
         let task = task.leader_view().unwrap();
 
@@ -3947,8 +4010,10 @@ mod tests {
             }
         );
 
-        // Wait out the batch write delay so the report status can be flushed to the DB.
-        sleep(config.max_upload_batch_write_delay * 2).await;
+        // Wait for the report writer to have completed one write task.
+        runtime_manager
+            .wait_for_completed_tasks("aggregator", 1)
+            .await;
 
         let got_counters = datastore
             .run_unnamed_tx(|tx| {
@@ -3966,9 +4031,13 @@ mod tests {
     #[tokio::test]
     async fn upload_report_public_share_decode_failure() {
         install_test_trace_subscriber();
-        let config = default_aggregator_config();
+        let mut runtime_manager = TestRuntimeManager::new();
         let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test(config).await;
+            setup_upload_test_with_runtime(
+                runtime_manager.with_label("aggregator"),
+                default_aggregator_config(),
+            )
+            .await;
 
         let task = task.leader_view().unwrap();
 
@@ -3996,8 +4065,10 @@ mod tests {
             }
         );
 
-        // Wait out the batch write delay so the report status can be flushed to the DB.
-        sleep(config.max_upload_batch_write_delay * 2).await;
+        // Wait for the report writer to have completed one write task.
+        runtime_manager
+            .wait_for_completed_tasks("aggregator", 1)
+            .await;
 
         let got_counters = datastore
             .run_unnamed_tx(|tx| {
@@ -4015,9 +4086,13 @@ mod tests {
     #[tokio::test]
     async fn upload_report_leader_input_share_decode_failure() {
         install_test_trace_subscriber();
-        let config = default_aggregator_config();
+        let mut runtime_manager = TestRuntimeManager::new();
         let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test(config).await;
+            setup_upload_test_with_runtime(
+                runtime_manager.with_label("aggregator"),
+                default_aggregator_config(),
+            )
+            .await;
 
         let task = task.leader_view().unwrap();
 
@@ -4059,8 +4134,10 @@ mod tests {
             }
         );
 
-        // Wait out the batch write delay so the report status can be flushed to the DB.
-        sleep(config.max_upload_batch_write_delay * 2).await;
+        // Wait for the report writer to have completed one write task.
+        runtime_manager
+            .wait_for_completed_tasks("aggregator", 1)
+            .await;
 
         let got_counters = datastore
             .run_unnamed_tx(|tx| {
