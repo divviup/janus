@@ -794,11 +794,11 @@ async fn taskprov_aggregate_continue() {
                     *report_share.metadata().time(),
                     0,
                     None,
-                    ReportAggregationState::WaitingHelper(
-                        transcript.helper_prepare_transitions[0]
+                    ReportAggregationState::WaitingHelper {
+                        prepare_state: transcript.helper_prepare_transitions[0]
                             .prepare_state()
                             .clone(),
-                    ),
+                    },
                 ))
                 .await?;
 

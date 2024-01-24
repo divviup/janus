@@ -253,15 +253,9 @@ mod tests {
                     .await
                     .unwrap();
 
-                    tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        *report.metadata().id(),
-                        client_timestamp,
-                        0,
-                        None,
-                        ReportAggregationState::Start,
-                    ))
+                    tx.put_report_aggregation(
+                        &report.as_start_leader_report_aggregation(aggregation_job_id, 0),
+                    )
                     .await
                     .unwrap();
 
@@ -448,7 +442,7 @@ mod tests {
                         client_timestamp,
                         0,
                         None,
-                        ReportAggregationState::Start,
+                        ReportAggregationState::Finished,
                     ))
                     .await
                     .unwrap();
@@ -624,15 +618,8 @@ mod tests {
                     );
                     tx.put_aggregation_job(&aggregation_job).await.unwrap();
 
-                    let report_aggregation = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
-                        *task.id(),
-                        *aggregation_job.id(),
-                        *report.metadata().id(),
-                        client_timestamp,
-                        0,
-                        None,
-                        ReportAggregationState::Start,
-                    );
+                    let report_aggregation =
+                        report.as_start_leader_report_aggregation(*aggregation_job.id(), 0);
                     tx.put_report_aggregation(&report_aggregation)
                         .await
                         .unwrap();
@@ -828,7 +815,7 @@ mod tests {
                         client_timestamp,
                         0,
                         None,
-                        ReportAggregationState::Start,
+                        ReportAggregationState::Finished,
                     );
                     tx.put_report_aggregation(&report_aggregation)
                         .await
