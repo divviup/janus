@@ -1,4 +1,7 @@
-use super::{error::ReportRejectedReason, Error};
+use super::{
+    error::{ReportRejection, ReportRejectionReason},
+    Error,
+};
 use async_trait::async_trait;
 use janus_aggregator_core::{
     datastore::{self, models::LeaderStoredReport, Transaction},
@@ -23,7 +26,7 @@ pub trait UploadableQueryType: QueryType {
         tx: &Transaction<'_, C>,
         vdaf: &A,
         report: &LeaderStoredReport<SEED_SIZE, A>,
-    ) -> Result<(), datastore::Error>
+    ) -> Result<(), Error>
     where
         A::InputShare: Send + Sync,
         A::PublicShare: Send + Sync;
@@ -39,7 +42,7 @@ impl UploadableQueryType for TimeInterval {
         tx: &Transaction<'_, C>,
         vdaf: &A,
         report: &LeaderStoredReport<SEED_SIZE, A>,
-    ) -> Result<(), datastore::Error>
+    ) -> Result<(), Error>
     where
         A::InputShare: Send + Sync,
         A::PublicShare: Send + Sync,
@@ -55,15 +58,12 @@ impl UploadableQueryType for TimeInterval {
             )
             .await?;
         if !conflicting_collect_jobs.is_empty() {
-            return Err(datastore::Error::User(
-                Error::ReportRejected(
-                    *report.task_id(),
-                    *report.metadata().id(),
-                    *report.metadata().time(),
-                    ReportRejectedReason::IntervalAlreadyCollected,
-                )
-                .into(),
-            ));
+            return Err(Error::ReportRejected(ReportRejection::new(
+                *report.task_id(),
+                *report.metadata().id(),
+                *report.metadata().time(),
+                ReportRejectionReason::IntervalCollected,
+            )));
         }
         Ok(())
     }
@@ -79,7 +79,7 @@ impl UploadableQueryType for FixedSize {
         _: &Transaction<'_, C>,
         _: &A,
         _: &LeaderStoredReport<SEED_SIZE, A>,
-    ) -> Result<(), datastore::Error> {
+    ) -> Result<(), Error> {
         // Fixed-size tasks associate reports to batches at time of aggregation rather than at time
         // of upload, and there are no other relevant checks to apply here, so this method simply
         // returns Ok(()).
