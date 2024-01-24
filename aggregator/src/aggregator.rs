@@ -4045,7 +4045,7 @@ mod tests {
         report = Report::new(
             report.metadata().clone(),
             // Some obviously wrong public share.
-            vec![0; 10],
+            Vec::from([0; 10]),
             report.leader_encrypted_input_share().clone(),
             report.helper_encrypted_input_share().clone(),
         );
