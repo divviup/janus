@@ -1034,10 +1034,9 @@ mod tests {
         problem_type::DapProblemType,
         query_type::{FixedSize, TimeInterval},
         AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
-        AggregationJobStep, Duration, Extension, ExtensionType, FixedSizeQuery, HpkeConfig,
-        InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare, PrepareContinue,
-        PrepareError, PrepareInit, PrepareResp, PrepareStepResult, Query, ReportIdChecksum,
-        ReportMetadata, ReportShare, Role, TaskId, Time,
+        AggregationJobStep, Duration, Extension, ExtensionType, FixedSizeQuery, Interval,
+        PartialBatchSelector, PrepareContinue, PrepareError, PrepareInit, PrepareResp,
+        PrepareStepResult, Query, ReportIdChecksum, ReportMetadata, ReportShare, Role, Time,
     };
     use mockito::ServerGuard;
     use prio::{
@@ -3579,14 +3578,12 @@ mod tests {
         );
 
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let report = generate_report::<VERIFY_KEY_LENGTH, Prio3Count>(
+        let report = LeaderStoredReport::generate(
             *task.id(),
             report_metadata,
             helper_hpke_keypair.config(),
-            transcript.public_share,
             Vec::new(),
-            &transcript.leader_input_share,
-            &transcript.helper_input_share,
+            &transcript,
         );
         let aggregation_job_id = random();
 
@@ -3599,15 +3596,7 @@ mod tests {
             AggregationJobState::InProgress,
             AggregationJobStep::from(0),
         );
-        let report_aggregation = ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
-            *task.id(),
-            aggregation_job_id,
-            *report.metadata().id(),
-            *report.metadata().time(),
-            0,
-            None,
-            ReportAggregationState::Start,
-        );
+        let report_aggregation = report.as_start_leader_report_aggregation(aggregation_job_id, 0);
 
         let lease = datastore
             .run_unnamed_tx(|tx| {

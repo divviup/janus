@@ -820,7 +820,7 @@ mod tests {
         report_id::ReportIdChecksumExt,
         test_util::{
             dummy_vdaf::{self, AggregationParam, OutputShare},
-            install_test_trace_subscriber, run_vdaf,
+            run_vdaf,
             runtime::TestRuntime,
         },
         time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},

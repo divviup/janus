@@ -119,9 +119,8 @@ impl ProblemDetailsConnExt for Conn {
 #[cfg(test)]
 mod tests {
     use crate::aggregator::{
-        error::{BatchMismatch, ReportRejectedReason},
         error::{BatchMismatch, ReportRejection, ReportRejectionReason},
-        send_request_to_helper, send_request_to_helper, Error, Error, RequestBody,
+        send_request_to_helper, Error, RequestBody,
     };
     use assert_matches::assert_matches;
     use futures::future::join_all;
