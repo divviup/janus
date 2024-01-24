@@ -1171,21 +1171,28 @@ impl<C: Clock> Transaction<'_, C> {
         ))
     }
 
-    /// `get_unaggregated_client_report_ids_for_task` returns some report IDs corresponding to
-    /// unaggregated client reports for the task identified by the given task ID. Returned client
-    /// reports are marked as aggregation-started: the caller must either create an aggregation job
-    /// with, or call `mark_reports_unaggregated` on each returned report as part of the same
-    /// transaction.
+    /// `get_unaggregated_client_reports_for_task` returns some unaggregated client reports for the
+    /// task identified by the given task ID. Returned reports are marked as aggregation-started:
+    /// the caller must either create an aggregation job with, or call `mark_reports_unaggregated`
+    /// on each returned report as part of the same transaction.
     ///
     /// This should only be used with VDAFs that have an aggregation parameter of the unit type. It
     /// relies on this assumption to find relevant reports without consulting collection jobs. For
     /// VDAFs that do have a different aggregation parameter,
     /// `get_unaggregated_client_report_ids_by_collect_for_task` should be used instead.
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_unaggregated_client_report_ids_for_task(
+    pub async fn get_unaggregated_client_reports_for_task<
+        const SEED_SIZE: usize,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+    >(
         &self,
+        vdaf: &A,
         task_id: &TaskId,
-    ) -> Result<Vec<(ReportId, Time)>, Error> {
+    ) -> Result<Vec<LeaderStoredReport<SEED_SIZE, A>>, Error>
+    where
+        A::InputShare: PartialEq,
+        A::PublicShare: PartialEq,
+    {
         // TODO(#269): allow the number of returned results to be controlled?
         let stmt = self
             .prepare_cached(
@@ -1202,7 +1209,8 @@ impl<C: Clock> Transaction<'_, C> {
                 UPDATE client_reports SET
                     aggregation_started = TRUE, updated_at = $3, updated_by = $4
                 WHERE id IN (SELECT id FROM unaggregated_reports)
-                RETURNING report_id, client_timestamp",
+                RETURNING report_id, client_timestamp, extensions, public_share, leader_input_share,
+                          helper_encrypted_input_share",
             )
             .await?;
         let rows = self
@@ -1219,9 +1227,12 @@ impl<C: Clock> Transaction<'_, C> {
 
         rows.into_iter()
             .map(|row| {
-                let report_id = row.get_bytea_and_convert::<ReportId>("report_id")?;
-                let time = Time::from_naive_date_time(&row.get("client_timestamp"));
-                Ok((report_id, time))
+                Self::client_report_from_row(
+                    vdaf,
+                    *task_id,
+                    row.get_bytea_and_convert::<ReportId>("report_id")?,
+                    row,
+                )
             })
             .collect::<Result<Vec<_>, Error>>()
     }
@@ -2007,9 +2018,13 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT
                     report_aggregations.client_timestamp, report_aggregations.ord,
-                    report_aggregations.state, report_aggregations.helper_prep_state,
-                    report_aggregations.leader_prep_transition, report_aggregations.error_code,
-                    report_aggregations.last_prep_resp
+                    report_aggregations.last_prep_resp,
+                    report_aggregations.state,
+                    report_aggregations.public_share, report_aggregations.leader_extensions,
+                    report_aggregations.leader_input_share,
+                    report_aggregations.helper_encrypted_input_share,
+                    report_aggregations.leader_prep_transition,
+                    report_aggregations.helper_prep_state, report_aggregations.error_code
                 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id AND tasks.id = report_aggregations.task_id
@@ -2062,9 +2077,13 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT
                     report_aggregations.client_report_id, report_aggregations.client_timestamp,
-                    report_aggregations.ord, report_aggregations.state,
-                    report_aggregations.helper_prep_state, report_aggregations.leader_prep_transition,
-                    report_aggregations.error_code, report_aggregations.last_prep_resp
+                    report_aggregations.ord, report_aggregations.last_prep_resp,
+                    report_aggregations.state, report_aggregations.public_share,
+                    report_aggregations.leader_extensions, report_aggregations.leader_input_share,
+                    report_aggregations.helper_encrypted_input_share,
+                    report_aggregations.leader_prep_transition,
+                    report_aggregations.helper_prep_state,
+                    report_aggregations.error_code
                 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id AND tasks.id = report_aggregations.task_id
@@ -2117,9 +2136,12 @@ impl<C: Clock> Transaction<'_, C> {
                 "SELECT
                     aggregation_jobs.aggregation_job_id, report_aggregations.client_report_id,
                     report_aggregations.client_timestamp, report_aggregations.ord,
-                    report_aggregations.state, report_aggregations.helper_prep_state,
-                    report_aggregations.leader_prep_transition, report_aggregations.error_code,
-                    report_aggregations.last_prep_resp
+                    report_aggregations.last_prep_resp, report_aggregations.state,
+                    report_aggregations.public_share, report_aggregations.leader_extensions,
+                    report_aggregations.leader_input_share,
+                    report_aggregations.helper_encrypted_input_share,
+                    report_aggregations.leader_prep_transition,
+                    report_aggregations.helper_prep_state, report_aggregations.error_code
                 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id AND tasks.id = report_aggregations.task_id
@@ -2166,24 +2188,63 @@ impl<C: Clock> Transaction<'_, C> {
         let error_code: Option<i16> = row.get("error_code");
         let last_prep_resp_bytes: Option<Vec<u8>> = row.get("last_prep_resp");
 
-        let error_code = match error_code {
-            Some(c) => {
-                let c: u8 = c.try_into().map_err(|err| {
-                    Error::DbState(format!("couldn't convert error_code value: {err}"))
-                })?;
-                Some(c.try_into().map_err(|err| {
-                    Error::DbState(format!("couldn't convert error_code value: {err}"))
-                })?)
-            }
-            None => None,
-        };
-
         let last_prep_resp = last_prep_resp_bytes
             .map(|bytes| PrepareResp::get_decoded(&bytes))
             .transpose()?;
 
         let agg_state = match state {
-            ReportAggregationStateCode::Start => ReportAggregationState::Start,
+            ReportAggregationStateCode::Start => {
+                let public_share_bytes =
+                    row.get::<_, Option<Vec<u8>>>("public_share")
+                        .ok_or_else(|| {
+                            Error::DbState(
+                                "report aggregation in state START but public_share is NULL"
+                                    .to_string(),
+                            )
+                        })?;
+                let leader_extensions_bytes = row
+                    .get::<_, Option<Vec<u8>>>("leader_extensions")
+                    .ok_or_else(|| {
+                        Error::DbState(
+                            "report aggregation in state START but leader_extensions is NULL"
+                                .to_string(),
+                        )
+                    })?;
+                let leader_input_share_bytes = row
+                    .get::<_, Option<Vec<u8>>>("leader_input_share")
+                    .ok_or_else(|| {
+                        Error::DbState(
+                            "report aggregation in state START but leader_input_share is NULL"
+                                .to_string(),
+                        )
+                    })?;
+                let helper_encrypted_input_share_bytes =
+                    row.get::<_, Option<Vec<u8>>>("helper_encrypted_input_share")
+                        .ok_or_else(|| {
+                            Error::DbState(
+                            "report aggregation in state START but helper_encrypted_input_share is NULL"
+                                .to_string(),
+                        )
+                        })?;
+
+                let public_share =
+                    A::PublicShare::get_decoded_with_param(vdaf, &public_share_bytes)?;
+                let leader_extensions =
+                    decode_u16_items(&(), &mut Cursor::new(&leader_extensions_bytes))?;
+                let leader_input_share = A::InputShare::get_decoded_with_param(
+                    &(vdaf, Role::Leader.index().unwrap()),
+                    &leader_input_share_bytes,
+                )?;
+                let helper_encrypted_input_share =
+                    HpkeCiphertext::get_decoded(&helper_encrypted_input_share_bytes)?;
+
+                ReportAggregationState::StartLeader {
+                    public_share,
+                    leader_extensions,
+                    leader_input_share,
+                    helper_encrypted_input_share,
+                }
+            }
 
             ReportAggregationStateCode::Waiting => {
                 match role {
@@ -2201,7 +2262,9 @@ impl<C: Clock> Transaction<'_, C> {
                             &leader_prep_transition_bytes,
                         )?;
 
-                        ReportAggregationState::WaitingLeader(ping_pong_transition)
+                        ReportAggregationState::WaitingLeader {
+                            transition: ping_pong_transition,
+                        }
                     }
                     Role::Helper => {
                         let helper_prep_state_bytes = row
@@ -2217,7 +2280,7 @@ impl<C: Clock> Transaction<'_, C> {
                             &helper_prep_state_bytes,
                         )?;
 
-                        ReportAggregationState::WaitingHelper(prepare_state)
+                        ReportAggregationState::WaitingHelper { prepare_state }
                     }
                     _ => panic!("unexpected role"),
                 }
@@ -2226,11 +2289,24 @@ impl<C: Clock> Transaction<'_, C> {
             ReportAggregationStateCode::Finished => ReportAggregationState::Finished,
 
             ReportAggregationStateCode::Failed => {
-                ReportAggregationState::Failed(error_code.ok_or_else(|| {
+                let prepare_error = match error_code {
+                    Some(c) => {
+                        let c: u8 = c.try_into().map_err(|err| {
+                            Error::DbState(format!("couldn't convert error_code value: {err}"))
+                        })?;
+                        Some(c.try_into().map_err(|err| {
+                            Error::DbState(format!("couldn't convert error_code value: {err}"))
+                        })?)
+                    }
+                    None => None,
+                }
+                .ok_or_else(|| {
                     Error::DbState(
                         "report aggregation in state FAILED but error_code is NULL".to_string(),
                     )
-                })?)
+                })?;
+
+                ReportAggregationState::Failed { prepare_error }
             }
         };
 
@@ -2266,15 +2342,16 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "INSERT INTO report_aggregations
-                    (task_id, aggregation_job_id, client_report_id, client_timestamp, ord, state,
-                    helper_prep_state, leader_prep_transition, error_code, last_prep_resp,
-                    created_at, updated_at, updated_by)
-                SELECT tasks.id, aggregation_jobs.id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+                    (task_id, aggregation_job_id, client_report_id, client_timestamp, ord,
+                    last_prep_resp, state, public_share, leader_extensions, leader_input_share,
+                    helper_encrypted_input_share, leader_prep_transition, helper_prep_state,
+                    error_code, created_at, updated_at, updated_by)
+                SELECT tasks.id, aggregation_jobs.id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
                 FROM aggregation_jobs
                 JOIN tasks ON tasks.id = aggregation_jobs.task_id
                 WHERE tasks.task_id = $1
                   AND aggregation_job_id = $2
-                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($14::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($18::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
                 ON CONFLICT DO NOTHING",
             )
             .await?;
@@ -2286,11 +2363,16 @@ impl<C: Clock> Transaction<'_, C> {
                 /* client_report_id */ &report_aggregation.report_id().as_ref(),
                 /* client_timestamp */ &report_aggregation.time().as_naive_date_time()?,
                 /* ord */ &TryInto::<i64>::try_into(report_aggregation.ord())?,
-                /* state */ &report_aggregation.state().state_code(),
-                /* helper_prep_state */ &encoded_state_values.helper_prep_state,
-                /* leader_prep_transition */ &encoded_state_values.leader_prep_transition,
-                /* error_code */ &encoded_state_values.prepare_err,
                 /* last_prep_resp */ &encoded_last_prep_resp,
+                /* state */ &report_aggregation.state().state_code(),
+                /* public_share */ &encoded_state_values.public_share,
+                /* leader_extensions */ &encoded_state_values.leader_extensions,
+                /* leader_input_share */ &encoded_state_values.leader_input_share,
+                /* helper_encrypted_input_share */
+                &encoded_state_values.helper_encrypted_input_share,
+                /* leader_prep_transition */ &encoded_state_values.leader_prep_transition,
+                /* helper_prep_state */ &encoded_state_values.helper_prep_state,
+                /* error_code */ &encoded_state_values.prepare_error,
                 /* created_at */ &self.clock.now().as_naive_date_time()?,
                 /* updated_at */ &self.clock.now().as_naive_date_time()?,
                 /* updated_by */ &self.name,
@@ -2322,31 +2404,37 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "UPDATE report_aggregations
                 SET
-                    state = $1, helper_prep_state = $2, leader_prep_transition = $3,
-                    error_code = $4, last_prep_resp = $5, updated_at = $6, updated_by = $7
+                    last_prep_resp = $1, state = $2, public_share = $3, leader_extensions = $4,
+                    leader_input_share = $5, helper_encrypted_input_share = $6,
+                    leader_prep_transition = $7, helper_prep_state = $8, error_code = $9,
+                    updated_at = $10, updated_by = $11
                 FROM aggregation_jobs, tasks
                 WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
                   AND report_aggregations.task_id = tasks.id
                   AND aggregation_jobs.task_id = tasks.id
-                  AND aggregation_jobs.aggregation_job_id = $8
-                  AND tasks.task_id = $9
-                  AND report_aggregations.client_report_id = $10
-                  AND report_aggregations.client_timestamp = $11
-                  AND report_aggregations.ord = $12
-                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($13::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
+                  AND aggregation_jobs.aggregation_job_id = $12
+                  AND tasks.task_id = $13
+                  AND report_aggregations.client_report_id = $14
+                  AND report_aggregations.client_timestamp = $15
+                  AND report_aggregations.ord = $16
+                  AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($17::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         check_single_row_mutation(
             self.execute(
                 &stmt,
                 &[
-                    /* state */
-                    &report_aggregation.state().state_code(),
-                    /* helper_prep_state */ &encoded_state_values.helper_prep_state,
+                    /* last_prep_resp */ &encoded_last_prep_resp,
+                    /* state */ &report_aggregation.state().state_code(),
+                    /* public_share */ &encoded_state_values.public_share,
+                    /* leader_extensions */ &encoded_state_values.leader_extensions,
+                    /* leader_input_share */ &encoded_state_values.leader_input_share,
+                    /* helper_encrypted_input_share */
+                    &encoded_state_values.helper_encrypted_input_share,
                     /* leader_prep_transition */
                     &encoded_state_values.leader_prep_transition,
-                    /* error_code */ &encoded_state_values.prepare_err,
-                    /* last_prep_resp */ &encoded_last_prep_resp,
+                    /* helper_prep_state */ &encoded_state_values.helper_prep_state,
+                    /* error_code */ &encoded_state_values.prepare_error,
                     /* updated_at */ &self.clock.now().as_naive_date_time()?,
                     /* updated_by */ &self.name,
                     /* aggregation_job_id */

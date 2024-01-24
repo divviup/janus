@@ -71,10 +71,15 @@ impl VdafOps {
                 if report_agg.report_id() != prep_step.report_id() {
                     // This report was omitted by the leader because of a prior failure. Note that
                     // the report was dropped (if it's not already in an error state) and continue.
-                    if matches!(report_agg.state(), ReportAggregationState::WaitingHelper(_)) {
+                    if matches!(
+                        report_agg.state(),
+                        ReportAggregationState::WaitingHelper { .. }
+                    ) {
                         *report_agg = report_agg
                             .clone()
-                            .with_state(ReportAggregationState::Failed(PrepareError::ReportDropped))
+                            .with_state(ReportAggregationState::Failed {
+                                prepare_error: PrepareError::ReportDropped,
+                            })
                             .with_last_prep_resp(None);
                     }
                     continue;
@@ -96,7 +101,9 @@ impl VdafOps {
             if !conflicting_aggregate_share_jobs.is_empty() {
                 *report_aggregation = report_aggregation
                     .clone()
-                    .with_state(ReportAggregationState::Failed(PrepareError::BatchCollected))
+                    .with_state(ReportAggregationState::Failed {
+                        prepare_error: PrepareError::BatchCollected,
+                    })
                     .with_last_prep_resp(Some(PrepareResp::new(
                         *prep_step.report_id(),
                         PrepareStepResult::Reject(PrepareError::BatchCollected),
@@ -105,8 +112,8 @@ impl VdafOps {
             }
 
             let prep_state = match report_aggregation.state() {
-                ReportAggregationState::WaitingHelper(prep_state) => prep_state,
-                ReportAggregationState::WaitingLeader(_) => {
+                ReportAggregationState::WaitingHelper { prepare_state } => prepare_state,
+                ReportAggregationState::WaitingLeader { .. } => {
                     return Err(datastore::Error::User(
                         Error::Internal(
                             "helper encountered unexpected ReportAggregationState::WaitingLeader"
@@ -143,8 +150,8 @@ impl VdafOps {
                                     let (report_aggregation_state, output_share) = match new_state {
                                         // Helper did not finish. Store the new state and await the
                                         // next message from the Leader to advance preparation.
-                                        PingPongState::Continued(prep_state) => (
-                                            ReportAggregationState::WaitingHelper(prep_state),
+                                        PingPongState::Continued(prepare_state) => (
+                                            ReportAggregationState::WaitingHelper { prepare_state },
                                             None,
                                         ),
                                         // Helper finished. Commit the output share.
@@ -179,7 +186,7 @@ impl VdafOps {
                     })
                     .unwrap_or_else(|prepare_error| {
                         (
-                            ReportAggregationState::Failed(prepare_error),
+                            ReportAggregationState::Failed { prepare_error },
                             PrepareStepResult::Reject(prepare_error),
                             None,
                         )
@@ -205,10 +212,15 @@ impl VdafOps {
         for report_agg in report_aggregations_iter {
             // This report was omitted by the leader because of a prior failure. Note that the
             // report was dropped (if it's not already in an error state) and continue.
-            if matches!(report_agg.state(), ReportAggregationState::WaitingHelper(_)) {
+            if matches!(
+                report_agg.state(),
+                ReportAggregationState::WaitingHelper { .. }
+            ) {
                 *report_agg = report_agg
                     .clone()
-                    .with_state(ReportAggregationState::Failed(PrepareError::ReportDropped))
+                    .with_state(ReportAggregationState::Failed {
+                        prepare_error: PrepareError::ReportDropped,
+                    })
                     .with_last_prep_resp(None);
             }
         }
@@ -220,7 +232,9 @@ impl VdafOps {
             if unwritable_reports.contains(report_aggregation.report_id()) {
                 *report_aggregation = report_aggregation
                     .clone()
-                    .with_state(ReportAggregationState::Failed(PrepareError::BatchCollected))
+                    .with_state(ReportAggregationState::Failed {
+                        prepare_error: PrepareError::BatchCollected,
+                    })
                     .with_last_prep_resp(Some(PrepareResp::new(
                         *report_aggregation.report_id(),
                         PrepareStepResult::Reject(PrepareError::BatchCollected),
@@ -502,11 +516,11 @@ mod tests {
                             *prepare_init.report_share().metadata().time(),
                             0,
                             None,
-                            ReportAggregationState::WaitingHelper(
-                                transcript.helper_prepare_transitions[0]
+                            ReportAggregationState::WaitingHelper {
+                                prepare_state: transcript.helper_prepare_transitions[0]
                                     .prepare_state()
                                     .clone(),
-                            ),
+                            },
                         ),
                     )
                     .await
