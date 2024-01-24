@@ -187,7 +187,7 @@ pub struct Aggregator<C: Clock> {
 }
 
 /// Config represents a configuration for an Aggregator.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Config {
     /// Defines the maximum size of a batch of uploaded reports which will be written in a single
     /// transaction.
@@ -1411,7 +1411,7 @@ impl VdafOps {
             let report_time = *report.metadata().time();
             async move {
                 let rejection = ReportRejection::new(*task.id(), report_id, report_time, reason);
-                report_writer.write_report(Err(rejection)).await?;
+                report_writer.write_rejection(rejection).await;
                 Ok::<_, Arc<Error>>(Arc::new(Error::ReportRejected(rejection)))
             }
         };
@@ -1562,9 +1562,9 @@ impl VdafOps {
         );
 
         report_writer
-            .write_report(Ok(Box::new(WritableReport::<SEED_SIZE, Q, A>::new(
+            .write_report(Box::new(WritableReport::<SEED_SIZE, Q, A>::new(
                 vdaf, report,
-            ))))
+            )))
             .await
     }
 }
@@ -3305,6 +3305,7 @@ mod tests {
     };
     use rand::random;
     use std::{collections::HashSet, iter, sync::Arc, time::Duration as StdDuration};
+    use tokio::time::sleep;
 
     pub(super) fn create_report_custom(
         task: &AggregatorTask,
@@ -3526,8 +3527,9 @@ mod tests {
     async fn upload_wrong_hpke_config_id() {
         install_test_trace_subscriber();
 
+        let config = default_aggregator_config();
         let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test(default_aggregator_config()).await;
+            setup_upload_test(config).await;
         let leader_task = task.leader_view().unwrap();
         let report = create_report(&leader_task, clock.now());
 
@@ -3562,6 +3564,9 @@ mod tests {
                 assert_eq!(id, &unused_hpke_config_id);
             })
         });
+
+        // Wait out the batch write delay so the report status can be flushed to the DB.
+        sleep(config.max_upload_batch_write_delay * 2).await;
 
         let got_counters = datastore
             .run_unnamed_tx(|tx| {
@@ -3620,9 +3625,9 @@ mod tests {
     #[tokio::test]
     async fn upload_report_in_the_future_past_clock_skew() {
         install_test_trace_subscriber();
-
+        let config = default_aggregator_config();
         let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test(default_aggregator_config()).await;
+            setup_upload_test(config).await;
         let report = create_report(
             &task.leader_view().unwrap(),
             clock
@@ -3644,6 +3649,9 @@ mod tests {
             assert_matches!(rejection.reason(), ReportRejectionReason::TooEarly);
         });
 
+        // Wait out the batch write delay so the report status can be flushed to the DB.
+        sleep(config.max_upload_batch_write_delay * 2).await;
+
         let got_counters = datastore
             .run_unnamed_tx(|tx| {
                 let task_id = *task.id();
@@ -3661,8 +3669,9 @@ mod tests {
     async fn upload_report_for_collected_batch() {
         install_test_trace_subscriber();
 
+        let config = default_aggregator_config();
         let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test(default_aggregator_config()).await;
+            setup_upload_test(config).await;
         let report = create_report(&task.leader_view().unwrap(), clock.now());
 
         // Insert a collection job for the batch interval including our report.
@@ -3711,6 +3720,9 @@ mod tests {
                 assert_matches!(rejection.reason(), ReportRejectionReason::IntervalCollected);
             }
         );
+
+        // Wait out the batch write delay so the report status can be flushed to the DB.
+        sleep(config.max_upload_batch_write_delay * 2).await;
 
         let got_counters = datastore
             .run_unnamed_tx(|tx| {
@@ -3805,9 +3817,9 @@ mod tests {
     #[tokio::test]
     async fn upload_report_task_expired() {
         install_test_trace_subscriber();
-
+        let config = default_aggregator_config();
         let (_, aggregator, clock, _, datastore, _ephemeral_datastore) =
-            setup_upload_test(default_aggregator_config()).await;
+            setup_upload_test(config).await;
 
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
             .with_task_expiration(Some(clock.now()))
@@ -3835,6 +3847,9 @@ mod tests {
             }
         );
 
+        // Wait out the batch write delay so the report status can be flushed to the DB.
+        sleep(config.max_upload_batch_write_delay * 2).await;
+
         let got_counters = datastore
             .run_unnamed_tx(|tx| {
                 let task_id = *task.id();
@@ -3851,9 +3866,9 @@ mod tests {
     #[tokio::test]
     async fn upload_report_report_expired() {
         install_test_trace_subscriber();
-
+        let config = default_aggregator_config();
         let (_, aggregator, clock, _, datastore, _ephemeral_datastore) =
-            setup_upload_test(default_aggregator_config()).await;
+            setup_upload_test(config).await;
 
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
             .with_report_expiry_age(Some(Duration::from_seconds(60)))
@@ -3882,6 +3897,9 @@ mod tests {
             }
         );
 
+        // Wait out the batch write delay so the report status can be flushed to the DB.
+        sleep(config.max_upload_batch_write_delay * 2).await;
+
         let got_counters = datastore
             .run_unnamed_tx(|tx| {
                 let task_id = *task.id();
@@ -3898,8 +3916,9 @@ mod tests {
     #[tokio::test]
     async fn upload_report_faulty_encryption() {
         install_test_trace_subscriber();
+        let config = default_aggregator_config();
         let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test(default_aggregator_config()).await;
+            setup_upload_test(config).await;
 
         let task = task.leader_view().unwrap();
 
@@ -3928,6 +3947,9 @@ mod tests {
             }
         );
 
+        // Wait out the batch write delay so the report status can be flushed to the DB.
+        sleep(config.max_upload_batch_write_delay * 2).await;
+
         let got_counters = datastore
             .run_unnamed_tx(|tx| {
                 let task_id = *task.id();
@@ -3944,8 +3966,9 @@ mod tests {
     #[tokio::test]
     async fn upload_report_public_share_decode_failure() {
         install_test_trace_subscriber();
+        let config = default_aggregator_config();
         let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test(default_aggregator_config()).await;
+            setup_upload_test(config).await;
 
         let task = task.leader_view().unwrap();
 
@@ -3973,6 +3996,9 @@ mod tests {
             }
         );
 
+        // Wait out the batch write delay so the report status can be flushed to the DB.
+        sleep(config.max_upload_batch_write_delay * 2).await;
+
         let got_counters = datastore
             .run_unnamed_tx(|tx| {
                 let task_id = *task.id();
@@ -3989,8 +4015,9 @@ mod tests {
     #[tokio::test]
     async fn upload_report_leader_input_share_decode_failure() {
         install_test_trace_subscriber();
+        let config = default_aggregator_config();
         let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test(default_aggregator_config()).await;
+            setup_upload_test(config).await;
 
         let task = task.leader_view().unwrap();
 
@@ -4031,6 +4058,9 @@ mod tests {
                 assert_matches!(rejection.reason(), ReportRejectionReason::DecodeFailure);
             }
         );
+
+        // Wait out the batch write delay so the report status can be flushed to the DB.
+        sleep(config.max_upload_batch_write_delay * 2).await;
 
         let got_counters = datastore
             .run_unnamed_tx(|tx| {

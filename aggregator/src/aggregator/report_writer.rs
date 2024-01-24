@@ -24,8 +24,8 @@ type ReportResult<C> = Result<Box<dyn ReportWriter<C>>, ReportRejection>;
 
 type ResultSender = oneshot::Sender<Result<(), Arc<Error>>>;
 
-type ReportWriteBatcherSender<C> = mpsc::Sender<(ReportResult<C>, ResultSender)>;
-type ReportWriteBatcherReceiver<C> = mpsc::Receiver<(ReportResult<C>, ResultSender)>;
+type ReportWriteBatcherSender<C> = mpsc::Sender<(ReportResult<C>, Option<ResultSender>)>;
+type ReportWriteBatcherReceiver<C> = mpsc::Receiver<(ReportResult<C>, Option<ResultSender>)>;
 
 pub struct ReportWriteBatcher<C: Clock> {
     report_tx: ReportWriteBatcherSender<C>,
@@ -54,15 +54,36 @@ impl<C: Clock> ReportWriteBatcher<C> {
         Self { report_tx }
     }
 
-    pub async fn write_report(&self, report_result: ReportResult<C>) -> Result<(), Arc<Error>> {
+    /// Save a [`ReportRejection`] to the database.
+    ///
+    /// This function does not wait for the result of the batch write, because we do not want
+    /// clients to retry bad reports, even due to server error.
+    pub async fn write_rejection(&self, report_rejection: ReportRejection) {
+        // Unwrap safety: report_rx is not dropped until ReportWriteBatcher is dropped.
+        self.report_tx
+            .send((Err(report_rejection), None))
+            .await
+            .unwrap();
+    }
+
+    /// Save a report to the database.
+    ///
+    /// This function waits for and returns the result of the batch write.
+    pub async fn write_report(
+        &self,
+        report_writer: Box<dyn ReportWriter<C>>,
+    ) -> Result<(), Arc<Error>> {
         // Send report to be written.
         // Unwrap safety: report_rx is not dropped until ReportWriteBatcher is dropped.
-        let (rslt_tx, rslt_rx) = oneshot::channel();
-        self.report_tx.send((report_result, rslt_tx)).await.unwrap();
+        let (result_tx, result_rx) = oneshot::channel();
+        self.report_tx
+            .send((Ok(report_writer), Some(result_tx)))
+            .await
+            .unwrap();
 
         // Await the result of writing the report.
         // Unwrap safety: rslt_tx is always sent on before being dropped, and is never closed.
-        rslt_rx.await.unwrap()
+        result_rx.await.unwrap()
     }
 
     #[tracing::instrument(name = "ReportWriteBatcher::run_upload_batcher", skip(ds, report_rx))]
@@ -121,7 +142,7 @@ impl<C: Clock> ReportWriteBatcher<C> {
     async fn write_batch(
         ds: Arc<Datastore<C>>,
         counter_shard_count: u64,
-        mut report_results: Vec<(ReportResult<C>, ResultSender)>,
+        mut report_results: Vec<(ReportResult<C>, Option<ResultSender>)>,
     ) {
         let ord = thread_rng().gen_range(0..counter_shard_count);
 
@@ -133,10 +154,10 @@ impl<C: Clock> ReportWriteBatcher<C> {
         });
 
         // Run all report writes concurrently.
-        let (report_results, result_senders): (Vec<ReportResult<C>>, Vec<ResultSender>) =
+        let (report_results, result_senders): (Vec<ReportResult<C>>, Vec<Option<ResultSender>>) =
             report_results.into_iter().unzip();
         let report_results = Arc::new(report_results);
-        let rslts = ds
+        let results = ds
             .run_tx("upload", |tx| {
                 let report_results = Arc::clone(&report_results);
                 Box::pin(async move {
@@ -161,28 +182,30 @@ impl<C: Clock> ReportWriteBatcher<C> {
             })
             .await;
 
-        match rslts {
-            Ok(rslts) => {
+        match results {
+            Ok(results) => {
                 // Individual, per-request results.
-                assert_eq!(result_senders.len(), rslts.len()); // sanity check: should be guaranteed.
-                for (rslt_tx, rslt) in result_senders.into_iter().zip(rslts.into_iter()) {
-                    if rslt_tx.send(rslt.map_err(Arc::new)).is_err() {
-                        debug!(
-                            "ReportWriter couldn't send result to requester (request cancelled?)"
-                        );
+                assert_eq!(result_senders.len(), results.len()); // sanity check: should be guaranteed.
+                for (result_tx, result) in result_senders.into_iter().zip(results.into_iter()) {
+                    if let Some(result_tx) = result_tx {
+                        if result_tx.send(result.map_err(Arc::new)).is_err() {
+                            debug!(
+                                "ReportWriter couldn't send result to requester (request cancelled?)"
+                            );
+                        }
                     }
                 }
             }
             Err(err) => {
                 // Total-transaction failures are given to all waiting report uploaders.
                 let err = Arc::new(Error::from(err));
-                for rslt_tx in result_senders.into_iter() {
-                    if rslt_tx.send(Err(Arc::clone(&err))).is_err() {
+                result_senders.into_iter().flatten().for_each(|result_tx| {
+                    if result_tx.send(Err(Arc::clone(&err))).is_err() {
                         debug!(
                             "ReportWriter couldn't send result to requester (request cancelled?)"
                         );
                     };
-                }
+                })
             }
         };
     }
