@@ -399,7 +399,7 @@ mod tests {
         test_util::noop_meter,
     };
     use janus_core::{
-        test_util::install_test_trace_subscriber,
+        test_util::{install_test_trace_subscriber, runtime::TestRuntime},
         time::{IntervalExt, MockClock},
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
     };
@@ -530,6 +530,7 @@ mod tests {
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock,
+            TestRuntime::default(),
             &meter,
             default_aggregator_config(),
         )

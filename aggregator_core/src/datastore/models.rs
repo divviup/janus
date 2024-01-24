@@ -1353,7 +1353,6 @@ pub enum CollectionJobStateCode {
 
 /// AggregateShareJob represents a row in the `aggregate_share_jobs` table, used by helpers to
 /// store the results of handling an AggregateShareReq from the leader.
-
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
 pub struct AggregateShareJob<
@@ -1539,7 +1538,6 @@ pub enum BatchState {
 }
 
 /// Represents the state of a given batch (and aggregation parameter).
-
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
 pub struct Batch<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> {
@@ -1845,5 +1843,87 @@ impl GlobalHpkeKeypair {
 
     pub fn updated_at(&self) -> &Time {
         &self.updated_at
+    }
+}
+
+/// Per-task counts of uploaded reports and upload attempts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TaskUploadCounter {
+    pub(crate) task_id: TaskId,
+
+    pub(crate) interval_collected: u64,
+    pub(crate) report_decode_failure: u64,
+    pub(crate) report_decrypt_failure: u64,
+    pub(crate) report_expired: u64,
+    pub(crate) report_outdated_key: u64,
+    pub(crate) report_success: u64,
+    pub(crate) report_too_early: u64,
+    pub(crate) task_expired: u64,
+}
+
+impl TaskUploadCounter {
+    /// Create a new [`TaskUploadCounter`].
+    ///
+    /// This is locked behind test-util since production code shouldn't need to manually create a
+    /// counter.
+    #[allow(clippy::too_many_arguments)]
+    #[cfg(feature = "test-util")]
+    pub fn new(
+        task_id: TaskId,
+        interval_collected: u64,
+        report_decode_failure: u64,
+        report_decrypt_failure: u64,
+        report_expired: u64,
+        report_outdated_key: u64,
+        report_success: u64,
+        report_too_early: u64,
+        task_expired: u64,
+    ) -> Self {
+        Self {
+            task_id,
+            interval_collected,
+            report_decode_failure,
+            report_decrypt_failure,
+            report_expired,
+            report_outdated_key,
+            report_success,
+            report_too_early,
+            task_expired,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskUploadIncrementor {
+    /// A report fell into a time interval that has already been collected.
+    IntervalCollected,
+    /// A report could not be decoded.
+    ReportDecodeFailure,
+    /// A report could not be decrypted.
+    ReportDecryptFailure,
+    /// A report contains a timestamp too far in the past.
+    ReportExpired,
+    /// A report is encrypted with an old or unknown HPKE key.
+    ReportOutdatedKey,
+    /// A report was successfully uploaded.
+    ReportSuccess,
+    /// A report contains a timestamp too far in the future.
+    ReportTooEarly,
+    /// A report was submitted to the task after the task's expiry.
+    TaskExpired,
+}
+
+impl TaskUploadIncrementor {
+    pub(crate) fn column(&self) -> &'static str {
+        match self {
+            TaskUploadIncrementor::IntervalCollected => "interval_collected",
+            TaskUploadIncrementor::ReportDecodeFailure => "report_decode_failure",
+            TaskUploadIncrementor::ReportDecryptFailure => "report_decrypt_failure",
+            TaskUploadIncrementor::ReportExpired => "report_expired",
+            TaskUploadIncrementor::ReportOutdatedKey => "report_outdated_key",
+            TaskUploadIncrementor::ReportSuccess => "report_success",
+            TaskUploadIncrementor::ReportTooEarly => "report_too_early",
+            TaskUploadIncrementor::TaskExpired => "task_expired",
+        }
     }
 }
