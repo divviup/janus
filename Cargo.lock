@@ -5308,9 +5308,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-client"
-version = "0.5.1"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2696ed59c1ad11d2593d7e1ec064077350acd9bdb23baecee4fa28e856fe9244"
+checksum = "f29d743ad54935b37a883cddc1569862cbe68cf8c0a0feba6d36df2cf0547f0a"
 dependencies = [
  "crossbeam-queue",
  "dashmap",
@@ -5340,9 +5340,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-http"
-version = "0.3.11"
+version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9b5f80f30b6958cff1e0b5b8587c6e8d1fe2f7e6ba656ea1ef115f745f9106d"
+checksum = "098325950afcdccb34312ec0804f31f33da3b7a8f08994d50792182a99f264fd"
 dependencies = [
  "encoding_rs",
  "futures-lite 2.2.0",
