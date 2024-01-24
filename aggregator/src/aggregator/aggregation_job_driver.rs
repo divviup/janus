@@ -871,7 +871,7 @@ impl AggregationJobDriver {
             &self.http_client,
             Method::DELETE,
             aggregation_job_uri?.ok_or_else(|| {
-                Error::InvalidConfiguration("task is not leader and has no aggregation job URI")
+                Error::InvalidConfiguration("task is leader and has no aggregation job URI")
             })?,
             AGGREGATION_JOB_ROUTE,
             None as Option<RequestBody<u8>>,
