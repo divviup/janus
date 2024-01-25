@@ -2656,8 +2656,7 @@ mod tests {
         // Verify that all reports we saw a report aggregation for are scrubbed.
         let all_seen_report_ids: HashSet<_> = agg_jobs_and_report_ids
             .iter()
-            .map(|(_, report_ids)| report_ids.iter())
-            .flatten()
+            .flat_map(|(_, report_ids)| report_ids)
             .collect();
         for report_id in &all_seen_report_ids {
             tx.verify_client_report_scrubbed(task_id, report_id).await;
