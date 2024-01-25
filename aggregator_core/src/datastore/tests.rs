@@ -660,29 +660,7 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
         Box::pin(async move {
             tx.scrub_client_report(&task_id, &report_id).await.unwrap();
 
-            let row = tx
-                .query_one(
-                    "SELECT
-                        client_reports.extensions,
-                        client_reports.public_share,
-                        client_reports.leader_input_share,
-                        client_reports.helper_encrypted_input_share
-                    FROM client_reports
-                    JOIN tasks ON tasks.id = client_reports.task_id
-                    WHERE tasks.task_id = $1
-                    AND client_reports.report_id = $2",
-                    &[&task_id.as_ref(), &report_id.as_ref()],
-                )
-                .await
-                .unwrap();
-
-            assert_eq!(row.get::<_, Option<Vec<u8>>>("extensions"), None);
-            assert_eq!(row.get::<_, Option<Vec<u8>>>("public_share"), None);
-            assert_eq!(row.get::<_, Option<Vec<u8>>>("leader_input_share"), None);
-            assert_eq!(
-                row.get::<_, Option<Vec<u8>>>("helper_encrypted_input_share"),
-                None
-            );
+            tx.verify_client_report_scrubbed(&task_id, &report_id).await;
 
             assert_matches!(
                 tx.get_client_report::<0, dummy_vdaf::Vdaf>(

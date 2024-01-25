@@ -1562,6 +1562,34 @@ impl<C: Clock> Transaction<'_, C> {
         )
     }
 
+    #[cfg(feature = "test-util")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
+    pub async fn verify_client_report_scrubbed(&self, task_id: &TaskId, report_id: &ReportId) {
+        let row = self
+            .query_one(
+                "SELECT
+                    client_reports.extensions,
+                    client_reports.public_share,
+                    client_reports.leader_input_share,
+                    client_reports.helper_encrypted_input_share
+                FROM client_reports
+                JOIN tasks ON tasks.id = client_reports.task_id
+                WHERE tasks.task_id = $1
+                AND client_reports.report_id = $2",
+                &[task_id.as_ref(), report_id.as_ref()],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(row.get::<_, Option<Vec<u8>>>("extensions"), None);
+        assert_eq!(row.get::<_, Option<Vec<u8>>>("public_share"), None);
+        assert_eq!(row.get::<_, Option<Vec<u8>>>("leader_input_share"), None);
+        assert_eq!(
+            row.get::<_, Option<Vec<u8>>>("helper_encrypted_input_share"),
+            None
+        );
+    }
+
     /// put_report_share stores a report share, given its associated task ID.
     ///
     /// This method is intended for use by aggregators acting in the Helper role; notably, it does
