@@ -7,13 +7,13 @@ use janus_aggregator_core::datastore::{
 };
 use janus_core::time::{Clock, DurationExt, TimeExt};
 use janus_messages::{
-    query_type::FixedSize, AggregationJobStep, BatchId, Duration, Interval, TaskId, Time,
+    query_type::FixedSize, AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskId, Time
 };
 use prio::{codec::Encode, vdaf::Aggregator};
 use rand::random;
 use std::{
     cmp::{max, min, Ordering},
-    collections::{binary_heap::PeekMut, hash_map, BinaryHeap, HashMap, VecDeque},
+    collections::{binary_heap::PeekMut, hash_map, BinaryHeap, HashMap, HashSet, VecDeque},
     ops::RangeInclusive,
     sync::Arc,
 };
@@ -32,8 +32,9 @@ where
 {
     properties: Properties,
     aggregation_job_writer: &'a mut AggregationJobWriter<SEED_SIZE, FixedSize, A>,
-    map: HashMap<Option<Time>, Bucket<SEED_SIZE, A>>,
+    buckets: HashMap<Option<Time>, Bucket<SEED_SIZE, A>>,
     new_batches: Vec<(BatchId, Option<Time>)>,
+    report_ids_to_scrub: HashSet<ReportId>,
 }
 
 /// Common properties used by [`BatchCreator`]. This is broken out into a separate structure to make
@@ -72,8 +73,9 @@ where
                 task_batch_time_window_size,
             },
             aggregation_job_writer,
-            map: HashMap::new(),
+            buckets: HashMap::new(),
             new_batches: Vec::new(),
+            report_ids_to_scrub: HashSet::new(),
         }
     }
 
@@ -95,7 +97,7 @@ where
                     .to_batch_interval_start(&batch_time_window_size)
             })
             .transpose()?;
-        let mut map_entry = self.map.entry(time_bucket_start_opt);
+        let mut map_entry = self.buckets.entry(time_bucket_start_opt);
         let bucket = match &mut map_entry {
             hash_map::Entry::Occupied(occupied) => occupied.get_mut(),
             hash_map::Entry::Vacant(_) => {
@@ -103,7 +105,7 @@ where
                 let outstanding_batches = tx
                     .get_outstanding_batches(&self.properties.task_id, &time_bucket_start_opt)
                     .await?;
-                self.map
+                self.buckets
                     .entry(time_bucket_start_opt)
                     .or_insert_with(|| Bucket::new(outstanding_batches))
             }
@@ -115,6 +117,7 @@ where
         Self::process_batches(
             &self.properties,
             self.aggregation_job_writer,
+            &mut self.report_ids_to_scrub,
             &mut self.new_batches,
             &time_bucket_start_opt,
             bucket,
@@ -136,6 +139,7 @@ where
     fn process_batches(
         properties: &Properties,
         aggregation_job_writer: &mut AggregationJobWriter<SEED_SIZE, FixedSize, A>,
+        report_ids_to_scrub: &mut HashSet<ReportId>,
         new_batches: &mut Vec<(BatchId, Option<Time>)>,
         time_bucket_start: &Option<Time>,
         bucket: &mut Bucket<SEED_SIZE, A>,
@@ -182,6 +186,7 @@ where
                             desired_aggregation_job_size,
                             &mut bucket.unaggregated_reports,
                             aggregation_job_writer,
+                            report_ids_to_scrub,
                         )?;
                         largest_outstanding_batch.add_reports(desired_aggregation_job_size);
                     } else {
@@ -209,6 +214,7 @@ where
                             desired_aggregation_job_size,
                             &mut bucket.unaggregated_reports,
                             aggregation_job_writer,
+                            report_ids_to_scrub,
                         )?;
                         largest_outstanding_batch.add_reports(desired_aggregation_job_size);
                     } else {
@@ -249,6 +255,7 @@ where
                     desired_aggregation_job_size,
                     &mut bucket.unaggregated_reports,
                     aggregation_job_writer,
+                    report_ids_to_scrub,
                 )?;
 
                 // Loop to the top of this method to create more aggregation jobs in this newly
@@ -268,6 +275,7 @@ where
         aggregation_job_size: usize,
         unaggregated_reports: &mut VecDeque<LeaderStoredReport<SEED_SIZE, A>>,
         aggregation_job_writer: &mut AggregationJobWriter<SEED_SIZE, FixedSize, A>,
+        report_ids_to_scrub: &mut HashSet<ReportId>,
     ) -> Result<(), Error> {
         let aggregation_job_id = random();
         debug!(
@@ -280,7 +288,7 @@ where
         let mut min_client_timestamp = None;
         let mut max_client_timestamp = None;
 
-        let report_aggregations = (0u64..)
+        let report_aggregations: Vec<_> = (0u64..)
             .zip(unaggregated_reports.drain(..aggregation_job_size))
             .map(|(ord, report)| {
                 let client_timestamp = *report.metadata().time();
@@ -294,6 +302,7 @@ where
                 report.as_start_leader_report_aggregation(aggregation_job_id, ord)
             })
             .collect();
+        report_ids_to_scrub.extend(report_aggregations.iter().map(|ra| *ra.report_id()));
 
         let min_client_timestamp = min_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
         let max_client_timestamp = max_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
@@ -329,10 +338,11 @@ where
         // be smaller than max_aggregation_job_size. We will only create jobs smaller than
         // min_aggregation_job_size if the remaining headroom in a batch requires it, otherwise
         // remaining reports will be added to unaggregated_report_ids, to be marked as unaggregated.
-        for (time_bucket_start, mut bucket) in self.map.into_iter() {
+        for (time_bucket_start, mut bucket) in self.buckets.into_iter() {
             Self::process_batches(
                 &self.properties,
                 self.aggregation_job_writer,
+                &mut self.report_ids_to_scrub,
                 &mut self.new_batches,
                 &time_bucket_start,
                 &mut bucket,
@@ -348,6 +358,11 @@ where
 
         try_join!(
             self.aggregation_job_writer.write(tx, vdaf),
+            try_join_all(
+                self.report_ids_to_scrub
+                    .iter()
+                    .map(|report_id| tx.scrub_client_report(&self.properties.task_id, report_id))
+            ),
             try_join_all(
                 self.new_batches
                     .iter()
