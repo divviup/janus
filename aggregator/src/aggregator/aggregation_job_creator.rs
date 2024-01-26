@@ -2720,8 +2720,6 @@ mod tests {
 
         // Verify outstanding batches.
         let mut total_max_size = 0;
-        println!("{outstanding_batches:?}");
-
         for outstanding_batch in &outstanding_batches {
             assert_eq!(outstanding_batch.size().start(), &0);
             assert!(
