@@ -35,7 +35,11 @@ use prio::{
     vdaf,
 };
 use reqwest::Method;
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::try_join;
 use tracing::{debug, error, info, trace_span, warn};
 
@@ -167,7 +171,7 @@ impl AggregationJobDriver {
                             lease.leased().aggregation_job_id(),
                         );
 
-                    let (aggregation_job, report_aggregations) =
+                    let (aggregation_job, mut report_aggregations) =
                         try_join!(aggregation_job_future, report_aggregations_future)?;
                     let aggregation_job = aggregation_job.ok_or_else(|| {
                         datastore::Error::User(
@@ -179,6 +183,49 @@ impl AggregationJobDriver {
                             .into(),
                         )
                     })?;
+
+                    // Load report data from client reports for any report aggregations which are in
+                    // the StartLeader state but don't have report data loaded already. This can
+                    // only happen if the aggregation job was written by a version of Janus which
+                    // did not include the report data in report aggregations.
+                    let report_ids_needing_client_reports: HashSet<_> = report_aggregations
+                        .iter()
+                        .filter_map(|ra| match ra.state() {
+                            ReportAggregationState::StartLeaderMissingReportData => {
+                                Some(*ra.report_id())
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    if !report_ids_needing_client_reports.is_empty() {
+                        let reports: HashMap<_, _> = try_join_all(
+                            report_ids_needing_client_reports.iter().map(|report_id| {
+                                tx.get_client_report(vdaf.as_ref(), task.id(), report_id)
+                            }),
+                        )
+                        .await?
+                        .into_iter()
+                        .flatten() // drop Nones
+                        .map(|report| (*report.metadata().id(), report))
+                        .collect();
+
+                        report_aggregations = report_aggregations
+                            .into_iter()
+                            .map(|mut ra| {
+                                if matches!(
+                                    ra.state(),
+                                    ReportAggregationState::StartLeaderMissingReportData
+                                ) {
+                                    if let Some(report) = reports.get(ra.report_id()) {
+                                        ra = ra.with_state(
+                                            report.as_start_leader_report_aggregation_state(),
+                                        );
+                                    }
+                                }
+                                ra
+                            })
+                            .collect();
+                    }
 
                     Ok((
                         Arc::new(task),
@@ -194,7 +241,8 @@ impl AggregationJobDriver {
         let (mut saw_start, mut saw_waiting, mut saw_finished) = (false, false, false);
         for report_aggregation in &report_aggregations {
             match report_aggregation.state() {
-                ReportAggregationState::StartLeader { .. } => saw_start = true,
+                ReportAggregationState::StartLeader { .. }
+                | ReportAggregationState::StartLeaderMissingReportData => saw_start = true,
                 ReportAggregationState::WaitingLeader { .. } => saw_waiting = true,
                 ReportAggregationState::WaitingHelper { .. } => {
                     return Err(Error::Internal(
@@ -285,6 +333,7 @@ impl AggregationJobDriver {
                 matches!(
                     report_aggregation.state(),
                     &ReportAggregationState::StartLeader { .. }
+                        | &ReportAggregationState::StartLeaderMissingReportData
                 )
             })
             .collect();
@@ -309,6 +358,19 @@ impl AggregationJobDriver {
                         leader_input_share,
                         helper_encrypted_input_share,
                     ),
+
+                    ReportAggregationState::StartLeaderMissingReportData => {
+                        info!(report_id = %report_aggregation.report_id(),
+                            "Attempted to aggregate missing report (most likely garbage collected)");
+                        self.aggregate_step_failure_counter
+                            .add(1, &[KeyValue::new("type", "missing_client_report")]);
+                        report_aggregations_to_write.push(report_aggregation.with_state(
+                            ReportAggregationState::Failed {
+                                prepare_error: PrepareError::ReportDropped,
+                            },
+                        ));
+                        continue;
+                    }
 
                     // Panic safety: this can't happen because we filter to only StartLeader-state
                     // report aggregations before this loop.
@@ -985,6 +1047,7 @@ mod tests {
                 LeaderStoredReport, ReportAggregation, ReportAggregationState,
             },
             test_util::ephemeral_datastore,
+            Transaction,
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
         task::{test_util::TaskBuilder, QueryType, VerifyKey},
@@ -1001,9 +1064,9 @@ mod tests {
     use janus_messages::{
         problem_type::DapProblemType,
         query_type::{FixedSize, TimeInterval},
-        AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
-        AggregationJobStep, Duration, Extension, ExtensionType, FixedSizeQuery, Interval,
-        PartialBatchSelector, PrepareContinue, PrepareError, PrepareInit, PrepareResp,
+        AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq,
+        AggregationJobResp, AggregationJobStep, Duration, Extension, ExtensionType, FixedSizeQuery,
+        Interval, PartialBatchSelector, PrepareContinue, PrepareError, PrepareInit, PrepareResp,
         PrepareStepResult, Query, ReportIdChecksum, ReportMetadata, ReportShare, Role, Time,
     };
     use prio::{
@@ -1017,6 +1080,7 @@ mod tests {
         },
     };
     use rand::random;
+    use rstest::rstest;
     use std::{borrow::Borrow, sync::Arc, time::Duration as StdDuration};
     use trillium_tokio::Stopper;
 
@@ -1317,8 +1381,13 @@ mod tests {
         assert_eq!(want_collection_job, got_collection_job);
     }
 
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
     #[tokio::test]
-    async fn step_time_interval_aggregation_job_init_single_step() {
+    async fn step_time_interval_aggregation_job_init_single_step(
+        #[case] report_data_in_report_aggregation: bool,
+    ) {
         // Setup: insert a client report and add it to a new aggregation job.
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
@@ -1383,15 +1452,6 @@ mod tests {
                     tx.put_client_report(vdaf.borrow(), &repeated_extension_report)
                         .await
                         .unwrap();
-                    tx.scrub_client_report(report.task_id(), report.metadata().id())
-                        .await
-                        .unwrap();
-                    tx.scrub_client_report(
-                        repeated_extension_report.task_id(),
-                        repeated_extension_report.metadata().id(),
-                    )
-                    .await
-                    .unwrap();
 
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
@@ -1409,17 +1469,22 @@ mod tests {
                     ))
                     .await
                     .unwrap();
-                    tx.put_report_aggregation(
-                        &report.as_start_leader_report_aggregation(aggregation_job_id, 0),
+                    put_start_report_aggregation_for_report(
+                        tx,
+                        report_data_in_report_aggregation,
+                        aggregation_job_id,
+                        0,
+                        &report,
                     )
-                    .await
-                    .unwrap();
-                    tx.put_report_aggregation(
-                        &repeated_extension_report
-                            .as_start_leader_report_aggregation(aggregation_job_id, 1),
+                    .await;
+                    put_start_report_aggregation_for_report(
+                        tx,
+                        report_data_in_report_aggregation,
+                        aggregation_job_id,
+                        1,
+                        &repeated_extension_report,
                     )
-                    .await
-                    .unwrap();
+                    .await;
 
                     tx.put_batch(&Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
                         *task.id(),
@@ -1636,8 +1701,13 @@ mod tests {
         assert_eq!(want_batch, got_batch);
     }
 
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
     #[tokio::test]
-    async fn step_time_interval_aggregation_job_init_two_steps() {
+    async fn step_time_interval_aggregation_job_init_two_steps(
+        #[case] report_data_in_report_aggregation: bool,
+    ) {
         // Setup: insert a client report and add it to a new aggregation job.
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
@@ -1694,9 +1764,6 @@ mod tests {
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
                     tx.put_client_report(vdaf.borrow(), &report).await.unwrap();
-                    tx.scrub_client_report(report.task_id(), report.metadata().id())
-                        .await
-                        .unwrap();
 
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
@@ -1715,11 +1782,14 @@ mod tests {
                     .await
                     .unwrap();
 
-                    tx.put_report_aggregation(
-                        &report.as_start_leader_report_aggregation(aggregation_job_id, 0),
+                    put_start_report_aggregation_for_report(
+                        tx,
+                        report_data_in_report_aggregation,
+                        aggregation_job_id,
+                        0,
+                        &report,
                     )
-                    .await
-                    .unwrap();
+                    .await;
 
                     tx.put_batch(&Batch::<
                         VERIFY_KEY_LENGTH,
@@ -1881,8 +1951,13 @@ mod tests {
         assert_eq!(want_batch, got_batch);
     }
 
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
     #[tokio::test]
-    async fn step_time_interval_aggregation_job_init_partially_garbage_collected() {
+    async fn step_time_interval_aggregation_job_init_partially_garbage_collected(
+        #[case] report_data_in_report_aggregation: bool,
+    ) {
         // This is a regression test for https://github.com/divviup/janus/issues/2464.
 
         const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
@@ -1974,18 +2049,6 @@ mod tests {
                     tx.put_client_report(vdaf.borrow(), &gc_ineligible_report)
                         .await
                         .unwrap();
-                    tx.scrub_client_report(
-                        gc_eligible_report.task_id(),
-                        gc_eligible_report.metadata().id(),
-                    )
-                    .await
-                    .unwrap();
-                    tx.scrub_client_report(
-                        gc_ineligible_report.task_id(),
-                        gc_ineligible_report.metadata().id(),
-                    )
-                    .await
-                    .unwrap();
 
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
@@ -2006,18 +2069,22 @@ mod tests {
                     ))
                     .await
                     .unwrap();
-                    tx.put_report_aggregation(
-                        &gc_eligible_report
-                            .as_start_leader_report_aggregation(aggregation_job_id, 0),
+                    put_start_report_aggregation_for_report(
+                        tx,
+                        report_data_in_report_aggregation,
+                        aggregation_job_id,
+                        0,
+                        &gc_eligible_report,
                     )
-                    .await
-                    .unwrap();
-                    tx.put_report_aggregation(
-                        &gc_ineligible_report
-                            .as_start_leader_report_aggregation(aggregation_job_id, 1),
+                    .await;
+                    put_start_report_aggregation_for_report(
+                        tx,
+                        report_data_in_report_aggregation,
+                        aggregation_job_id,
+                        1,
+                        &gc_ineligible_report,
                     )
-                    .await
-                    .unwrap();
+                    .await;
 
                     tx.put_batch(&Batch::<VERIFY_KEY_LENGTH, TimeInterval, Prio3Count>::new(
                         *leader_task.id(),
@@ -2056,21 +2123,58 @@ mod tests {
         clock.advance(&REPORT_EXPIRY_AGE);
 
         // Setup: prepare mocked HTTP response.
-        let leader_request = AggregationJobInitializeReq::new(
-            ().get_encoded(),
-            PartialBatchSelector::new_time_interval(),
-            Vec::from([
-                PrepareInit::new(
-                    ReportShare::new(
-                        gc_eligible_report.metadata().clone(),
-                        gc_eligible_report.public_share().get_encoded(),
-                        gc_eligible_report.helper_encrypted_input_share().clone(),
+        let (leader_request, helper_response) = if report_data_in_report_aggregation {
+            let leader_request = AggregationJobInitializeReq::new(
+                ().get_encoded(),
+                PartialBatchSelector::new_time_interval(),
+                Vec::from([
+                    PrepareInit::new(
+                        ReportShare::new(
+                            gc_eligible_report.metadata().clone(),
+                            gc_eligible_report.public_share().get_encoded(),
+                            gc_eligible_report.helper_encrypted_input_share().clone(),
+                        ),
+                        gc_eligible_transcript.leader_prepare_transitions[0]
+                            .message
+                            .clone(),
                     ),
-                    gc_eligible_transcript.leader_prepare_transitions[0]
-                        .message
-                        .clone(),
+                    PrepareInit::new(
+                        ReportShare::new(
+                            gc_ineligible_report.metadata().clone(),
+                            gc_ineligible_report.public_share().get_encoded(),
+                            gc_ineligible_report.helper_encrypted_input_share().clone(),
+                        ),
+                        gc_ineligible_transcript.leader_prepare_transitions[0]
+                            .message
+                            .clone(),
+                    ),
+                ]),
+            );
+            let helper_response = AggregationJobResp::new(Vec::from([
+                PrepareResp::new(
+                    *gc_eligible_report.metadata().id(),
+                    PrepareStepResult::Continue {
+                        message: gc_eligible_transcript.helper_prepare_transitions[0]
+                            .message
+                            .clone(),
+                    },
                 ),
-                PrepareInit::new(
+                PrepareResp::new(
+                    *gc_ineligible_report.metadata().id(),
+                    PrepareStepResult::Continue {
+                        message: gc_ineligible_transcript.helper_prepare_transitions[0]
+                            .message
+                            .clone(),
+                    },
+                ),
+            ]));
+
+            (leader_request, helper_response)
+        } else {
+            let leader_request = AggregationJobInitializeReq::new(
+                ().get_encoded(),
+                PartialBatchSelector::new_time_interval(),
+                Vec::from([PrepareInit::new(
                     ReportShare::new(
                         gc_ineligible_report.metadata().clone(),
                         gc_ineligible_report.public_share().get_encoded(),
@@ -2079,27 +2183,19 @@ mod tests {
                     gc_ineligible_transcript.leader_prepare_transitions[0]
                         .message
                         .clone(),
-                ),
-            ]),
-        );
-        let helper_response = AggregationJobResp::new(Vec::from([
-            PrepareResp::new(
-                *gc_eligible_report.metadata().id(),
-                PrepareStepResult::Continue {
-                    message: gc_eligible_transcript.helper_prepare_transitions[0]
-                        .message
-                        .clone(),
-                },
-            ),
-            PrepareResp::new(
+                )]),
+            );
+            let helper_response = AggregationJobResp::new(Vec::from([PrepareResp::new(
                 *gc_ineligible_report.metadata().id(),
                 PrepareStepResult::Continue {
                     message: gc_ineligible_transcript.helper_prepare_transitions[0]
                         .message
                         .clone(),
                 },
-            ),
-        ]));
+            )]));
+
+            (leader_request, helper_response)
+        };
         let (header, value) = agg_auth_token.request_authentication();
         let mocked_aggregate_init = server
             .mock(
@@ -2157,7 +2253,13 @@ mod tests {
                 *gc_eligible_report.metadata().time(),
                 0,
                 None,
-                ReportAggregationState::Finished,
+                if report_data_in_report_aggregation {
+                    ReportAggregationState::Finished
+                } else {
+                    ReportAggregationState::Failed {
+                        prepare_error: PrepareError::ReportDropped,
+                    }
+                },
             );
         let want_ineligible_report_aggregation =
             ReportAggregation::<VERIFY_KEY_LENGTH, Prio3Count>::new(
@@ -2218,8 +2320,13 @@ mod tests {
         assert_eq!(want_batches, got_batches);
     }
 
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
     #[tokio::test]
-    async fn step_fixed_size_aggregation_job_init_single_step() {
+    async fn step_fixed_size_aggregation_job_init_single_step(
+        #[case] report_data_in_report_aggregation: bool,
+    ) {
         // Setup: insert a client report and add it to a new aggregation job.
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
@@ -2275,9 +2382,6 @@ mod tests {
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
                     tx.put_client_report(vdaf.borrow(), &report).await.unwrap();
-                    tx.scrub_client_report(report.task_id(), report.metadata().id())
-                        .await
-                        .unwrap();
 
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
@@ -2296,11 +2400,14 @@ mod tests {
                     .await
                     .unwrap();
 
-                    tx.put_report_aggregation(
-                        &report.as_start_leader_report_aggregation(aggregation_job_id, 0),
+                    put_start_report_aggregation_for_report(
+                        tx,
+                        report_data_in_report_aggregation,
+                        aggregation_job_id,
+                        0,
+                        &report,
                     )
-                    .await
-                    .unwrap();
+                    .await;
 
                     tx.put_batch(&Batch::<VERIFY_KEY_LENGTH, FixedSize, Prio3Count>::new(
                         *task.id(),
@@ -2473,8 +2580,13 @@ mod tests {
         assert_eq!(want_batch, got_batch);
     }
 
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
     #[tokio::test]
-    async fn step_fixed_size_aggregation_job_init_two_steps() {
+    async fn step_fixed_size_aggregation_job_init_two_steps(
+        #[case] report_data_in_report_aggregation: bool,
+    ) {
         // Setup: insert a client report and add it to a new aggregation job.
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
@@ -2539,9 +2651,6 @@ mod tests {
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
                     tx.put_client_report(vdaf.borrow(), &report).await.unwrap();
-                    tx.scrub_client_report(report.task_id(), report.metadata().id())
-                        .await
-                        .unwrap();
 
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
@@ -2560,11 +2669,14 @@ mod tests {
                     .await
                     .unwrap();
 
-                    tx.put_report_aggregation(
-                        &report.as_start_leader_report_aggregation(aggregation_job_id, 0),
+                    put_start_report_aggregation_for_report(
+                        tx,
+                        report_data_in_report_aggregation,
+                        aggregation_job_id,
+                        0,
+                        &report,
                     )
-                    .await
-                    .unwrap();
+                    .await;
 
                     tx.put_batch(&Batch::<
                         VERIFY_KEY_LENGTH,
@@ -4085,5 +4197,46 @@ mod tests {
                 Interval::from_time(report.metadata().time()).unwrap(),
             ),
         );
+    }
+
+    async fn put_start_report_aggregation_for_report<'a, const SEED_SIZE: usize, A>(
+        tx: &Transaction<'a, MockClock>,
+        report_data_in_report_aggregation: bool,
+        aggregation_job_id: AggregationJobId,
+        ord: u64,
+        report: &LeaderStoredReport<SEED_SIZE, A>,
+    ) where
+        A: Aggregator<SEED_SIZE, 16>,
+        A::PrepareState: Encode,
+    {
+        // report_data_in_report_aggregation == true means that the report data will be stored in
+        // the report aggregation state, and the report will be scrubbed.
+        // report_data_in_report_aggregation == false means that the report data will be stored in
+        // the client report.
+        //
+        // As a precondition, this function expects the report to already be written to the
+        // datastore (e.g. by `tx.put_client_report`).
+        if report_data_in_report_aggregation {
+            tx.scrub_client_report(report.task_id(), report.metadata().id())
+                .await
+                .unwrap();
+            tx.put_report_aggregation(
+                &report.as_start_leader_report_aggregation(aggregation_job_id, ord),
+            )
+            .await
+            .unwrap();
+        } else {
+            tx.put_report_aggregation(&ReportAggregation::<SEED_SIZE, A>::new(
+                *report.task_id(),
+                aggregation_job_id,
+                *report.metadata().id(),
+                *report.metadata().time(),
+                ord,
+                None,
+                ReportAggregationState::StartLeaderMissingReportData,
+            ))
+            .await
+            .unwrap();
+        }
     }
 }

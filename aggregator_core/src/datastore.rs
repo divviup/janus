@@ -2186,55 +2186,52 @@ impl<C: Clock> Transaction<'_, C> {
 
         let agg_state = match state {
             ReportAggregationStateCode::Start => {
-                let public_share_bytes =
-                    row.get::<_, Option<Vec<u8>>>("public_share")
-                        .ok_or_else(|| {
-                            Error::DbState(
-                                "report aggregation in state START but public_share is NULL"
-                                    .to_string(),
-                            )
-                        })?;
-                let leader_extensions_bytes = row
-                    .get::<_, Option<Vec<u8>>>("leader_extensions")
-                    .ok_or_else(|| {
-                        Error::DbState(
-                            "report aggregation in state START but leader_extensions is NULL"
-                                .to_string(),
-                        )
-                    })?;
-                let leader_input_share_bytes = row
-                    .get::<_, Option<Vec<u8>>>("leader_input_share")
-                    .ok_or_else(|| {
-                        Error::DbState(
-                            "report aggregation in state START but leader_input_share is NULL"
-                                .to_string(),
-                        )
-                    })?;
+                let public_share_bytes = row.get::<_, Option<Vec<u8>>>("public_share");
+                let leader_extensions_bytes = row.get::<_, Option<Vec<u8>>>("leader_extensions");
+                let leader_input_share_bytes = row.get::<_, Option<Vec<u8>>>("leader_input_share");
                 let helper_encrypted_input_share_bytes =
-                    row.get::<_, Option<Vec<u8>>>("helper_encrypted_input_share")
-                        .ok_or_else(|| {
-                            Error::DbState(
-                            "report aggregation in state START but helper_encrypted_input_share is NULL"
-                                .to_string(),
-                        )
-                        })?;
+                    row.get::<_, Option<Vec<u8>>>("helper_encrypted_input_share");
 
-                let public_share =
-                    A::PublicShare::get_decoded_with_param(vdaf, &public_share_bytes)?;
-                let leader_extensions =
-                    decode_u16_items(&(), &mut Cursor::new(&leader_extensions_bytes))?;
-                let leader_input_share = A::InputShare::get_decoded_with_param(
-                    &(vdaf, Role::Leader.index().unwrap()),
-                    &leader_input_share_bytes,
-                )?;
-                let helper_encrypted_input_share =
-                    HpkeCiphertext::get_decoded(&helper_encrypted_input_share_bytes)?;
+                match (
+                    public_share_bytes,
+                    leader_extensions_bytes,
+                    leader_input_share_bytes,
+                    helper_encrypted_input_share_bytes,
+                ) {
+                    (
+                        Some(public_share_bytes),
+                        Some(leader_extensions_bytes),
+                        Some(leader_input_share_bytes),
+                        Some(helper_encrypted_input_share_bytes),
+                    ) => {
+                        let public_share =
+                            A::PublicShare::get_decoded_with_param(vdaf, &public_share_bytes)?;
+                        let leader_extensions =
+                            decode_u16_items(&(), &mut Cursor::new(&leader_extensions_bytes))?;
+                        let leader_input_share = A::InputShare::get_decoded_with_param(
+                            &(vdaf, Role::Leader.index().unwrap()),
+                            &leader_input_share_bytes,
+                        )?;
+                        let helper_encrypted_input_share =
+                            HpkeCiphertext::get_decoded(&helper_encrypted_input_share_bytes)?;
 
-                ReportAggregationState::StartLeader {
-                    public_share,
-                    leader_extensions,
-                    leader_input_share,
-                    helper_encrypted_input_share,
+                        ReportAggregationState::StartLeader {
+                            public_share,
+                            leader_extensions,
+                            leader_input_share,
+                            helper_encrypted_input_share,
+                        }
+                    }
+
+                    (None, None, None, None) => {
+                        ReportAggregationState::StartLeaderMissingReportData
+                    }
+
+                    _ => {
+                        return Err(Error::DbState(
+                            "report aggregation has partially-filled StartLeader data".to_string(),
+                        ))
+                    }
                 }
             }
 

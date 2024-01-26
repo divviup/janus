@@ -172,13 +172,17 @@ where
             *self.metadata().time(),
             ord,
             None,
-            ReportAggregationState::StartLeader {
-                public_share: self.public_share().clone(),
-                leader_extensions: self.leader_extensions().to_vec(),
-                leader_input_share: self.leader_input_share().clone(),
-                helper_encrypted_input_share: self.helper_encrypted_input_share().clone(),
-            },
+            self.as_start_leader_report_aggregation_state(),
         )
+    }
+
+    pub fn as_start_leader_report_aggregation_state(&self) -> ReportAggregationState<SEED_SIZE, A> {
+        ReportAggregationState::StartLeader {
+            public_share: self.public_share().clone(),
+            leader_extensions: self.leader_extensions().to_vec(),
+            leader_input_share: self.leader_input_share().clone(),
+            helper_encrypted_input_share: self.helper_encrypted_input_share().clone(),
+        }
     }
 
     #[cfg(feature = "test-util")]
@@ -858,6 +862,11 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED
         #[derivative(Debug = "ignore")]
         helper_encrypted_input_share: HpkeCiphertext,
     },
+    /// StartLeaderMissingReportData represents a StartLeader state which does not have report
+    /// information in the `report_aggregations` table. This information, if required, may be read
+    /// from the `client_reports` table, as long as the relevant report has not been garbage
+    /// collected.
+    StartLeaderMissingReportData,
     WaitingLeader {
         /// Most recent transition for this report aggregation.
         #[derivative(Debug = "ignore")]
@@ -879,7 +888,10 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
 {
     pub fn state_code(&self) -> ReportAggregationStateCode {
         match self {
-            ReportAggregationState::StartLeader { .. } => ReportAggregationStateCode::Start,
+            ReportAggregationState::StartLeader { .. }
+            | ReportAggregationState::StartLeaderMissingReportData => {
+                ReportAggregationStateCode::Start
+            }
             ReportAggregationState::WaitingLeader { .. }
             | ReportAggregationState::WaitingHelper { .. } => ReportAggregationStateCode::Waiting,
             ReportAggregationState::Finished => ReportAggregationStateCode::Finished,
@@ -911,6 +923,9 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
                     helper_encrypted_input_share: Some(helper_encrypted_input_share.get_encoded()),
                     ..Default::default()
                 }
+            }
+            ReportAggregationState::StartLeaderMissingReportData => {
+                EncodedReportAggregationStateValues::default()
             }
             ReportAggregationState::WaitingLeader { transition } => {
                 EncodedReportAggregationStateValues {
