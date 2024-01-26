@@ -1,5 +1,27 @@
 # Deploying Janus
 
+<!--toc:start-->
+- [Deploying Janus](#deploying-janus)
+  - [Configuration](#configuration)
+    - [Common Configuration](#common-configuration)
+      - [Database Connection](#database-connection)
+        - [TLS](#tls)
+      - [Health Check](#health-check)
+      - [Observability](#observability)
+        - [Logging](#logging)
+        - [Metrics](#metrics)
+        - [Tracing](#tracing)
+        - [`tokio-console`](#tokio-console)
+    - [`aggregator` configuration](#aggregator-configuration)
+    - [`aggregation_job_creator` configuration](#aggregationjobcreator-configuration)
+    - [`aggregation_job_driver` configuration](#aggregationjobdriver-configuration)
+    - [`collection_job_driver` configuration](#collectionjobdriver-configuration)
+  - [Database](#database)
+    - [Datastore Keys](#datastore-keys)
+    - [Recommended Configuration](#recommended-configuration)
+  - [`janus_cli provision-tasks`](#januscli-provision-tasks)
+<!--toc:end-->
+
 A full deployment of Janus is composed of multiple Janus components and a
 PostgreSQL database. The `aggregator` component is responsible for servicing DAP
 requests from other protocol participants, (client, collector, or leader) while
@@ -172,6 +194,19 @@ plan to keep any previous keys in the datastore keys list until all data
 encrypted under them has been deleted.
 
 [base64url]: https://datatracker.ietf.org/doc/html/rfc4648#section-5
+
+### Recommended Configuration
+
+It is recommended to run Janus on a PostgreSQL instance backed by solid-state
+disks.
+
+When using a SSD-backed database, [set `random_page_cost` to `1.1`][random_page_cost].
+
+This can be set in `postgresql.conf`. See the [PostgreSQL documentation][pgdoc]
+or your PostgreSQL vendor's documentation for details on how to set this.
+
+[random_page_cost]: https://www.postgresql.org/docs/current/runtime-config-query.html#GUC-RANDOM-PAGE-COST
+[pgdoc]: https://www.postgresql.org/docs/current/config-setting.html#CONFIG-SETTING-CONFIGURATION-FILE
 
 ## `janus_cli provision-tasks`
 
