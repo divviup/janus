@@ -226,23 +226,11 @@ CREATE TABLE report_aggregations(
     client_report_id    BYTEA NOT NULL,                     -- the client report ID this report aggregation is associated with
     client_timestamp    TIMESTAMP NOT NULL,                 -- the client timestamp this report aggregation is associated with
     ord                 BIGINT NOT NULL,                    -- a value used to specify the ordering of client reports in the aggregation job
-    last_prep_resp      BYTEA,                              -- the last PrepareResp message sent to the Leader, to assist in replay (opaque DAP message, populated for Helper only)
     state               REPORT_AGGREGATION_STATE NOT NULL,  -- the current state of this report aggregation
-
-    -- Additional data for state StartLeader.
-    public_share                  BYTEA,  -- the public share for the report (opaque VDAF message)
-    leader_extensions             BYTEA,  -- encoded sequence of Extension messages from Leader input share (opaque DAP messages)
-    leader_input_share            BYTEA,  -- encoded leader input share (opaque VDAF message)
-    helper_encrypted_input_share  BYTEA,  -- encoded HPKE ciphertext of helper input share (opaque DAP message)
-
-    -- Additional data for state WaitingLeader.
-    leader_prep_transition  BYTEA,  -- the current VDAF prepare transition (opaque VDAF message)
-
-    -- Additional data for state WaitingHelper.
-    helper_prep_state  BYTEA,  -- the current VDAF prepare state (opaque VDAF message)
-
-    -- Additional data for state Failed.
-    error_code  SMALLINT,  -- error code corresponding to a DAP ReportShareError value
+    helper_prep_state   BYTEA,                              -- the current VDAF prepare state (opaque VDAF message, only if in state WAITING, only populated for helper)
+    leader_prep_transition BYTEA,                           -- the current VDAF prepare transition (opaque VDAF message, only if in state WAITING, only populated for leader)
+    error_code          SMALLINT,                           -- error code corresponding to a DAP ReportShareError value; null if in a state other than FAILED
+    last_prep_resp      BYTEA,                              -- the last PrepareResp message sent to the Leader, to assist in replay (opaque DAP message, populated for Helper only)
 
     -- creation/update records
     created_at TIMESTAMP NOT NULL,  -- when the row was created
