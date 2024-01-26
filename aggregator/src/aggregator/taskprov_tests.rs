@@ -167,7 +167,7 @@ impl TaskprovTestCase {
 
         let task = TaskBuilder::new(
             QueryType::FixedSize {
-                max_batch_size: max_batch_size as u64,
+                max_batch_size: Some(max_batch_size as u64),
                 batch_time_window_size: None,
             },
             vdaf_instance,

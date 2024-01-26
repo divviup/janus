@@ -1054,7 +1054,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
 
     let task = TaskBuilder::new(
         task::QueryType::FixedSize {
-            max_batch_size: 10,
+            max_batch_size: Some(10),
             batch_time_window_size: None,
         },
         VdafInstance::Fake,
@@ -1065,7 +1065,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
     .unwrap();
     let unrelated_task = TaskBuilder::new(
         task::QueryType::FixedSize {
-            max_batch_size: 10,
+            max_batch_size: None,
             batch_time_window_size: None,
         },
         VdafInstance::Fake,
@@ -1316,7 +1316,7 @@ async fn roundtrip_aggregation_job(ephemeral_datastore: EphemeralDatastore) {
     // serialization/deserialization roundtrip of the batch_identifier & aggregation_param.
     let task = TaskBuilder::new(
         task::QueryType::FixedSize {
-            max_batch_size: 10,
+            max_batch_size: Some(10),
             batch_time_window_size: None,
         },
         VdafInstance::Fake,
@@ -1921,7 +1921,7 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
     // serialization/deserialization roundtrip of the batch_identifier & aggregation_param.
     let task = TaskBuilder::new(
         task::QueryType::FixedSize {
-            max_batch_size: 10,
+            max_batch_size: None,
             batch_time_window_size: None,
         },
         VdafInstance::Fake,
@@ -1977,7 +1977,7 @@ async fn get_aggregation_jobs_for_task(ephemeral_datastore: EphemeralDatastore) 
             // is not returned.
             let unrelated_task = TaskBuilder::new(
                 task::QueryType::FixedSize {
-                    max_batch_size: 10,
+                    max_batch_size: None,
                     batch_time_window_size: None,
                 },
                 VdafInstance::Fake,
@@ -3404,7 +3404,7 @@ async fn fixed_size_collection_job_acquire_release_happy_path(
         CollectionJobAcquireTestCase {
             task_ids: Vec::from([task_id]),
             query_type: task::QueryType::FixedSize {
-                max_batch_size: 10,
+                max_batch_size: Some(10),
                 batch_time_window_size: None,
             },
             reports,
@@ -4443,7 +4443,7 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
 
     let task = TaskBuilder::new(
         task::QueryType::FixedSize {
-            max_batch_size: 10,
+            max_batch_size: Some(10),
             batch_time_window_size: None,
         },
         VdafInstance::Fake,
@@ -4461,7 +4461,7 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
             Box::pin(async move {
                 let other_task = TaskBuilder::new(
                     task::QueryType::FixedSize {
-                        max_batch_size: 10,
+                        max_batch_size: Some(10),
                         batch_time_window_size: None,
                     },
                     VdafInstance::Fake,
@@ -4853,7 +4853,7 @@ async fn roundtrip_aggregate_share_job_fixed_size(ephemeral_datastore: Ephemeral
             Box::pin(async move {
                 let task = TaskBuilder::new(
                     task::QueryType::FixedSize {
-                        max_batch_size: 10,
+                        max_batch_size: None,
                         batch_time_window_size: None,
                     },
                     VdafInstance::Fake,
@@ -5002,7 +5002,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
             Box::pin(async move {
                 let task_1 = TaskBuilder::new(
                     task::QueryType::FixedSize {
-                        max_batch_size: 10,
+                        max_batch_size: Some(10),
                         batch_time_window_size: None,
                     },
                     VdafInstance::Fake,
@@ -5031,7 +5031,7 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
 
                 let task_2 = TaskBuilder::new(
                     task::QueryType::FixedSize {
-                        max_batch_size: 10,
+                        max_batch_size: Some(10),
                         batch_time_window_size: Some(batch_time_window_size),
                     },
                     VdafInstance::Fake,
@@ -5341,7 +5341,7 @@ async fn roundtrip_batch(ephemeral_datastore: EphemeralDatastore) {
             tx.put_aggregator_task(
                 &TaskBuilder::new(
                     task::QueryType::FixedSize {
-                        max_batch_size: 10,
+                        max_batch_size: None,
                         batch_time_window_size: None,
                     },
                     VdafInstance::Fake,
@@ -5657,7 +5657,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                         .unwrap();
                 let leader_fixed_size_task = TaskBuilder::new(
                     task::QueryType::FixedSize {
-                        max_batch_size: 10,
+                        max_batch_size: Some(10),
                         batch_time_window_size: None,
                     },
                     VdafInstance::Fake,
@@ -5668,7 +5668,7 @@ async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralData
                 .unwrap();
                 let helper_fixed_size_task = TaskBuilder::new(
                     task::QueryType::FixedSize {
-                        max_batch_size: 10,
+                        max_batch_size: Some(10),
                         batch_time_window_size: None,
                     },
                     VdafInstance::Fake,
@@ -6174,7 +6174,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                         .unwrap();
                 let leader_fixed_size_task = TaskBuilder::new(
                     task::QueryType::FixedSize {
-                        max_batch_size: 10,
+                        max_batch_size: Some(10),
                         batch_time_window_size: None,
                     },
                     VdafInstance::Fake,
@@ -6185,7 +6185,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 .unwrap();
                 let helper_fixed_size_task = TaskBuilder::new(
                     task::QueryType::FixedSize {
-                        max_batch_size: 10,
+                        max_batch_size: Some(10),
                         batch_time_window_size: None,
                     },
                     VdafInstance::Fake,
@@ -6196,7 +6196,7 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
                 .unwrap();
                 let leader_fixed_size_time_bucketed_task = TaskBuilder::new(
                     task::QueryType::FixedSize {
-                        max_batch_size: 10,
+                        max_batch_size: Some(10),
                         batch_time_window_size: Some(Duration::from_hours(24)?),
                     },
                     VdafInstance::Fake,

@@ -270,9 +270,7 @@ impl AggregatorAddTaskRequest {
     pub fn from_task(task: Task, role: Role) -> Self {
         let (query_type, max_batch_size) = match task.query_type() {
             QueryType::TimeInterval => (TimeInterval::CODE as u8, None),
-            QueryType::FixedSize { max_batch_size, .. } => {
-                (FixedSize::CODE as u8, Some(*max_batch_size))
-            }
+            QueryType::FixedSize { max_batch_size, .. } => (FixedSize::CODE as u8, *max_batch_size),
         };
         Self {
             task_id: *task.id(),

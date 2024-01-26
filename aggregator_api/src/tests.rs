@@ -1618,7 +1618,7 @@ fn post_task_req_serialization() {
         &PostTaskReq {
             peer_aggregator_endpoint: "https://example.com/".parse().unwrap(),
             query_type: QueryType::FixedSize {
-                max_batch_size: 999,
+                max_batch_size: Some(999),
                 batch_time_window_size: None,
             },
             vdaf: VdafInstance::Prio3CountVec {
@@ -1655,6 +1655,7 @@ fn post_task_req_serialization() {
                 len: 2,
             },
             Token::Str("max_batch_size"),
+            Token::Some,
             Token::U64(999),
             Token::Str("batch_time_window_size"),
             Token::None,
@@ -1727,7 +1728,7 @@ fn post_task_req_serialization() {
         &PostTaskReq {
             peer_aggregator_endpoint: "https://example.com/".parse().unwrap(),
             query_type: QueryType::FixedSize {
-                max_batch_size: 999,
+                max_batch_size: Some(999),
                 batch_time_window_size: None,
             },
             vdaf: VdafInstance::Prio3CountVec {
@@ -1768,6 +1769,7 @@ fn post_task_req_serialization() {
                 len: 2,
             },
             Token::Str("max_batch_size"),
+            Token::Some,
             Token::U64(999),
             Token::Str("batch_time_window_size"),
             Token::None,
@@ -1868,7 +1870,7 @@ fn task_resp_serialization() {
         TaskId::from([0u8; 32]),
         "https://helper.com/".parse().unwrap(),
         QueryType::FixedSize {
-            max_batch_size: 999,
+            max_batch_size: Some(999),
             batch_time_window_size: None,
         },
         VdafInstance::Prio3CountVec {
@@ -1929,6 +1931,7 @@ fn task_resp_serialization() {
                 len: 2,
             },
             Token::Str("max_batch_size"),
+            Token::Some,
             Token::U64(999),
             Token::Str("batch_time_window_size"),
             Token::None,

@@ -584,7 +584,7 @@ mod tests {
                 Box::pin(async move {
                     let task = TaskBuilder::new(
                         task::QueryType::FixedSize {
-                            max_batch_size: 10,
+                            max_batch_size: Some(10),
                             batch_time_window_size: None,
                         },
                         VdafInstance::Fake,
@@ -766,7 +766,7 @@ mod tests {
                 Box::pin(async move {
                     let task = TaskBuilder::new(
                         task::QueryType::FixedSize {
-                            max_batch_size: 10,
+                            max_batch_size: Some(10),
                             batch_time_window_size: None,
                         },
                         VdafInstance::Fake,
