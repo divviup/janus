@@ -2246,7 +2246,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::FixedSize {
-                max_batch_size: 10,
+                max_batch_size: Some(10),
                 batch_time_window_size: None,
             },
             VdafInstance::Prio3Count,
@@ -2501,7 +2501,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::FixedSize {
-                max_batch_size: 10,
+                max_batch_size: Some(10),
                 batch_time_window_size: None,
             },
             VdafInstance::Poplar1 { bits: 1 },
@@ -3171,7 +3171,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::FixedSize {
-                max_batch_size: 10,
+                max_batch_size: Some(10),
                 batch_time_window_size: None,
             },
             VdafInstance::Poplar1 { bits: 1 },

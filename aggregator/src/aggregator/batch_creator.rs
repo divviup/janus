@@ -45,7 +45,7 @@ struct Properties {
     max_aggregation_job_size: usize,
     task_id: TaskId,
     task_min_batch_size: usize,
-    task_max_batch_size: usize,
+    effective_task_max_batch_size: usize,
     task_batch_time_window_size: Option<Duration>,
 }
 
@@ -59,7 +59,7 @@ where
         max_aggregation_job_size: usize,
         task_id: TaskId,
         task_min_batch_size: usize,
-        task_max_batch_size: usize,
+        task_max_batch_size: Option<usize>,
         task_batch_time_window_size: Option<Duration>,
         aggregation_job_writer: &'a mut AggregationJobWriter<SEED_SIZE, FixedSize, A>,
     ) -> Self {
@@ -69,7 +69,13 @@ where
                 max_aggregation_job_size,
                 task_id,
                 task_min_batch_size,
-                task_max_batch_size,
+                // If the task has no explicit max_batch_size set, then our goal is to create
+                // batches of exactly min_batch_size reports, so we use that value as the effective
+                // maximum batch size, but we may create batches which exceed this size. See
+                // process_batches, below.
+                //
+                // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#section-4.1.2-6
+                effective_task_max_batch_size: task_max_batch_size.unwrap_or(task_min_batch_size),
                 task_batch_time_window_size,
             },
             aggregation_job_writer,
@@ -153,7 +159,8 @@ where
                     return Ok(());
                 }
                 // Discard any outstanding batches that do not currently have room for more reports.
-                if largest_outstanding_batch.max_size() >= properties.task_max_batch_size {
+                if largest_outstanding_batch.max_size() >= properties.effective_task_max_batch_size
+                {
                     PeekMut::pop(largest_outstanding_batch);
                     continue;
                 }
@@ -164,7 +171,8 @@ where
                             bucket.unaggregated_reports.len(),
                             properties.max_aggregation_job_size,
                         ),
-                        properties.task_max_batch_size - largest_outstanding_batch.max_size(),
+                        properties.effective_task_max_batch_size
+                            - largest_outstanding_batch.max_size(),
                     );
                     if (desired_aggregation_job_size >= properties.min_aggregation_job_size)
                         || (largest_outstanding_batch.max_size() < properties.task_min_batch_size
@@ -205,7 +213,8 @@ where
                     // any more.
                     let desired_aggregation_job_size = min(
                         properties.max_aggregation_job_size,
-                        properties.task_max_batch_size - largest_outstanding_batch.max_size(),
+                        properties.effective_task_max_batch_size
+                            - largest_outstanding_batch.max_size(),
                     );
                     if bucket.unaggregated_reports.len() >= desired_aggregation_job_size {
                         Self::create_aggregation_job(
@@ -236,7 +245,7 @@ where
                     bucket.unaggregated_reports.len(),
                     properties.max_aggregation_job_size,
                 ),
-                properties.task_max_batch_size,
+                properties.effective_task_max_batch_size,
             );
             if desired_aggregation_job_size >= new_batch_threshold {
                 let batch_id = random();

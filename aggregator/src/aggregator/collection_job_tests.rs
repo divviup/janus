@@ -168,7 +168,7 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
     let test_case = setup_collection_job_test_case(
         Role::Leader,
         QueryType::FixedSize {
-            max_batch_size: 10,
+            max_batch_size: Some(10),
             batch_time_window_size: None,
         },
     )
@@ -792,7 +792,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id() {
     let test_case = setup_collection_job_test_case(
         Role::Leader,
         QueryType::FixedSize {
-            max_batch_size: 10,
+            max_batch_size: Some(10),
             batch_time_window_size: None,
         },
     )
@@ -845,7 +845,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_batch_id()
     let test_case = setup_collection_job_test_case(
         Role::Leader,
         QueryType::FixedSize {
-            max_batch_size: 10,
+            max_batch_size: Some(10),
             batch_time_window_size: None,
         },
     )
@@ -914,7 +914,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_aggregatio
     let test_case = setup_collection_job_test_case(
         Role::Leader,
         QueryType::FixedSize {
-            max_batch_size: 10,
+            max_batch_size: Some(10),
             batch_time_window_size: None,
         },
     )

@@ -89,9 +89,7 @@ async fn handle_add_task(
     let query_type = match request.query_type {
         1 => task::QueryType::TimeInterval,
         2 => task::QueryType::FixedSize {
-            max_batch_size: request
-                .max_batch_size
-                .ok_or_else(|| anyhow::anyhow!("\"max_batch_size\" is missing"))?,
+            max_batch_size: request.max_batch_size,
             batch_time_window_size: None,
         },
         _ => {

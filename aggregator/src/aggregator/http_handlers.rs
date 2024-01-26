@@ -2127,7 +2127,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::FixedSize {
-                max_batch_size: 100,
+                max_batch_size: Some(100),
                 batch_time_window_size: None,
             },
             VdafInstance::Fake,
