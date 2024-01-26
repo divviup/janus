@@ -71,8 +71,7 @@ where
                 task_min_batch_size,
                 // If the task has no explicit max_batch_size set, then our goal is to create
                 // batches of exactly min_batch_size reports, so we use that value as the effective
-                // maximum batch size, but we may create batches which exceed this size. See
-                // process_batches, below.
+                // maximum batch size.
                 //
                 // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-09#section-4.1.2-6
                 effective_task_max_batch_size: task_max_batch_size.unwrap_or(task_min_batch_size),
