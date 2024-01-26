@@ -3889,7 +3889,7 @@ mod tests {
 
         // Try to upload the report, verify that we get the expected error.
         let error = aggregator
-            .handle_upload(task.id(), &report.get_encoded().unwrap())
+            .handle_upload(task.id(), &report.get_encoded())
             .await
             .unwrap_err();
         assert_matches!(
@@ -3945,7 +3945,7 @@ mod tests {
 
         // Try to upload the report, verify that we get the expected error.
         let error = aggregator
-            .handle_upload(task.id(), &report.get_encoded().unwrap())
+            .handle_upload(task.id(), &report.get_encoded())
             .await
             .unwrap_err();
         assert_matches!(
@@ -4001,7 +4001,7 @@ mod tests {
 
         // Try to upload the report, verify that we get the expected error.
         let error = aggregator
-            .handle_upload(task.id(), &report.get_encoded().unwrap())
+            .handle_upload(task.id(), &report.get_encoded())
             .await
             .unwrap_err();
         assert_matches!(
@@ -4056,7 +4056,7 @@ mod tests {
 
         // Try to upload the report, verify that we get the expected error.
         let error = aggregator
-            .handle_upload(task.id(), &report.get_encoded().unwrap())
+            .handle_upload(task.id(), &report.get_encoded())
             .await
             .unwrap_err();
         assert_matches!(
@@ -4108,16 +4108,13 @@ mod tests {
                 task.current_hpke_key().config(),
                 &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader),
                 // Some obviously wrong payload.
-                &PlaintextInputShare::new(Vec::new(), vec![0; 100])
-                    .get_encoded()
-                    .unwrap(),
+                &PlaintextInputShare::new(Vec::new(), vec![0; 100]).get_encoded(),
                 &InputShareAad::new(
                     *task.id(),
                     report.metadata().clone(),
                     report.public_share().to_vec(),
                 )
-                .get_encoded()
-                .unwrap(),
+                .get_encoded(),
             )
             .unwrap(),
             report.helper_encrypted_input_share().clone(),
@@ -4125,7 +4122,7 @@ mod tests {
 
         // Try to upload the report, verify that we get the expected error.
         let error = aggregator
-            .handle_upload(task.id(), &report.get_encoded().unwrap())
+            .handle_upload(task.id(), &report.get_encoded())
             .await
             .unwrap_err();
         assert_matches!(
