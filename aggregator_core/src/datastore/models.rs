@@ -1849,8 +1849,6 @@ impl GlobalHpkeKeypair {
 /// Per-task counts of uploaded reports and upload attempts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TaskUploadCounter {
-    pub(crate) task_id: TaskId,
-
     pub(crate) interval_collected: u64,
     pub(crate) report_decode_failure: u64,
     pub(crate) report_decrypt_failure: u64,
@@ -1869,7 +1867,6 @@ impl TaskUploadCounter {
     #[allow(clippy::too_many_arguments)]
     #[cfg(feature = "test-util")]
     pub fn new(
-        task_id: TaskId,
         interval_collected: u64,
         report_decode_failure: u64,
         report_decrypt_failure: u64,
@@ -1880,7 +1877,6 @@ impl TaskUploadCounter {
         task_expired: u64,
     ) -> Self {
         Self {
-            task_id,
             interval_collected,
             report_decode_failure,
             report_decrypt_failure,

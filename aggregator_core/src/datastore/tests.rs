@@ -7533,20 +7533,7 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
             let task_id = *task.id();
             Box::pin(async move {
                 let counter = tx.get_task_upload_counter(&task_id).await.unwrap();
-                assert_eq!(
-                    counter,
-                    TaskUploadCounter {
-                        task_id,
-                        interval_collected: 0,
-                        report_decode_failure: 0,
-                        report_decrypt_failure: 0,
-                        report_expired: 0,
-                        report_success: 0,
-                        report_too_early: 0,
-                        report_outdated_key: 0,
-                        task_expired: 0,
-                    }
-                );
+                assert_eq!(counter, None);
 
                 for case in [
                     (TaskUploadIncrementor::IntervalCollected, 2),
@@ -7570,8 +7557,7 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
                 let counter = tx.get_task_upload_counter(&task_id).await.unwrap();
                 assert_eq!(
                     counter,
-                    TaskUploadCounter {
-                        task_id,
+                    Some(TaskUploadCounter {
                         interval_collected: 2,
                         report_decode_failure: 4,
                         report_decrypt_failure: 6,
@@ -7580,7 +7566,7 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
                         report_success: 100,
                         report_too_early: 25,
                         task_expired: 12,
-                    }
+                    })
                 );
 
                 Ok(())

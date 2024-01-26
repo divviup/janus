@@ -3496,7 +3496,7 @@ mod tests {
             .eq_report(&vdaf, leader_task.current_hpke_key(), &report));
         assert_eq!(
             got_counter,
-            TaskUploadCounter::new(*task.id(), 0, 0, 0, 0, 0, 1, 0, 0)
+            Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 1, 0, 0))
         )
     }
 
@@ -3552,7 +3552,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            TaskUploadCounter::new(*task.id(), 0, 0, 0, 0, 0, 100, 0, 0),
+            Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 100, 0, 0))
         );
     }
 
@@ -3616,8 +3616,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            TaskUploadCounter::new(*task.id(), 0, 0, 0, 0, 1, 0, 0, 0),
-        );
+            Some(TaskUploadCounter::new(0, 0, 0, 0, 1, 0, 0, 0))
+        )
     }
 
     #[tokio::test]
@@ -3657,8 +3657,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            TaskUploadCounter::new(*task.id(), 0, 0, 0, 0, 0, 1, 0, 0),
-        );
+            Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 1, 0, 0))
+        )
     }
 
     #[tokio::test]
@@ -3706,8 +3706,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            TaskUploadCounter::new(*task.id(), 0, 0, 0, 0, 0, 0, 1, 0),
-        );
+            Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 0, 1, 0))
+        )
     }
 
     #[tokio::test]
@@ -3784,8 +3784,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            TaskUploadCounter::new(*task.id(), 1, 0, 0, 0, 0, 0, 0, 0),
-        );
+            Some(TaskUploadCounter::new(1, 0, 0, 0, 0, 0, 0, 0))
+        )
     }
 
     #[tokio::test]
@@ -3916,8 +3916,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            TaskUploadCounter::new(*task.id(), 0, 0, 0, 0, 0, 0, 0, 1),
-        );
+            Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 0, 0, 1))
+        )
     }
 
     #[tokio::test]
@@ -3972,8 +3972,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            TaskUploadCounter::new(*task.id(), 0, 0, 0, 1, 0, 0, 0, 0),
-        );
+            Some(TaskUploadCounter::new(0, 0, 0, 1, 0, 0, 0, 0))
+        )
     }
 
     #[tokio::test]
@@ -4028,8 +4028,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            TaskUploadCounter::new(*task.id(), 0, 0, 1, 0, 0, 0, 0, 0),
-        );
+            Some(TaskUploadCounter::new(0, 0, 1, 0, 0, 0, 0, 0))
+        )
     }
 
     #[tokio::test]
@@ -4083,8 +4083,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            TaskUploadCounter::new(*task.id(), 0, 1, 0, 0, 0, 0, 0, 0),
-        );
+            Some(TaskUploadCounter::new(0, 1, 0, 0, 0, 0, 0, 0))
+        )
     }
 
     #[tokio::test]
@@ -4152,8 +4152,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            TaskUploadCounter::new(*task.id(), 0, 1, 0, 0, 0, 0, 0, 0),
-        );
+            Some(TaskUploadCounter::new(0, 1, 0, 0, 0, 0, 0, 0))
+        )
     }
 
     pub(crate) fn generate_helper_report_share<V: vdaf::Client<16>>(
