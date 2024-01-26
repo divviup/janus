@@ -1,9 +1,9 @@
 use crate::{
     models::{
         AggregatorApiConfig, AggregatorRole, DeleteTaskprovPeerAggregatorReq, GetTaskIdsResp,
-        GetTaskMetricsResp, GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PostTaskReq,
-        PostTaskprovPeerAggregatorReq, PutGlobalHpkeConfigReq, SupportedVdaf, TaskResp,
-        TaskprovPeerAggregatorResp,
+        GetTaskMetricsResp, GetTaskUploadMetricsResp, GlobalHpkeConfigResp,
+        PatchGlobalHpkeConfigReq, PostTaskReq, PostTaskprovPeerAggregatorReq,
+        PutGlobalHpkeConfigReq, SupportedVdaf, TaskResp, TaskprovPeerAggregatorResp,
     },
     Config, ConnExt, Error,
 };
@@ -274,6 +274,20 @@ pub(super) async fn get_task_metrics<C: Clock>(
         reports,
         report_aggregations,
     }))
+}
+
+pub(super) async fn get_task_upload_metrics<C: Clock>(
+    conn: &mut Conn,
+    State(ds): State<Arc<Datastore<C>>>,
+) -> Result<Json<GetTaskUploadMetricsResp>, Error> {
+    let task_id = conn.task_id_param()?;
+    Ok(Json(GetTaskUploadMetricsResp(
+        ds.run_tx("get_task_upload_metrics", |tx| {
+            Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+        })
+        .await?
+        .ok_or(Error::NotFound)?,
+    )))
 }
 
 pub(super) async fn get_global_hpke_configs<C: Clock>(
