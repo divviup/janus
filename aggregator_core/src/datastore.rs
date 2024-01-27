@@ -56,7 +56,7 @@ use std::{
 };
 use tokio::{sync::Barrier, try_join};
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row, Statement, ToStatement};
-use tracing::{Level, error};
+use tracing::{error, Level};
 use url::Url;
 
 pub mod models;
