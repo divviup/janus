@@ -90,7 +90,7 @@ use std::{
     time::{Duration as StdDuration, Instant},
 };
 use tokio::{sync::Mutex, try_join};
-use tracing::{debug, info, trace_span, warn};
+use tracing::{debug, info, trace_span, warn, Level};
 use url::Url;
 
 pub mod accumulator;
