@@ -699,7 +699,7 @@ impl<C: Clock> Aggregator<C> {
     }
 
     /// Opts in or out of a taskprov task.
-    #[tracing::instrument(skip(self, aggregator_auth_token), err)]
+    #[tracing::instrument(skip(self, aggregator_auth_token), err(level = Level::DEBUG))]
     async fn taskprov_opt_in(
         &self,
         peer_role: &Role,
@@ -772,7 +772,7 @@ impl<C: Clock> Aggregator<C> {
     /// Validate and authorize a taskprov request. Returns values necessary for determining whether
     /// we can opt into the task. This function might return an opt-out error for conditions that
     /// are relevant for all DAP workflows (e.g. task expiration).
-    #[tracing::instrument(skip(self, aggregator_auth_token), err)]
+    #[tracing::instrument(skip(self, aggregator_auth_token), err(level = Level::DEBUG))]
     async fn taskprov_authorize_request(
         &self,
         peer_role: &Role,
@@ -1285,7 +1285,7 @@ macro_rules! vdaf_ops_dispatch {
 }
 
 impl VdafOps {
-    #[tracing::instrument(skip_all, fields(task_id = ?task.id()), err)]
+    #[tracing::instrument(skip_all, fields(task_id = ?task.id()), err(level = Level::DEBUG))]
     async fn handle_upload<C: Clock>(
         &self,
         clock: &C,
@@ -1336,7 +1336,7 @@ impl VdafOps {
     #[tracing::instrument(
         skip(self, datastore, global_hpke_keypairs, aggregate_step_failure_counter, task, req_bytes),
         fields(task_id = ?task.id()),
-        err
+        err(level = Level::DEBUG)
     )]
     async fn handle_aggregate_init<C: Clock>(
         &self,
@@ -1387,7 +1387,7 @@ impl VdafOps {
     #[tracing::instrument(
         skip(self, datastore, aggregate_step_failure_counter, task, req, request_hash),
         fields(task_id = ?task.id()),
-        err
+        err(level = Level::DEBUG)
     )]
     async fn handle_aggregate_continue<C: Clock>(
         &self,
@@ -1433,7 +1433,7 @@ impl VdafOps {
         }
     }
 
-    #[tracing::instrument(skip(self, datastore), fields(task_id = ?task.id()), err)]
+    #[tracing::instrument(skip(self, datastore), fields(task_id = ?task.id()), err(level = Level::DEBUG))]
     async fn handle_aggregate_delete<C: Clock>(
         &self,
         datastore: &Datastore<C>,
@@ -2439,7 +2439,7 @@ impl VdafOps {
     #[tracing::instrument(
         skip(self, datastore, task, collection_req_bytes),
         fields(task_id = ?task.id()),
-        err
+        err(level = Level::DEBUG)
     )]
     async fn handle_create_collection_job<C: Clock>(
         &self,
@@ -2741,7 +2741,7 @@ impl VdafOps {
     /// Handle GET requests to the leader's `tasks/{task-id}/collection_jobs/{collection-job-id}`
     /// endpoint. The return value is an encoded `CollectResp<Q>`.
     /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-collecting-results>
-    #[tracing::instrument(skip(self, datastore, task), fields(task_id = ?task.id()), err)]
+    #[tracing::instrument(skip(self, datastore, task), fields(task_id = ?task.id()), err(level = Level::DEBUG))]
     async fn handle_get_collection_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
@@ -2918,7 +2918,7 @@ impl VdafOps {
         }
     }
 
-    #[tracing::instrument(skip(self, datastore, task), fields(task_id = ?task.id()), err)]
+    #[tracing::instrument(skip(self, datastore, task), fields(task_id = ?task.id()), err(level = Level::DEBUG))]
     async fn handle_delete_collection_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
@@ -3001,7 +3001,7 @@ impl VdafOps {
     #[tracing::instrument(
         skip(self, datastore, clock, task, req_bytes),
         fields(task_id = ?task.id()),
-        err
+        err(level = Level::DEBUG)
     )]
     async fn handle_aggregate_share<C: Clock>(
         &self,
@@ -3311,7 +3311,7 @@ struct RequestBody<T> {
         http_request_duration_histogram,
     ),
     fields(url = %url),
-    err,
+    err(level = Level::DEBUG),
 )]
 async fn send_request_to_helper<T: Encode>(
     http_client: &Client,
