@@ -41,8 +41,7 @@ impl Handler for Error {
     async fn run(&self, mut conn: Conn) -> Conn {
         let error_code = self.error_code();
         conn.set_state(ErrorCode(error_code));
-        warn!(error_code, error=?self, "Error handling endpoint");
-        match self {
+        let conn = match self {
             Error::InvalidConfiguration(_) => conn.with_status(Status::InternalServerError),
             Error::MessageDecode(_) => conn
                 .with_problem_document(&ProblemDocument::new_dap(DapProblemType::InvalidMessage)),
@@ -132,7 +131,13 @@ impl Handler for Error {
                 &ProblemDocument::new_dap(DapProblemType::InvalidTask).with_task_id(task_id),
             ),
             Error::DifferentialPrivacy(_) => conn.with_status(Status::InternalServerError),
+        };
+
+        if matches!(conn.status(), Some(status) if status.is_server_error()) {
+            warn!(error_code, error=?self, "Error handling endpoint");
         }
+
+        conn
     }
 }
 
