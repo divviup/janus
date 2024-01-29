@@ -32,7 +32,7 @@ use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
     KeyValue,
 };
-use postgres_types::{FromSql, Json, ToSql};
+use postgres_types::{FromSql, Json, Timestamp, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
     topology::ping_pong::PingPongTransition,
@@ -4218,13 +4218,40 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         limit: u64,
     ) -> Result<u64, Error> {
-        let stmt = self
+        // Calculation of a report timestamp threshold is split apart from the main body of the
+        // query so that the query planner can see concrete timestamp value, compare it against the
+        // client_timestamp column's histogram, and make an accurate row count estimate. If the
+        // threshold is determined in a single query via a join, the query planner is not able to
+        // predict the task's report_expiry_age, and the accuracy of the row count estimate suffers.
+        let stmt_1 = self
+            .prepare_cached(
+                "SELECT
+                    id,
+                    COALESCE(
+                        $2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL,
+                        '-infinity'::TIMESTAMP
+                    ) AS threshold
+                FROM tasks WHERE tasks.task_id = $1",
+            )
+            .await?;
+        let row = self
+            .query_one(
+                &stmt_1,
+                &[
+                    /* task_id */ &task_id.get_encoded()?,
+                    /* now */ &self.clock.now().as_naive_date_time()?,
+                ],
+            )
+            .await?;
+        let id = row.get::<_, i64>("id");
+        let threshold = row.get::<_, Timestamp<NaiveDateTime>>("threshold");
+
+        let stmt_2 = self
             .prepare_cached(
                 "WITH client_reports_to_delete AS (
                     SELECT client_reports.id FROM client_reports
-                    JOIN tasks ON tasks.id = client_reports.task_id
-                    WHERE tasks.task_id = $1
-                      AND client_reports.client_timestamp < COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                    WHERE client_reports.task_id = $1
+                        AND client_reports.client_timestamp < $2::TIMESTAMP
                     LIMIT $3
                 )
                 DELETE FROM client_reports
@@ -4233,10 +4260,10 @@ impl<C: Clock> Transaction<'_, C> {
             )
             .await?;
         self.execute(
-            &stmt,
+            &stmt_2,
             &[
-                /* task_id */ &task_id.get_encoded()?,
-                /* now */ &self.clock.now().as_naive_date_time()?,
+                /* id */ &id,
+                /* threshold */ &threshold,
                 /* limit */ &i64::try_from(limit)?,
             ],
         )
