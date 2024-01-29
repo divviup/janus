@@ -1,0 +1,97 @@
+name: make-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: >-
+          JSON array of branches to target. The first branch in the array will
+          be marked as the latest release.
+        required: false
+        type: string
+        default: '["release/0.6","release/0.5"]'
+
+jobs:
+  bump-version:
+    strategy:
+      matrix:
+        target_branch: ${{ fromJSON(inputs.target_branch) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: '${{ matrix.target_branch }}'
+          token: '${{ secrets.DIVVIUP_GITHUB_AUTOMATION_RELEASE_PAT }}'
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Restore cargo-edit from cache
+        id: cache-cargo-edit-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/bin
+          key: ${{ runner.os }}-cargo-edit
+
+      - run: cargo install cargo-edit --no-default-features --features set-version
+        if: steps.cache-cargo-edit-restore.outputs.cache-hit != 'true'
+
+      - name: Save cargo-edit to cache
+        id: cache-cargo-edit-save
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/bin
+          key: ${{ steps.cache-cargo-edit-restore.outputs.cache-primary-key }}
+      
+      - run: cargo set-version --bump patch
+      - run: git diff
+      - name: Push changes
+        run: |
+          git config user.email "divviup-github-automation@divviup.org"
+          git config user.name "divviup-github-automation"
+          git commit -am "Bump Janus patch version, triggered by @${{ github.actor }}"
+          git push
+
+  # This job is kept separate from the previous one to enable retrying it without
+  # bumping the version number again.
+  make-release:
+    strategy:
+      matrix:
+        target_branch: ${{ fromJSON(inputs.target_branch) }}
+    runs-on: ubuntu-latest
+    needs: [bump-version]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: '${{ matrix.target_branch }}'
+          token: '${{ secrets.DIVVIUP_GITHUB_AUTOMATION_RELEASE_PAT }}'
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Create release
+        run: |
+          # Determine the workspace version.
+          VERSION=$(cargo metadata --no-deps | jq -er '.packages[0].version')
+          TARGET_BRANCH="${{ matrix.target_branch }}"
+          FIRST_BRANCH="${{ fromJSON(inputs.target_branch)[0] }}"
+
+          LATEST=
+          if [ "$TARGET_BRANCH" == "$FIRST_BRANCH" ]; then
+              LATEST="--latest=true"
+          else
+              LATEST="--latest=false"
+          fi
+
+          gh release create "$VERSION" \
+              --generate-notes \
+              --target "$TARGET_BRANCH" \
+              $LATEST
+        env:
+          GH_TOKEN: '${{ secrets.DIVVIUP_GITHUB_AUTOMATION_RELEASE_PAT }}'
