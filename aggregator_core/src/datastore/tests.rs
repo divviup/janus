@@ -5564,6 +5564,80 @@ async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) 
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
+async fn delete_expired_client_reports_noop(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
+
+    let clock = MockClock::default();
+    let ds = ephemeral_datastore.datastore(clock.clone()).await;
+    let vdaf = dummy_vdaf::Vdaf::new();
+
+    // Setup.
+    let (task_id, new_report_id, old_report_id) = ds
+        .run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                let task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
+                    .with_report_expiry_age(None)
+                    .build()
+                    .leader_view()
+                    .unwrap();
+                tx.put_aggregator_task(&task).await?;
+
+                let old_report = LeaderStoredReport::new_dummy(
+                    *task.id(),
+                    OLDEST_ALLOWED_REPORT_TIMESTAMP
+                        .sub(&Duration::from_seconds(1))
+                        .unwrap(),
+                );
+                let new_report =
+                    LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &old_report)
+                    .await?;
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &new_report)
+                    .await?;
+
+                Ok((
+                    *task.id(),
+                    *new_report.metadata().id(),
+                    *old_report.metadata().id(),
+                ))
+            })
+        })
+        .await
+        .unwrap();
+
+    // Run.
+    let deleted_report_count = ds
+        .run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                tx.delete_expired_client_reports(&task_id, u64::try_from(i64::MAX)?)
+                    .await
+            })
+        })
+        .await
+        .unwrap();
+
+    // Verify.
+    assert_eq!(0, deleted_report_count);
+    let want_report_ids = HashSet::from([new_report_id, old_report_id]);
+    let got_report_ids = ds
+        .run_unnamed_tx(|tx| {
+            let vdaf = vdaf.clone();
+            Box::pin(async move {
+                let task_client_reports = tx.get_client_reports_for_task(&vdaf, &task_id).await?;
+                Ok(HashSet::from_iter(
+                    task_client_reports
+                        .into_iter()
+                        .map(|report| *report.metadata().id()),
+                ))
+            })
+        })
+        .await
+        .unwrap();
+    assert_eq!(want_report_ids, got_report_ids);
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
 async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
