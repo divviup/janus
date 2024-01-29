@@ -17,7 +17,7 @@ use deadpool_postgres::{Manager, Pool, PoolError, Runtime, Timeouts};
 use futures::StreamExt;
 use janus_aggregator_core::datastore::{Crypter, Datastore};
 use janus_core::time::Clock;
-use opentelemetry::metrics::Meter;
+use opentelemetry::metrics::{Meter, MetricsError};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use rustls::RootCertStore;
 use std::{
@@ -268,7 +268,7 @@ where
     .await
     .context("couldn't create database connection pool")?;
     let datastore = datastore(
-        pool,
+        pool.clone(),
         clock.clone(),
         &meter,
         &options.common_options().datastore_keys,
@@ -276,6 +276,8 @@ where
     )
     .await
     .context("couldn't create datastore")?;
+
+    register_database_pool_status_metrics(pool, &meter)?;
 
     let health_check_listen_address = config.common_config().health_check_listen_address;
     let zpages_task_handle = tokio::task::spawn(async move {
@@ -295,6 +297,62 @@ where
     zpages_task_handle.abort();
 
     result
+}
+
+/// Set up metrics to monitor the database connection pool's status.
+fn register_database_pool_status_metrics(pool: Pool, meter: &Meter) -> Result<(), MetricsError> {
+    let available_connections_gauge = meter
+        .u64_observable_gauge("janus_database_pool_available_connections")
+        .with_description(
+            "Number of available database connections in the database connection pool.",
+        )
+        .init();
+    let total_connections_gauge = meter
+        .u64_observable_gauge("janus_database_pool_total_connections")
+        .with_description("Total number of connections in the database connection pool.")
+        .init();
+    let maximum_size_gauge = meter
+        .u64_observable_gauge("janus_database_pool_maximum_size_connections")
+        .with_description("Maximum size of the database connection pool.")
+        .init();
+    let waiting_tasks_gauge = meter
+        .u64_observable_gauge("janus_database_pool_waiting_tasks")
+        .with_description(
+            "Number of tasks waiting for a connection from the database connection pool.",
+        )
+        .init();
+    meter.register_callback(
+        &[
+            available_connections_gauge.as_any(),
+            total_connections_gauge.as_any(),
+            maximum_size_gauge.as_any(),
+            waiting_tasks_gauge.as_any(),
+        ],
+        move |observer| {
+            let status = pool.status();
+            observer.observe_u64(
+                &available_connections_gauge,
+                u64::try_from(status.available).unwrap_or(u64::MAX),
+                &[],
+            );
+            observer.observe_u64(
+                &total_connections_gauge,
+                u64::try_from(status.size).unwrap_or(u64::MAX),
+                &[],
+            );
+            observer.observe_u64(
+                &maximum_size_gauge,
+                u64::try_from(status.max_size).unwrap_or(u64::MAX),
+                &[],
+            );
+            observer.observe_u64(
+                &waiting_tasks_gauge,
+                u64::try_from(status.waiting).unwrap_or(u64::MAX),
+                &[],
+            );
+        },
+    )?;
+    Ok(())
 }
 
 /// A trillium server which serves z-pages, which are utility endpoints for health checks and
@@ -426,16 +484,27 @@ pub async fn setup_server(
 mod tests {
     use crate::{
         aggregator::http_handlers::test_util::take_response_body,
-        binary_utils::{database_pool, zpages_handler, CommonBinaryOptions},
+        binary_utils::{
+            database_pool, register_database_pool_status_metrics, zpages_handler,
+            CommonBinaryOptions,
+        },
         config::DbConfig,
     };
     use clap::CommandFactory;
+    use janus_aggregator_core::datastore::test_util::ephemeral_datastore;
     use janus_core::test_util::{
         install_test_trace_subscriber,
         testcontainers::{container_client, Postgres, Volume},
     };
-    use std::fs;
+    use opentelemetry::metrics::MeterProvider as _;
+    use opentelemetry_sdk::{
+        metrics::{data::Gauge, MeterProvider, PeriodicReader},
+        runtime::Tokio,
+        testing::metrics::InMemoryMetricsExporter,
+    };
+    use std::{collections::HashMap, fs};
     use testcontainers::RunnableImage;
+    use tokio::task::spawn_blocking;
     use tracing_subscriber::{reload, EnvFilter};
     use trillium::Status;
     use trillium_testing::prelude::*;
@@ -579,5 +648,88 @@ mod tests {
         let pool = database_pool(&db_config, None).await.unwrap();
         let conn = pool.get().await.unwrap();
         conn.query_one("SELECT 1", &[]).await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn database_pool_metrics() {
+        install_test_trace_subscriber();
+
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let pool = ephemeral_datastore.pool();
+
+        let exporter = InMemoryMetricsExporter::default();
+        let reader = PeriodicReader::builder(exporter.clone(), Tokio).build();
+        let meter_provider = MeterProvider::builder().with_reader(reader.clone()).build();
+        let meter = meter_provider.meter("tests");
+
+        register_database_pool_status_metrics(pool.clone(), &meter).unwrap();
+
+        check_database_pool_gauges(&meter_provider, &exporter, 0, 0, 0).await;
+        let connection = pool.get().await.unwrap();
+        check_database_pool_gauges(&meter_provider, &exporter, 0, 1, 0).await;
+        drop(connection);
+        check_database_pool_gauges(&meter_provider, &exporter, 1, 1, 0).await;
+
+        spawn_blocking(move || {
+            // TODO: PeriodicReader::shutdown() currently has a bug that results in this method
+            // always returning an error. Ignore this until the fix makes it into the next release.
+            // See https://github.com/open-telemetry/opentelemetry-rust/pull/1375.
+            let _ = meter_provider.shutdown();
+        })
+        .await
+        .unwrap();
+    }
+
+    async fn check_database_pool_gauges(
+        meter_provider: &MeterProvider,
+        exporter: &InMemoryMetricsExporter,
+        expected_available: u64,
+        expected_total: u64,
+        expected_waiting: u64,
+    ) {
+        spawn_blocking({
+            let meter_provider = meter_provider.clone();
+            move || {
+                meter_provider.force_flush().unwrap();
+            }
+        })
+        .await
+        .unwrap();
+
+        let finished_metrics = exporter.get_finished_metrics().unwrap();
+        let metrics = finished_metrics
+            .into_iter()
+            .flat_map(|rm| rm.scope_metrics.into_iter())
+            .flat_map(|sm| sm.metrics.into_iter())
+            .map(|metric| (metric.name.into_owned(), metric.data))
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(
+            metrics["janus_database_pool_available_connections"]
+                .as_any()
+                .downcast_ref::<Gauge<u64>>()
+                .unwrap()
+                .data_points[0]
+                .value,
+            expected_available
+        );
+        assert_eq!(
+            metrics["janus_database_pool_total_connections"]
+                .as_any()
+                .downcast_ref::<Gauge<u64>>()
+                .unwrap()
+                .data_points[0]
+                .value,
+            expected_total
+        );
+        assert_eq!(
+            metrics["janus_database_pool_waiting_tasks"]
+                .as_any()
+                .downcast_ref::<Gauge<u64>>()
+                .unwrap()
+                .data_points[0]
+                .value,
+            expected_waiting
+        );
     }
 }
