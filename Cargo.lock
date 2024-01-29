@@ -1142,13 +1142,13 @@ dependencies = [
 
 [[package]]
 name = "divviup-client"
-version = "0.1.5"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f85ac7fb9a8e40b41680a6db2ba891f528b2f627eb4109e6561c543f72088be"
+checksum = "1fc486c497504a6512a879880b6c1bbc4c59c8655a01c60e7c0d1ec595594830"
 dependencies = [
  "base64",
  "email_address",
- "janus_messages 0.6.8",
+ "janus_messages 0.6.11 (registry+https://github.com/rust-lang/crates.io-index)",
  "log",
  "pad-adapter",
  "serde",
@@ -2408,24 +2408,6 @@ dependencies = [
 
 [[package]]
 name = "janus_messages"
-version = "0.6.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2cba01ea862d2da98602c73aa0f37f9eb834965cde2ca1320b2fe47f2658182"
-dependencies = [
- "anyhow",
- "base64",
- "derivative",
- "hex",
- "num_enum",
- "prio",
- "rand",
- "serde",
- "thiserror",
- "url",
-]
-
-[[package]]
-name = "janus_messages"
 version = "0.6.11"
 dependencies = [
  "anyhow",
@@ -2438,6 +2420,24 @@ dependencies = [
  "rand",
  "serde",
  "serde_test",
+ "thiserror",
+ "url",
+]
+
+[[package]]
+name = "janus_messages"
+version = "0.6.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc25b5ae36dcef4d58ae907315cb9323ee1391e965cc74a8d50585f54c178ecb"
+dependencies = [
+ "anyhow",
+ "base64",
+ "derivative",
+ "hex",
+ "num_enum",
+ "prio",
+ "rand",
+ "serde",
  "thiserror",
  "url",
 ]
@@ -5281,9 +5281,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-client"
-version = "0.5.1"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2696ed59c1ad11d2593d7e1ec064077350acd9bdb23baecee4fa28e856fe9244"
+checksum = "f29d743ad54935b37a883cddc1569862cbe68cf8c0a0feba6d36df2cf0547f0a"
 dependencies = [
  "crossbeam-queue",
  "dashmap",
@@ -5313,9 +5313,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-http"
-version = "0.3.11"
+version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9b5f80f30b6958cff1e0b5b8587c6e8d1fe2f7e6ba656ea1ef115f745f9106d"
+checksum = "098325950afcdccb34312ec0804f31f33da3b7a8f08994d50792182a99f264fd"
 dependencies = [
  "encoding_rs",
  "futures-lite 2.2.0",
