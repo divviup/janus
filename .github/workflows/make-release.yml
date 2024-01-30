@@ -78,7 +78,7 @@ jobs:
       - name: Create release
         run: |
           # Determine the workspace version.
-          VERSION=$(cargo metadata --no-deps | jq -er '.packages[0].version')
+          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -er '.packages[0].version')
           TARGET_BRANCH="${{ matrix.target_branch }}"
           FIRST_BRANCH="${{ fromJSON(inputs.target_branch)[0] }}"
 
