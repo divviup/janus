@@ -47,8 +47,9 @@ use janus_messages::{
     },
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq,
     AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
-    AggregationJobStep, BatchSelector, Duration, Interval, PartialBatchSelector, PrepareContinue,
-    PrepareInit, PrepareResp, PrepareStepResult, ReportIdChecksum, ReportShare, Role, TaskId, Time,
+    AggregationJobStep, BatchSelector, Duration, Extension, ExtensionType, Interval,
+    PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult,
+    ReportIdChecksum, ReportShare, Role, TaskId, Time,
 };
 use prio::{
     idpf::IdpfInput,
@@ -204,6 +205,20 @@ impl TaskprovTestCase {
         ReportShare,
         Poplar1AggregationParam,
     ) {
+        self.next_report_share_with_extensions(Vec::from([Extension::new(
+            ExtensionType::Taskprov,
+            Vec::new(),
+        )]))
+    }
+
+    fn next_report_share_with_extensions(
+        &self,
+        extensions: Vec<Extension>,
+    ) -> (
+        VdafTranscript<16, TestVdaf>,
+        ReportShare,
+        Poplar1AggregationParam,
+    ) {
         let aggregation_param =
             Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[true])]))
                 .unwrap();
@@ -215,6 +230,7 @@ impl TaskprovTestCase {
             aggregation_param.clone(),
         )
         .with_hpke_config(self.global_hpke_key.config().clone())
+        .with_extensions(extensions)
         .next_report_share(&measurement);
         (transcript, report_share, aggregation_param)
     }
@@ -365,6 +381,92 @@ async fn taskprov_aggregate_init() {
                 .eq(&AggregationJobState::InProgress)
     );
     assert_eq!(test.task.taskprov_helper_view().unwrap(), got_task.unwrap());
+}
+
+#[tokio::test]
+async fn taskprov_aggregate_init_missing_extension() {
+    let test = TaskprovTestCase::new().await;
+
+    let (transcript, report_share, aggregation_param) =
+        test.next_report_share_with_extensions(Vec::new());
+    let batch_id = random();
+    let request = AggregationJobInitializeReq::new(
+        aggregation_param.get_encoded().unwrap(),
+        PartialBatchSelector::new_fixed_size(batch_id),
+        Vec::from([PrepareInit::new(
+            report_share.clone(),
+            transcript.leader_prepare_transitions[0].message.clone(),
+        )]),
+    );
+    let aggregation_job_id: AggregationJobId = random();
+
+    let auth = test
+        .peer_aggregator
+        .primary_aggregator_auth_token()
+        .request_authentication();
+
+    let test_conn = put(test
+        .task
+        .aggregation_job_uri(&aggregation_job_id)
+        .unwrap()
+        .path())
+    .with_request_header(auth.0, auth.1)
+    .with_request_header(
+        KnownHeaderName::ContentType,
+        AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+    )
+    .with_request_header(
+        TASKPROV_HEADER,
+        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+    )
+    .with_request_body(request.get_encoded().unwrap())
+    .run_async(&test.handler)
+    .await;
+
+    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+}
+
+#[tokio::test]
+async fn taskprov_aggregate_init_malformed_extension() {
+    let test = TaskprovTestCase::new().await;
+
+    let (transcript, report_share, aggregation_param) =
+        test.next_report_share_with_extensions(Vec::new());
+    let batch_id = random();
+    let request = AggregationJobInitializeReq::new(
+        aggregation_param.get_encoded().unwrap(),
+        PartialBatchSelector::new_fixed_size(batch_id),
+        Vec::from([PrepareInit::new(
+            report_share.clone(),
+            transcript.leader_prepare_transitions[0].message.clone(),
+        )]),
+    );
+    let aggregation_job_id: AggregationJobId = random();
+
+    let auth = test
+        .peer_aggregator
+        .primary_aggregator_auth_token()
+        .request_authentication();
+
+    let test_conn = put(test
+        .task
+        .aggregation_job_uri(&aggregation_job_id)
+        .unwrap()
+        .path())
+    .with_request_header(auth.0, auth.1)
+    .with_request_header(
+        KnownHeaderName::ContentType,
+        AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+    )
+    .with_request_header(
+        TASKPROV_HEADER,
+        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+    )
+    .with_request_body(request.get_encoded().unwrap())
+    .run_async(&test.handler)
+    .await;
+
+    assert_eq!(test_conn.status(), Some(Status::BadRequest));
 }
 
 #[tokio::test]

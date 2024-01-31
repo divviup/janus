@@ -55,7 +55,7 @@ use janus_messages::{
     taskprov::TaskConfig,
     AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
-    BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, HpkeConfig,
+    BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, ExtensionType, HpkeConfig,
     HpkeConfigList, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
     PrepareError, PrepareResp, PrepareStepResult, Report, ReportIdChecksum, ReportShare, Role,
     TaskId,
@@ -149,6 +149,8 @@ pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
         "duplicate_extension",
         "missing_client_report",
         "missing_prepare_message",
+        "missing_or_malformed_taskprov_extension",
+        "unexpected_taskprov_extension",
     ] {
         aggregate_step_failure_counter.add(0, &[KeyValue::new("type", failure_type)]);
     }
@@ -423,6 +425,7 @@ impl<C: Clock> Aggregator<C> {
                 &self.aggregate_step_failure_counter,
                 self.cfg.batch_aggregation_shard_count,
                 aggregation_job_id,
+                taskprov_task_config.is_some(),
                 req_bytes,
             )
             .await
@@ -725,26 +728,28 @@ impl<C: Clock> Aggregator<C> {
 
         let vdaf_verify_key = peer_aggregator.derive_vdaf_verify_key(task_id, &vdaf_instance);
 
-        let task = AggregatorTask::new(
-            *task_id,
-            leader_url,
-            task_config.query_config().query().try_into()?,
-            vdaf_instance,
-            vdaf_verify_key,
-            task_config.query_config().max_batch_query_count() as u64,
-            Some(*task_config.task_expiration()),
-            peer_aggregator.report_expiry_age().cloned(),
-            task_config.query_config().min_batch_size() as u64,
-            *task_config.query_config().time_precision(),
-            *peer_aggregator.tolerable_clock_skew(),
-            // Taskprov task has no per-task HPKE keys
-            [],
-            task::AggregatorTaskParameters::TaskprovHelper,
-        )
-        .map_err(|err| Error::InvalidTask(*task_id, OptOutReason::TaskParameters(err)))?;
+        let task = Arc::new(
+            AggregatorTask::new(
+                *task_id,
+                leader_url,
+                task_config.query_config().query().try_into()?,
+                vdaf_instance,
+                vdaf_verify_key,
+                task_config.query_config().max_batch_query_count() as u64,
+                Some(*task_config.task_expiration()),
+                peer_aggregator.report_expiry_age().cloned(),
+                task_config.query_config().min_batch_size() as u64,
+                *task_config.query_config().time_precision(),
+                *peer_aggregator.tolerable_clock_skew(),
+                // Taskprov task has no per-task HPKE keys
+                [],
+                task::AggregatorTaskParameters::TaskprovHelper,
+            )
+            .map_err(|err| Error::InvalidTask(*task_id, OptOutReason::TaskParameters(err)))?,
+        );
         self.datastore
             .run_tx("taskprov_put_task", |tx| {
-                let task = task.clone();
+                let task = Arc::clone(&task);
                 Box::pin(async move { tx.put_aggregator_task(&task).await })
             })
             .await
@@ -784,7 +789,8 @@ impl<C: Clock> Aggregator<C> {
             Role::Leader => task_config.leader_aggregator_endpoint(),
             Role::Helper => task_config.helper_aggregator_endpoint(),
             _ => panic!("Unexpected role {peer_role}"),
-        }.try_into()?;
+        }
+        .try_into()?;
 
         let peer_aggregator = self
             .peer_aggregators
@@ -984,6 +990,7 @@ impl<C: Clock> TaskAggregator<C> {
         aggregate_step_failure_counter: &Counter<u64>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
+        require_taskprov_extension: bool,
         req_bytes: &[u8],
     ) -> Result<AggregationJobResp, Error> {
         self.vdaf_ops
@@ -994,6 +1001,7 @@ impl<C: Clock> TaskAggregator<C> {
                 Arc::clone(&self.task),
                 batch_aggregation_shard_count,
                 aggregation_job_id,
+                require_taskprov_extension,
                 req_bytes,
             )
             .await
@@ -1339,6 +1347,7 @@ impl VdafOps {
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
+        require_taskprov_extension: bool,
         req_bytes: &[u8],
     ) -> Result<AggregationJobResp, Error> {
         match task.query_type() {
@@ -1353,6 +1362,7 @@ impl VdafOps {
                         batch_aggregation_shard_count,
                         aggregation_job_id,
                         verify_key,
+                        require_taskprov_extension,
                         req_bytes,
                     )
                     .await
@@ -1369,6 +1379,7 @@ impl VdafOps {
                         batch_aggregation_shard_count,
                         aggregation_job_id,
                         verify_key,
+                        require_taskprov_extension,
                         req_bytes,
                     )
                     .await
@@ -1717,6 +1728,7 @@ impl VdafOps {
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         verify_key: &VerifyKey<SEED_SIZE>,
+        require_taskprov_extension: bool,
         req_bytes: &[u8],
     ) -> Result<AggregationJobResp, Error>
     where
@@ -1852,6 +1864,7 @@ impl VdafOps {
                 })
             });
 
+            let mut taskprov_error = None;
             let plaintext_input_share = plaintext.and_then(|plaintext| {
                 let plaintext_input_share =
                     PlaintextInputShare::get_decoded(&plaintext).map_err(|error| {
@@ -1869,13 +1882,14 @@ impl VdafOps {
                         );
                         PrepareError::InvalidMessage
                     })?;
-                // Check for repeated extensions.
-                let mut extension_types = HashSet::new();
-                if !plaintext_input_share
-                    .extensions()
-                    .iter()
-                    .all(|extension| extension_types.insert(extension.extension_type()))
-                {
+
+                // Build map of extension type to extension data, checking for duplicates.
+                let mut extensions = HashMap::new();
+                if !plaintext_input_share.extensions().iter().all(|extension| {
+                    extensions
+                        .insert(*extension.extension_type(), extension.extension_data())
+                        .is_none()
+                }) {
                     debug!(
                         task_id = %task.id(),
                         metadata = ?prepare_init.report_share().metadata(),
@@ -1885,8 +1899,35 @@ impl VdafOps {
                         .add(1, &[KeyValue::new("type", "duplicate_extension")]);
                     return Err(PrepareError::InvalidMessage);
                 }
+
+                if require_taskprov_extension {
+                    if !extensions.get(&ExtensionType::Taskprov).map(|data| data.is_empty()).unwrap_or(false) {
+                        debug!(
+                            task_id = %task.id(),
+                            metadata = ?prepare_init.report_share().metadata(),
+                            "Taskprov task received report with missing or malformed taskprov extension",
+                        );
+                        aggregate_step_failure_counter
+                            .add(1, &[KeyValue::new("type", "missing_or_malformed_taskprov_extension")]);
+                        taskprov_error = Some(Error::InvalidMessage(Some(*task.id()), "missing or malformed taskprov extension"));
+                    }
+                } else if extensions.contains_key(&ExtensionType::Taskprov) {
+                    // taskprov not enabled, but the taskprov extension is present.
+                        debug!(
+                            task_id = %task.id(),
+                            metadata = ?prepare_init.report_share().metadata(),
+                            "Taskprov task received report with unexpected taskprov extension",
+                        );
+                        aggregate_step_failure_counter
+                            .add(1, &[KeyValue::new("type", "unexpected_taskprov_extension")]);
+                        taskprov_error = Some(Error::InvalidMessage(Some(*task.id()), "unexpected taskprov extension"));
+                    }
+
                 Ok(plaintext_input_share)
             });
+            if let Some(err) = taskprov_error {
+                return Err(err);
+            }
 
             let input_share = plaintext_input_share.and_then(|plaintext_input_share| {
                 A::InputShare::get_decoded_with_param(

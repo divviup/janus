@@ -29,7 +29,8 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::TimeInterval, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
-    HpkeConfig, PartialBatchSelector, PrepareInit, PrepareStepResult, ReportMetadata, ReportShare,
+    Extension, ExtensionType, HpkeConfig, PartialBatchSelector, PrepareInit, PrepareStepResult,
+    ReportMetadata, ReportShare,
 };
 use prio::{
     codec::Encode,
@@ -46,6 +47,7 @@ use std::sync::Arc;
 use trillium::{Handler, KnownHeaderName, Status};
 use trillium_testing::{prelude::put, TestConn};
 
+#[derive(Clone)]
 pub(super) struct PrepareInitGenerator<const VERIFY_KEY_SIZE: usize, V>
 where
     V: vdaf::Vdaf,
@@ -55,6 +57,7 @@ where
     vdaf: V,
     aggregation_param: V::AggregationParam,
     hpke_config: HpkeConfig,
+    extensions: Vec<Extension>,
 }
 
 impl<const VERIFY_KEY_SIZE: usize, V> PrepareInitGenerator<VERIFY_KEY_SIZE, V>
@@ -74,11 +77,17 @@ where
             vdaf,
             aggregation_param,
             hpke_config,
+            extensions: Vec::new(),
         }
     }
 
     pub(super) fn with_hpke_config(mut self, config: HpkeConfig) -> Self {
         self.hpke_config = config;
+        self
+    }
+
+    pub(super) fn with_extensions(mut self, extensions: Vec<Extension>) -> Self {
+        self.extensions = extensions;
         self
     }
 
@@ -147,7 +156,7 @@ where
             report_metadata,
             &self.hpke_config,
             &transcript.public_share,
-            Vec::new(),
+            self.extensions.clone(),
             &transcript.helper_input_share,
         );
         (report_share, transcript)
@@ -388,6 +397,41 @@ async fn aggregation_job_init_malformed_authorization_header(#[case] header_valu
     .run_async(&test_case.handler)
     .await;
 
+    assert_eq!(response.status(), Some(Status::BadRequest));
+}
+
+#[tokio::test]
+async fn aggregation_job_init_unexpected_taskprov_header() {
+    let test_case = setup_aggregate_init_test_without_sending_request(
+        dummy_vdaf::Vdaf::new(),
+        VdafInstance::Fake,
+        dummy_vdaf::AggregationParam(0),
+        (),
+        random(),
+    )
+    .await;
+
+    let aggregation_job_init_req = AggregationJobInitializeReq::new(
+        dummy_vdaf::AggregationParam(1).get_encoded().unwrap(),
+        PartialBatchSelector::new_time_interval(),
+        Vec::from([test_case
+            .prepare_init_generator
+            .clone()
+            .with_extensions(Vec::from([Extension::new(
+                ExtensionType::Taskprov,
+                Vec::new(),
+            )]))
+            .next(&())
+            .0]),
+    );
+
+    let response = put_aggregation_job(
+        &test_case.task,
+        &test_case.aggregation_job_id,
+        &aggregation_job_init_req,
+        &test_case.handler,
+    )
+    .await;
     assert_eq!(response.status(), Some(Status::BadRequest));
 }
 
