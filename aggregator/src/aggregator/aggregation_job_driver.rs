@@ -3589,6 +3589,8 @@ mod tests {
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await?;
                     tx.put_client_report(vdaf.borrow(), &report).await?;
+                    tx.scrub_client_report(report.task_id(), report.metadata().id())
+                        .await?;
                     tx.put_aggregation_job(&aggregation_job).await?;
                     tx.put_report_aggregation(&report_aggregation).await?;
 
