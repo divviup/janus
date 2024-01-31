@@ -17,6 +17,8 @@ jobs:
       matrix:
         target_branch: ${{ fromJSON(inputs.target_branch) }}
     runs-on: ubuntu-latest
+    env:
+      CARGO_EDIT_VERSION: 0.12.2
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,28 +26,21 @@ jobs:
           token: '${{ secrets.DIVVIUP_GITHUB_AUTOMATION_RELEASE_PAT }}'
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Restore cargo-edit from cache
-        id: cache-cargo-edit-restore
-        uses: actions/cache/restore@v4
+      - name: Cache cargo edit
+        uses: actions/cache@v4
         with:
-          path: |
-            ~/.cargo/bin
-          key: ${{ runner.os }}-cargo-edit
-
-      - run: cargo install cargo-edit --no-default-features --features set-version
-        if: steps.cache-cargo-edit-restore.outputs.cache-hit != 'true'
-
-      - name: Save cargo-edit to cache
-        id: cache-cargo-edit-save
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cargo/bin
-          key: ${{ steps.cache-cargo-edit-restore.outputs.cache-primary-key }}
+          path: ${{ runner.tool_cache }}/cargo-edit
+          key: cargo-edit-${{ env.CARGO_EDIT_VERSION }}
+      - name: Add the tool cache directory to the search path
+        run: echo "${{ runner.tool_cache }}/cargo-edit/bin/" >>$GITHUB_PATH
+      - name: Ensure cargo-edit is installed
+        run: |
+          cargo install \
+            --root ${{ runner.tool_cache }}/cargo-edit \
+            --version ${{ env.CARGO_EDIT_VERSION }} \
+            cargo-edit
       
       - run: cargo set-version --bump patch
       - run: git diff
