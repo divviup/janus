@@ -498,9 +498,7 @@ impl Options {
             (Some(config), Some(private), None) => {
                 Ok(HpkeKeypair::new(config.clone(), private.clone()))
             }
-            (None, None, Some(collector_credential)) => {
-                Ok(collector_credential.hpke_keypair_infallible())
-            }
+            (None, None, Some(collector_credential)) => Ok(collector_credential.hpke_keypair()),
             _ => unreachable!(
                 "hpke arguments are mutually exclusive with collector credential arguments"
             ),
@@ -1428,7 +1426,7 @@ mod tests {
                 .unwrap(),
             (
                 collector_credential.authentication_token().unwrap(),
-                collector_credential.hpke_keypair_infallible()
+                collector_credential.hpke_keypair()
             ),
         );
 
@@ -1444,7 +1442,7 @@ mod tests {
                 .unwrap(),
             (
                 AuthenticationToken::Bearer(bearer_token.clone()),
-                collector_credential.hpke_keypair_infallible()
+                collector_credential.hpke_keypair()
             ),
         );
 
@@ -1460,7 +1458,7 @@ mod tests {
                 .unwrap(),
             (
                 collector_credential.authentication_token().unwrap(),
-                collector_credential.hpke_keypair_infallible()
+                collector_credential.hpke_keypair()
             ),
         );
     }
