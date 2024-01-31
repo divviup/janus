@@ -18,14 +18,13 @@ pub struct PrivateCollectorCredential {
     aead: Aead,
     public_key: HpkePublicKey,
     private_key: HpkePrivateKey,
-    // TODO(#2329): Turn this non-optional for the next breaking change cycle.
-    token: Option<BearerToken>,
+    token: BearerToken,
 }
 
 impl PrivateCollectorCredential {
     /// Returns the [`AuthenticationToken`] necessary for connecting to an aggregator for collection.
-    pub fn authentication_token(&self) -> Option<AuthenticationToken> {
-        self.token.clone().map(AuthenticationToken::Bearer)
+    pub fn authentication_token(&self) -> AuthenticationToken {
+        AuthenticationToken::Bearer(self.token.clone())
     }
 
     /// Returns the [`HpkeKeypair`] necessary for decrypting aggregate shares.
@@ -92,6 +91,6 @@ mod tests {
         let expected_token = AuthenticationToken::Bearer("Krx-CLfdWo1ULAfsxhr0rA".parse().unwrap());
 
         assert_eq!(credential.hpke_keypair(), expected_keypair);
-        assert_eq!(credential.authentication_token(), Some(expected_token));
+        assert_eq!(credential.authentication_token(), expected_token);
     }
 }
