@@ -480,7 +480,9 @@ impl Options {
             (Some(token), None, _) => Some(token.clone()),
             (None, Some(token), _) => Some(token.clone()),
             // Fall back to collector credential token, if present.
-            (None, None, Some(collector_credential)) => collector_credential.authentication_token(),
+            (None, None, Some(collector_credential)) => {
+                Some(collector_credential.authentication_token())
+            }
             (None, None, None) => None,
             _ => unreachable!("all authentication token arguments are mutually exclusive"),
         }
@@ -1425,7 +1427,7 @@ mod tests {
                 .credential()
                 .unwrap(),
             (
-                collector_credential.authentication_token().unwrap(),
+                collector_credential.authentication_token(),
                 collector_credential.hpke_keypair()
             ),
         );
@@ -1457,7 +1459,7 @@ mod tests {
                 .credential()
                 .unwrap(),
             (
-                collector_credential.authentication_token().unwrap(),
+                collector_credential.authentication_token(),
                 collector_credential.hpke_keypair()
             ),
         );
