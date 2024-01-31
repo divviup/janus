@@ -26,7 +26,8 @@ impl HttpErrorResponse {
                 match response.json::<HttpApiProblem>().await {
                     Ok(mut problem) => {
                         problem.status = Some(status);
-                        return problem.into();
+                        // Unwrap safety: the conversion always succeeds if the status is populated.
+                        return problem.try_into().unwrap();
                     }
                     Err(error) => warn!(%error, "Failed to parse problem details"),
                 }
@@ -37,7 +38,8 @@ impl HttpErrorResponse {
 
     /// The HTTP status code returned by the server.
     pub fn status(&self) -> StatusCode {
-        // Unwrap safety: Self::from_response() always populates this field.
+        // Unwrap safety: Self::from_response(), TryFrom<HttpApiProblem>, and From<StatusCode>
+        // always populate this field.
         self.problem_details.status.unwrap()
     }
 
@@ -62,22 +64,35 @@ impl HttpErrorResponse {
     }
 }
 
-impl From<HttpApiProblem> for HttpErrorResponse {
-    fn from(problem_details: HttpApiProblem) -> Self {
+/// The error type returned when converting an [`HttpApiProblem`] without a status code into an
+/// [`HttpErrorResponse`].
+#[derive(Debug)]
+pub struct MissingStatusCodeError;
+
+impl TryFrom<HttpApiProblem> for HttpErrorResponse {
+    type Error = MissingStatusCodeError;
+
+    fn try_from(problem_details: HttpApiProblem) -> Result<Self, Self::Error> {
+        if problem_details.status.is_none() {
+            return Err(MissingStatusCodeError);
+        }
         let dap_problem_type = problem_details
             .type_url
             .as_ref()
             .and_then(|str| str.parse::<DapProblemType>().ok());
-        Self {
+        Ok(Self {
             problem_details,
             dap_problem_type,
-        }
+        })
     }
 }
 
 impl From<StatusCode> for HttpErrorResponse {
     fn from(value: StatusCode) -> Self {
-        HttpApiProblem::new(value).into()
+        Self {
+            problem_details: HttpApiProblem::new(value),
+            dap_problem_type: None,
+        }
     }
 }
 
