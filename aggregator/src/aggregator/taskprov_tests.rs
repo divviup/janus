@@ -135,10 +135,8 @@ impl TaskprovTestCase {
         let task_expiration = clock.now().add(&Duration::from_hours(24).unwrap()).unwrap();
         let task_config = TaskConfig::new(
             Vec::from("foobar".as_bytes()),
-            Vec::from([
-                "https://leader.example.com/".as_bytes().try_into().unwrap(),
-                "https://helper.example.com/".as_bytes().try_into().unwrap(),
-            ]),
+            "https://leader.example.com/".as_bytes().try_into().unwrap(),
+            "https://helper.example.com/".as_bytes().try_into().unwrap(),
             QueryConfig::new(
                 time_precision,
                 max_batch_query_count,
@@ -448,10 +446,8 @@ async fn taskprov_opt_out_mismatched_task_id() {
         .unwrap();
     let another_task_config = TaskConfig::new(
         Vec::from("foobar".as_bytes()),
-        Vec::from([
-            "https://leader.example.com/".as_bytes().try_into().unwrap(),
-            "https://helper.example.com/".as_bytes().try_into().unwrap(),
-        ]),
+        "https://leader.example.com/".as_bytes().try_into().unwrap(),
+        "https://helper.example.com/".as_bytes().try_into().unwrap(),
         // Query configuration is different from the normal test case.
         QueryConfig::new(
             Duration::from_seconds(1),
@@ -507,86 +503,6 @@ async fn taskprov_opt_out_mismatched_task_id() {
 }
 
 #[tokio::test]
-async fn taskprov_opt_out_missing_aggregator() {
-    let test = TaskprovTestCase::new().await;
-
-    let (transcript, report_share, _) = test.next_report_share();
-    let batch_id = random();
-    let request = AggregationJobInitializeReq::new(
-        ().get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(batch_id),
-        Vec::from([PrepareInit::new(
-            report_share.clone(),
-            transcript.leader_prepare_transitions[0].message.clone(),
-        )]),
-    );
-
-    let aggregation_job_id: AggregationJobId = random();
-
-    let task_expiration = test
-        .clock
-        .now()
-        .add(&Duration::from_hours(24).unwrap())
-        .unwrap();
-    let another_task_config = TaskConfig::new(
-        Vec::from("foobar".as_bytes()),
-        // Only one aggregator!
-        Vec::from(["https://leader.example.com/".as_bytes().try_into().unwrap()]),
-        QueryConfig::new(
-            Duration::from_seconds(1),
-            100,
-            100,
-            TaskprovQuery::FixedSize {
-                max_batch_size: 100,
-            },
-        ),
-        task_expiration,
-        VdafConfig::new(
-            DpConfig::new(DpMechanism::None),
-            VdafType::Poplar1 { bits: 1 },
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    let another_task_config_encoded = another_task_config.get_encoded().unwrap();
-    let another_task_id: TaskId = digest(&SHA256, &another_task_config_encoded)
-        .as_ref()
-        .try_into()
-        .unwrap();
-
-    let auth = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
-
-    let mut test_conn = put(format!(
-        "/tasks/{another_task_id}/aggregation_jobs/{aggregation_job_id}"
-    ))
-    .with_request_header(auth.0, auth.1)
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
-    )
-    .with_request_header(
-        TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(another_task_config_encoded),
-    )
-    .with_request_body(request.get_encoded().unwrap())
-    .run_async(&test.handler)
-    .await;
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
-    assert_eq!(
-        take_problem_details(&mut test_conn).await,
-        json!({
-            "status": Status::BadRequest as u16,
-            "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
-            "title": "The message type for a response was incorrect or the payload was malformed.",
-            "taskid": format!("{}", another_task_id),
-        })
-    );
-}
-
-#[tokio::test]
 async fn taskprov_opt_out_peer_aggregator_wrong_role() {
     let test = TaskprovTestCase::new().await;
 
@@ -611,10 +527,8 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
     let another_task_config = TaskConfig::new(
         Vec::from("foobar".as_bytes()),
         // Attempt to configure leader as a helper.
-        Vec::from([
-            "https://helper.example.com/".as_bytes().try_into().unwrap(),
-            "https://leader.example.com/".as_bytes().try_into().unwrap(),
-        ]),
+        "https://helper.example.com/".as_bytes().try_into().unwrap(),
+        "https://leader.example.com/".as_bytes().try_into().unwrap(),
         QueryConfig::new(
             Duration::from_seconds(1),
             100,
@@ -693,11 +607,9 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
         .unwrap();
     let another_task_config = TaskConfig::new(
         Vec::from("foobar".as_bytes()),
-        Vec::from([
-            // Some non-existent aggregator.
-            "https://foobar.example.com/".as_bytes().try_into().unwrap(),
-            "https://leader.example.com/".as_bytes().try_into().unwrap(),
-        ]),
+        // Some non-existent aggregator.
+        "https://foobar.example.com/".as_bytes().try_into().unwrap(),
+        "https://leader.example.com/".as_bytes().try_into().unwrap(),
         QueryConfig::new(
             Duration::from_seconds(1),
             100,

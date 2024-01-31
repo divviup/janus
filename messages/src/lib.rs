@@ -919,6 +919,7 @@ impl Decode for Extension {
 #[non_exhaustive]
 pub enum ExtensionType {
     Tbd = 0,
+    Taskprov = 0xFF00,
 }
 
 impl Encode for ExtensionType {
@@ -3170,9 +3171,9 @@ mod tests {
                 ),
             ),
             (
-                Extension::new(ExtensionType::Tbd, Vec::from("0123")),
+                Extension::new(ExtensionType::Taskprov, Vec::from("0123")),
                 concat!(
-                    "0000", // extension_type
+                    "FF00", // extension_type
                     concat!(
                         // extension_data
                         "0004",     // length

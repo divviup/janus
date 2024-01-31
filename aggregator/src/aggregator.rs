@@ -780,22 +780,15 @@ impl<C: Clock> Aggregator<C> {
         task_config: &TaskConfig,
         aggregator_auth_token: Option<&AuthenticationToken>,
     ) -> Result<(&PeerAggregator, Url, Url), Error> {
-        let aggregator_urls = task_config
-            .aggregator_endpoints()
-            .iter()
-            .map(|url| url.try_into())
-            .collect::<Result<Vec<Url>, _>>()?;
-        if aggregator_urls.len() != 2 {
-            return Err(Error::InvalidMessage(
-                Some(*task_id),
-                "taskprov configuration is missing one or both aggregators",
-            ));
-        }
-        let peer_aggregator_url = &aggregator_urls[peer_role.index().unwrap()];
+        let peer_aggregator_url = match peer_role {
+            Role::Leader => task_config.leader_aggregator_endpoint(),
+            Role::Helper => task_config.helper_aggregator_endpoint(),
+            _ => panic!("Unexpected role {peer_role}"),
+        }.try_into()?;
 
         let peer_aggregator = self
             .peer_aggregators
-            .get(peer_aggregator_url, peer_role)
+            .get(&peer_aggregator_url, peer_role)
             .ok_or(Error::InvalidTask(
                 *task_id,
                 OptOutReason::NoSuchPeer(*peer_role),
@@ -820,8 +813,8 @@ impl<C: Clock> Aggregator<C> {
         );
         Ok((
             peer_aggregator,
-            aggregator_urls[Role::Leader.index().unwrap()].clone(),
-            aggregator_urls[Role::Helper.index().unwrap()].clone(),
+            task_config.leader_aggregator_endpoint().try_into()?,
+            task_config.helper_aggregator_endpoint().try_into()?,
         ))
     }
 
