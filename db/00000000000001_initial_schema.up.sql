@@ -316,13 +316,11 @@ CREATE TABLE batch_aggregations(
     id                         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     task_id                    BIGINT NOT NULL,                   -- the task ID
     batch_identifier           BYTEA NOT NULL,                    -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector)
-    batch_interval             TSRANGE,                           -- batch interval, as a TSRANGE, populated only for time-interval tasks. (will always match batch_identifier)
     aggregation_param          BYTEA NOT NULL,                    -- the aggregation parameter (opaque VDAF message)
     ord                        BIGINT NOT NULL,                   -- the index of this batch aggregation shard, over (task ID, batch_identifier, aggregation_param).
     state                      BATCH_AGGREGATION_STATE NOT NULL,  -- the current state of this batch aggregation
     aggregate_share            BYTEA,                             -- the (possibly-incremental) aggregate share; NULL only if report_count is 0.
     report_count               BIGINT NOT NULL,                   -- the (possibly-incremental) client report count
-    client_timestamp_interval  TSRANGE NOT NULL,                  -- the minimal interval containing all of client timestamps included in this batch aggregation
     checksum                   BYTEA NOT NULL,                    -- the (possibly-incremental) checksum
 
     -- creation/update records

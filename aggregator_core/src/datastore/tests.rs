@@ -4153,8 +4153,6 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                         BatchAggregationState::Aggregating,
                         Some(aggregate_share),
                         0,
-                        Interval::new(Time::from_seconds_since_epoch(1100), time_precision)
-                            .unwrap(),
                         ReportIdChecksum::default(),
                     );
 
@@ -4168,8 +4166,6 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                         BatchAggregationState::Collected,
                         None,
                         0,
-                        Interval::new(Time::from_seconds_since_epoch(1200), time_precision)
-                            .unwrap(),
                         ReportIdChecksum::default(),
                     );
 
@@ -4183,8 +4179,6 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                         BatchAggregationState::Aggregating,
                         Some(aggregate_share),
                         0,
-                        Interval::new(Time::from_seconds_since_epoch(1300), time_precision)
-                            .unwrap(),
                         ReportIdChecksum::default(),
                     );
 
@@ -4199,8 +4193,6 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                         BatchAggregationState::Collected,
                         None,
                         0,
-                        Interval::new(Time::from_seconds_since_epoch(1000), time_precision)
-                            .unwrap(),
                         ReportIdChecksum::default(),
                     ),
                 )
@@ -4236,8 +4228,6 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                         BatchAggregationState::Aggregating,
                         Some(aggregate_share),
                         0,
-                        Interval::new(Time::from_seconds_since_epoch(1000), time_precision)
-                            .unwrap(),
                         ReportIdChecksum::default(),
                     ),
                 )
@@ -4254,8 +4244,6 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                         BatchAggregationState::Collected,
                         None,
                         0,
-                        Interval::new(Time::from_seconds_since_epoch(1400), time_precision)
-                            .unwrap(),
                         ReportIdChecksum::default(),
                     ),
                 )
@@ -4281,8 +4269,6 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                         BatchAggregationState::Aggregating,
                         Some(aggregate_share),
                         0,
-                        Interval::new(Time::from_seconds_since_epoch(1200), time_precision)
-                            .unwrap(),
                         ReportIdChecksum::default(),
                     ),
                 )
@@ -4356,7 +4342,6 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     *first_batch_aggregation.state(),
                     Some(AggregateShare(92)),
                     1,
-                    *first_batch_aggregation.client_timestamp_interval(),
                     ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
                 );
             tx.update_batch_aggregation(&first_batch_aggregation)
@@ -4493,8 +4478,6 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
                     BatchAggregationState::Aggregating,
                     Some(aggregate_share),
                     0,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
-                        .unwrap(),
                     ReportIdChecksum::default(),
                 );
 
@@ -4527,8 +4510,6 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
                     BatchAggregationState::Collected,
                     None,
                     0,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
-                        .unwrap(),
                     ReportIdChecksum::default(),
                 ))
                 .await?;
@@ -4553,8 +4534,6 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
                     BatchAggregationState::Aggregating,
                     Some(aggregate_share),
                     0,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
-                        .unwrap(),
                     ReportIdChecksum::default(),
                 ))
                 .await?;
@@ -4568,8 +4547,6 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
                     BatchAggregationState::Collected,
                     None,
                     0,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
-                        .unwrap(),
                     ReportIdChecksum::default(),
                 ))
                 .await?;
@@ -4607,7 +4584,6 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
                 *batch_aggregation.state(),
                 None,
                 1,
-                Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1)).unwrap(),
                 ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
             );
             tx.update_batch_aggregation(&batch_aggregation).await?;
@@ -5202,8 +5178,6 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     BatchAggregationState::Aggregating,
                     Some(AggregateShare(0)),
                     1,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
-                        .unwrap(),
                     ReportIdChecksum::default(),
                 ))
                 .await?;
@@ -5215,8 +5189,6 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     BatchAggregationState::Aggregating,
                     Some(AggregateShare(0)),
                     1,
-                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
-                        .unwrap(),
                     ReportIdChecksum::default(),
                 ))
                 .await?;
@@ -6142,7 +6114,6 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
             BatchAggregationState::Aggregating,
             None,
             0,
-            client_timestamp_interval,
             ReportIdChecksum::default(),
         );
         tx.put_batch_aggregation(&batch_aggregation).await.unwrap();

@@ -3028,7 +3028,6 @@ mod tests {
             BatchAggregationState::Aggregating,
             Some(leader_aggregate_share),
             1,
-            Interval::from_time(report.metadata().time()).unwrap(),
             ReportIdChecksum::for_report_id(report.metadata().id()),
         )]);
         let want_active_batch =
@@ -3144,7 +3143,6 @@ mod tests {
                     *agg.state(),
                     agg.aggregate_share().cloned(),
                     agg.report_count(),
-                    *agg.client_timestamp_interval(),
                     *agg.checksum(),
                 )
             })
@@ -3415,7 +3413,6 @@ mod tests {
             BatchAggregationState::Aggregating,
             Some(leader_aggregate_share),
             1,
-            Interval::from_time(report.metadata().time()).unwrap(),
             ReportIdChecksum::for_report_id(report.metadata().id()),
         )]);
         let want_batch = Batch::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofTurboShake128, 16>>::new(
@@ -3501,7 +3498,6 @@ mod tests {
                     *agg.state(),
                     agg.aggregate_share().cloned(),
                     agg.report_count(),
-                    *agg.client_timestamp_interval(),
                     *agg.checksum(),
                 )
             })

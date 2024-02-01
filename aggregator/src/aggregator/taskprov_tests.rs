@@ -934,7 +934,6 @@ async fn taskprov_aggregate_share() {
                     BatchAggregationState::Aggregating,
                     Some(transcript.helper_aggregate_share),
                     1,
-                    interval,
                     ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                 ))
                 .await

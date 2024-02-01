@@ -280,7 +280,6 @@ mod tests {
                             BatchAggregationState::Collected,
                             Some(AggregateShare(11)),
                             1,
-                            Interval::from_time(&client_timestamp).unwrap(),
                             random(),
                         ),
                     )
@@ -468,7 +467,6 @@ mod tests {
                             BatchAggregationState::Collected,
                             Some(AggregateShare(11)),
                             1,
-                            Interval::from_time(&client_timestamp).unwrap(),
                             random(),
                         ),
                     )
@@ -649,7 +647,6 @@ mod tests {
                             BatchAggregationState::Collected,
                             Some(AggregateShare(11)),
                             1,
-                            Interval::from_time(&client_timestamp).unwrap(),
                             random(),
                         ),
                     )
@@ -846,7 +843,6 @@ mod tests {
                             BatchAggregationState::Collected,
                             Some(AggregateShare(11)),
                             1,
-                            Interval::from_time(&client_timestamp).unwrap(),
                             random(),
                         ),
                     )
