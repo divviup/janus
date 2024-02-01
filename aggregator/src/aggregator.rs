@@ -1864,7 +1864,6 @@ impl VdafOps {
                 })
             });
 
-            let mut taskprov_error = None;
             let plaintext_input_share = plaintext.and_then(|plaintext| {
                 let plaintext_input_share =
                     PlaintextInputShare::get_decoded(&plaintext).map_err(|error| {
@@ -1909,7 +1908,7 @@ impl VdafOps {
                         );
                         aggregate_step_failure_counter
                             .add(1, &[KeyValue::new("type", "missing_or_malformed_taskprov_extension")]);
-                        taskprov_error = Some(Error::InvalidMessage(Some(*task.id()), "missing or malformed taskprov extension"));
+                        return Err(PrepareError::InvalidMessage);
                     }
                 } else if extensions.contains_key(&ExtensionType::Taskprov) {
                     // taskprov not enabled, but the taskprov extension is present.
@@ -1920,14 +1919,11 @@ impl VdafOps {
                         );
                         aggregate_step_failure_counter
                             .add(1, &[KeyValue::new("type", "unexpected_taskprov_extension")]);
-                        taskprov_error = Some(Error::InvalidMessage(Some(*task.id()), "unexpected taskprov extension"));
+                        return Err(PrepareError::InvalidMessage);
                     }
 
                 Ok(plaintext_input_share)
             });
-            if let Some(err) = taskprov_error {
-                return Err(err);
-            }
 
             let input_share = plaintext_input_share.and_then(|plaintext_input_share| {
                 A::InputShare::get_decoded_with_param(

@@ -48,8 +48,8 @@ use janus_messages::{
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq,
     AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
     AggregationJobStep, BatchSelector, Duration, Extension, ExtensionType, Interval,
-    PartialBatchSelector, PrepareContinue, PrepareInit, PrepareResp, PrepareStepResult,
-    ReportIdChecksum, ReportShare, Role, TaskId, Time,
+    PartialBatchSelector, PrepareContinue, PrepareError, PrepareInit, PrepareResp,
+    PrepareStepResult, ReportIdChecksum, ReportShare, Role, TaskId, Time,
 };
 use prio::{
     idpf::IdpfInput,
@@ -405,7 +405,7 @@ async fn taskprov_aggregate_init_missing_extension() {
         .primary_aggregator_auth_token()
         .request_authentication();
 
-    let test_conn = put(test
+    let mut test_conn = put(test
         .task
         .aggregation_job_uri(&aggregation_job_id)
         .unwrap()
@@ -423,7 +423,47 @@ async fn taskprov_aggregate_init_missing_extension() {
     .run_async(&test.handler)
     .await;
 
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_headers!(
+        &test_conn,
+        "content-type" => (AggregationJobResp::MEDIA_TYPE)
+    );
+    let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+
+    assert_eq!(aggregate_resp.prepare_resps().len(), 1);
+    let prepare_step = aggregate_resp.prepare_resps().first().unwrap();
+    assert_eq!(prepare_step.report_id(), report_share.metadata().id(),);
+    assert_eq!(
+        prepare_step.result(),
+        &PrepareStepResult::Reject(PrepareError::InvalidMessage),
+    );
+
+    let (aggregation_jobs, got_task) = test
+        .datastore
+        .run_unnamed_tx(|tx| {
+            let task_id = test.task_id;
+            Box::pin(async move {
+                Ok((
+                    tx.get_aggregation_jobs_for_task::<16, FixedSize, TestVdaf>(&task_id)
+                        .await
+                        .unwrap(),
+                    tx.get_aggregator_task(&task_id).await.unwrap(),
+                ))
+            })
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(aggregation_jobs.len(), 1);
+    assert!(
+        aggregation_jobs[0].task_id().eq(&test.task_id)
+            && aggregation_jobs[0].id().eq(&aggregation_job_id)
+            && aggregation_jobs[0].partial_batch_identifier().eq(&batch_id)
+            && aggregation_jobs[0]
+                .state()
+                .eq(&AggregationJobState::Finished)
+    );
+    assert_eq!(test.task.taskprov_helper_view().unwrap(), got_task.unwrap());
 }
 
 #[tokio::test]
@@ -448,7 +488,7 @@ async fn taskprov_aggregate_init_malformed_extension() {
         .primary_aggregator_auth_token()
         .request_authentication();
 
-    let test_conn = put(test
+    let mut test_conn = put(test
         .task
         .aggregation_job_uri(&aggregation_job_id)
         .unwrap()
@@ -466,7 +506,47 @@ async fn taskprov_aggregate_init_malformed_extension() {
     .run_async(&test.handler)
     .await;
 
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_headers!(
+        &test_conn,
+        "content-type" => (AggregationJobResp::MEDIA_TYPE)
+    );
+    let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+
+    assert_eq!(aggregate_resp.prepare_resps().len(), 1);
+    let prepare_step = aggregate_resp.prepare_resps().first().unwrap();
+    assert_eq!(prepare_step.report_id(), report_share.metadata().id(),);
+    assert_eq!(
+        prepare_step.result(),
+        &PrepareStepResult::Reject(PrepareError::InvalidMessage),
+    );
+
+    let (aggregation_jobs, got_task) = test
+        .datastore
+        .run_unnamed_tx(|tx| {
+            let task_id = test.task_id;
+            Box::pin(async move {
+                Ok((
+                    tx.get_aggregation_jobs_for_task::<16, FixedSize, TestVdaf>(&task_id)
+                        .await
+                        .unwrap(),
+                    tx.get_aggregator_task(&task_id).await.unwrap(),
+                ))
+            })
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(aggregation_jobs.len(), 1);
+    assert!(
+        aggregation_jobs[0].task_id().eq(&test.task_id)
+            && aggregation_jobs[0].id().eq(&aggregation_job_id)
+            && aggregation_jobs[0].partial_batch_identifier().eq(&batch_id)
+            && aggregation_jobs[0]
+                .state()
+                .eq(&AggregationJobState::Finished)
+    );
+    assert_eq!(test.task.taskprov_helper_view().unwrap(), got_task.unwrap());
 }
 
 #[tokio::test]
