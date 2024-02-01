@@ -2484,7 +2484,10 @@ mod tests {
 
         // This report has the same ID as the previous one, but a different timestamp.
         let mutated_timestamp_report_metadata = ReportMetadata::new(
-            *test_case.aggregation_job_init_req.prepare_inits()[0].report_share().metadata().id(),
+            *test_case.aggregation_job_init_req.prepare_inits()[0]
+                .report_share()
+                .metadata()
+                .id(),
             test_case
                 .clock
                 .now()
@@ -2540,11 +2543,15 @@ mod tests {
         assert_eq!(client_reports.len(), 2);
         assert_eq!(
             &client_reports[0],
-            test_case.aggregation_job_init_req.prepare_inits()[0].report_share().metadata()
+            test_case.aggregation_job_init_req.prepare_inits()[0]
+                .report_share()
+                .metadata()
         );
         assert_eq!(
             &client_reports[1],
-            test_case.aggregation_job_init_req.prepare_inits()[1].report_share().metadata()
+            test_case.aggregation_job_init_req.prepare_inits()[1]
+                .report_share()
+                .metadata()
         );
     }
 
