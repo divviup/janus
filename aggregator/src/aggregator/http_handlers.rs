@@ -828,7 +828,7 @@ mod tests {
             run_vdaf,
             runtime::TestRuntime,
         },
-        time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
+        time::{Clock, DurationExt, MockClock, TimeExt},
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
     };
     use janus_messages::{
@@ -2190,7 +2190,6 @@ mod tests {
                                 BatchAggregationState::Collected,
                                 Some(OutputShare().into()),
                                 1,
-                                interval,
                                 ReportIdChecksum::for_report_id(&random()),
                             );
                         tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
@@ -3302,7 +3301,6 @@ mod tests {
                     BatchAggregationState::Aggregating,
                     agg.aggregate_share().cloned(),
                     agg.report_count(),
-                    *agg.client_timestamp_interval(),
                     *agg.checksum(),
                 )
             })
@@ -3337,7 +3335,6 @@ mod tests {
                 BatchAggregationState::Aggregating,
                 Some(aggregate_share),
                 2,
-                Interval::from_time(report_metadata_0.time()).unwrap(),
                 checksum,
             ),])
         );
@@ -3611,7 +3608,6 @@ mod tests {
                     BatchAggregationState::Aggregating,
                     agg.aggregate_share().cloned(),
                     agg.report_count(),
-                    *agg.client_timestamp_interval(),
                     *agg.checksum(),
                 )
             })
@@ -3651,7 +3647,6 @@ mod tests {
                 BatchAggregationState::Aggregating,
                 Some(first_aggregate_share),
                 3,
-                Interval::from_time(report_metadata_0.time()).unwrap(),
                 first_checksum,
             ),
         );
@@ -4885,7 +4880,6 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(0)),
                             10,
-                            interval,
                             ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                         ),
                     )
@@ -4949,7 +4943,6 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(0)),
                             10,
-                            interval,
                             ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                         ),
                     )
@@ -5273,7 +5266,6 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(64)),
                             interval_1_report_count,
-                            interval_1,
                             interval_1_checksum,
                         ))
                         .await
@@ -5301,7 +5293,6 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(128)),
                             interval_2_report_count,
-                            interval_2,
                             interval_2_checksum,
                         ))
                         .await
@@ -5329,7 +5320,6 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(256)),
                             interval_3_report_count,
-                            interval_3,
                             interval_3_checksum,
                         ))
                         .await
@@ -5357,7 +5347,6 @@ mod tests {
                             BatchAggregationState::Aggregating,
                             Some(dummy_vdaf::AggregateShare(512)),
                             interval_4_report_count,
-                            interval_4,
                             interval_4_checksum,
                         ))
                         .await

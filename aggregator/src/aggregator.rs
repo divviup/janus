@@ -3285,7 +3285,6 @@ fn empty_batch_aggregations<
                 BatchAggregationState::Collected,
                 None,
                 0,
-                Interval::EMPTY,
                 ReportIdChecksum::default(),
             ))
         } else {
