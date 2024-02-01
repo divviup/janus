@@ -480,7 +480,9 @@ impl Options {
             (Some(token), None, _) => Some(token.clone()),
             (None, Some(token), _) => Some(token.clone()),
             // Fall back to collector credential token, if present.
-            (None, None, Some(collector_credential)) => collector_credential.authentication_token(),
+            (None, None, Some(collector_credential)) => {
+                Some(collector_credential.authentication_token())
+            }
             (None, None, None) => None,
             _ => unreachable!("all authentication token arguments are mutually exclusive"),
         }
@@ -498,9 +500,7 @@ impl Options {
             (Some(config), Some(private), None) => {
                 Ok(HpkeKeypair::new(config.clone(), private.clone()))
             }
-            (None, None, Some(collector_credential)) => {
-                Ok(collector_credential.hpke_keypair_infallible())
-            }
+            (None, None, Some(collector_credential)) => Ok(collector_credential.hpke_keypair()),
             _ => unreachable!(
                 "hpke arguments are mutually exclusive with collector credential arguments"
             ),
@@ -1427,8 +1427,8 @@ mod tests {
                 .credential()
                 .unwrap(),
             (
-                collector_credential.authentication_token().unwrap(),
-                collector_credential.hpke_keypair_infallible()
+                collector_credential.authentication_token(),
+                collector_credential.hpke_keypair()
             ),
         );
 
@@ -1444,7 +1444,7 @@ mod tests {
                 .unwrap(),
             (
                 AuthenticationToken::Bearer(bearer_token.clone()),
-                collector_credential.hpke_keypair_infallible()
+                collector_credential.hpke_keypair()
             ),
         );
 
@@ -1459,8 +1459,8 @@ mod tests {
                 .credential()
                 .unwrap(),
             (
-                collector_credential.authentication_token().unwrap(),
-                collector_credential.hpke_keypair_infallible()
+                collector_credential.authentication_token(),
+                collector_credential.hpke_keypair()
             ),
         );
     }

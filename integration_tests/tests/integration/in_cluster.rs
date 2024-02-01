@@ -203,8 +203,8 @@ impl InClusterJanusPair {
             leader_aggregator_id,
             helper_aggregator_id,
             collector_credential_id,
-            collector_credential.authentication_token().unwrap(),
-            collector_credential.hpke_keypair_infallible(),
+            collector_credential.authentication_token(),
+            collector_credential.hpke_keypair(),
             InClusterJanus {
                 aggregator_port_forward: None,
             },

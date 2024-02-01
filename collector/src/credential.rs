@@ -1,4 +1,3 @@
-use crate::Error;
 use hpke_dispatch::{Aead, Kdf, Kem};
 use janus_core::{
     auth_tokens::{AuthenticationToken, BearerToken},
@@ -19,25 +18,17 @@ pub struct PrivateCollectorCredential {
     aead: Aead,
     public_key: HpkePublicKey,
     private_key: HpkePrivateKey,
-    // TODO(#2329): Turn this non-optional for the next breaking change cycle.
-    token: Option<BearerToken>,
+    token: BearerToken,
 }
 
 impl PrivateCollectorCredential {
     /// Returns the [`AuthenticationToken`] necessary for connecting to an aggregator for collection.
-    pub fn authentication_token(&self) -> Option<AuthenticationToken> {
-        self.token.clone().map(AuthenticationToken::Bearer)
-    }
-
-    /// Returns the [`HpkeKeypair`] necessary for decrypting aggregate shares. This cannot fail
-    /// currently, but returns a `Result` for historical reasons.
-    #[deprecated = "Use `hpke_keypair_infallible` instead"]
-    pub fn hpke_keypair(&self) -> Result<HpkeKeypair, Error> {
-        Ok(self.hpke_keypair_infallible())
+    pub fn authentication_token(&self) -> AuthenticationToken {
+        AuthenticationToken::Bearer(self.token.clone())
     }
 
     /// Returns the [`HpkeKeypair`] necessary for decrypting aggregate shares.
-    pub fn hpke_keypair_infallible(&self) -> HpkeKeypair {
+    pub fn hpke_keypair(&self) -> HpkeKeypair {
         HpkeKeypair::new(
             HpkeConfig::new(
                 self.id,
@@ -99,7 +90,7 @@ mod tests {
         );
         let expected_token = AuthenticationToken::Bearer("Krx-CLfdWo1ULAfsxhr0rA".parse().unwrap());
 
-        assert_eq!(credential.hpke_keypair_infallible(), expected_keypair);
-        assert_eq!(credential.authentication_token(), Some(expected_token));
+        assert_eq!(credential.hpke_keypair(), expected_keypair);
+        assert_eq!(credential.authentication_token(), expected_token);
     }
 }

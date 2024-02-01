@@ -260,70 +260,12 @@ impl HpkeKeypair {
     }
 }
 
-// This mod is a workaround for https://github.com/serde-rs/serde/issues/2195. The `Deserialize`
-// derive macro triggers deprecation warnings when used on a deprecated struct.
-#[allow(deprecated)]
-pub use deprecated::DivviUpHpkeConfig;
-mod deprecated {
-    #![allow(deprecated)]
-
-    use super::{Error, HpkeKeypair, HpkePrivateKey};
-    use hpke_dispatch::{Aead, Kdf, Kem};
-    use janus_messages::{HpkeConfig, HpkeConfigId, HpkePublicKey};
-    use serde::Deserialize;
-
-    /// HPKE configuration compatible with the output of `divviup collector-credential generate`.
-    #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-    #[deprecated = "use CollectorCredential instead"]
-    pub struct DivviUpHpkeConfig {
-        id: HpkeConfigId,
-        kem: Kem,
-        kdf: Kdf,
-        aead: Aead,
-        public_key: HpkePublicKey,
-        private_key: HpkePrivateKey,
-    }
-
-    // We use a fallible TryFrom conversion for historical reasons. The algorithm enums didn't used
-    // to have `Other` catch-all variants, so conversion from raw integer IDs to each enum was
-    // fallible. It was possible that HpkeDispatch, Janus and divviup-api could be built with
-    // support for different sets of HPKE algorithms, and that used to be an error at
-    // deserialization/conversion time, rather than at decryption time.
-    impl TryFrom<DivviUpHpkeConfig> for HpkeKeypair {
-        type Error = Error;
-
-        fn try_from(value: DivviUpHpkeConfig) -> Result<Self, Self::Error> {
-            Ok(Self::new(
-                HpkeConfig::new(
-                    value.id,
-                    (value.kem as u16).into(),
-                    (value.kdf as u16).into(),
-                    (value.aead as u16).into(),
-                    value.public_key,
-                ),
-                value.private_key,
-            ))
-        }
-    }
-}
-
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use super::{generate_hpke_config_and_private_key, HpkeKeypair};
     use janus_messages::{HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId};
-
     use rand::random;
-
-    pub const SAMPLE_DIVVIUP_HPKE_CONFIG: &str = r#"{
-  "aead": "AesGcm128",
-  "id": 66,
-  "kdf": "Sha256",
-  "kem": "X25519HkdfSha256",
-  "private_key": "uKkTvzKLfYNUPZcoKI7hV64zS06OWgBkbivBL4Sw4mo",
-  "public_key": "CcDghts2boltt9GQtBUxdUsVR83SCVYHikcGh33aVlU"
-}
-"#;
 
     pub fn generate_test_hpke_config_and_private_key() -> HpkeKeypair {
         generate_hpke_config_and_private_key(
@@ -350,11 +292,7 @@ pub mod test_util {
 mod tests {
     use super::{test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label};
     #[allow(deprecated)]
-    use crate::hpke::{
-        open, seal, test_util::SAMPLE_DIVVIUP_HPKE_CONFIG, DivviUpHpkeConfig, HpkeKeypair,
-        HpkePrivateKey,
-    };
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use crate::hpke::{open, seal, HpkeKeypair, HpkePrivateKey};
     use hpke_dispatch::{Kem, Keypair};
     use janus_messages::{
         HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
@@ -640,34 +578,5 @@ mod tests {
         // provided. (AES-128-GCM, AES-256-GCM, and ChaCha20Poly1305) This makes for an expected
         // total of 2 * 2 * 3 = 12 unique combinations of algorithms.
         assert_eq!(algorithms_tested.len(), 12);
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn deserialize_divviup_api_hpke_config() {
-        let deserialized: DivviUpHpkeConfig =
-            serde_json::from_str(SAMPLE_DIVVIUP_HPKE_CONFIG).unwrap();
-        let hpke_keypair = HpkeKeypair::try_from(deserialized).unwrap();
-        assert_eq!(
-            hpke_keypair,
-            HpkeKeypair::new(
-                HpkeConfig::new(
-                    HpkeConfigId::from(66),
-                    HpkeKemId::X25519HkdfSha256,
-                    HpkeKdfId::HkdfSha256,
-                    HpkeAeadId::Aes128Gcm,
-                    HpkePublicKey::from(
-                        URL_SAFE_NO_PAD
-                            .decode("CcDghts2boltt9GQtBUxdUsVR83SCVYHikcGh33aVlU")
-                            .unwrap()
-                    ),
-                ),
-                HpkePrivateKey::from(
-                    URL_SAFE_NO_PAD
-                        .decode("uKkTvzKLfYNUPZcoKI7hV64zS06OWgBkbivBL4Sw4mo")
-                        .unwrap()
-                )
-            ),
-        );
     }
 }
