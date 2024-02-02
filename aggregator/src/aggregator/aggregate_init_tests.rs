@@ -27,7 +27,8 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::TimeInterval, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
-    HpkeConfig, PartialBatchSelector, PrepareInit, PrepareStepResult, ReportMetadata, ReportShare,
+    Duration, HpkeConfig, PartialBatchSelector, PrepareError, PrepareInit, PrepareStepResult,
+    ReportMetadata, ReportShare,
 };
 use prio::{
     codec::Encode,
@@ -159,9 +160,8 @@ pub(super) struct AggregationJobInitTestCase<
     pub(super) clock: MockClock,
     pub(super) task: Task,
     pub(super) prepare_init_generator: PrepareInitGenerator<VERIFY_KEY_SIZE, V>,
-    pub(super) prepare_inits: Vec<PrepareInit>,
     pub(super) aggregation_job_id: AggregationJobId,
-    aggregation_job_init_req: AggregationJobInitializeReq<TimeInterval>,
+    pub(super) aggregation_job_init_req: AggregationJobInitializeReq<TimeInterval>,
     aggregation_job_init_resp: Option<AggregationJobResp>,
     pub(super) aggregation_param: V::AggregationParam,
     pub(super) handler: Box<dyn Handler>,
@@ -287,7 +287,6 @@ async fn setup_aggregate_init_test_without_sending_request<
     AggregationJobInitTestCase {
         clock,
         task,
-        prepare_inits,
         prepare_init_generator,
         aggregation_job_id,
         aggregation_job_init_req,
@@ -396,7 +395,7 @@ async fn aggregation_job_mutation_aggregation_job() {
     let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
         dummy_vdaf::AggregationParam(1).get_encoded(),
         PartialBatchSelector::new_time_interval(),
-        test_case.prepare_inits,
+        test_case.aggregation_job_init_req.prepare_inits().to_vec(),
     );
 
     let response = put_aggregation_job(
@@ -413,25 +412,27 @@ async fn aggregation_job_mutation_aggregation_job() {
 async fn aggregation_job_mutation_report_shares() {
     let test_case = setup_aggregate_init_test().await;
 
+    let prepare_inits = test_case.aggregation_job_init_req.prepare_inits();
+
     // Put the aggregation job again, mutating the associated report shares' metadata such that
     // uniqueness constraints on client_reports are violated
     for mutated_prepare_inits in [
         // Omit a report share that was included previously
-        Vec::from(&test_case.prepare_inits[0..test_case.prepare_inits.len() - 1]),
+        Vec::from(&prepare_inits[0..prepare_inits.len() - 1]),
         // Include a different report share than was included previously
         [
-            &test_case.prepare_inits[0..test_case.prepare_inits.len() - 1],
+            &prepare_inits[0..prepare_inits.len() - 1],
             &[test_case.prepare_init_generator.next(&()).0],
         ]
         .concat(),
         // Include an extra report share than was included previously
         [
-            test_case.prepare_inits.as_slice(),
+            prepare_inits,
             &[test_case.prepare_init_generator.next(&()).0],
         ]
         .concat(),
         // Reverse the order of the reports
-        test_case.prepare_inits.into_iter().rev().collect(),
+        prepare_inits.iter().rev().cloned().collect(),
     ] {
         let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
             test_case.aggregation_param.get_encoded(),
@@ -458,7 +459,8 @@ async fn aggregation_job_mutation_report_aggregations() {
     // values such that the prepare state computed during aggregation initializaton won't match the
     // first aggregation job.
     let mutated_prepare_inits = test_case
-        .prepare_inits
+        .aggregation_job_init_req
+        .prepare_inits()
         .iter()
         .map(|s| {
             test_case
@@ -485,6 +487,80 @@ async fn aggregation_job_mutation_report_aggregations() {
     )
     .await;
     assert_eq!(response.status(), Some(Status::Conflict));
+}
+
+#[tokio::test]
+async fn aggregation_job_intolerable_clock_skew() {
+    let mut test_case = setup_aggregate_init_test_without_sending_request(
+        dummy_vdaf::Vdaf::new(),
+        VdafInstance::Fake,
+        dummy_vdaf::AggregationParam(0),
+        (),
+        AuthenticationToken::Bearer(random()),
+    )
+    .await;
+
+    test_case.aggregation_job_init_req = AggregationJobInitializeReq::new(
+        test_case.aggregation_param.get_encoded(),
+        PartialBatchSelector::new_time_interval(),
+        Vec::from([
+            // Barely tolerable.
+            test_case
+                .prepare_init_generator
+                .next_with_metadata(
+                    ReportMetadata::new(
+                        random(),
+                        test_case
+                            .clock
+                            .now()
+                            .add(test_case.task.tolerable_clock_skew())
+                            .unwrap(),
+                    ),
+                    &(),
+                )
+                .0,
+            // Barely intolerable.
+            test_case
+                .prepare_init_generator
+                .next_with_metadata(
+                    ReportMetadata::new(
+                        random(),
+                        test_case
+                            .clock
+                            .now()
+                            .add(test_case.task.tolerable_clock_skew())
+                            .unwrap()
+                            .add(&Duration::from_seconds(1))
+                            .unwrap(),
+                    ),
+                    &(),
+                )
+                .0,
+        ]),
+    );
+
+    let mut response = put_aggregation_job(
+        &test_case.task,
+        &test_case.aggregation_job_id,
+        &test_case.aggregation_job_init_req,
+        &test_case.handler,
+    )
+    .await;
+    assert_eq!(response.status(), Some(Status::Ok));
+
+    let aggregation_job_init_resp: AggregationJobResp = decode_response_body(&mut response).await;
+    assert_eq!(
+        aggregation_job_init_resp.prepare_resps().len(),
+        test_case.aggregation_job_init_req.prepare_inits().len(),
+    );
+    assert_matches!(
+        aggregation_job_init_resp.prepare_resps()[0].result(),
+        &PrepareStepResult::Continue { .. }
+    );
+    assert_matches!(
+        aggregation_job_init_resp.prepare_resps()[1].result(),
+        &PrepareStepResult::Reject(PrepareError::ReportTooEarly)
+    );
 }
 
 #[tokio::test]
@@ -517,7 +593,7 @@ async fn aggregation_job_init_wrong_query() {
     let wrong_query = AggregationJobInitializeReq::new(
         test_case.aggregation_param.get_encoded(),
         PartialBatchSelector::new_fixed_size(random()),
-        test_case.prepare_inits,
+        test_case.aggregation_job_init_req.prepare_inits().to_vec(),
     );
 
     let (header, value) = test_case

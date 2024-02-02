@@ -409,6 +409,7 @@ impl<C: Clock> Aggregator<C> {
         task_aggregator
             .handle_aggregate_init(
                 &self.datastore,
+                &self.clock,
                 &self.global_hpke_keypairs,
                 &self.aggregate_step_failure_counter,
                 self.cfg.batch_aggregation_shard_count,
@@ -942,6 +943,7 @@ impl<C: Clock> TaskAggregator<C> {
     async fn handle_aggregate_init(
         &self,
         datastore: &Datastore<C>,
+        clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
         aggregate_step_failure_counter: &Counter<u64>,
         batch_aggregation_shard_count: u64,
@@ -951,6 +953,7 @@ impl<C: Clock> TaskAggregator<C> {
         self.vdaf_ops
             .handle_aggregate_init(
                 datastore,
+                clock,
                 global_hpke_keypairs,
                 aggregate_step_failure_counter,
                 Arc::clone(&self.task),
@@ -1283,6 +1286,7 @@ impl VdafOps {
     async fn handle_aggregate_init<C: Clock>(
         &self,
         datastore: &Datastore<C>,
+        clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<AggregatorTask>,
@@ -1295,6 +1299,7 @@ impl VdafOps {
                 vdaf_ops_dispatch!(self, (vdaf, verify_key, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
                         datastore,
+                        clock,
                         global_hpke_keypairs,
                         Arc::clone(vdaf),
                         aggregate_step_failure_counter,
@@ -1311,6 +1316,7 @@ impl VdafOps {
                 vdaf_ops_dispatch!(self, (vdaf, verify_key, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
                         datastore,
+                        clock,
                         global_hpke_keypairs,
                         Arc::clone(vdaf),
                         aggregate_step_failure_counter,
@@ -1625,6 +1631,7 @@ impl VdafOps {
     /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-helper-initialization
     async fn handle_aggregate_init_generic<const SEED_SIZE: usize, Q, A, C>(
         datastore: &Datastore<C>,
+        clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
         vdaf: Arc<A>,
         aggregate_step_failure_counter: &Counter<u64>,
@@ -1649,6 +1656,11 @@ impl VdafOps {
         // unwrap safety: SHA-256 computed by ring should always be 32 bytes
         let request_hash = digest(&SHA256, req_bytes).as_ref().try_into().unwrap();
         let req = AggregationJobInitializeReq::<Q>::get_decoded(req_bytes)?;
+
+        let report_deadline = clock
+            .now()
+            .add(task.tolerable_clock_skew())
+            .map_err(Error::from)?;
 
         // If two ReportShare messages have the same report ID, then the helper MUST abort with
         // error "invalidMessage". (§4.5.1.2)
@@ -1832,6 +1844,19 @@ impl VdafOps {
             });
 
             let shares = input_share.and_then(|input_share| Ok((public_share?, input_share)));
+
+            // Reject reports from too far in the future.
+            let shares = shares.and_then(|shares| {
+                if prepare_init
+                    .report_share()
+                    .metadata()
+                    .time()
+                    .is_after(&report_deadline)
+                {
+                    return Err(PrepareError::ReportTooEarly);
+                }
+                Ok(shares)
+            });
 
             // Next, the aggregator runs the preparation-state initialization algorithm for the VDAF
             // associated with the task and computes the first state transition. [...] If either
