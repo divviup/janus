@@ -21,9 +21,9 @@ implemented on any branches missing from this list.
 | ---------- | ------------- | --------------------- | ------ |
 | `release/0.subscriber-01` | [`draft-wang-ppm-dap-taskprov-04`][2] | Helper only | Unmaintained as of November 1, 2023 |
 | `release/0.5` | [`draft-wang-ppm-dap-taskprov-04`][2] | Helper only | Supported |
-| `main` | [`draft-wang-ppm-dap-taskprov-04`][2] | Helper only | Supported |
+| `main` | [`draft-wang-ppm-dap-taskprov-06`][2] | Helper only | Supported |
 
-[2]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/04/
+[2]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/06/
 
 ## Operational Considerations
 
