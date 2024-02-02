@@ -1086,9 +1086,6 @@ pub struct BatchAggregation<
     aggregate_share: Option<A::AggregateShare>,
     /// The number of reports currently included in this aggregate sahre.
     report_count: u64,
-    /// The minimal interval of time spanned by the reports included in this batch aggregation,
-    /// which may be smaller than the batch interval (for time interval tasks).
-    client_timestamp_interval: Interval,
     /// Checksum over the aggregated report shares, as described in §4.4.4.3.
     #[derivative(Debug = "ignore")]
     checksum: ReportIdChecksum,
@@ -1107,7 +1104,6 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         state: BatchAggregationState,
         aggregate_share: Option<A::AggregateShare>,
         report_count: u64,
-        client_timestamp_interval: Interval,
         checksum: ReportIdChecksum,
     ) -> Self {
         Self {
@@ -1118,7 +1114,6 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
             state,
             aggregate_share,
             report_count,
-            client_timestamp_interval,
             checksum,
         }
     }
@@ -1169,12 +1164,6 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         self.report_count
     }
 
-    /// Returns the minimal interval of time spanned by the reports included in this batch
-    /// aggregation, which may be smaller than the batch interval (for time interval tasks).
-    pub fn client_timestamp_interval(&self) -> &Interval {
-        &self.client_timestamp_interval
-    }
-
     /// Returns the checksum associated with this batch aggregation.
     pub fn checksum(&self) -> &ReportIdChecksum {
         &self.checksum
@@ -1204,10 +1193,6 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         Ok(Self {
             aggregate_share: merged_aggregate_share,
             report_count: self.report_count + other.report_count(),
-            client_timestamp_interval: self
-                .client_timestamp_interval
-                .merge(&other.client_timestamp_interval)
-                .map_err(|err| Error::User(err.into()))?,
             checksum: self.checksum.combined_with(other.checksum()),
             ..self
         })
@@ -1246,7 +1231,6 @@ where
             && self.state == other.state
             && self.aggregate_share == other.aggregate_share
             && self.report_count == other.report_count
-            && self.client_timestamp_interval == other.client_timestamp_interval
             && self.checksum == other.checksum
     }
 }
