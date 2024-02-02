@@ -70,7 +70,7 @@ pub trait AccumulableQueryType: QueryType {
     fn default_partial_batch_identifier() -> Option<&'static Self::PartialBatchIdentifier>;
 
     /// Determine if the batch is expected to be garbage-collected, based on the identifier.
-    /// `Some(true)` and `Some(false)`` indicate the expected result, and `None` indicates that the
+    /// `Some(true)` and `Some(false)` indicate the expected result, and `None` indicates that the
     /// answer cannot be determined based on the batch identifier alone (for e.g. the fixed-size
     /// query type).
     fn is_batch_garbage_collected<C: Clock>(
