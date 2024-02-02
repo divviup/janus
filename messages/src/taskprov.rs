@@ -5,7 +5,10 @@
 use crate::{Duration, Error, Time, Url};
 use anyhow::anyhow;
 use derivative::Derivative;
-use prio::codec::{decode_u8_items, encode_u8_items, CodecError, Decode, Encode};
+use prio::codec::{
+    decode_u16_items, decode_u8_items, encode_u16_items, encode_u8_items, CodecError, Decode,
+    Encode,
+};
 use std::{fmt::Debug, io::Cursor};
 
 /// Defines all parameters necessary to configure an aggregator with a new task.
@@ -79,9 +82,10 @@ impl Encode for TaskConfig {
         encode_u8_items(bytes, &(), &self.task_info)?;
         self.leader_aggregator_endpoint.encode(bytes)?;
         self.helper_aggregator_endpoint.encode(bytes)?;
-        self.query_config.encode(bytes)?;
+        encode_u16_items(bytes, &(), &self.query_config.get_encoded()?)?;
         self.task_expiration.encode(bytes)?;
-        self.vdaf_config.encode(bytes)
+        encode_u16_items(bytes, &(), &self.vdaf_config.get_encoded()?)?;
+        Ok(())
     }
 
     fn encoded_len(&self) -> Option<usize> {
@@ -89,9 +93,9 @@ impl Encode for TaskConfig {
             (1 + self.task_info.len())
                 + self.leader_aggregator_endpoint.encoded_len()?
                 + self.helper_aggregator_endpoint.encoded_len()?
-                + self.query_config.encoded_len()?
+                + (2 + self.query_config.encoded_len()?)
                 + self.task_expiration.encoded_len()?
-                + self.vdaf_config.encoded_len()?,
+                + (2 + self.vdaf_config.encoded_len()?),
         )
     }
 }
@@ -104,14 +108,19 @@ impl Decode for TaskConfig {
                 anyhow!("task_info must not be empty").into(),
             ));
         }
+        let leader_aggregator_endpoint = Url::decode(bytes)?;
+        let helper_aggregator_endpoint = Url::decode(bytes)?;
+        let query_config = QueryConfig::get_decoded(&decode_u16_items(&(), bytes)?)?;
+        let task_expiration = Time::decode(bytes)?;
+        let vdaf_config = VdafConfig::get_decoded(&decode_u16_items(&(), bytes)?)?;
 
         Ok(Self {
             task_info,
-            leader_aggregator_endpoint: Url::decode(bytes)?,
-            helper_aggregator_endpoint: Url::decode(bytes)?,
-            query_config: QueryConfig::decode(bytes)?,
-            task_expiration: Time::decode(bytes)?,
-            vdaf_config: VdafConfig::decode(bytes)?,
+            leader_aggregator_endpoint,
+            helper_aggregator_endpoint,
+            query_config,
+            task_expiration,
+            vdaf_config,
         })
     }
 }
@@ -167,66 +176,29 @@ impl QueryConfig {
 
 impl Encode for QueryConfig {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        match self.query {
-            Query::Reserved => Query::RESERVED.encode(bytes)?,
-            Query::TimeInterval => Query::TIME_INTERVAL.encode(bytes)?,
-            Query::FixedSize { .. } => Query::FIXED_SIZE.encode(bytes)?,
-        };
         self.time_precision.encode(bytes)?;
         self.max_batch_query_count.encode(bytes)?;
         self.min_batch_size.encode(bytes)?;
-        self.query.query_type_param_len().encode(bytes)?;
-        if let Query::FixedSize { max_batch_size } = self.query {
-            max_batch_size.encode(bytes)?;
-        }
-
+        self.query.encode(bytes)?;
         Ok(())
     }
 
     fn encoded_len(&self) -> Option<usize> {
         Some(
-            1 + self.time_precision.encoded_len()?
+            self.time_precision.encoded_len()?
                 + self.max_batch_query_count.encoded_len()?
                 + self.min_batch_size.encoded_len()?
-                + 2 // query_type_param_len
-                + match self.query {
-                    Query::FixedSize { max_batch_size } => max_batch_size.encoded_len()?,
-                    _ => 0,
-                },
+                + self.query.encoded_len()?,
         )
     }
 }
 
 impl Decode for QueryConfig {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let query_type = u8::decode(bytes)?;
         let time_precision = Duration::decode(bytes)?;
         let max_batch_query_count = u16::decode(bytes)?;
         let min_batch_size = u32::decode(bytes)?;
-
-        let query_type_param_len = u16::decode(bytes)?;
-        let query = match query_type {
-            Query::RESERVED => Query::Reserved,
-            Query::TIME_INTERVAL => Query::TimeInterval,
-            Query::FIXED_SIZE => Query::FixedSize {
-                max_batch_size: u32::decode(bytes)?,
-            },
-            val => {
-                return Err(CodecError::Other(
-                    anyhow!("unexpected QueryType value {}", val).into(),
-                ))
-            }
-        };
-        if query_type_param_len != query.query_type_param_len() {
-            return Err(CodecError::Other(
-                anyhow!(
-                    "unexpected query_type_param_len value {} (wanted {})",
-                    query_type_param_len,
-                    query.query_type_param_len()
-                )
-                .into(),
-            ));
-        }
+        let query = Query::decode(bytes)?;
 
         Ok(Self {
             time_precision,
@@ -258,12 +230,45 @@ impl Query {
     const RESERVED: u8 = 0;
     const TIME_INTERVAL: u8 = 1;
     const FIXED_SIZE: u8 = 2;
+}
 
-    fn query_type_param_len(&self) -> u16 {
+// XXX: write roundtrip_query (to test encoded_len)
+impl Encode for Query {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         match self {
-            Self::Reserved | Self::TimeInterval => 0,
-            Self::FixedSize { .. } => 4,
-        }
+            Query::Reserved => Query::RESERVED.encode(bytes)?,
+            Query::TimeInterval => Query::TIME_INTERVAL.encode(bytes)?,
+            Query::FixedSize { max_batch_size } => {
+                Query::FIXED_SIZE.encode(bytes)?;
+                max_batch_size.encode(bytes)?;
+            }
+        };
+        Ok(())
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(match self {
+            Query::Reserved | Query::TimeInterval => 1,
+            Query::FixedSize { .. } => 5,
+        })
+    }
+}
+
+impl Decode for Query {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let query_type = u8::decode(bytes)?;
+        Ok(match query_type {
+            Query::RESERVED => Query::Reserved,
+            Query::TIME_INTERVAL => Query::TimeInterval,
+            Query::FIXED_SIZE => Query::FixedSize {
+                max_batch_size: u32::decode(bytes)?,
+            },
+            val => {
+                return Err(CodecError::Other(
+                    anyhow!("unexpected QueryType value {}", val).into(),
+                ))
+            }
+        })
     }
 }
 
@@ -293,22 +298,24 @@ impl VdafConfig {
 
 impl Encode for VdafConfig {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        self.dp_config.encode(bytes)?;
+        encode_u16_items(bytes, &(), &self.dp_config.get_encoded()?)?;
         self.vdaf_type.encode(bytes)
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        Some(self.dp_config.encoded_len()? + self.vdaf_type.encoded_len()?)
+        Some((2 + self.dp_config.encoded_len()?) + self.vdaf_type.encoded_len()?)
     }
 }
 
 impl Decode for VdafConfig {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let ret = Self {
-            dp_config: DpConfig::decode(bytes)?,
-            vdaf_type: VdafType::decode(bytes)?,
-        };
-        Ok(ret)
+        let dp_config = DpConfig::get_decoded(&decode_u16_items(&(), bytes)?)?;
+        let vdaf_type = VdafType::decode(bytes)?;
+
+        Ok(Self {
+            dp_config,
+            vdaf_type,
+        })
     }
 }
 
@@ -358,23 +365,11 @@ impl VdafType {
             Self::Poplar1 { .. } => Self::POPLAR1,
         }
     }
-
-    fn vdaf_type_param_len(&self) -> u16 {
-        match self {
-            Self::Prio3Count => 0,
-            Self::Prio3Sum { .. } => 1,
-            Self::Prio3SumVec { .. } => 9,
-            Self::Prio3Histogram { .. } => 8,
-            Self::Poplar1 { .. } => 2,
-        }
-    }
 }
 
 impl Encode for VdafType {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         self.vdaf_type_code().encode(bytes)?;
-        self.vdaf_type_param_len().encode(bytes)?;
-
         match self {
             Self::Prio3Count => (),
             Self::Prio3Sum { bits } => {
@@ -405,14 +400,13 @@ impl Encode for VdafType {
 
     fn encoded_len(&self) -> Option<usize> {
         Some(
-            4 + 2
-                + match self {
-                    Self::Prio3Count => 0,
-                    Self::Prio3Sum { .. } => 1,
-                    Self::Prio3SumVec { .. } => 9,
-                    Self::Prio3Histogram { .. } => 8,
-                    Self::Poplar1 { .. } => 2,
-                },
+            4 + match self {
+                Self::Prio3Count => 0,
+                Self::Prio3Sum { .. } => 1,
+                Self::Prio3SumVec { .. } => 9,
+                Self::Prio3Histogram { .. } => 8,
+                Self::Poplar1 { .. } => 2,
+            },
         )
     }
 }
@@ -420,8 +414,6 @@ impl Encode for VdafType {
 impl Decode for VdafType {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let vdaf_type_code = u32::decode(bytes)?;
-        let vdaf_type_param_len = u16::decode(bytes)?;
-
         let vdaf_type = match vdaf_type_code {
             Self::PRIO3COUNT => Self::Prio3Count,
             Self::PRIO3SUM => Self::Prio3Sum {
@@ -445,17 +437,6 @@ impl Decode for VdafType {
                 ))
             }
         };
-
-        if vdaf_type_param_len != vdaf_type.vdaf_type_param_len() {
-            return Err(CodecError::Other(
-                anyhow!(
-                    "unexpected vdaf_type_param_len value {} (wanted {})",
-                    vdaf_type_param_len,
-                    vdaf_type.vdaf_type_param_len()
-                )
-                .into(),
-            ));
-        }
 
         Ok(vdaf_type)
     }
@@ -509,10 +490,6 @@ pub enum DpMechanism {
 impl DpMechanism {
     const RESERVED: u8 = 0;
     const NONE: u8 = 1;
-
-    fn dp_mechanism_param_len(&self) -> u16 {
-        0
-    }
 }
 
 impl Encode for DpMechanism {
@@ -521,21 +498,17 @@ impl Encode for DpMechanism {
             Self::Reserved => Self::RESERVED.encode(bytes)?,
             Self::None => Self::NONE.encode(bytes)?,
         };
-        self.dp_mechanism_param_len().encode(bytes)?;
         Ok(())
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        match self {
-            Self::Reserved | Self::None => Some(3),
-        }
+        Some(1)
     }
 }
 
 impl Decode for DpMechanism {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let dp_mechanism_code = u8::decode(bytes)?;
-        let dp_mechanism_param_len = u16::decode(bytes)?;
         let dp_mechanism = match dp_mechanism_code {
             Self::RESERVED => Self::Reserved,
             Self::NONE => Self::None,
@@ -545,17 +518,6 @@ impl Decode for DpMechanism {
                 ))
             }
         };
-
-        if dp_mechanism_param_len != dp_mechanism.dp_mechanism_param_len() {
-            return Err(CodecError::Other(
-                anyhow!(
-                    "unexpected dp_mechanism_param_len value {} (wanted {})",
-                    dp_mechanism_param_len,
-                    dp_mechanism.dp_mechanism_param_len()
-                )
-                .into(),
-            ));
-        }
 
         Ok(dp_mechanism)
     }
@@ -574,14 +536,12 @@ mod tests {
                 DpConfig::new(DpMechanism::Reserved),
                 concat!(
                     "00",   // dp_mechanism
-                    "0000", // dp_mechanism_param_len
                 ),
             ),
             (
                 DpConfig::new(DpMechanism::None),
                 concat!(
                     "01",   // dp_mechanism
-                    "0000", // dp_mechanism_param_len
                 ),
             ),
         ])
@@ -594,14 +554,12 @@ mod tests {
                 VdafType::Prio3Count,
                 concat!(
                     "00000000", // vdaf_type_code
-                    "0000",     // vdaf_type_param_len
                 ),
             ),
             (
                 VdafType::Prio3Sum { bits: u8::MIN },
                 concat!(
                     "00000001", // vdaf_type_code
-                    "0001",     // vdaf_type_param_len
                     "00"        // bits
                 ),
             ),
@@ -609,7 +567,6 @@ mod tests {
                 VdafType::Prio3Sum { bits: 0x80 },
                 concat!(
                     "00000001", // vdaf_type_code
-                    "0001",     // vdaf_type_param_len
                     "80"        // bits
                 ),
             ),
@@ -617,7 +574,6 @@ mod tests {
                 VdafType::Prio3Sum { bits: u8::MAX },
                 concat!(
                     "00000001", // vdaf_type_code
-                    "0001",     // vdaf_type_param_len
                     "FF",       // bits
                 ),
             ),
@@ -629,7 +585,6 @@ mod tests {
                 },
                 concat!(
                     "00000002", // vdaf_type_code
-                    "0009",     // vdaf_type_param_len
                     "08",       // bits
                     "0000000C", // length
                     "0000000E"  // chunk_length
@@ -642,7 +597,6 @@ mod tests {
                 },
                 concat!(
                     "00000003", // vdaf_type_code
-                    "0008",     // vdaf_type_param_len
                     "00000100", // length
                     "00000012", // chunk_length
                 ),
@@ -651,7 +605,6 @@ mod tests {
                 VdafType::Poplar1 { bits: u16::MIN },
                 concat!(
                     "00001000", // vdaf_type_code
-                    "0002",     // vdaf_type_param_len
                     "0000",     // bits
                 ),
             ),
@@ -659,7 +612,6 @@ mod tests {
                 VdafType::Poplar1 { bits: 0xABAB },
                 concat!(
                     "00001000", // vdaf_type_code
-                    "0002",     // vdaf_type_param_len
                     "ABAB",     // bits
                 ),
             ),
@@ -667,7 +619,6 @@ mod tests {
                 VdafType::Poplar1 { bits: u16::MAX },
                 concat!(
                     "00001000", // vdaf_type_code
-                    "0002",     // vdaf_type_param_len
                     "FFFF"      // bits
                 ),
             ),
@@ -682,13 +633,12 @@ mod tests {
                 concat!(
                     concat!(
                         // dp_config
+                        "0001", // dp_config length
                         "01",   // dp_mechanism
-                        "0000", // dp_mechanism_param_len
                     ),
                     concat!(
                         // vdaf_type
                         "00000000", // vdaf_type_code
-                        "0000",     // vdaf_type_param_len
                     ),
                 ),
             ),
@@ -701,13 +651,12 @@ mod tests {
                 concat!(
                     concat!(
                         // dp_config
+                        "0001", // dp_config length
                         "01",   // dp_mechanism
-                        "0000", // dp_mechanism_param_len
                     ),
                     concat!(
                         // vdaf_type
                         "00000001", // vdaf_type_code
-                        "0001",     // vdaf_type_param_len
                         "42",       // bits
                     ),
                 ),
@@ -725,13 +674,12 @@ mod tests {
                 concat!(
                     concat!(
                         // dp_config
+                        "0001", // dp_config length
                         "01",   // dp_mechanism
-                        "0000", // dp_mechanism_param_len
                     ),
                     concat!(
                         // vdaf_type
                         "00000002", // vdaf_type_code
-                        "0009",     // vdaf_type_param_len
                         "08",       // bits
                         "0000000C", // length
                         "0000000E", // chunk_length
@@ -750,13 +698,12 @@ mod tests {
                 concat!(
                     concat!(
                         // dp_config
+                        "0001", //dp_config length
                         "01",   // dp_mechanism
-                        "0000", // dp_mechanism_param_len
                     ),
                     concat!(
                         // vdaf_type
                         "00000003", // vdaf_type_code
-                        "0008",     // vdaf_type_param_len
                         "0000000A", // length
                         "00000004", // chunk_length
                     ),
@@ -776,11 +723,10 @@ mod tests {
                     Query::TimeInterval,
                 ),
                 concat!(
-                    "01",               // query_type
                     "000000000000003C", // time_precision
                     "0040",             // max_batch_query_count
                     "00000024",         // min_batch_size
-                    "0000",             // query_type_param_len
+                    "01",               // query_type
                 ),
             ),
             (
@@ -793,11 +739,10 @@ mod tests {
                     },
                 ),
                 concat!(
-                    "02",               // query_type
                     "0000000000000000", // time_precision
                     "0000",             // max_batch_query_count
                     "00000000",         // min_batch_size
-                    "0004",             // query_type_param_len
+                    "02",               // query_type
                     "00000000",         // max_batch_size
                 ),
             ),
@@ -811,11 +756,10 @@ mod tests {
                     },
                 ),
                 concat!(
-                    "02",               // query_type
                     "000000000000003C", // time_precision
                     "0040",             // max_batch_query_count
                     "00000024",         // min_batch_size
-                    "0004",             // query_type_param_len
+                    "02",               // query_type
                     "0000FAFA",         // max_batch_size
                 ),
             ),
@@ -829,12 +773,50 @@ mod tests {
                     },
                 ),
                 concat!(
-                    "02",               // query_type
                     "FFFFFFFFFFFFFFFF", // time_precision
                     "FFFF",             // max_batch_query_count
                     "FFFFFFFF",         // min_batch_size
-                    "0004",             // query_type_param_len
+                    "02",               // query_type
                     "FFFFFFFF",         // max_batch_size
+                ),
+            ),
+        ])
+    }
+
+    #[test]
+    fn roundtrip_query() {
+        roundtrip_encoding(&[
+            (
+                Query::TimeInterval,
+                concat!(
+                    "01",               // query_type
+                ),
+            ),
+            (
+                Query::FixedSize {
+                    max_batch_size: u32::MIN,
+                },
+                concat!(
+                    "02",       // query_type
+                    "00000000", // max_batch_size
+                ),
+            ),
+            (
+                Query::FixedSize {
+                    max_batch_size: 0xFAFA,
+                },
+                concat!(
+                    "02",       // query_type
+                    "0000FAFA", // max_batch_size
+                ),
+            ),
+            (
+                Query::FixedSize {
+                    max_batch_size: u32::MAX,
+                },
+                concat!(
+                    "02",       // query_type
+                    "FFFFFFFF", // max_batch_size
                 ),
             ),
         ])
@@ -879,25 +861,25 @@ mod tests {
                     ),
                     concat!(
                         // query_config
-                        "02",               // query_type
+                        "0013",             // query_config length
                         "000000000000AAAA", // time_precision
                         "BBBB",             // max_batch_query_count
                         "0000CCCC",         // min_batch_size
-                        "0004",             // query_type_param_len
+                        "02",               // query_type
                         "0000DDDD",         // max_batch_size
                     ),
                     "000000000000EEEE", // task_expiration
                     concat!(
                         // vdaf_config
+                        "0007", // vdaf_config length
                         concat!(
                             // dp_config
+                            "0001", // dp_config length
                             "01",   // dp_config
-                            "0000", // dp_mechanism_param_len
                         ),
                         concat!(
                             // vdaf_type
                             "00000000", // vdaf_type_code
-                            "0000",     // vdaf_type_param_len
                         ),
                     ),
                 ),
@@ -942,24 +924,24 @@ mod tests {
                     ),
                     concat!(
                         // query_config
-                        "01",               // query_type
+                        "000F",             // query_config length
                         "000000000000AAAA", // time_precision
                         "BBBB",             // max_batch_query_count
                         "0000CCCC",         // min_batch_size
-                        "0000",             // query_type_param_len
+                        "01",               // query_type
                     ),
                     "000000000000EEEE", // task_expiration
                     concat!(
                         // vdaf_config
+                        "000F", // vdaf_config length
                         concat!(
                             // dp_config
+                            "0001", // dp_config length
                             "01",   // dp_mechanism
-                            "0000", // dp_mechanism_param_len
                         ),
                         concat!(
                             // vdaf_type
                             "00000003", // vdaf_type_code
-                            "0008",     // vdaf_type_param_len
                             "0000000A", // length
                             "00000004", // chunk_length
                         ),
@@ -988,24 +970,24 @@ mod tests {
                     ),
                     concat!(
                         // query_config
-                        "01",               // query_type
+                        "000F",             // query_config length
                         "000000000000AAAA", // time_precision
                         "BBBB",             // max_batch_query_count
                         "0000CCCC",         // min_batch_size
-                        "0000",             // query_type_param_len
+                        "01",               // query_type
                     ),
                     "000000000000EEEE", // task_expiration
                     concat!(
                         // vdaf_config
+                        "0007", // vdaf_config length
                         concat!(
                             // dp_config
+                            "0001", // dp_config length
                             "01",   // dp_config
-                            "0000", // dp_mechanism_param_len
                         ),
                         concat!(
                             // vdaf_type
                             "00000000", // vdaf_type_code
-                            "0000",     // vdaf_type_param_len
                         ),
                     ),
                 ))
