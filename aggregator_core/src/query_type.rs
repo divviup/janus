@@ -8,7 +8,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use futures::future::try_join_all;
-use janus_core::time::{Clock, TimeExt as _};
+use janus_core::time::{Clock, IntervalExt as _, TimeExt as _};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     Duration, FixedSizeQuery, Interval, Query, ReportMetadata, TaskId, Time,
@@ -68,6 +68,15 @@ pub trait AccumulableQueryType: QueryType {
 
     /// Get the default value of the partial batch identifier, if applicable.
     fn default_partial_batch_identifier() -> Option<&'static Self::PartialBatchIdentifier>;
+
+    /// Determine if the batch is expected to be garbage-collected, based on the identifier.
+    /// `Some(true)` and `Some(false)` indicate the expected result, and `None` indicates that the
+    /// answer cannot be determined based on the batch identifier alone (for e.g. the fixed-size
+    /// query type).
+    fn is_batch_garbage_collected<C: Clock>(
+        clock: &C,
+        batch_identifier: &Self::BatchIdentifier,
+    ) -> Option<bool>;
 }
 
 #[async_trait]
@@ -136,6 +145,13 @@ impl AccumulableQueryType for TimeInterval {
     fn default_partial_batch_identifier() -> Option<&'static Self::PartialBatchIdentifier> {
         Some(&())
     }
+
+    fn is_batch_garbage_collected<C: Clock>(
+        clock: &C,
+        batch_identifier: &Self::BatchIdentifier,
+    ) -> Option<bool> {
+        Some(batch_identifier.end() < clock.now())
+    }
 }
 
 #[async_trait]
@@ -194,6 +210,10 @@ impl AccumulableQueryType for FixedSize {
     }
 
     fn default_partial_batch_identifier() -> Option<&'static Self::PartialBatchIdentifier> {
+        None
+    }
+
+    fn is_batch_garbage_collected<C: Clock>(_: &C, _: &Self::BatchIdentifier) -> Option<bool> {
         None
     }
 }
