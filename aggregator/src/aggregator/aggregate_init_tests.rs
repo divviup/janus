@@ -501,7 +501,7 @@ async fn aggregation_job_intolerable_clock_skew() {
     .await;
 
     test_case.aggregation_job_init_req = AggregationJobInitializeReq::new(
-        test_case.aggregation_param.get_encoded().unwrap(),
+        test_case.aggregation_param.get_encoded(),
         PartialBatchSelector::new_time_interval(),
         Vec::from([
             // Barely tolerable.
