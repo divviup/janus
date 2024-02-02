@@ -209,22 +209,16 @@ impl AggregationJobDriver {
                         .map(|report| (*report.metadata().id(), report))
                         .collect();
 
-                        report_aggregations = report_aggregations
-                            .into_iter()
-                            .map(|mut ra| {
-                                if matches!(
-                                    ra.state(),
-                                    ReportAggregationState::StartLeaderMissingReportData
-                                ) {
-                                    if let Some(report) = reports.get(ra.report_id()) {
-                                        ra = ra.with_state(
-                                            report.as_start_leader_report_aggregation_state(),
-                                        );
-                                    }
+                        for ra in report_aggregations.iter_mut() {
+                            if let ReportAggregationState::StartLeaderMissingReportData = ra.state()
+                            {
+                                if let Some(report) = reports.get(ra.report_id()) {
+                                    *ra = ra.clone().with_state(
+                                        report.as_start_leader_report_aggregation_state(),
+                                    );
                                 }
-                                ra
-                            })
-                            .collect();
+                            }
+                        }
                     }
 
                     Ok((

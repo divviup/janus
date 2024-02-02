@@ -1176,16 +1176,11 @@ impl<C: Clock> Transaction<'_, C> {
     /// relies on this assumption to find relevant reports without consulting collection jobs. For
     /// VDAFs that do have a different aggregation parameter,
     /// `get_unaggregated_client_report_ids_by_collect_for_task` should be used instead.
-<<<<<<< HEAD
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_unaggregated_client_reports_for_task<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
     >(
-=======
-    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn get_unaggregated_client_report_ids_for_task(
->>>>>>> release/0.6
         &self,
         vdaf: &A,
         task_id: &TaskId,
