@@ -5242,9 +5242,9 @@ dependencies = [
 
 [[package]]
 name = "trillium"
-version = "0.2.13"
+version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b4a1ea726106cfe880370300042a8712b0911f30a63920597437c76cda47893"
+checksum = "8bd8a431d7d45d839ae8236a3b6330bd3d84807592104dbd958143de56b3773f"
 dependencies = [
  "async-trait",
  "futures-lite 2.2.0",
