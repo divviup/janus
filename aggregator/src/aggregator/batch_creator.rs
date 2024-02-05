@@ -7,7 +7,7 @@ use janus_aggregator_core::datastore::{
 };
 use janus_core::time::{Clock, DurationExt, TimeExt};
 use janus_messages::{
-    query_type::FixedSize, AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskId, Time
+    query_type::FixedSize, AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskId, Time,
 };
 use prio::{codec::Encode, vdaf::Aggregator};
 use rand::random;
