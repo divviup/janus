@@ -5,7 +5,7 @@ use crate::{
     aggregator::{
         accumulator::Accumulator,
         aggregate_share::compute_aggregate_share,
-        error::{handle_ping_pong_error, ReportRejectedReason},
+        error::{handle_ping_pong_error, ReportRejection, ReportRejectionReason},
         error::{BatchMismatch, OptOutReason},
         query_type::{CollectableQueryType, UploadableQueryType},
         report_writer::{ReportWriteBatcher, WritableReport},
@@ -48,6 +48,7 @@ use janus_core::{
     http::HttpErrorResponse,
     time::{Clock, DurationExt, IntervalExt, TimeExt},
     vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
+    Runtime,
 };
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
@@ -187,7 +188,7 @@ pub struct Aggregator<C: Clock> {
 }
 
 /// Config represents a configuration for an Aggregator.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Config {
     /// Defines the maximum size of a batch of uploaded reports which will be written in a single
     /// transaction.
@@ -203,6 +204,11 @@ pub struct Config {
     /// the cost of collection.
     pub batch_aggregation_shard_count: u64,
 
+    /// Defines the number of shards to break report counters into. Increasing this value will
+    /// reduce the amount of database contention during report uploads, while increasing the cost
+    /// of getting task metrics.
+    pub task_counter_shard_count: u64,
+
     /// Defines how often to refresh the global HPKE configs cache. This affects how often an aggregator
     /// becomes aware of key state changes.
     pub global_hpke_configs_refresh_interval: StdDuration,
@@ -216,6 +222,7 @@ impl Default for Config {
             max_upload_batch_size: 1,
             max_upload_batch_write_delay: StdDuration::ZERO,
             batch_aggregation_shard_count: 1,
+            task_counter_shard_count: 32,
             global_hpke_configs_refresh_interval: GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
             taskprov_config: TaskprovConfig::default(),
         }
@@ -223,14 +230,17 @@ impl Default for Config {
 }
 
 impl<C: Clock> Aggregator<C> {
-    async fn new(
+    async fn new<R: Runtime + Send + Sync + 'static>(
         datastore: Arc<Datastore<C>>,
         clock: C,
+        runtime: R,
         meter: &Meter,
         cfg: Config,
     ) -> Result<Self, Error> {
         let report_writer = Arc::new(ReportWriteBatcher::new(
             Arc::clone(&datastore),
+            runtime,
+            cfg.task_counter_shard_count,
             cfg.max_upload_batch_size,
             cfg.max_upload_batch_write_delay,
         ));
@@ -409,6 +419,7 @@ impl<C: Clock> Aggregator<C> {
         task_aggregator
             .handle_aggregate_init(
                 &self.datastore,
+                &self.clock,
                 &self.global_hpke_keypairs,
                 &self.aggregate_step_failure_counter,
                 self.cfg.batch_aggregation_shard_count,
@@ -942,6 +953,7 @@ impl<C: Clock> TaskAggregator<C> {
     async fn handle_aggregate_init(
         &self,
         datastore: &Datastore<C>,
+        clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
         aggregate_step_failure_counter: &Counter<u64>,
         batch_aggregation_shard_count: u64,
@@ -951,6 +963,7 @@ impl<C: Clock> TaskAggregator<C> {
         self.vdaf_ops
             .handle_aggregate_init(
                 datastore,
+                clock,
                 global_hpke_keypairs,
                 aggregate_step_failure_counter,
                 Arc::clone(&self.task),
@@ -1283,6 +1296,7 @@ impl VdafOps {
     async fn handle_aggregate_init<C: Clock>(
         &self,
         datastore: &Datastore<C>,
+        clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<AggregatorTask>,
@@ -1295,6 +1309,7 @@ impl VdafOps {
                 vdaf_ops_dispatch!(self, (vdaf, verify_key, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
                         datastore,
+                        clock,
                         global_hpke_keypairs,
                         Arc::clone(vdaf),
                         aggregate_step_failure_counter,
@@ -1311,6 +1326,7 @@ impl VdafOps {
                 vdaf_ops_dispatch!(self, (vdaf, verify_key, VdafType, VERIFY_KEY_LENGTH) => {
                     Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
                         datastore,
+                        clock,
                         global_hpke_keypairs,
                         Arc::clone(vdaf),
                         aggregate_step_failure_counter,
@@ -1394,14 +1410,16 @@ impl VdafOps {
         C: Clock,
         Q: UploadableQueryType,
     {
-        // Shorthand function for generating an Error::ReportRejected with proper parameters.
+        // Shorthand function for generating an Error::ReportRejected with proper parameters and
+        // recording it in the report_writer.
         let reject_report = |reason| {
-            Arc::new(Error::ReportRejected(
-                *task.id(),
-                *report.metadata().id(),
-                *report.metadata().time(),
-                reason,
-            ))
+            let report_id = *report.metadata().id();
+            let report_time = *report.metadata().time();
+            async move {
+                let rejection = ReportRejection::new(*task.id(), report_id, report_time, reason);
+                report_writer.write_rejection(rejection).await;
+                Ok::<_, Arc<Error>>(Arc::new(Error::ReportRejected(rejection)))
+            }
         };
 
         let report_deadline = clock
@@ -1412,18 +1430,14 @@ impl VdafOps {
         // Reject reports from too far in the future.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-4.4.2-21
         if report.metadata().time().is_after(&report_deadline) {
-            return Err(Arc::new(Error::ReportTooEarly(
-                *task.id(),
-                *report.metadata().id(),
-                *report.metadata().time(),
-            )));
+            return Err(reject_report(ReportRejectionReason::TooEarly).await?);
         }
 
         // Reject reports after a task has expired.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-4.4.2-20
         if let Some(task_expiration) = task.task_expiration() {
             if report.metadata().time().is_after(task_expiration) {
-                return Err(reject_report(ReportRejectedReason::TaskExpired));
+                return Err(reject_report(ReportRejectionReason::TaskExpired).await?);
             }
         }
 
@@ -1435,7 +1449,7 @@ impl VdafOps {
                 .add(report_expiry_age)
                 .map_err(|err| Arc::new(Error::from(err)))?;
             if clock.now().is_after(&report_expiry_time) {
-                return Err(reject_report(ReportRejectedReason::TooOld));
+                return Err(reject_report(ReportRejectionReason::Expired).await?);
             }
         }
 
@@ -1455,9 +1469,7 @@ impl VdafOps {
                         "public share decoding failed",
                     );
                     upload_decode_failure_counter.add(1, &[]);
-                    return Err(reject_report(
-                        ReportRejectedReason::PublicShareDecodeFailure,
-                    ));
+                    return Err(reject_report(ReportRejectionReason::DecodeFailure).await?);
                 }
             };
 
@@ -1486,10 +1498,10 @@ impl VdafOps {
             // Verify that the report's HPKE config ID is known.
             // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#section-4.4.2-17
             (None, None) => {
-                return Err(Arc::new(Error::OutdatedHpkeConfig(
-                    *task.id(),
+                return Err(reject_report(ReportRejectionReason::OutdatedHpkeConfig(
                     *report.leader_encrypted_input_share().config_id(),
-                )));
+                ))
+                .await?);
             }
             (None, Some(global_hpke_keypair)) => try_hpke_open(&global_hpke_keypair),
             (Some(task_hpke_keypair), None) => try_hpke_open(task_hpke_keypair),
@@ -1513,7 +1525,7 @@ impl VdafOps {
                     "Report decryption failed",
                 );
                 upload_decrypt_failure_counter.add(1, &[]);
-                return Err(reject_report(ReportRejectedReason::LeaderDecryptFailure));
+                return Err(reject_report(ReportRejectionReason::DecryptFailure).await?);
             }
         };
 
@@ -1540,9 +1552,7 @@ impl VdafOps {
                     "Leader input share decoding failed",
                 );
                 upload_decode_failure_counter.add(1, &[]);
-                return Err(reject_report(
-                    ReportRejectedReason::LeaderInputShareDecodeFailure,
-                ));
+                return Err(reject_report(ReportRejectionReason::DecodeFailure).await?);
             }
         };
 
@@ -1556,7 +1566,9 @@ impl VdafOps {
         );
 
         report_writer
-            .write_report(WritableReport::<SEED_SIZE, Q, A>::new(vdaf, report))
+            .write_report(Box::new(WritableReport::<SEED_SIZE, Q, A>::new(
+                vdaf, report,
+            )))
             .await
     }
 }
@@ -1625,6 +1637,7 @@ impl VdafOps {
     /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-helper-initialization
     async fn handle_aggregate_init_generic<const SEED_SIZE: usize, Q, A, C>(
         datastore: &Datastore<C>,
+        clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
         vdaf: Arc<A>,
         aggregate_step_failure_counter: &Counter<u64>,
@@ -1651,6 +1664,11 @@ impl VdafOps {
         // unwrap safety: SHA-256 computed by ring should always be 32 bytes
         let request_hash = digest(&SHA256, req_bytes).as_ref().try_into().unwrap();
         let req = AggregationJobInitializeReq::<Q>::get_decoded(req_bytes)?;
+
+        let report_deadline = clock
+            .now()
+            .add(task.tolerable_clock_skew())
+            .map_err(Error::from)?;
 
         // If two ReportShare messages have the same report ID, then the helper MUST abort with
         // error "invalidMessage". (§4.5.1.2)
@@ -1834,6 +1852,19 @@ impl VdafOps {
             });
 
             let shares = input_share.and_then(|input_share| Ok((public_share?, input_share)));
+
+            // Reject reports from too far in the future.
+            let shares = shares.and_then(|shares| {
+                if prepare_init
+                    .report_share()
+                    .metadata()
+                    .time()
+                    .is_after(&report_deadline)
+                {
+                    return Err(PrepareError::ReportTooEarly);
+                }
+                Ok(shares)
+            });
 
             // Next, the aggregator runs the preparation-state initialization algorithm for the VDAF
             // associated with the task and computes the first state transition. [...] If either
@@ -3252,14 +3283,14 @@ pub(crate) mod test_util {
 #[cfg(test)]
 mod tests {
     use crate::aggregator::{
-        error::ReportRejectedReason, test_util::default_aggregator_config, Aggregator, Config,
+        error::ReportRejectionReason, test_util::default_aggregator_config, Aggregator, Config,
         Error,
     };
     use assert_matches::assert_matches;
     use futures::future::try_join_all;
     use janus_aggregator_core::{
         datastore::{
-            models::{CollectionJob, CollectionJobState},
+            models::{CollectionJob, CollectionJobState, TaskUploadCounter},
             test_util::{ephemeral_datastore, EphemeralDatastore},
             Datastore,
         },
@@ -3274,9 +3305,13 @@ mod tests {
             self, test_util::generate_test_hpke_config_and_private_key_with_id,
             HpkeApplicationInfo, HpkeKeypair, Label,
         },
-        test_util::install_test_trace_subscriber,
+        test_util::{
+            install_test_trace_subscriber,
+            runtime::{TestRuntime, TestRuntimeManager},
+        },
         time::{Clock, MockClock, TimeExt},
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
+        Runtime,
     };
     use janus_messages::{
         query_type::TimeInterval, Duration, Extension, HpkeCiphertext, HpkeConfig, HpkeConfigId,
@@ -3346,6 +3381,23 @@ mod tests {
         Arc<Datastore<MockClock>>,
         EphemeralDatastore,
     ) {
+        setup_upload_test_with_runtime(TestRuntime::default(), cfg).await
+    }
+
+    async fn setup_upload_test_with_runtime<R>(
+        runtime: R,
+        cfg: Config,
+    ) -> (
+        Prio3Count,
+        Aggregator<MockClock>,
+        MockClock,
+        Task,
+        Arc<Datastore<MockClock>>,
+        EphemeralDatastore,
+    )
+    where
+        R: Runtime + Send + Sync + 'static,
+    {
         let clock = MockClock::default();
         let vdaf = Prio3Count::new_count(2).unwrap();
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
@@ -3357,9 +3409,15 @@ mod tests {
 
         datastore.put_aggregator_task(&leader_task).await.unwrap();
 
-        let aggregator = Aggregator::new(Arc::clone(&datastore), clock.clone(), &noop_meter(), cfg)
-            .await
-            .unwrap();
+        let aggregator = Aggregator::new(
+            Arc::clone(&datastore),
+            clock.clone(),
+            runtime,
+            &noop_meter(),
+            cfg,
+        )
+        .await
+        .unwrap();
 
         (
             vdaf,
@@ -3421,17 +3479,29 @@ mod tests {
             .unwrap();
 
         // Verify that the original report, rather than the modified report, is stored.
-        let got_report = ds
+        let (got_report, got_counter) = ds
             .run_unnamed_tx(|tx| {
                 let vdaf = vdaf.clone();
                 let task_id = *task.id();
                 let report_id = *report.metadata().id();
-                Box::pin(async move { tx.get_client_report(&vdaf, &task_id, &report_id).await })
+                Box::pin(async move {
+                    Ok((
+                        tx.get_client_report(&vdaf, &task_id, &report_id)
+                            .await
+                            .unwrap(),
+                        tx.get_task_upload_counter(&task_id).await.unwrap(),
+                    ))
+                })
             })
             .await
-            .unwrap()
             .unwrap();
-        assert!(got_report.eq_report(&vdaf, leader_task.current_hpke_key(), &report));
+        assert!(got_report
+            .unwrap()
+            .eq_report(&vdaf, leader_task.current_hpke_key(), &report));
+        assert_eq!(
+            got_counter,
+            Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 1, 0, 0))
+        )
     }
 
     #[tokio::test]
@@ -3476,14 +3546,31 @@ mod tests {
             .collect();
 
         assert_eq!(want_report_ids, got_report_ids);
+
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 100, 0, 0))
+        );
     }
 
     #[tokio::test]
     async fn upload_wrong_hpke_config_id() {
         install_test_trace_subscriber();
 
-        let (_, aggregator, clock, task, _, _ephemeral_datastore) =
-            setup_upload_test(default_aggregator_config()).await;
+        let mut runtime_manager = TestRuntimeManager::new();
+        let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
+            setup_upload_test_with_runtime(
+                runtime_manager.with_label("aggregator"),
+                default_aggregator_config(),
+            )
+            .await;
         let leader_task = task.leader_view().unwrap();
         let report = create_report(&leader_task, clock.now());
 
@@ -3506,10 +3593,35 @@ mod tests {
             report.helper_encrypted_input_share().clone(),
         );
 
-        assert_matches!(aggregator.handle_upload(task.id(), &report.get_encoded()).await.unwrap_err().as_ref(), Error::OutdatedHpkeConfig(task_id, config_id) => {
-            assert_eq!(task.id(), task_id);
-            assert_eq!(config_id, &unused_hpke_config_id);
+        let result = aggregator
+            .handle_upload(task.id(), &report.get_encoded())
+            .await
+            .unwrap_err();
+        assert_matches!(result.as_ref(), Error::ReportRejected(rejection) => {
+            assert_eq!(task.id(), rejection.task_id());
+            assert_eq!(report.metadata().id(), rejection.report_id());
+            assert_eq!(report.metadata().time(), rejection.time());
+            assert_matches!(rejection.reason(), ReportRejectionReason::OutdatedHpkeConfig(id) => {
+                assert_eq!(id, &unused_hpke_config_id);
+            })
         });
+
+        // Wait for the report writer to have completed one write task.
+        runtime_manager
+            .wait_for_completed_tasks("aggregator", 1)
+            .await;
+
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new(0, 0, 0, 0, 1, 0, 0, 0))
+        )
     }
 
     #[tokio::test]
@@ -3539,14 +3651,30 @@ mod tests {
             .unwrap();
         assert_eq!(task.id(), got_report.task_id());
         assert_eq!(report.metadata(), got_report.metadata());
+
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 1, 0, 0))
+        )
     }
 
     #[tokio::test]
     async fn upload_report_in_the_future_past_clock_skew() {
         install_test_trace_subscriber();
-
-        let (_, aggregator, clock, task, _, _ephemeral_datastore) =
-            setup_upload_test(default_aggregator_config()).await;
+        let mut runtime_manager = TestRuntimeManager::new();
+        let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
+            setup_upload_test_with_runtime(
+                runtime_manager.with_label("aggregator"),
+                default_aggregator_config(),
+            )
+            .await;
         let report = create_report(
             &task.leader_view().unwrap(),
             clock
@@ -3561,20 +3689,42 @@ mod tests {
             .handle_upload(task.id(), &report.get_encoded())
             .await
             .unwrap_err();
-
-        assert_matches!(upload_error.as_ref(), Error::ReportTooEarly(task_id, report_id, time) => {
-            assert_eq!(task.id(), task_id);
-            assert_eq!(report.metadata().id(), report_id);
-            assert_eq!(report.metadata().time(), time);
+        assert_matches!(upload_error.as_ref(), Error::ReportRejected(rejection) => {
+            assert_eq!(task.id(), rejection.task_id());
+            assert_eq!(report.metadata().id(), rejection.report_id());
+            assert_eq!(report.metadata().time(), rejection.time());
+            assert_matches!(rejection.reason(), ReportRejectionReason::TooEarly);
         });
+
+        // Wait for the report writer to have completed one write task.
+        runtime_manager
+            .wait_for_completed_tasks("aggregator", 1)
+            .await;
+
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 0, 1, 0))
+        )
     }
 
     #[tokio::test]
     async fn upload_report_for_collected_batch() {
         install_test_trace_subscriber();
 
+        let mut runtime_manager = TestRuntimeManager::new();
         let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test(default_aggregator_config()).await;
+            setup_upload_test_with_runtime(
+                runtime_manager.with_label("aggregator"),
+                default_aggregator_config(),
+            )
+            .await;
         let report = create_report(&task.leader_view().unwrap(), clock.now());
 
         // Insert a collection job for the batch interval including our report.
@@ -3616,12 +3766,30 @@ mod tests {
             .unwrap_err();
         assert_matches!(
             error.as_ref(),
-            Error::ReportRejected(err_task_id, err_report_id, err_time, ReportRejectedReason::IntervalAlreadyCollected) => {
-                assert_eq!(task.id(), err_task_id);
-                assert_eq!(report.metadata().id(), err_report_id);
-                assert_eq!(report.metadata().time(), err_time);
+            Error::ReportRejected(rejection) => {
+                assert_eq!(task.id(), rejection.task_id());
+                assert_eq!(report.metadata().id(), rejection.report_id());
+                assert_eq!(report.metadata().time(), rejection.time());
+                assert_matches!(rejection.reason(), ReportRejectionReason::IntervalCollected);
             }
         );
+
+        // Wait for the report writer to have completed one write task.
+        runtime_manager
+            .wait_for_completed_tasks("aggregator", 1)
+            .await;
+
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new(1, 0, 0, 0, 0, 0, 0, 0))
+        )
     }
 
     #[tokio::test]
@@ -3699,6 +3867,294 @@ mod tests {
             assert_eq!(task.id(), got_report.task_id());
             assert_eq!(report.metadata(), got_report.metadata());
         }
+    }
+
+    #[tokio::test]
+    async fn upload_report_task_expired() {
+        install_test_trace_subscriber();
+        let mut runtime_manager = TestRuntimeManager::new();
+        let (_, aggregator, clock, _, datastore, _ephemeral_datastore) =
+            setup_upload_test_with_runtime(
+                runtime_manager.with_label("aggregator"),
+                default_aggregator_config(),
+            )
+            .await;
+
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            .with_task_expiration(Some(clock.now()))
+            .build()
+            .leader_view()
+            .unwrap();
+        datastore.put_aggregator_task(&task).await.unwrap();
+
+        // Advance the clock to expire the task.
+        clock.advance(&Duration::from_seconds(1));
+        let report = create_report(&task, clock.now());
+
+        // Try to upload the report, verify that we get the expected error.
+        let error = aggregator
+            .handle_upload(task.id(), &report.get_encoded())
+            .await
+            .unwrap_err();
+        assert_matches!(
+            error.as_ref(),
+            Error::ReportRejected(rejection) => {
+                assert_eq!(task.id(), rejection.task_id());
+                assert_eq!(report.metadata().id(), rejection.report_id());
+                assert_eq!(report.metadata().time(), rejection.time());
+                assert_matches!(rejection.reason(), ReportRejectionReason::TaskExpired);
+            }
+        );
+
+        // Wait for the report writer to have completed one write task.
+        runtime_manager
+            .wait_for_completed_tasks("aggregator", 1)
+            .await;
+
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 0, 0, 1))
+        )
+    }
+
+    #[tokio::test]
+    async fn upload_report_report_expired() {
+        install_test_trace_subscriber();
+        let mut runtime_manager = TestRuntimeManager::new();
+        let (_, aggregator, clock, _, datastore, _ephemeral_datastore) =
+            setup_upload_test_with_runtime(
+                runtime_manager.with_label("aggregator"),
+                default_aggregator_config(),
+            )
+            .await;
+
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            .with_report_expiry_age(Some(Duration::from_seconds(60)))
+            .build()
+            .leader_view()
+            .unwrap();
+        datastore.put_aggregator_task(&task).await.unwrap();
+
+        let report = create_report(&task, clock.now());
+
+        // Advance the clock to expire the report.
+        clock.advance(&Duration::from_seconds(61));
+
+        // Try to upload the report, verify that we get the expected error.
+        let error = aggregator
+            .handle_upload(task.id(), &report.get_encoded())
+            .await
+            .unwrap_err();
+        assert_matches!(
+            error.as_ref(),
+            Error::ReportRejected(rejection) => {
+                assert_eq!(task.id(), rejection.task_id());
+                assert_eq!(report.metadata().id(), rejection.report_id());
+                assert_eq!(report.metadata().time(), rejection.time());
+                assert_matches!(rejection.reason(), ReportRejectionReason::Expired);
+            }
+        );
+
+        // Wait for the report writer to have completed one write task.
+        runtime_manager
+            .wait_for_completed_tasks("aggregator", 1)
+            .await;
+
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new(0, 0, 0, 1, 0, 0, 0, 0))
+        )
+    }
+
+    #[tokio::test]
+    async fn upload_report_faulty_encryption() {
+        install_test_trace_subscriber();
+        let mut runtime_manager = TestRuntimeManager::new();
+        let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
+            setup_upload_test_with_runtime(
+                runtime_manager.with_label("aggregator"),
+                default_aggregator_config(),
+            )
+            .await;
+
+        let task = task.leader_view().unwrap();
+
+        // Encrypt with the wrong key.
+        let report = create_report_custom(
+            &task,
+            clock.now(),
+            random(),
+            &generate_test_hpke_config_and_private_key_with_id(
+                (*task.current_hpke_key().config().id()).into(),
+            ),
+        );
+
+        // Try to upload the report, verify that we get the expected error.
+        let error = aggregator
+            .handle_upload(task.id(), &report.get_encoded())
+            .await
+            .unwrap_err();
+        assert_matches!(
+            error.as_ref(),
+            Error::ReportRejected(rejection) => {
+                assert_eq!(task.id(), rejection.task_id());
+                assert_eq!(report.metadata().id(), rejection.report_id());
+                assert_eq!(report.metadata().time(), rejection.time());
+                assert_matches!(rejection.reason(), ReportRejectionReason::DecryptFailure);
+            }
+        );
+
+        // Wait for the report writer to have completed one write task.
+        runtime_manager
+            .wait_for_completed_tasks("aggregator", 1)
+            .await;
+
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new(0, 0, 1, 0, 0, 0, 0, 0))
+        )
+    }
+
+    #[tokio::test]
+    async fn upload_report_public_share_decode_failure() {
+        install_test_trace_subscriber();
+        let mut runtime_manager = TestRuntimeManager::new();
+        let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
+            setup_upload_test_with_runtime(
+                runtime_manager.with_label("aggregator"),
+                default_aggregator_config(),
+            )
+            .await;
+
+        let task = task.leader_view().unwrap();
+
+        let mut report = create_report(&task, clock.now());
+        report = Report::new(
+            report.metadata().clone(),
+            // Some obviously wrong public share.
+            Vec::from([0; 10]),
+            report.leader_encrypted_input_share().clone(),
+            report.helper_encrypted_input_share().clone(),
+        );
+
+        // Try to upload the report, verify that we get the expected error.
+        let error = aggregator
+            .handle_upload(task.id(), &report.get_encoded())
+            .await
+            .unwrap_err();
+        assert_matches!(
+            error.as_ref(),
+            Error::ReportRejected(rejection) => {
+                assert_eq!(task.id(), rejection.task_id());
+                assert_eq!(report.metadata().id(), rejection.report_id());
+                assert_eq!(report.metadata().time(), rejection.time());
+                assert_matches!(rejection.reason(), ReportRejectionReason::DecodeFailure);
+            }
+        );
+
+        // Wait for the report writer to have completed one write task.
+        runtime_manager
+            .wait_for_completed_tasks("aggregator", 1)
+            .await;
+
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new(0, 1, 0, 0, 0, 0, 0, 0))
+        )
+    }
+
+    #[tokio::test]
+    async fn upload_report_leader_input_share_decode_failure() {
+        install_test_trace_subscriber();
+        let mut runtime_manager = TestRuntimeManager::new();
+        let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
+            setup_upload_test_with_runtime(
+                runtime_manager.with_label("aggregator"),
+                default_aggregator_config(),
+            )
+            .await;
+
+        let task = task.leader_view().unwrap();
+
+        let mut report = create_report(&task, clock.now());
+        report = Report::new(
+            report.metadata().clone(),
+            report.public_share().to_vec(),
+            hpke::seal(
+                task.current_hpke_key().config(),
+                &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader),
+                // Some obviously wrong payload.
+                &PlaintextInputShare::new(Vec::new(), vec![0; 100]).get_encoded(),
+                &InputShareAad::new(
+                    *task.id(),
+                    report.metadata().clone(),
+                    report.public_share().to_vec(),
+                )
+                .get_encoded(),
+            )
+            .unwrap(),
+            report.helper_encrypted_input_share().clone(),
+        );
+
+        // Try to upload the report, verify that we get the expected error.
+        let error = aggregator
+            .handle_upload(task.id(), &report.get_encoded())
+            .await
+            .unwrap_err();
+        assert_matches!(
+            error.as_ref(),
+            Error::ReportRejected(rejection) => {
+                assert_eq!(task.id(), rejection.task_id());
+                assert_eq!(report.metadata().id(), rejection.report_id());
+                assert_eq!(report.metadata().time(), rejection.time());
+                assert_matches!(rejection.reason(), ReportRejectionReason::DecodeFailure);
+            }
+        );
+
+        // Wait for the report writer to have completed one write task.
+        runtime_manager
+            .wait_for_completed_tasks("aggregator", 1)
+            .await;
+
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new(0, 1, 0, 0, 0, 0, 0, 0))
+        )
     }
 
     pub(crate) fn generate_helper_report_share<V: vdaf::Client<16>>(

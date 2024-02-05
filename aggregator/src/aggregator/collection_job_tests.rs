@@ -28,6 +28,7 @@ use janus_core::{
     test_util::{
         dummy_vdaf::{self, AggregationParam},
         install_test_trace_subscriber,
+        runtime::TestRuntime,
     },
     time::{Clock, IntervalExt, MockClock},
     vdaf::VdafInstance,
@@ -143,6 +144,7 @@ pub(crate) async fn setup_collection_job_test_case(
     let handler = aggregator_handler(
         Arc::clone(&datastore),
         clock.clone(),
+        TestRuntime::default(),
         &noop_meter(),
         Config {
             batch_aggregation_shard_count: 32,

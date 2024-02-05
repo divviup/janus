@@ -5,6 +5,7 @@ use crate::{
             AggregationJobState, Batch, BatchAggregation, BatchAggregationState, BatchState,
             CollectionJob, CollectionJobState, GlobalHpkeKeypair, HpkeKeyState, LeaderStoredReport,
             Lease, OutstandingBatch, ReportAggregation, ReportAggregationState, SqlInterval,
+            TaskUploadCounter, TaskUploadIncrementor,
         },
         schema_versions_template,
         test_util::{ephemeral_datastore_schema_version, generate_aead_key, EphemeralDatastore},
@@ -7467,4 +7468,66 @@ async fn reject_expired_reports_with_same_id(ephemeral_datastore: EphemeralDatas
         })
         .await;
     assert_matches!(result, Err(Error::MutationTargetAlreadyExists));
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
+    let clock = MockClock::default();
+    let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+
+    let task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
+        .build()
+        .leader_view()
+        .unwrap();
+
+    datastore.put_aggregator_task(&task).await.unwrap();
+
+    datastore
+        .run_unnamed_tx(|tx| {
+            let task_id = *task.id();
+            Box::pin(async move {
+                let counter = tx.get_task_upload_counter(&task_id).await.unwrap();
+                assert_eq!(counter, None);
+
+                for case in [
+                    (TaskUploadIncrementor::IntervalCollected, 2),
+                    (TaskUploadIncrementor::ReportDecodeFailure, 4),
+                    (TaskUploadIncrementor::ReportDecryptFailure, 6),
+                    (TaskUploadIncrementor::ReportExpired, 8),
+                    (TaskUploadIncrementor::ReportOutdatedKey, 10),
+                    (TaskUploadIncrementor::ReportSuccess, 100),
+                    (TaskUploadIncrementor::ReportTooEarly, 25),
+                    (TaskUploadIncrementor::TaskExpired, 12),
+                ] {
+                    let ord = thread_rng().gen_range(0..32);
+                    try_join_all(
+                        (0..case.1)
+                            .map(|_| tx.increment_task_upload_counter(&task_id, ord, &case.0)),
+                    )
+                    .await
+                    .unwrap();
+                }
+
+                let counter = tx.get_task_upload_counter(&task_id).await.unwrap();
+                assert_eq!(
+                    counter,
+                    Some(TaskUploadCounter {
+                        interval_collected: 2,
+                        report_decode_failure: 4,
+                        report_decrypt_failure: 6,
+                        report_expired: 8,
+                        report_outdated_key: 10,
+                        report_success: 100,
+                        report_too_early: 25,
+                        task_expired: 12,
+                    })
+                );
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
 }

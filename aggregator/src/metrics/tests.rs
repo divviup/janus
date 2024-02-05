@@ -4,7 +4,7 @@ use http::StatusCode;
 use janus_aggregator_core::datastore::test_util::ephemeral_datastore;
 use janus_core::{
     retries::{retry_http_request, test_http_request_exponential_backoff},
-    test_util::install_test_trace_subscriber,
+    test_util::{install_test_trace_subscriber, runtime::TestRuntime},
     time::MockClock,
 };
 use opentelemetry::metrics::MeterProvider as _;
@@ -86,6 +86,7 @@ async fn http_metrics() {
     let handler = aggregator_handler(
         datastore.clone(),
         clock.clone(),
+        TestRuntime::default(),
         &meter,
         default_aggregator_config(),
     )
