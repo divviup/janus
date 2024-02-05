@@ -65,8 +65,6 @@ pub mod vdaf_dp_strategies {
 pub enum VdafInstance {
     /// A `Prio3` counter.
     Prio3Count,
-    /// A vector of `Prio3` counters.
-    Prio3CountVec { length: usize, chunk_length: usize },
     /// A `Prio3` sum.
     Prio3Sum { bits: usize },
     /// A vector of `Prio3` sums.
@@ -173,24 +171,6 @@ macro_rules! vdaf_dispatch_impl_base {
             ::janus_core::vdaf::VdafInstance::Prio3Count => {
                 let $vdaf = ::prio::vdaf::prio3::Prio3::new_count(2)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Count;
-                const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
-                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
-                $body
-            }
-
-            ::janus_core::vdaf::VdafInstance::Prio3CountVec {
-                length,
-                chunk_length,
-            } => {
-                // Prio3CountVec is implemented as a 1-bit sum vec
-                let $vdaf = ::prio::vdaf::prio3::Prio3::new_sum_vec_multithreaded(
-                    2,
-                    1,
-                    *length,
-                    *chunk_length,
-                )?;
-                type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
                 const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
                 let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
@@ -387,7 +367,6 @@ macro_rules! vdaf_dispatch_impl {
     (impl match all $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
         match $vdaf_instance {
             ::janus_core::vdaf::VdafInstance::Prio3Count
-            | ::janus_core::vdaf::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. }
@@ -418,7 +397,6 @@ macro_rules! vdaf_dispatch_impl {
     (impl match all $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
         match $vdaf_instance {
             ::janus_core::vdaf::VdafInstance::Prio3Count
-            | ::janus_core::vdaf::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. }
@@ -443,7 +421,6 @@ macro_rules! vdaf_dispatch_impl {
     (impl match all $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
         match $vdaf_instance {
             ::janus_core::vdaf::VdafInstance::Prio3Count
-            | ::janus_core::vdaf::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. }
@@ -470,7 +447,6 @@ macro_rules! vdaf_dispatch_impl {
     (impl match all $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
         match $vdaf_instance {
             ::janus_core::vdaf::VdafInstance::Prio3Count
-            | ::janus_core::vdaf::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. }
@@ -541,24 +517,6 @@ mod tests {
                 name: "VdafInstance",
                 variant: "Prio3Count",
             }],
-        );
-        assert_tokens(
-            &VdafInstance::Prio3CountVec {
-                length: 8,
-                chunk_length: 3,
-            },
-            &[
-                Token::StructVariant {
-                    name: "VdafInstance",
-                    variant: "Prio3CountVec",
-                    len: 2,
-                },
-                Token::Str("length"),
-                Token::U64(8),
-                Token::Str("chunk_length"),
-                Token::U64(3),
-                Token::StructVariantEnd,
-            ],
         );
         assert_tokens(
             &VdafInstance::Prio3Sum { bits: 64 },

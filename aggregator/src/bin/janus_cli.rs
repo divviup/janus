@@ -669,7 +669,8 @@ mod tests {
                 max_batch_size: Some(100),
                 batch_time_window_size: None,
             },
-            VdafInstance::Prio3CountVec {
+            VdafInstance::Prio3SumVec {
+                bits: 1,
                 length: 4,
                 chunk_length: 2,
             },

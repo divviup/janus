@@ -416,13 +416,6 @@ impl InClusterJanusPair {
                     length: length.try_into().unwrap(),
                     chunk_length: Some(chunk_length.try_into().unwrap()),
                 }),
-                VdafInstance::Prio3CountVec {
-                    length,
-                    chunk_length,
-                } => Vdaf::CountVec {
-                    length: length.try_into().unwrap(),
-                    chunk_length: Some(chunk_length.try_into().unwrap()),
-                },
                 other => panic!("unsupported vdaf {other:?}"),
             },
             min_batch_size: task.min_batch_size(),

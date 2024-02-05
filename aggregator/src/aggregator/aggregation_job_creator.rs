@@ -289,25 +289,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     .await
             }
 
-            (
-                task::QueryType::TimeInterval,
-                VdafInstance::Prio3CountVec {
-                    length,
-                    chunk_length,
-                },
-            ) => {
-                let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(
-                    2,
-                    1,
-                    *length,
-                    *chunk_length,
-                )?);
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<
-                    VERIFY_KEY_LENGTH,
-                    Prio3SumVecMultithreaded
-                >(task, vdaf).await
-            }
-
             (task::QueryType::TimeInterval, VdafInstance::Prio3Sum { bits }) => {
                 let vdaf = Arc::new(Prio3::new_sum(2, *bits)?);
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<VERIFY_KEY_LENGTH, Prio3Sum>(task, vdaf)
@@ -403,30 +384,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
                     VERIFY_KEY_LENGTH,
                     Prio3Count,
-                >(task, vdaf, max_batch_size, batch_time_window_size).await
-            }
-
-            (
-                task::QueryType::FixedSize {
-                    max_batch_size,
-                    batch_time_window_size,
-                },
-                VdafInstance::Prio3CountVec {
-                    length,
-                    chunk_length,
-                },
-            ) => {
-                let vdaf = Arc::new(Prio3::new_sum_vec_multithreaded(
-                    2,
-                    1,
-                    *length,
-                    *chunk_length,
-                )?);
-                let max_batch_size = *max_batch_size;
-                let batch_time_window_size = *batch_time_window_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<
-                    VERIFY_KEY_LENGTH,
-                    Prio3SumVecMultithreaded
                 >(task, vdaf, max_batch_size, batch_time_window_size).await
             }
 

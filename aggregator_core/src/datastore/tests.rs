@@ -112,14 +112,16 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
     for (vdaf, role) in [
         (VdafInstance::Prio3Count, Role::Leader),
         (
-            VdafInstance::Prio3CountVec {
+            VdafInstance::Prio3SumVec {
+                bits: 1,
                 length: 8,
                 chunk_length: 3,
             },
             Role::Leader,
         ),
         (
-            VdafInstance::Prio3CountVec {
+            VdafInstance::Prio3SumVec {
+                bits: 1,
                 length: 64,
                 chunk_length: 10,
             },

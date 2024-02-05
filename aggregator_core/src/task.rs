@@ -1632,7 +1632,8 @@ mod tests {
                     max_batch_size: Some(10),
                     batch_time_window_size: None,
                 },
-                VdafInstance::Prio3CountVec {
+                VdafInstance::Prio3SumVec {
+                    bits: 1,
                     length: 8,
                     chunk_length: 3,
                 },
@@ -1695,9 +1696,11 @@ mod tests {
                 Token::Str("vdaf"),
                 Token::StructVariant {
                     name: "VdafInstance",
-                    variant: "Prio3CountVec",
-                    len: 2,
+                    variant: "Prio3SumVec",
+                    len: 3,
                 },
+                Token::Str("bits"),
+                Token::U64(1),
                 Token::Str("length"),
                 Token::U64(8),
                 Token::Str("chunk_length"),
