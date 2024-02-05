@@ -1237,21 +1237,17 @@ impl<C: Clock> Transaction<'_, C> {
             .collect::<Result<Vec<_>, Error>>()
     }
 
-    /// `mark_reports_unaggregated` resets the aggregation-started flag on the given client reports,
-    /// so that they may once again be returned by `get_unaggregated_client_report_ids_for_task`. It
+    /// `mark_report_unaggregated` resets the aggregation-started flag on the given client report,
+    /// so that it may once again be returned by `get_unaggregated_client_report_ids_for_task`. It
     /// should generally only be called on report IDs returned from
     /// `get_unaggregated_client_report_ids_for_task`, as part of the same transaction, for any
     /// client reports that are not added to an aggregation job.
-    #[tracing::instrument(skip(self, report_ids), err(level = Level::DEBUG))]
-    pub async fn mark_reports_unaggregated(
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
+    pub async fn mark_report_unaggregated(
         &self,
         task_id: &TaskId,
-        report_ids: &[ReportId],
+        report_id: &ReportId,
     ) -> Result<(), Error> {
-        let report_ids: Vec<_> = report_ids
-            .iter()
-            .map(ReportId::get_encoded)
-            .collect::<Result<Vec<_>, _>>()?;
         let stmt = self
             .prepare_cached(
                 "UPDATE client_reports
@@ -1259,26 +1255,23 @@ impl<C: Clock> Transaction<'_, C> {
                 FROM tasks
                 WHERE client_reports.task_id = tasks.id
                   AND tasks.task_id = $1
-                  AND client_reports.report_id IN (SELECT * FROM UNNEST($2::BYTEA[]))
+                  AND client_reports.report_id = $2
                   AND client_reports.client_timestamp >= COALESCE($3::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
-        let row_count = self
-            .execute(
+        check_single_row_mutation(
+            self.execute(
                 &stmt,
                 &[
                     /* task_id */ &task_id.as_ref(),
-                    /* report_ids */ &report_ids,
+                    /* report_ids */ &report_id.get_encoded()?,
                     /* now */ &self.clock.now().as_naive_date_time()?,
                     /* updated_at */ &self.clock.now().as_naive_date_time()?,
                     /* updated_by */ &self.name,
                 ],
             )
-            .await?;
-        if TryInto::<usize>::try_into(row_count)? != report_ids.len() {
-            return Err(Error::MutationTargetNotFound);
-        }
-        Ok(())
+            .await?,
+        )
     }
 
     #[cfg(feature = "test-util")]
