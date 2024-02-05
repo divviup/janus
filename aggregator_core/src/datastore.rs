@@ -1237,8 +1237,8 @@ impl<C: Clock> Transaction<'_, C> {
             .collect::<Result<Vec<_>, Error>>()
     }
 
-    /// `mark_reports_unaggregated` resets the aggregation-started flag on the given client reports,
-    /// so that they may once again be returned by `get_unaggregated_client_report_ids_for_task`. It
+    /// `mark_report_unaggregated` resets the aggregation-started flag on the given client report,
+    /// so that it may once again be returned by `get_unaggregated_client_report_ids_for_task`. It
     /// should generally only be called on report IDs returned from
     /// `get_unaggregated_client_report_ids_for_task`, as part of the same transaction, for any
     /// client reports that are not added to an aggregation job.
