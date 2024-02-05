@@ -372,16 +372,12 @@ where
                         time_bucket_start,
                     ))
             ),
-            async move {
-                if !unaggregated_report_ids.is_empty() {
-                    tx.mark_reports_unaggregated(
-                        &self.properties.task_id,
-                        &unaggregated_report_ids,
-                    )
-                    .await?;
-                }
-                Ok(())
-            }
+            try_join_all(
+                unaggregated_report_ids
+                    .iter()
+                    .map(|report_id| tx
+                        .mark_report_unaggregated(&self.properties.task_id, report_id))
+            ),
         )?;
         Ok(())
     }

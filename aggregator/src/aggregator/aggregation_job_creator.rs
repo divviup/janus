@@ -5,6 +5,7 @@ use fixed::{
     FixedI16, FixedI32,
 };
 use futures::future::try_join_all;
+use itertools::Itertools as _;
 use janus_aggregator_core::{
     datastore::models::{AggregationJob, AggregationJobState},
     datastore::{self, Datastore},
@@ -35,6 +36,7 @@ use prio::{
 };
 use rand::{random, thread_rng, Rng};
 use std::{
+    cmp::min,
     collections::{HashMap, HashSet},
     sync::Arc,
     time::Duration,
@@ -530,74 +532,113 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
                 Box::pin(async move {
                     // Find some unaggregated client reports.
-                    let reports = tx
+                    let mut reports = tx
                         .get_unaggregated_client_reports_for_task(vdaf.as_ref(), task.id())
                         .await?;
+                    reports.sort_by_key(|report| *report.metadata().time());
 
                     // Generate aggregation jobs & report aggregations based on the reports we read.
+                    // We attempt to generate reports from touching a minimal number of batches by
+                    // generating as many aggregation jobs in the allowed size range for each batch
+                    // before considering using reports from the next batch.
                     let mut aggregation_job_writer = AggregationJobWriter::new(Arc::clone(&task));
                     let mut report_ids_to_scrub = HashSet::new();
-                    for agg_job_reports in reports.chunks(this.max_aggregation_job_size) {
-                        if agg_job_reports.len() < this.min_aggregation_job_size {
-                            if !agg_job_reports.is_empty() {
-                                let report_ids: Vec<_> = agg_job_reports
-                                    .iter()
-                                    .map(|report| *report.metadata().id())
-                                    .collect();
-                                tx.mark_reports_unaggregated(task.id(), &report_ids).await?;
+                    let mut outstanding_reports = Vec::new();
+                    {
+                        // We have to place `reports_by_batch` in this block, as some of its
+                        // internal types are not Send/Sync & thus cannot be held across an await
+                        // point.
+                        let reports_by_batch = reports.into_iter().group_by(|report| {
+                            // Unwrap safety: task.time_precision() is nonzero, so
+                            // `to_batch_interval_start` will never return an error.
+                            report
+                                .metadata()
+                                .time()
+                                .to_batch_interval_start(task.time_precision())
+                                .unwrap()
+                        });
+                        let mut reports_by_batch = reports_by_batch.into_iter();
+
+                        // Each iteration of this loop will generate at most a single aggregation
+                        // job, from the reports available in `outstanding_reports`. If there aren't
+                        // enough reports available, we will pull additional reports from
+                        // `reports_by_batch` until enough are available.
+                        loop {
+                            // Fill `outstanding_reports` from `reports_by_batch` until we have at
+                            // least the minimum aggregation job size available. If we run out of
+                            // reports from `reports_by_batch` without meeting the minimum
+                            // aggregation job size, we are done generating aggregation jobs.
+                            if outstanding_reports.len() < this.min_aggregation_job_size {
+                                if let Some((_, new_reports)) = reports_by_batch.next() {
+                                    outstanding_reports.extend(new_reports);
+                                    continue;
+                                } else {
+                                    // If we get here, we have consumed all of `reports_by_batch`
+                                    // and we still don't have enough outstanding reports for an
+                                    // aggregation job -- we are done.
+                                    break;
+                                }
                             }
-                            continue;
+
+                            // For the rest of the iteration of this loop, we'll generate a single
+                            // aggregation job.
+                            let agg_job_reports: Vec<_> = outstanding_reports
+                                .drain(
+                                    ..min(this.max_aggregation_job_size, outstanding_reports.len()),
+                                )
+                                .collect();
+
+                            let aggregation_job_id = random();
+                            debug!(
+                                task_id = %task.id(),
+                                %aggregation_job_id,
+                                report_count = %agg_job_reports.len(),
+                                "Creating aggregation job"
+                            );
+
+                            let min_client_timestamp = agg_job_reports
+                                .iter()
+                                .map(|report| report.metadata().time())
+                                .min()
+                                .unwrap(); // unwrap safety: agg_job_reports is non-empty
+                            let max_client_timestamp = agg_job_reports
+                                .iter()
+                                .map(|report| report.metadata().time())
+                                .max()
+                                .unwrap(); // unwrap safety: agg_job_reports is non-empty
+                            let client_timestamp_interval = Interval::new(
+                                *min_client_timestamp,
+                                max_client_timestamp
+                                    .difference(min_client_timestamp)?
+                                    .add(&DurationMsg::from_seconds(1))?,
+                            )?;
+
+                            let aggregation_job = AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
+                                *task.id(),
+                                aggregation_job_id,
+                                (),
+                                (),
+                                client_timestamp_interval,
+                                AggregationJobState::InProgress,
+                                AggregationJobStep::from(0),
+                            );
+
+                            let report_aggregations = agg_job_reports
+                                .iter()
+                                .enumerate()
+                                .map(|(ord, report)| {
+                                    Ok(report.as_start_leader_report_aggregation(
+                                        aggregation_job_id,
+                                        ord.try_into()?,
+                                    ))
+                                })
+                                .collect::<Result<_, datastore::Error>>()?;
+                            report_ids_to_scrub.extend(
+                                agg_job_reports.iter().map(|report| *report.metadata().id()),
+                            );
+
+                            aggregation_job_writer.put(aggregation_job, report_aggregations)?;
                         }
-
-                        let aggregation_job_id = random();
-                        debug!(
-                            task_id = %task.id(),
-                            %aggregation_job_id,
-                            report_count = %agg_job_reports.len(),
-                            "Creating aggregation job"
-                        );
-
-                        let min_client_timestamp = agg_job_reports
-                            .iter()
-                            .map(|report| report.metadata().time())
-                            .min()
-                            .unwrap(); // unwrap safety: agg_job_reports is non-empty
-                        let max_client_timestamp = agg_job_reports
-                            .iter()
-                            .map(|report| report.metadata().time())
-                            .max()
-                            .unwrap(); // unwrap safety: agg_job_reports is non-empty
-                        let client_timestamp_interval = Interval::new(
-                            *min_client_timestamp,
-                            max_client_timestamp
-                                .difference(min_client_timestamp)?
-                                .add(&DurationMsg::from_seconds(1))?,
-                        )?;
-
-                        let aggregation_job = AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
-                            *task.id(),
-                            aggregation_job_id,
-                            (),
-                            (),
-                            client_timestamp_interval,
-                            AggregationJobState::InProgress,
-                            AggregationJobStep::from(0),
-                        );
-
-                        let report_aggregations = agg_job_reports
-                            .iter()
-                            .enumerate()
-                            .map(|(ord, report)| {
-                                Ok(report.as_start_leader_report_aggregation(
-                                    aggregation_job_id,
-                                    ord.try_into()?,
-                                ))
-                            })
-                            .collect::<Result<_, datastore::Error>>()?;
-                        report_ids_to_scrub
-                            .extend(agg_job_reports.iter().map(|report| *report.metadata().id()));
-
-                        aggregation_job_writer.put(aggregation_job, report_aggregations)?;
                     }
 
                     // Write the aggregation jobs & report aggregations we created.
@@ -607,7 +648,10 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             report_ids_to_scrub
                                 .iter()
                                 .map(|report_id| tx.scrub_client_report(task.id(), report_id))
-                        )
+                        ),
+                        try_join_all(outstanding_reports.iter().map(|report| {
+                            tx.mark_report_unaggregated(task.id(), report.metadata().id())
+                        })),
                     )?;
 
                     Ok(!aggregation_job_writer.is_empty())
@@ -685,7 +729,7 @@ mod tests {
         datastore::{
             models::{
                 AggregationJob, AggregationJobState, Batch, BatchState, LeaderStoredReport,
-                ReportAggregationState,
+                ReportAggregation, ReportAggregationState,
             },
             test_util::ephemeral_datastore,
             Transaction,
@@ -806,7 +850,7 @@ mod tests {
             noop_meter(),
             Duration::from_secs(3600),
             AGGREGATION_JOB_CREATION_INTERVAL,
-            0,
+            1,
             100,
         ));
         let stopper = Stopper::new();
@@ -880,7 +924,11 @@ mod tests {
         assert_eq!(leader_aggregation.0.partial_batch_identifier(), &());
         assert_eq!(leader_aggregation.0.step(), AggregationJobStep::from(0));
         assert_eq!(
-            leader_aggregation.1,
+            leader_aggregation
+                .1
+                .into_iter()
+                .map(|ra| *ra.report_id())
+                .collect::<Vec<_>>(),
             Vec::from([*leader_report.metadata().id()])
         );
 
@@ -917,33 +965,38 @@ mod tests {
                 .unwrap(),
         );
 
-        // Create 2 max-size batches, a min-size batch, one extra report (which will be added to the
-        // min-size batch).
-        let report_time = clock.now();
-        let batch_identifier = TimeInterval::to_batch_identifier(&task, &(), &report_time).unwrap();
+        // In one batch, create enough reports to fill 2 max-size aggregation jobs, a min-size
+        // aggregation job, one extra report (which will be added to the min-size aggregation job).
+        // In another batch, create enough reports to fill a min-size aggregation job. The two
+        // batches shouldn't have any aggregation jobs in common since we can fill our aggregation
+        // jobs without overlap.
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
 
+        let first_report_time = clock.now();
+        let second_report_time = clock.now().add(task.time_precision()).unwrap();
         let reports: Arc<Vec<_>> = Arc::new(
-            iter::repeat_with(|| {
-                let report_metadata = ReportMetadata::new(random(), report_time);
-                let transcript = run_vdaf(
-                    vdaf.as_ref(),
-                    task.vdaf_verify_key().unwrap().as_bytes(),
-                    &(),
-                    report_metadata.id(),
-                    &0,
-                );
-                LeaderStoredReport::generate(
-                    *task.id(),
-                    report_metadata,
-                    helper_hpke_keypair.config(),
-                    Vec::new(),
-                    &transcript,
-                )
-            })
-            .take(2 * MAX_AGGREGATION_JOB_SIZE + MIN_AGGREGATION_JOB_SIZE + 1)
-            .collect(),
+            iter::repeat(first_report_time)
+                .take(2 * MAX_AGGREGATION_JOB_SIZE + MIN_AGGREGATION_JOB_SIZE + 1)
+                .chain(iter::repeat(second_report_time).take(MIN_AGGREGATION_JOB_SIZE))
+                .map(|report_time| {
+                    let report_metadata = ReportMetadata::new(random(), report_time);
+                    let transcript = run_vdaf(
+                        vdaf.as_ref(),
+                        task.vdaf_verify_key().unwrap().as_bytes(),
+                        &(),
+                        report_metadata.id(),
+                        &0,
+                    );
+                    LeaderStoredReport::generate(
+                        *task.id(),
+                        report_metadata,
+                        helper_hpke_keypair.config(),
+                        Vec::new(),
+                        &transcript,
+                    )
+                })
+                .collect(),
         );
         let all_report_ids: HashSet<ReportId> = reports
             .iter()
@@ -995,7 +1048,7 @@ mod tests {
                 })
                 .collect(),
         );
-        let (agg_jobs, batches) = job_creator
+        let (agg_jobs, mut batches) = job_creator
             .datastore
             .run_unnamed_tx(|tx| {
                 let task = Arc::clone(&task);
@@ -1015,37 +1068,61 @@ mod tests {
             .await
             .unwrap();
         let mut seen_report_ids = HashSet::new();
-        for (agg_job, report_ids) in &agg_jobs {
+        for (agg_job, report_aggs) in &agg_jobs {
             // Jobs are created in step 0
             assert_eq!(agg_job.step(), AggregationJobStep::from(0));
 
             // The batch is at most MAX_AGGREGATION_JOB_SIZE in size.
-            assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
+            assert!(report_aggs.len() <= MAX_AGGREGATION_JOB_SIZE);
 
             // The batch is at least MIN_AGGREGATION_JOB_SIZE in size.
-            assert!(report_ids.len() >= MIN_AGGREGATION_JOB_SIZE);
+            assert!(report_aggs.len() >= MIN_AGGREGATION_JOB_SIZE);
 
             // Report IDs are not repeated across or inside aggregation jobs.
-            for report_id in report_ids {
-                assert!(!seen_report_ids.contains(report_id));
-                seen_report_ids.insert(*report_id);
+            for ra in report_aggs {
+                assert!(!seen_report_ids.contains(ra.report_id()));
+                seen_report_ids.insert(*ra.report_id());
             }
+
+            // All reports being aggregated are from the same batch.
+            assert_eq!(
+                report_aggs
+                    .iter()
+                    .map(|ra| ra
+                        .time()
+                        .to_batch_interval_start(task.time_precision())
+                        .unwrap())
+                    .collect::<HashSet<_>>()
+                    .len(),
+                1
+            )
         }
 
         // Every client report was added to some aggregation job.
         assert_eq!(all_report_ids, seen_report_ids);
 
         // Batches are created appropriately.
+        batches.sort_by_key(|batch| *batch.batch_identifier());
         assert_eq!(
             batches,
-            Vec::from([Batch::new(
-                *task.id(),
-                batch_identifier,
-                (),
-                BatchState::Open,
-                agg_jobs.len().try_into().unwrap(),
-                Interval::from_time(&report_time).unwrap(),
-            )])
+            Vec::from([
+                Batch::new(
+                    *task.id(),
+                    TimeInterval::to_batch_identifier(&task, &(), &first_report_time).unwrap(),
+                    (),
+                    BatchState::Open,
+                    3,
+                    Interval::from_time(&first_report_time).unwrap(),
+                ),
+                Batch::new(
+                    *task.id(),
+                    TimeInterval::to_batch_identifier(&task, &(), &second_report_time).unwrap(),
+                    (),
+                    BatchState::Open,
+                    1,
+                    Interval::from_time(&second_report_time).unwrap(),
+                )
+            ])
         );
     }
 
@@ -1225,7 +1302,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(agg_jobs.len(), 1);
-        let report_ids: HashSet<_> = agg_jobs.into_iter().next().unwrap().1.into_iter().collect();
+        let report_ids: HashSet<_> = agg_jobs
+            .into_iter()
+            .next()
+            .unwrap()
+            .1
+            .into_iter()
+            .map(|ra| *ra.report_id())
+            .collect();
         assert_eq!(
             report_ids,
             HashSet::from([
@@ -1369,7 +1453,7 @@ mod tests {
             .await
             .unwrap();
         let mut seen_report_ids = HashSet::new();
-        for (agg_job, report_ids) in &agg_jobs {
+        for (agg_job, report_aggs) in &agg_jobs {
             // Job immediately finished since all reports are in a closed batch.
             assert_eq!(agg_job.state(), &AggregationJobState::Finished);
 
@@ -1377,15 +1461,15 @@ mod tests {
             assert_eq!(agg_job.step(), AggregationJobStep::from(0));
 
             // The batch is at most MAX_AGGREGATION_JOB_SIZE in size.
-            assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
+            assert!(report_aggs.len() <= MAX_AGGREGATION_JOB_SIZE);
 
             // The batch is at least MIN_AGGREGATION_JOB_SIZE in size.
-            assert!(report_ids.len() >= MIN_AGGREGATION_JOB_SIZE);
+            assert!(report_aggs.len() >= MIN_AGGREGATION_JOB_SIZE);
 
             // Report IDs are not repeated across or inside aggregation jobs.
-            for report_id in report_ids {
-                assert!(!seen_report_ids.contains(report_id));
-                seen_report_ids.insert(*report_id);
+            for ra in report_aggs {
+                assert!(!seen_report_ids.contains(ra.report_id()));
+                seen_report_ids.insert(*ra.report_id());
             }
         }
 
@@ -1562,7 +1646,7 @@ mod tests {
         // Verify aggregation jobs.
         let mut seen_report_ids = HashSet::new();
         let mut batches_with_small_agg_jobs = HashSet::new();
-        for (agg_job, report_ids) in agg_jobs {
+        for (agg_job, report_aggs) in agg_jobs {
             // Aggregation jobs are created in step 0.
             assert_eq!(agg_job.step(), AggregationJobStep::from(0));
 
@@ -1571,18 +1655,18 @@ mod tests {
 
             // At most one aggregation job per batch will be smaller than the normal minimum
             // aggregation job size.
-            if report_ids.len() < MIN_AGGREGATION_JOB_SIZE {
+            if report_aggs.len() < MIN_AGGREGATION_JOB_SIZE {
                 assert!(!batches_with_small_agg_jobs.contains(agg_job.batch_id()));
                 batches_with_small_agg_jobs.insert(*agg_job.batch_id());
             }
 
             // The aggregation job is at most MAX_AGGREGATION_JOB_SIZE in size.
-            assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
+            assert!(report_aggs.len() <= MAX_AGGREGATION_JOB_SIZE);
 
             // Report IDs are not repeated across or inside aggregation jobs.
-            for report_id in report_ids {
-                assert!(!seen_report_ids.contains(&report_id));
-                seen_report_ids.insert(report_id);
+            for ra in report_aggs {
+                assert!(!seen_report_ids.contains(ra.report_id()));
+                seen_report_ids.insert(*ra.report_id());
             }
         }
 
@@ -1758,9 +1842,14 @@ mod tests {
                         .into_iter()
                         .map(|report| *report.metadata().id())
                         .collect::<Vec<_>>();
-                    tx.mark_reports_unaggregated(task.id(), &report_ids)
-                        .await
-                        .unwrap();
+
+                    try_join_all(
+                        report_ids
+                            .iter()
+                            .map(|report_id| tx.mark_report_unaggregated(task.id(), report_id)),
+                    )
+                    .await
+                    .unwrap();
                     Ok(report_ids.len())
                 })
             })
@@ -2017,14 +2106,14 @@ mod tests {
 
         // Verify consistency of batches and aggregation jobs.
         let mut seen_report_ids = HashSet::new();
-        for (agg_job, report_ids) in agg_jobs {
+        for (agg_job, report_aggs) in agg_jobs {
             assert_eq!(agg_job.step(), AggregationJobStep::from(0));
             assert!(batch_ids.contains(agg_job.batch_id()));
-            assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
+            assert!(report_aggs.len() <= MAX_AGGREGATION_JOB_SIZE);
 
             // Report IDs are not repeated across or inside aggregation jobs.
-            for report_id in report_ids {
-                let newly_inserted = seen_report_ids.insert(report_id);
+            for ra in report_aggs {
+                let newly_inserted = seen_report_ids.insert(*ra.report_id());
                 assert!(newly_inserted);
             }
         }
@@ -2285,14 +2374,14 @@ mod tests {
 
         // Verify consistency of batches and aggregation jobs.
         let mut seen_report_ids = HashSet::new();
-        for (agg_job, report_ids) in agg_jobs {
+        for (agg_job, report_aggs) in agg_jobs {
             assert_eq!(agg_job.step(), AggregationJobStep::from(0));
             assert!(batch_ids.contains(agg_job.batch_id()));
-            assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
+            assert!(report_aggs.len() <= MAX_AGGREGATION_JOB_SIZE);
 
             // Report IDs are not repeated across or inside aggregation jobs.
-            for report_id in report_ids {
-                let newly_inserted = seen_report_ids.insert(report_id);
+            for ra in report_aggs {
+                let newly_inserted = seen_report_ids.insert(*ra.report_id());
                 assert!(newly_inserted);
             }
         }
@@ -2499,21 +2588,21 @@ mod tests {
         // Verify aggregation jobs.
         let mut seen_report_ids = HashSet::new();
         let mut batches_with_small_agg_jobs = HashSet::new();
-        for (agg_job, report_ids) in agg_jobs {
+        for (agg_job, report_aggs) in agg_jobs {
             assert_eq!(agg_job.step(), AggregationJobStep::from(0));
             assert!(batch_ids.contains(agg_job.batch_id()));
-            assert!(report_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
+            assert!(report_aggs.len() <= MAX_AGGREGATION_JOB_SIZE);
 
             // At most one aggregation job per batch will be smaller than the normal minimum
             // aggregation job size.
-            if report_ids.len() < MIN_AGGREGATION_JOB_SIZE {
+            if report_aggs.len() < MIN_AGGREGATION_JOB_SIZE {
                 let newly_inserted = batches_with_small_agg_jobs.insert(*agg_job.batch_id());
                 assert!(newly_inserted);
             }
 
             // Report IDs are not repeated across or inside aggregation jobs.
-            for report_id in report_ids {
-                let newly_inserted = seen_report_ids.insert(report_id);
+            for ra in report_aggs {
+                let newly_inserted = seen_report_ids.insert(*ra.report_id());
                 assert!(newly_inserted);
             }
         }
@@ -2591,7 +2680,10 @@ mod tests {
         task_id: &TaskId,
         want_ra_states: &HashMap<ReportId, ReportAggregationState<SEED_SIZE, A>>,
     ) -> (
-        Vec<(AggregationJob<SEED_SIZE, Q, A>, Vec<ReportId>)>,
+        Vec<(
+            AggregationJob<SEED_SIZE, Q, A>,
+            Vec<ReportAggregation<SEED_SIZE, A>>,
+        )>,
         Vec<Batch<SEED_SIZE, Q, A>>,
     )
     where
@@ -2612,33 +2704,28 @@ mod tests {
                     .into_iter()
                     .map(|agg_job| async {
                         let agg_job_id = *agg_job.id();
-                        tx.get_report_aggregations_for_aggregation_job(
-                            vdaf,
-                            &Role::Leader,
-                            task_id,
-                            &agg_job_id,
-                        )
-                        .await
-                        .map(|report_aggs| {
-                            // Verify that each report aggregation has the expected state.
-                            let report_ids: Vec<_> = report_aggs
-                                .into_iter()
-                                .map(|ra| {
-                                    let want_ra_state =
-                                        want_ra_states.get(ra.report_id()).unwrap_or_else(|| {
-                                            panic!(
-                                                "found report aggregation for unknown report {}",
-                                                ra.report_id()
-                                            )
-                                        });
-                                    assert_eq!(want_ra_state, ra.state());
+                        let report_aggs = tx
+                            .get_report_aggregations_for_aggregation_job(
+                                vdaf,
+                                &Role::Leader,
+                                task_id,
+                                &agg_job_id,
+                            )
+                            .await
+                            .unwrap();
 
-                                    *ra.report_id()
-                                })
-                                .collect();
+                        for ra in &report_aggs {
+                            let want_ra_state =
+                                want_ra_states.get(ra.report_id()).unwrap_or_else(|| {
+                                    panic!(
+                                        "found report aggregation for unknown report {}",
+                                        ra.report_id()
+                                    )
+                                });
+                            assert_eq!(want_ra_state, ra.state());
+                        }
 
-                            (agg_job, report_ids)
-                        })
+                        Ok((agg_job, report_aggs))
                     }),
             ),
             tx.get_batches_for_task(task_id),
@@ -2648,7 +2735,7 @@ mod tests {
         // Verify that all reports we saw a report aggregation for are scrubbed.
         let all_seen_report_ids: HashSet<_> = agg_jobs_and_report_ids
             .iter()
-            .flat_map(|(_, report_ids)| report_ids)
+            .flat_map(|(_, report_aggs)| report_aggs.iter().map(|ra| ra.report_id()))
             .collect();
         for report_id in &all_seen_report_ids {
             tx.verify_client_report_scrubbed(task_id, report_id).await;
