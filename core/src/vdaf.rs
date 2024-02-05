@@ -1,10 +1,27 @@
 use derivative::Derivative;
 use janus_messages::taskprov;
+use prio::{
+    field::Field64,
+    flp::{
+        gadgets::{Mul, ParallelSum},
+        types::SumVec,
+    },
+    vdaf::{prio3::Prio3, xof::XofHmacSha256Aes128, VdafError},
+};
 use serde::{Deserialize, Serialize};
 use std::str;
 
-/// The length of the verify key parameter for Prio3 & Poplar1 VDAF instantiations.
+/// The length of the verify key parameter for Prio3 and Poplar1 VDAF instantiations using
+/// [`XofTurboShake128`][prio::vdaf::xof::XofTurboShake128].
 pub const VERIFY_KEY_LENGTH: usize = 16;
+
+/// Private use algorithm ID for a customized version of Prio3SumVec. This value was chosen for
+/// interoperability with Daphne.
+const ALGORITHM_ID_PRIO3_SUM_VEC_FIELD64_MULTIPROOF_HMACSHA256_AES128: u32 = 0xFFFF_1003;
+
+/// The length of the verify key parameter when using [`XofHmacSha256Aes128`]. This XOF is not part
+/// of the VDAF specification.
+pub const VERIFY_KEY_LENGTH_HMACSHA256_AES128: usize = 32;
 
 /// Bitsize parameter for the `Prio3FixedPointBoundedL2VecSum` VDAF.
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -54,6 +71,13 @@ pub enum VdafInstance {
     Prio3Sum { bits: usize },
     /// A vector of `Prio3` sums.
     Prio3SumVec {
+        bits: usize,
+        length: usize,
+        chunk_length: usize,
+    },
+    /// Prio3SumVec with additional customizations: a smaller field, three proofs, and a different
+    /// XOF.
+    Prio3SumVecField64MultiproofHmacSha256Aes128 {
         bits: usize,
         length: usize,
         chunk_length: usize,
@@ -195,6 +219,25 @@ macro_rules! vdaf_dispatch_impl_base {
                 )?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
                 const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
+                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
+                let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
+                $body
+            }
+
+            ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                bits,
+                length,
+                chunk_length,
+            } => {
+                let $vdaf =
+                    janus_core::vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
+                        *bits,
+                        *length,
+                        *chunk_length,
+                    )?;
+                type $Vdaf = janus_core::vdaf::Prio3SumVecField64MultiproofHmacSha256Aes128;
+                const $VERIFY_KEY_LEN: usize =
+                    ::janus_core::vdaf::VERIFY_KEY_LENGTH_HMACSHA256_AES128;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
                 let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
                 $body
@@ -347,6 +390,7 @@ macro_rules! vdaf_dispatch_impl {
             | ::janus_core::vdaf::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
+            | ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. }
             | ::janus_core::vdaf::VdafInstance::Poplar1 { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
@@ -377,6 +421,7 @@ macro_rules! vdaf_dispatch_impl {
             | ::janus_core::vdaf::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
+            | ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. }
             | ::janus_core::vdaf::VdafInstance::Poplar1 { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
@@ -401,6 +446,7 @@ macro_rules! vdaf_dispatch_impl {
             | ::janus_core::vdaf::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
+            | ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. }
             | ::janus_core::vdaf::VdafInstance::Poplar1 { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
@@ -427,6 +473,7 @@ macro_rules! vdaf_dispatch_impl {
             | ::janus_core::vdaf::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
+            | ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. }
             | ::janus_core::vdaf::VdafInstance::Poplar1 { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
@@ -523,6 +570,48 @@ mod tests {
                 },
                 Token::Str("bits"),
                 Token::U64(64),
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_tokens(
+            &VdafInstance::Prio3SumVec {
+                bits: 1,
+                length: 8,
+                chunk_length: 3,
+            },
+            &[
+                Token::StructVariant {
+                    name: "VdafInstance",
+                    variant: "Prio3SumVec",
+                    len: 3,
+                },
+                Token::Str("bits"),
+                Token::U64(1),
+                Token::Str("length"),
+                Token::U64(8),
+                Token::Str("chunk_length"),
+                Token::U64(3),
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_tokens(
+            &VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                bits: 1,
+                length: 8,
+                chunk_length: 3,
+            },
+            &[
+                Token::StructVariant {
+                    name: "VdafInstance",
+                    variant: "Prio3SumVecField64MultiproofHmacSha256Aes128",
+                    len: 3,
+                },
+                Token::Str("bits"),
+                Token::U64(1),
+                Token::Str("length"),
+                Token::U64(8),
+                Token::Str("chunk_length"),
+                Token::U64(3),
                 Token::StructVariantEnd,
             ],
         );

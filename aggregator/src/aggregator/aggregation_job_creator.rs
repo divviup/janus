@@ -14,7 +14,11 @@ use janus_aggregator_core::{
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
     time::{Clock, DurationExt as _, TimeExt as _},
-    vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
+    vdaf::{
+        new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
+        Prio3SumVecField64MultiproofHmacSha256Aes128, VdafInstance, VERIFY_KEY_LENGTH,
+        VERIFY_KEY_LENGTH_HMACSHA256_AES128,
+    },
 };
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
@@ -328,6 +332,25 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
             (
                 task::QueryType::TimeInterval,
+                VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                    bits,
+                    length,
+                    chunk_length,
+                },
+            ) => {
+                let vdaf = Arc::new(new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
+                    *bits,
+                    *length,
+                    *chunk_length,
+                )?);
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<
+                    VERIFY_KEY_LENGTH_HMACSHA256_AES128,
+                    Prio3SumVecField64MultiproofHmacSha256Aes128,
+                >(task, vdaf).await
+            }
+
+            (
+                task::QueryType::TimeInterval,
                 VdafInstance::Prio3Histogram {
                     length,
                     chunk_length,
@@ -443,6 +466,30 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
                     VERIFY_KEY_LENGTH,
                     Prio3SumVecMultithreaded,
+                >(task, vdaf, max_batch_size, batch_time_window_size).await
+            }
+
+            (
+                task::QueryType::FixedSize {
+                    max_batch_size,
+                    batch_time_window_size,
+                },
+                VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                    bits,
+                    length,
+                    chunk_length,
+                },
+            ) => {
+                let vdaf = Arc::new(new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
+                    *bits,
+                    *length,
+                    *chunk_length,
+                )?);
+                let max_batch_size = *max_batch_size;
+                let batch_time_window_size = *batch_time_window_size;
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<
+                    VERIFY_KEY_LENGTH_HMACSHA256_AES128,
+                    Prio3SumVecField64MultiproofHmacSha256Aes128,
                 >(task, vdaf, max_batch_size, batch_time_window_size).await
             }
 

@@ -47,7 +47,10 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
     http::HttpErrorResponse,
     time::{Clock, DurationExt, IntervalExt, TimeExt},
-    vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
+    vdaf::{
+        new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128,
+        Prio3SumVecField64MultiproofHmacSha256Aes128, VdafInstance, VERIFY_KEY_LENGTH,
+    },
     Runtime,
 };
 use janus_messages::{
@@ -880,6 +883,20 @@ impl<C: Clock> TaskAggregator<C> {
                 VdafOps::Prio3SumVec(Arc::new(vdaf), verify_key)
             }
 
+            VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                bits,
+                length,
+                chunk_length,
+            } => {
+                let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
+                    *bits,
+                    *length,
+                    *chunk_length,
+                )?;
+                let verify_key = task.vdaf_verify_key()?;
+                VdafOps::Prio3SumVecField64MultiproofHmacSha256Aes128(Arc::new(vdaf), verify_key)
+            }
+
             VdafInstance::Prio3Histogram {
                 length,
                 chunk_length,
@@ -1133,6 +1150,10 @@ enum VdafOps {
     Prio3CountVec(Arc<Prio3SumVecMultithreaded>, VerifyKey<VERIFY_KEY_LENGTH>),
     Prio3Sum(Arc<Prio3Sum>, VerifyKey<VERIFY_KEY_LENGTH>),
     Prio3SumVec(Arc<Prio3SumVecMultithreaded>, VerifyKey<VERIFY_KEY_LENGTH>),
+    Prio3SumVecField64MultiproofHmacSha256Aes128(
+        Arc<Prio3SumVecField64MultiproofHmacSha256Aes128>,
+        VerifyKey<32>,
+    ),
     Prio3Histogram(Arc<Prio3Histogram>, VerifyKey<VERIFY_KEY_LENGTH>),
     #[cfg(feature = "fpvec_bounded_l2")]
     Prio3FixedPoint16BitBoundedL2VecSum(
@@ -1197,6 +1218,16 @@ macro_rules! vdaf_ops_dispatch {
                 let $verify_key = verify_key;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
+                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
+                let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
+                $body
+            }
+
+            crate::aggregator::VdafOps::Prio3SumVecField64MultiproofHmacSha256Aes128(vdaf, verify_key) => {
+                let $vdaf = vdaf;
+                let $verify_key = verify_key;
+                type $Vdaf = janus_core::vdaf::Prio3SumVecField64MultiproofHmacSha256Aes128;
+                const $VERIFY_KEY_LENGTH: usize = 32;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
                 let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
                 $body

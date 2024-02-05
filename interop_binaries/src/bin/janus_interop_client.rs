@@ -9,7 +9,7 @@ use fixed::{
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
-use janus_core::vdaf::VdafInstance;
+use janus_core::vdaf::{new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128, VdafInstance};
 use janus_interop_binaries::{
     install_tracing_subscriber,
     status::{ERROR, SUCCESS},
@@ -132,6 +132,20 @@ async fn handle_upload(
             let measurement = parse_vector_measurement::<u128>(request.measurement.clone())?;
             let vdaf = Prio3::new_sum_vec_multithreaded(2, bits, length, chunk_length)
                 .context("failed to construct Prio3SumVec VDAF")?;
+            handle_upload_generic(http_client, vdaf, request, measurement).await?;
+        }
+
+        VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+            bits,
+            length,
+            chunk_length,
+        } => {
+            let measurement = parse_vector_measurement::<u64>(request.measurement.clone())?;
+            let vdaf =
+                new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(bits, length, chunk_length)
+                    .context(
+                        "failed to construct Prio3SumVecField64MultiproofHmacSha256Aes128 VDAF",
+                    )?;
             handle_upload_generic(http_client, vdaf, request, measurement).await?;
         }
 

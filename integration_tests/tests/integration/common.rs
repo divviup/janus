@@ -5,7 +5,7 @@ use janus_collector::{Collection, Collector};
 use janus_core::{
     retries::test_http_request_exponential_backoff,
     time::{Clock, RealClock, TimeExt},
-    vdaf::VdafInstance,
+    vdaf::{new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128, VdafInstance},
 };
 use janus_integration_tests::{
     client::{ClientBackend, ClientImplementation, InteropClientEncoding},
@@ -420,7 +420,7 @@ pub async fn submit_measurements_and_verify_aggregate(
             let vdaf = Prio3::new_sum_vec_multithreaded(2, *bits, *length, *chunk_length).unwrap();
 
             let measurements = iter::repeat_with(|| {
-                iter::repeat_with(|| (random::<u128>()) >> (128 - bits))
+                iter::repeat_with(|| random::<u128>() >> (128 - bits))
                     .take(*length)
                     .collect::<Vec<_>>()
             })
@@ -430,6 +430,59 @@ pub async fn submit_measurements_and_verify_aggregate(
                 measurements
                     .iter()
                     .fold(vec![0u128; *length], |mut accumulator, measurement| {
+                        for (sum, elem) in accumulator.iter_mut().zip(measurement.iter()) {
+                            *sum += *elem;
+                        }
+                        accumulator
+                    });
+            let test_case = AggregationTestCase {
+                measurements,
+                aggregation_parameter: (),
+                aggregate_result,
+            };
+
+            let client_implementation = client_backend
+                .build(
+                    test_name,
+                    task_parameters,
+                    (leader_port, helper_port),
+                    vdaf.clone(),
+                )
+                .await
+                .unwrap();
+
+            submit_measurements_and_verify_aggregate_generic(
+                task_parameters,
+                leader_port,
+                vdaf,
+                &test_case,
+                &client_implementation,
+            )
+            .await;
+        }
+        VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+            bits,
+            length,
+            chunk_length,
+        } => {
+            let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
+                *bits,
+                *length,
+                *chunk_length,
+            )
+            .unwrap();
+
+            let measurements = iter::repeat_with(|| {
+                iter::repeat_with(|| random::<u64>() >> (64 - bits))
+                    .take(*length)
+                    .collect::<Vec<_>>()
+            })
+            .take(total_measurements)
+            .collect::<Vec<_>>();
+            let aggregate_result =
+                measurements
+                    .iter()
+                    .fold(vec![0u64; *length], |mut accumulator, measurement| {
                         for (sum, elem) in accumulator.iter_mut().zip(measurement.iter()) {
                             *sum += *elem;
                         }

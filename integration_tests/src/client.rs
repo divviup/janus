@@ -2,7 +2,7 @@ use crate::TaskParameters;
 use anyhow::anyhow;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_client::Client;
-use janus_core::vdaf::VdafInstance;
+use janus_core::vdaf::{Prio3SumVecField64MultiproofHmacSha256Aes128, VdafInstance};
 use janus_interop_binaries::{get_rust_log_level, ContainerLogsDropGuard};
 use janus_messages::{Duration, TaskId};
 use prio::{
@@ -53,6 +53,17 @@ impl InteropClientEncoding for Prio3SumVecMultithreaded {
     }
 }
 
+impl InteropClientEncoding for Prio3SumVecField64MultiproofHmacSha256Aes128 {
+    fn json_encode_measurement(&self, measurement: &Self::Measurement) -> Value {
+        Value::Array(
+            measurement
+                .iter()
+                .map(|value| Value::String(format!("{value}")))
+                .collect(),
+        )
+    }
+}
+
 fn json_encode_vdaf(vdaf: &VdafInstance) -> Value {
     match vdaf {
         VdafInstance::Prio3Count => json!({
@@ -68,6 +79,16 @@ fn json_encode_vdaf(vdaf: &VdafInstance) -> Value {
             chunk_length,
         } => json!({
             "type": "Prio3SumVec",
+            "bits": format!("{bits}"),
+            "length": format!("{length}"),
+            "chunk_length": format!("{chunk_length}"),
+        }),
+        VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+            bits,
+            length,
+            chunk_length,
+        } => json!({
+            "type": "Prio3SumVecField64MultiproofHmacSha256Aes128",
             "bits": format!("{bits}"),
             "length": format!("{length}"),
             "chunk_length": format!("{chunk_length}"),
