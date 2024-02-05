@@ -42,6 +42,8 @@ pub enum Error {
     /// An illegal arithmetic operation on a [`Time`] or [`Duration`].
     #[error("{0}")]
     IllegalTimeArithmetic(&'static str),
+    #[error("base64 decode failure: {0}")]
+    Base64Decode(#[from] base64::DecodeError),
 }
 
 /// Wire-representation of an ASCII-encoded URL with minimum length 1 and maximum
@@ -291,12 +293,20 @@ impl From<[u8; Self::LEN]> for BatchId {
 }
 
 impl<'a> TryFrom<&'a [u8]> for BatchId {
-    type Error = &'static str;
+    type Error = Error;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
         Ok(Self(value.try_into().map_err(|_| {
-            "byte slice has incorrect length for BatchId"
+            Error::InvalidParameter("byte slice has incorrect length for BatchId")
         })?))
+    }
+}
+
+impl FromStr for BatchId {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::try_from(URL_SAFE_NO_PAD.decode(s)?.as_ref())
     }
 }
 
@@ -363,11 +373,11 @@ impl From<[u8; Self::LEN]> for ReportId {
 }
 
 impl<'a> TryFrom<&'a [u8]> for ReportId {
-    type Error = &'static str;
+    type Error = Error;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
         Ok(Self(value.try_into().map_err(|_| {
-            "byte slice has incorrect length for ReportId"
+            Error::InvalidParameter("byte slice has incorrect length for ReportId")
         })?))
     }
 }
@@ -414,13 +424,10 @@ impl Decode for ReportId {
 }
 
 impl FromStr for ReportId {
-    type Err = Box<dyn Debug>;
+    type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = URL_SAFE_NO_PAD
-            .decode(s)
-            .map_err(|err| Box::new(err) as Box<dyn Debug>)?;
-        Self::try_from(bytes.as_ref()).map_err(|err| Box::new(err) as Box<dyn Debug>)
+        Self::try_from(URL_SAFE_NO_PAD.decode(s)?.as_ref())
     }
 }
 
@@ -446,11 +453,11 @@ impl From<[u8; Self::LEN]> for ReportIdChecksum {
 }
 
 impl<'a> TryFrom<&'a [u8]> for ReportIdChecksum {
-    type Error = &'static str;
+    type Error = Error;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
         Ok(Self(value.try_into().map_err(|_| {
-            "byte slice has incorrect length for ReportIdChecksum"
+            Error::InvalidParameter("byte slice has incorrect length for ReportIdChecksum")
         })?))
     }
 }
@@ -675,11 +682,11 @@ impl From<[u8; Self::LEN]> for TaskId {
 }
 
 impl<'a> TryFrom<&'a [u8]> for TaskId {
-    type Error = &'static str;
+    type Error = Error;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
         Ok(Self(value.try_into().map_err(|_| {
-            "byte slice has incorrect length for TaskId"
+            Error::InvalidParameter("byte slice has incorrect length for TaskId")
         })?))
     }
 }
@@ -691,13 +698,10 @@ impl AsRef<[u8; Self::LEN]> for TaskId {
 }
 
 impl FromStr for TaskId {
-    type Err = Box<dyn Debug>;
+    type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = URL_SAFE_NO_PAD
-            .decode(s)
-            .map_err(|err| Box::new(err) as Box<dyn Debug>)?;
-        Self::try_from(bytes.as_ref()).map_err(|err| Box::new(err) as Box<dyn Debug>)
+        Self::try_from(URL_SAFE_NO_PAD.decode(s)?.as_ref())
     }
 }
 
@@ -1668,23 +1672,20 @@ impl AsRef<[u8; Self::LEN]> for CollectionJobId {
 }
 
 impl TryFrom<&[u8]> for CollectionJobId {
-    type Error = &'static str;
+    type Error = Error;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
         Ok(Self(value.try_into().map_err(|_| {
-            "byte slice has incorrect length for CollectionId"
+            Error::InvalidParameter("byte slice has incorrect length for CollectionId")
         })?))
     }
 }
 
 impl FromStr for CollectionJobId {
-    type Err = Box<dyn Debug>;
+    type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = URL_SAFE_NO_PAD
-            .decode(s)
-            .map_err(|err| Box::new(err) as Box<dyn Debug>)?;
-        Self::try_from(bytes.as_ref()).map_err(|err| Box::new(err) as Box<dyn Debug>)
+        Self::try_from(URL_SAFE_NO_PAD.decode(s)?.as_ref())
     }
 }
 
@@ -2436,13 +2437,10 @@ impl AsRef<[u8; Self::LEN]> for AggregationJobId {
 }
 
 impl FromStr for AggregationJobId {
-    type Err = Box<dyn Debug>;
+    type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = URL_SAFE_NO_PAD
-            .decode(s)
-            .map_err(|err| Box::new(err) as Box<dyn Debug>)?;
-        Self::try_from(bytes.as_ref()).map_err(|err| Box::new(err) as Box<dyn Debug>)
+        Self::try_from(URL_SAFE_NO_PAD.decode(s)?.as_ref())
     }
 }
 
