@@ -85,104 +85,6 @@ enum VdafType {
 }
 
 #[derive(Clone)]
-struct TaskIdValueParser {
-    inner: NonEmptyStringValueParser,
-}
-
-impl TaskIdValueParser {
-    fn new() -> TaskIdValueParser {
-        TaskIdValueParser {
-            inner: NonEmptyStringValueParser::new(),
-        }
-    }
-}
-
-impl TypedValueParser for TaskIdValueParser {
-    type Value = TaskId;
-
-    fn parse_ref(
-        &self,
-        cmd: &clap::Command,
-        arg: Option<&clap::Arg>,
-        value: &std::ffi::OsStr,
-    ) -> Result<Self::Value, clap::Error> {
-        let input = self.inner.parse_ref(cmd, arg, value)?;
-        let task_id_bytes: [u8; TaskId::LEN] = URL_SAFE_NO_PAD
-            .decode(input)
-            .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))?
-            .try_into()
-            .map_err(|_| {
-                clap::Error::raw(ErrorKind::ValueValidation, "task ID length incorrect")
-            })?;
-        Ok(TaskId::from(task_id_bytes))
-    }
-}
-
-#[derive(Clone)]
-struct CollectionJobIdValueParser {
-    inner: NonEmptyStringValueParser,
-}
-
-impl CollectionJobIdValueParser {
-    fn new() -> CollectionJobIdValueParser {
-        CollectionJobIdValueParser {
-            inner: NonEmptyStringValueParser::new(),
-        }
-    }
-}
-
-impl TypedValueParser for CollectionJobIdValueParser {
-    type Value = CollectionJobId;
-
-    fn parse_ref(
-        &self,
-        cmd: &clap::Command,
-        arg: Option<&clap::Arg>,
-        value: &std::ffi::OsStr,
-    ) -> Result<Self::Value, clap::Error> {
-        let input = self.inner.parse_ref(cmd, arg, value)?;
-        let collection_job_id = input
-            .parse()
-            .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, format!("{:?}", err)))?;
-        Ok(collection_job_id)
-    }
-}
-
-#[derive(Clone)]
-struct BatchIdValueParser {
-    inner: NonEmptyStringValueParser,
-}
-
-impl BatchIdValueParser {
-    fn new() -> BatchIdValueParser {
-        BatchIdValueParser {
-            inner: NonEmptyStringValueParser::new(),
-        }
-    }
-}
-
-impl TypedValueParser for BatchIdValueParser {
-    type Value = BatchId;
-
-    fn parse_ref(
-        &self,
-        cmd: &clap::Command,
-        arg: Option<&clap::Arg>,
-        value: &std::ffi::OsStr,
-    ) -> Result<Self::Value, clap::Error> {
-        let input = self.inner.parse_ref(cmd, arg, value)?;
-        let batch_id_bytes: [u8; BatchId::LEN] = URL_SAFE_NO_PAD
-            .decode(input)
-            .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))?
-            .try_into()
-            .map_err(|_| {
-                clap::Error::raw(ErrorKind::ValueValidation, "batch ID length incorrect")
-            })?;
-        Ok(BatchId::from(batch_id_bytes))
-    }
-}
-
-#[derive(Clone)]
 struct HpkeConfigValueParser {
     inner: NonEmptyStringValueParser,
 }
@@ -297,7 +199,6 @@ struct QueryOptions {
     /// Batch identifier, encoded with base64url
     #[clap(
         long,
-        value_parser = BatchIdValueParser::new(),
         conflicts_with_all = ["batch_interval_start", "batch_interval_duration", "current_batch"],
         help_heading = "Collect Request Parameters (Fixed Size)",
     )]
@@ -376,7 +277,6 @@ enum Subcommands {
         /// Job ID to use for the new collection job. If absent, an ID is randomly generated
         ///
         /// A valid ID consists of 16 randomly selected bytes, encoded with unpadded base64url.
-        #[clap(value_parser = CollectionJobIdValueParser::new())]
         collection_job_id: Option<CollectionJobId>,
     },
     /// Poll an existing collection job once
@@ -388,7 +288,7 @@ enum Subcommands {
     /// stdout. If it is not ready, the exit status is 75 (EX_TEMPFAIL).
     PollJob {
         /// Job ID for an existing collection job, encoded with unpadded base64url
-        #[clap(value_parser = CollectionJobIdValueParser::new(), required = true)]
+        #[clap(required = true)]
         collection_job_id: CollectionJobId,
     },
 }
@@ -409,12 +309,7 @@ struct Options {
     subcommand: Option<Subcommands>,
 
     /// DAP task identifier, encoded with unpadded base64url
-    #[clap(
-        long,
-        value_parser = TaskIdValueParser::new(),
-        help_heading = "DAP Task Parameters",
-        display_order = 0
-    )]
+    #[clap(long, help_heading = "DAP Task Parameters", display_order = 0)]
     task_id: TaskId,
     /// The leader aggregator's endpoint URL
     #[clap(long, help_heading = "DAP Task Parameters", display_order = 1)]
