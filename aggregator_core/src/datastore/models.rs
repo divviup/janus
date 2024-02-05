@@ -22,7 +22,7 @@ use postgres_protocol::types::{
 };
 use postgres_types::{accepts, to_sql_checked, FromSql, ToSql};
 use prio::{
-    codec::Encode,
+    codec::{encode_u16_items, Encode},
     topology::ping_pong::PingPongTransition,
     vdaf::{self, Aggregatable},
 };
@@ -160,6 +160,31 @@ where
         &self.helper_encrypted_input_share
     }
 
+    pub fn as_start_leader_report_aggregation(
+        &self,
+        aggregation_job_id: AggregationJobId,
+        ord: u64,
+    ) -> ReportAggregation<SEED_SIZE, A> {
+        ReportAggregation::new(
+            *self.task_id(),
+            aggregation_job_id,
+            *self.metadata().id(),
+            *self.metadata().time(),
+            ord,
+            None,
+            self.as_start_leader_report_aggregation_state(),
+        )
+    }
+
+    pub fn as_start_leader_report_aggregation_state(&self) -> ReportAggregationState<SEED_SIZE, A> {
+        ReportAggregationState::StartLeader {
+            public_share: self.public_share().clone(),
+            leader_extensions: self.leader_extensions().to_vec(),
+            leader_input_share: self.leader_input_share().clone(),
+            helper_encrypted_input_share: self.helper_encrypted_input_share().clone(),
+        }
+    }
+
     #[cfg(feature = "test-util")]
     pub fn eq_report(
         &self,
@@ -206,6 +231,44 @@ where
             && self.public_share() == &public_share
             && self.leader_extensions() == leader_plaintext_input_share.extensions()
             && self.leader_input_share() == &leader_input_share
+    }
+
+    #[cfg(feature = "test-util")]
+    pub fn generate(
+        task_id: TaskId,
+        report_metadata: ReportMetadata,
+        helper_hpke_config: &janus_messages::HpkeConfig,
+        extensions: Vec<Extension>,
+        transcript: &janus_core::test_util::VdafTranscript<SEED_SIZE, A>,
+    ) -> Self
+    where
+        A: vdaf::Client<16>,
+    {
+        use janus_core::hpke::{self, HpkeApplicationInfo, Label};
+        use janus_messages::{InputShareAad, PlaintextInputShare};
+
+        let encrypted_helper_input_share = hpke::seal(
+            helper_hpke_config,
+            &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
+            &PlaintextInputShare::new(Vec::new(), transcript.helper_input_share.get_encoded())
+                .get_encoded(),
+            &InputShareAad::new(
+                task_id,
+                report_metadata.clone(),
+                transcript.public_share.get_encoded(),
+            )
+            .get_encoded(),
+        )
+        .unwrap();
+
+        LeaderStoredReport::new(
+            task_id,
+            report_metadata,
+            transcript.public_share.clone(),
+            extensions,
+            transcript.leader_input_share.clone(),
+            encrypted_helper_input_share,
+        )
     }
 }
 
@@ -750,9 +813,9 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> ReportAggregati
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
     for ReportAggregation<SEED_SIZE, A>
 where
-    A::PrepareState: PartialEq,
-    A::PrepareMessage: PartialEq,
+    A::InputShare: PartialEq,
     A::PrepareShare: PartialEq,
+    A::PublicShare: PartialEq,
     A::OutputShare: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
@@ -773,28 +836,51 @@ where
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
     for ReportAggregation<SEED_SIZE, A>
 where
-    A::PrepareState: Eq,
-    A::PrepareMessage: Eq,
+    A::InputShare: Eq,
     A::PrepareShare: Eq,
+    A::PublicShare: Eq,
     A::OutputShare: Eq,
 {
 }
 
 /// ReportAggregationState represents the state of a single report aggregation. It corresponds
 /// to the REPORT_AGGREGATION_STATE enum in the schema, along with the state-specific data.
-#[derive(Clone, Debug, Derivative)]
+#[derive(Clone, Derivative)]
+#[derivative(Debug)]
 pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
-    Start,
-    WaitingLeader(
+    StartLeader {
+        /// Public share for this report.
+        #[derivative(Debug = "ignore")]
+        public_share: A::PublicShare,
+        /// The sequence of extensions from the Leader's input share for this report.
+        #[derivative(Debug = "ignore")]
+        leader_extensions: Vec<Extension>,
+        /// The Leader's input share for this report.
+        #[derivative(Debug = "ignore")]
+        leader_input_share: A::InputShare,
+        /// The Helper's encrypted input share for this report.
+        #[derivative(Debug = "ignore")]
+        helper_encrypted_input_share: HpkeCiphertext,
+    },
+    /// StartLeaderMissingReportData represents a StartLeader state which does not have report
+    /// information in the `report_aggregations` table. This information, if required, may be read
+    /// from the `client_reports` table, as long as the relevant report has not been garbage
+    /// collected.
+    StartLeaderMissingReportData,
+    WaitingLeader {
         /// Most recent transition for this report aggregation.
-        PingPongTransition<SEED_SIZE, 16, A>,
-    ),
-    WaitingHelper(
+        #[derivative(Debug = "ignore")]
+        transition: PingPongTransition<SEED_SIZE, 16, A>,
+    },
+    WaitingHelper {
         /// Helper's current preparation state
-        A::PrepareState,
-    ),
+        #[derivative(Debug = "ignore")]
+        prepare_state: A::PrepareState,
+    },
     Finished,
-    Failed(PrepareError),
+    Failed {
+        prepare_error: PrepareError,
+    },
 }
 
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
@@ -802,12 +888,14 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
 {
     pub fn state_code(&self) -> ReportAggregationStateCode {
         match self {
-            ReportAggregationState::Start => ReportAggregationStateCode::Start,
-            ReportAggregationState::WaitingLeader(_) | ReportAggregationState::WaitingHelper(_) => {
-                ReportAggregationStateCode::Waiting
+            ReportAggregationState::StartLeader { .. }
+            | ReportAggregationState::StartLeaderMissingReportData => {
+                ReportAggregationStateCode::Start
             }
+            ReportAggregationState::WaitingLeader { .. }
+            | ReportAggregationState::WaitingHelper { .. } => ReportAggregationStateCode::Waiting,
             ReportAggregationState::Finished => ReportAggregationStateCode::Finished,
-            ReportAggregationState::Failed(_) => ReportAggregationStateCode::Failed,
+            ReportAggregationState::Failed { .. } => ReportAggregationStateCode::Failed,
         }
     }
 
@@ -819,33 +907,65 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
         A::PrepareState: Encode,
     {
         match self {
-            ReportAggregationState::Start => EncodedReportAggregationStateValues::default(),
-            ReportAggregationState::WaitingLeader(transition) => {
+            ReportAggregationState::StartLeader {
+                public_share,
+                leader_extensions,
+                leader_input_share,
+                helper_encrypted_input_share,
+            } => {
+                let mut encoded_extensions = Vec::new();
+                encode_u16_items(&mut encoded_extensions, &(), leader_extensions);
+
+                EncodedReportAggregationStateValues {
+                    public_share: Some(public_share.get_encoded()),
+                    leader_extensions: Some(encoded_extensions),
+                    leader_input_share: Some(leader_input_share.get_encoded()),
+                    helper_encrypted_input_share: Some(helper_encrypted_input_share.get_encoded()),
+                    ..Default::default()
+                }
+            }
+            ReportAggregationState::StartLeaderMissingReportData => {
+                EncodedReportAggregationStateValues::default()
+            }
+            ReportAggregationState::WaitingLeader { transition } => {
                 EncodedReportAggregationStateValues {
                     leader_prep_transition: Some(transition.get_encoded()),
                     ..Default::default()
                 }
             }
-            ReportAggregationState::WaitingHelper(prepare_state) => {
+            ReportAggregationState::WaitingHelper { prepare_state } => {
                 EncodedReportAggregationStateValues {
                     helper_prep_state: Some(prepare_state.get_encoded()),
                     ..Default::default()
                 }
             }
             ReportAggregationState::Finished => EncodedReportAggregationStateValues::default(),
-            ReportAggregationState::Failed(prepare_err) => EncodedReportAggregationStateValues {
-                prepare_err: Some(*prepare_err as i16),
-                ..Default::default()
-            },
+            ReportAggregationState::Failed { prepare_error } => {
+                EncodedReportAggregationStateValues {
+                    prepare_error: Some(*prepare_error as i16),
+                    ..Default::default()
+                }
+            }
         }
     }
 }
 
 #[derive(Default)]
 pub(super) struct EncodedReportAggregationStateValues {
+    // State for StartLeader.
+    pub(super) public_share: Option<Vec<u8>>,
+    pub(super) leader_extensions: Option<Vec<u8>>,
+    pub(super) leader_input_share: Option<Vec<u8>>,
+    pub(super) helper_encrypted_input_share: Option<Vec<u8>>,
+
+    // State for WaitingLeader.
     pub(super) leader_prep_transition: Option<Vec<u8>>,
+
+    // State for WaitingHelper.
     pub(super) helper_prep_state: Option<Vec<u8>>,
-    pub(super) prepare_err: Option<i16>,
+
+    // State for Failed.
+    pub(super) prepare_error: Option<i16>,
 }
 
 // The private ReportAggregationStateCode exists alongside the public ReportAggregationState
@@ -872,20 +992,56 @@ pub enum ReportAggregationStateCode {
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
     for ReportAggregationState<SEED_SIZE, A>
 where
+    A::InputShare: PartialEq,
     A::PrepareShare: PartialEq,
+    A::PublicShare: PartialEq,
     A::OutputShare: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::WaitingLeader(lhs_transition), Self::WaitingLeader(rhs_transition)) => {
-                lhs_transition == rhs_transition
+            (
+                Self::StartLeader {
+                    public_share: lhs_public_share,
+                    leader_extensions: lhs_leader_extensions,
+                    leader_input_share: lhs_leader_input_share,
+                    helper_encrypted_input_share: lhs_helper_encrypted_input_share,
+                },
+                Self::StartLeader {
+                    public_share: rhs_public_share,
+                    leader_extensions: rhs_leader_extensions,
+                    leader_input_share: rhs_leader_input_share,
+                    helper_encrypted_input_share: rhs_helper_encrypted_input_share,
+                },
+            ) => {
+                lhs_public_share == rhs_public_share
+                    && lhs_leader_extensions == rhs_leader_extensions
+                    && lhs_leader_input_share == rhs_leader_input_share
+                    && lhs_helper_encrypted_input_share == rhs_helper_encrypted_input_share
             }
-            (Self::WaitingHelper(lhs_state), Self::WaitingHelper(rhs_state)) => {
-                lhs_state == rhs_state
-            }
-            (Self::Failed(lhs_prepare_err), Self::Failed(rhs_prepare_err)) => {
-                lhs_prepare_err == rhs_prepare_err
-            }
+            (
+                Self::WaitingLeader {
+                    transition: lhs_transition,
+                },
+                Self::WaitingLeader {
+                    transition: rhs_transition,
+                },
+            ) => lhs_transition == rhs_transition,
+            (
+                Self::WaitingHelper {
+                    prepare_state: lhs_state,
+                },
+                Self::WaitingHelper {
+                    prepare_state: rhs_state,
+                },
+            ) => lhs_state == rhs_state,
+            (
+                Self::Failed {
+                    prepare_error: lhs_prepare_error,
+                },
+                Self::Failed {
+                    prepare_error: rhs_prepare_error,
+                },
+            ) => lhs_prepare_error == rhs_prepare_error,
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }
     }
@@ -898,9 +1054,9 @@ where
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
     for ReportAggregationState<SEED_SIZE, A>
 where
-    A::PrepareState: Eq,
-    A::PrepareMessage: Eq,
+    A::InputShare: Eq,
     A::PrepareShare: Eq,
+    A::PublicShare: Eq,
     A::OutputShare: Eq,
 {
 }

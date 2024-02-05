@@ -15,7 +15,7 @@ use janus_aggregator_core::{
     datastore::{
         models::{
             AggregationJob, AggregationJobState, HpkeKeyState, LeaderStoredReport,
-            ReportAggregation, ReportAggregationState, TaskUploadCounter, TaskUploadIncrementor,
+            TaskUploadCounter, TaskUploadIncrementor,
         },
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
@@ -807,17 +807,10 @@ async fn get_task_metrics() {
                         .take(REPORT_AGGREGATION_COUNT)
                         .enumerate()
                         .map(|(ord, report)| async move {
-                            tx.put_report_aggregation(
-                                &ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
-                                    task_id,
-                                    aggregation_job_id,
-                                    *report.metadata().id(),
-                                    *report.metadata().time(),
-                                    ord.try_into().unwrap(),
-                                    None,
-                                    ReportAggregationState::Start,
-                                ),
-                            )
+                            tx.put_report_aggregation(&report.as_start_leader_report_aggregation(
+                                aggregation_job_id,
+                                ord.try_into().unwrap(),
+                            ))
                             .await
                         }),
                 )

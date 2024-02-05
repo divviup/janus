@@ -1827,7 +1827,7 @@ mod tests {
                         *report_share_4.metadata().time(),
                         0,
                         None,
-                        ReportAggregationState::Start,
+                        ReportAggregationState::Finished,
                     ))
                     .await
                     .unwrap();
@@ -1858,7 +1858,7 @@ mod tests {
                         *report_share_8.metadata().time(),
                         0,
                         None,
-                        ReportAggregationState::Start,
+                        ReportAggregationState::Finished,
                     ))
                     .await
                     .unwrap();
@@ -2769,7 +2769,7 @@ mod tests {
                             *report_metadata_0.time(),
                             0,
                             None,
-                            ReportAggregationState::WaitingHelper(helper_prep_state_0),
+                            ReportAggregationState::WaitingHelper{prepare_state: helper_prep_state_0},
                         ),
                     )
                     .await?;
@@ -2781,7 +2781,7 @@ mod tests {
                             *report_metadata_1.time(),
                             1,
                             None,
-                            ReportAggregationState::WaitingHelper(helper_prep_state_1),
+                            ReportAggregationState::WaitingHelper{prepare_state: helper_prep_state_1},
                         ),
                     )
                     .await?;
@@ -2793,7 +2793,7 @@ mod tests {
                             *report_metadata_2.time(),
                             2,
                             None,
-                            ReportAggregationState::WaitingHelper(helper_prep_state_2),
+                            ReportAggregationState::WaitingHelper{prepare_state: helper_prep_state_2},
                         ),
                     )
                     .await?;
@@ -2906,7 +2906,9 @@ mod tests {
                     *report_metadata_1.time(),
                     1,
                     None,
-                    ReportAggregationState::Failed(PrepareError::ReportDropped),
+                    ReportAggregationState::Failed {
+                        prepare_error: PrepareError::ReportDropped
+                    },
                 ),
                 ReportAggregation::new(
                     *task.id(),
@@ -2918,7 +2920,9 @@ mod tests {
                         *report_metadata_2.id(),
                         PrepareStepResult::Reject(PrepareError::BatchCollected)
                     )),
-                    ReportAggregationState::Failed(PrepareError::BatchCollected),
+                    ReportAggregationState::Failed {
+                        prepare_error: PrepareError::BatchCollected
+                    },
                 )
             ])
         );
@@ -3108,7 +3112,9 @@ mod tests {
                         *report_metadata_0.time(),
                         0,
                         None,
-                        ReportAggregationState::WaitingHelper(helper_prep_state_0),
+                        ReportAggregationState::WaitingHelper {
+                            prepare_state: helper_prep_state_0,
+                        },
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -3121,7 +3127,9 @@ mod tests {
                         *report_metadata_1.time(),
                         1,
                         None,
-                        ReportAggregationState::WaitingHelper(helper_prep_state_1),
+                        ReportAggregationState::WaitingHelper {
+                            prepare_state: helper_prep_state_1,
+                        },
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -3134,7 +3142,9 @@ mod tests {
                         *report_metadata_2.time(),
                         2,
                         None,
-                        ReportAggregationState::WaitingHelper(helper_prep_state_2),
+                        ReportAggregationState::WaitingHelper {
+                            prepare_state: helper_prep_state_2,
+                        },
                     ))
                     .await?;
 
@@ -3435,7 +3445,9 @@ mod tests {
                         *report_metadata_3.time(),
                         3,
                         None,
-                        ReportAggregationState::WaitingHelper(helper_prep_state_3),
+                        ReportAggregationState::WaitingHelper {
+                            prepare_state: helper_prep_state_3,
+                        },
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -3448,7 +3460,9 @@ mod tests {
                         *report_metadata_4.time(),
                         4,
                         None,
-                        ReportAggregationState::WaitingHelper(helper_prep_state_4),
+                        ReportAggregationState::WaitingHelper {
+                            prepare_state: helper_prep_state_4,
+                        },
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -3461,7 +3475,9 @@ mod tests {
                         *report_metadata_5.time(),
                         5,
                         None,
-                        ReportAggregationState::WaitingHelper(helper_prep_state_5),
+                        ReportAggregationState::WaitingHelper {
+                            prepare_state: helper_prep_state_5,
+                        },
                     ))
                     .await?;
 
@@ -3685,11 +3701,11 @@ mod tests {
                             *report_metadata.time(),
                             0,
                             None,
-                            ReportAggregationState::WaitingHelper(
-                                transcript.helper_prepare_transitions[0]
+                            ReportAggregationState::WaitingHelper {
+                                prepare_state: transcript.helper_prepare_transitions[0]
                                     .prepare_state()
                                     .clone(),
-                            ),
+                            },
                         ),
                     )
                     .await
@@ -3791,11 +3807,11 @@ mod tests {
                             *report_metadata.time(),
                             0,
                             None,
-                            ReportAggregationState::WaitingHelper(
-                                transcript.helper_prepare_transitions[0]
+                            ReportAggregationState::WaitingHelper {
+                                prepare_state: transcript.helper_prepare_transitions[0]
                                     .prepare_state()
                                     .clone(),
-                            ),
+                            },
                         ),
                     )
                     .await
@@ -3884,7 +3900,9 @@ mod tests {
                     *report_metadata.id(),
                     PrepareStepResult::Reject(PrepareError::VdafPrepError)
                 )),
-                ReportAggregationState::Failed(PrepareError::VdafPrepError),
+                ReportAggregationState::Failed {
+                    prepare_error: PrepareError::VdafPrepError
+                },
             )
         );
     }
@@ -3960,11 +3978,11 @@ mod tests {
                             *report_metadata.time(),
                             0,
                             None,
-                            ReportAggregationState::WaitingHelper(
-                                transcript.helper_prepare_transitions[0]
+                            ReportAggregationState::WaitingHelper {
+                                prepare_state: transcript.helper_prepare_transitions[0]
                                     .prepare_state()
                                     .clone(),
-                            ),
+                            },
                         ),
                     )
                     .await
@@ -4106,11 +4124,11 @@ mod tests {
                             *report_metadata_0.time(),
                             0,
                             None,
-                            ReportAggregationState::WaitingHelper(
-                                transcript_0.helper_prepare_transitions[0]
+                            ReportAggregationState::WaitingHelper {
+                                prepare_state: transcript_0.helper_prepare_transitions[0]
                                     .prepare_state()
                                     .clone(),
-                            ),
+                            },
                         ),
                     )
                     .await?;
@@ -4122,11 +4140,11 @@ mod tests {
                             *report_metadata_1.time(),
                             1,
                             None,
-                            ReportAggregationState::WaitingHelper(
-                                transcript_1.helper_prepare_transitions[0]
+                            ReportAggregationState::WaitingHelper {
+                                prepare_state: transcript_1.helper_prepare_transitions[0]
                                     .prepare_state()
                                     .clone(),
-                            ),
+                            },
                         ),
                     )
                     .await
@@ -4223,7 +4241,9 @@ mod tests {
                         *report_metadata.time(),
                         0,
                         None,
-                        ReportAggregationState::Failed(PrepareError::VdafPrepError),
+                        ReportAggregationState::Failed {
+                            prepare_error: PrepareError::VdafPrepError,
+                        },
                     ))
                     .await
                 })
