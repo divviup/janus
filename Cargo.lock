@@ -4818,9 +4818,9 @@ dependencies = [
 
 [[package]]
 name = "trillium"
-version = "0.2.13"
+version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b4a1ea726106cfe880370300042a8712b0911f30a63920597437c76cda47893"
+checksum = "8bd8a431d7d45d839ae8236a3b6330bd3d84807592104dbd958143de56b3773f"
 dependencies = [
  "async-trait",
  "futures-lite",
@@ -4950,9 +4950,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-testing"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "477a6aaec9203ecfa8b3972915a447706e4c980c84d3f45569f4f367d35a48be"
+checksum = "8f5db819e24e57207e0f29727a73a7d533015600c2ff058aab97627974d7d4b1"
 dependencies = [
  "async-channel",
  "async-dup",
