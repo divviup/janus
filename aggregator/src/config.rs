@@ -112,7 +112,7 @@ fn format_database_url(url: &Url, fmt: &mut std::fmt::Formatter) -> Result<(), s
 /// options are implementation-specific.
 ///
 /// [spec]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct TaskprovConfig {
     /// Whether to enable the extension or not. Enabling this changes the behavior
     /// of the aggregator consistent with the taskprov [specification][spec].

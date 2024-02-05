@@ -1,9 +1,10 @@
 use crate::{
     aggregator_api_handler,
     models::{
-        DeleteTaskprovPeerAggregatorReq, GetTaskIdsResp, GetTaskMetricsResp, GlobalHpkeConfigResp,
-        PatchGlobalHpkeConfigReq, PostTaskReq, PostTaskprovPeerAggregatorReq,
-        PutGlobalHpkeConfigReq, TaskResp, TaskprovPeerAggregatorResp,
+        DeleteTaskprovPeerAggregatorReq, GetTaskIdsResp, GetTaskMetricsResp,
+        GetTaskUploadMetricsResp, GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PostTaskReq,
+        PostTaskprovPeerAggregatorReq, PutGlobalHpkeConfigReq, TaskResp,
+        TaskprovPeerAggregatorResp,
     },
     Config, CONTENT_TYPE,
 };
@@ -14,7 +15,7 @@ use janus_aggregator_core::{
     datastore::{
         models::{
             AggregationJob, AggregationJobState, HpkeKeyState, LeaderStoredReport,
-            ReportAggregation, ReportAggregationState,
+            ReportAggregation, ReportAggregationState, TaskUploadCounter, TaskUploadIncrementor,
         },
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
@@ -857,6 +858,78 @@ async fn get_task_metrics() {
     // Verify: unauthorized requests are denied appropriately.
     assert_response!(
         get(&format!("/tasks/{}/metrics", &task_id))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .run_async(&handler)
+            .await,
+        Status::Unauthorized,
+        "",
+    );
+}
+
+#[tokio::test]
+async fn get_task_upload_metrics() {
+    let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
+    let task_id = ds
+        .run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
+                    .build()
+                    .leader_view()
+                    .unwrap();
+                let task_id = *task.id();
+                tx.put_aggregator_task(&task).await?;
+
+                for case in [
+                    (TaskUploadIncrementor::ReportDecryptFailure, 2),
+                    (TaskUploadIncrementor::ReportExpired, 4),
+                    (TaskUploadIncrementor::ReportOutdatedKey, 6),
+                    (TaskUploadIncrementor::ReportSuccess, 100),
+                    (TaskUploadIncrementor::ReportTooEarly, 25),
+                    (TaskUploadIncrementor::TaskExpired, 12),
+                ] {
+                    let ord = thread_rng().gen_range(0..32);
+                    try_join_all(
+                        (0..case.1)
+                            .map(|_| tx.increment_task_upload_counter(&task_id, ord, &case.0)),
+                    )
+                    .await
+                    .unwrap();
+                }
+
+                Ok(task_id)
+            })
+        })
+        .await
+        .unwrap();
+
+    // Verify: requesting metrics on a task returns the correct result.
+    assert_response!(
+        get(&format!("/tasks/{}/metrics/uploads", &task_id))
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .run_async(&handler)
+            .await,
+        Status::Ok,
+        serde_json::to_string(&GetTaskUploadMetricsResp(TaskUploadCounter::new(
+            0, 0, 2, 4, 6, 100, 25, 12
+        )))
+        .unwrap(),
+    );
+
+    // Verify: requesting metrics on a nonexistent task returns NotFound.
+    assert_response!(
+        get(&format!("/tasks/{}/metrics/uploads", &random::<TaskId>()))
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .run_async(&handler)
+            .await,
+        Status::NotFound,
+        "",
+    );
+
+    // Verify: unauthorized requests are denied appropriately.
+    assert_response!(
+        get(&format!("/tasks/{}/metrics/uploads", &task_id))
             .with_request_header("Accept", CONTENT_TYPE)
             .run_async(&handler)
             .await,
@@ -1980,6 +2053,39 @@ fn get_task_metrics_resp_serialization() {
             Token::U64(87),
             Token::Str("report_aggregations"),
             Token::U64(348),
+            Token::StructEnd,
+        ],
+    )
+}
+
+#[test]
+fn get_task_upload_metrics_serialization() {
+    assert_ser_tokens(
+        &GetTaskUploadMetricsResp(TaskUploadCounter::new(0, 1, 2, 3, 4, 5, 6, 7)),
+        &[
+            Token::NewtypeStruct {
+                name: "GetTaskUploadMetricsResp",
+            },
+            Token::Struct {
+                name: "TaskUploadCounter",
+                len: 8,
+            },
+            Token::Str("interval_collected"),
+            Token::U64(0),
+            Token::Str("report_decode_failure"),
+            Token::U64(1),
+            Token::Str("report_decrypt_failure"),
+            Token::U64(2),
+            Token::Str("report_expired"),
+            Token::U64(3),
+            Token::Str("report_outdated_key"),
+            Token::U64(4),
+            Token::Str("report_success"),
+            Token::U64(5),
+            Token::Str("report_too_early"),
+            Token::U64(6),
+            Token::Str("task_expired"),
+            Token::U64(7),
             Token::StructEnd,
         ],
     )

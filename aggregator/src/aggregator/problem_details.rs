@@ -109,7 +109,7 @@ impl ProblemDetailsConnExt for Conn {
 #[cfg(test)]
 mod tests {
     use crate::aggregator::{
-        error::{BatchMismatch, ReportRejectedReason},
+        error::{BatchMismatch, ReportRejection, ReportRejectionReason},
         send_request_to_helper, Error,
     };
     use assert_matches::assert_matches;
@@ -119,7 +119,7 @@ mod tests {
     use janus_core::time::{Clock, RealClock};
     use janus_messages::{
         problem_type::{DapProblemType, DapProblemTypeParseError},
-        Duration, HpkeConfigId, Interval, ReportIdChecksum,
+        Duration, Interval, ReportIdChecksum,
     };
     use opentelemetry::metrics::Unit;
     use rand::random;
@@ -179,14 +179,36 @@ mod tests {
                 TestCase::new(Box::new(|| Error::InvalidConfiguration("test")), None),
                 TestCase::new(
                     Box::new(|| {
-                        Error::ReportRejected(
+                        Error::ReportRejected(ReportRejection::new(
                             random(),
                             random(),
                             RealClock::default().now(),
-                            ReportRejectedReason::TaskExpired
-                        )
+                            ReportRejectionReason::TaskExpired
+                        ))
                     }),
                     Some(DapProblemType::ReportRejected),
+                ),
+                TestCase::new(
+                    Box::new(|| {
+                        Error::ReportRejected(ReportRejection::new(
+                            random(),
+                            random(),
+                            RealClock::default().now(),
+                            ReportRejectionReason::TooEarly
+                        ))
+                    }),
+                    Some(DapProblemType::ReportTooEarly),
+                ),
+                TestCase::new(
+                    Box::new(|| {
+                        Error::ReportRejected(ReportRejection::new(
+                            random(),
+                            random(),
+                            RealClock::default().now(),
+                            ReportRejectionReason::OutdatedHpkeConfig(random()),
+                        ))
+                    }),
+                    Some(DapProblemType::OutdatedConfig),
                 ),
                 TestCase::new(
                     Box::new(|| Error::InvalidMessage(Some(random()), "test")),
@@ -203,16 +225,6 @@ mod tests {
                 TestCase::new(
                     Box::new(|| Error::UnrecognizedAggregationJob(random(), random())),
                     Some(DapProblemType::UnrecognizedAggregationJob),
-                ),
-                TestCase::new(
-                    Box::new(|| Error::OutdatedHpkeConfig(random(), HpkeConfigId::from(0))),
-                    Some(DapProblemType::OutdatedConfig),
-                ),
-                TestCase::new(
-                    Box::new(|| {
-                        Error::ReportTooEarly(random(), random(), RealClock::default().now())
-                    }),
-                    Some(DapProblemType::ReportTooEarly),
                 ),
                 TestCase::new(
                     Box::new(|| Error::UnauthorizedRequest(random())),

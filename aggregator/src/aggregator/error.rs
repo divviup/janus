@@ -1,4 +1,7 @@
-use janus_aggregator_core::{datastore, task};
+use janus_aggregator_core::{
+    datastore::{self, models::TaskUploadIncrementor},
+    task,
+};
 use janus_core::http::HttpErrorResponse;
 use janus_messages::{
     AggregationJobId, AggregationJobStep, CollectionJobId, HpkeConfigId, Interval, PrepareError,
@@ -29,14 +32,9 @@ pub enum Error {
     /// Error handling a message.
     #[error("invalid message: {0}")]
     Message(#[from] janus_messages::Error),
-    /// Corresponds to `reportRejected` in DAP. A report was rejected for some reason that is not
-    /// specified in DAP.
-    #[error("task {0}: report {1} rejected: {2}")]
-    ReportRejected(TaskId, ReportId, Time, ReportRejectedReason),
-    /// Corresponds to `reportTooEarly` in DAP. A report was rejected because the timestamp is too
-    /// far in the future.
-    #[error("task {0}: report {1} too early: {2}")]
-    ReportTooEarly(TaskId, ReportId, Time),
+    /// Catch-all error for invalid reports.
+    #[error("{0}")]
+    ReportRejected(ReportRejection),
     /// Corresponds to `invalidMessage` in DAP.
     #[error("task {0:?}: invalid message: {1}")]
     InvalidMessage(Option<TaskId>, &'static str),
@@ -69,9 +67,6 @@ pub enum Error {
     /// An attempt was made to act on a collection job that has been abandoned by the aggregator.
     #[error("abandoned collection job: {0}")]
     AbandonedCollectionJob(CollectionJobId),
-    /// Corresponds to `outdatedHpkeConfig` in DAP.
-    #[error("task {0}: outdated HPKE config: {1}")]
-    OutdatedHpkeConfig(TaskId, HpkeConfigId),
     /// Corresponds to `unauthorizedRequest` in DAP.
     #[error("task {0}: unauthorized request")]
     UnauthorizedRequest(TaskId),
@@ -145,34 +140,106 @@ pub enum Error {
     DifferentialPrivacy(VdafError),
 }
 
-#[derive(Debug)]
-pub enum ReportRejectedReason {
-    IntervalAlreadyCollected,
-    LeaderDecryptFailure,
-    LeaderInputShareDecodeFailure,
-    PublicShareDecodeFailure,
-    TaskExpired,
-    TooOld,
+/// Contains details that describe the report and why it was rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReportRejection {
+    task_id: TaskId,
+    report_id: ReportId,
+    time: Time,
+    reason: ReportRejectionReason,
 }
 
-impl ReportRejectedReason {
+impl ReportRejection {
+    pub fn new(
+        task_id: TaskId,
+        report_id: ReportId,
+        time: Time,
+        reason: ReportRejectionReason,
+    ) -> Self {
+        Self {
+            task_id,
+            report_id,
+            time,
+            reason,
+        }
+    }
+
+    pub fn task_id(&self) -> &TaskId {
+        &self.task_id
+    }
+
+    pub fn report_id(&self) -> &ReportId {
+        &self.report_id
+    }
+
+    pub fn time(&self) -> &Time {
+        &self.time
+    }
+
+    pub fn reason(&self) -> &ReportRejectionReason {
+        &self.reason
+    }
+}
+
+impl Display for ReportRejection {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "task {}, report {}, time {}, rejected {}",
+            self.task_id, self.report_id, self.time, self.reason
+        )
+    }
+}
+
+/// Indicates why a report was rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportRejectionReason {
+    IntervalCollected,
+    DecryptFailure,
+    DecodeFailure,
+    TaskExpired,
+    Expired,
+    TooEarly,
+    OutdatedHpkeConfig(HpkeConfigId),
+}
+
+impl ReportRejectionReason {
     pub fn detail(&self) -> &'static str {
         match self {
-            ReportRejectedReason::IntervalAlreadyCollected => {
+            ReportRejectionReason::IntervalCollected => {
                 "Report falls into a time interval that has already been collected."
             }
-            ReportRejectedReason::LeaderDecryptFailure => {
-                "Leader's report share could not be decrypted."
+            ReportRejectionReason::DecryptFailure => "Report share could not be decrypted.",
+            ReportRejectionReason::DecodeFailure => "Report could not be decoded.",
+            ReportRejectionReason::TaskExpired => "Task has expired.",
+            ReportRejectionReason::Expired => "Report timestamp is too old.",
+            ReportRejectionReason::TooEarly => "Report timestamp is too far in the future.",
+            ReportRejectionReason::OutdatedHpkeConfig(_) => {
+                "Report is using an outdated HPKE configuration."
             }
-            ReportRejectedReason::LeaderInputShareDecodeFailure => {
-                "Leader's input share could not be decoded."
-            }
-            ReportRejectedReason::PublicShareDecodeFailure => {
-                "Report public share could not be decoded."
-            }
-            ReportRejectedReason::TaskExpired => "Task has expired.",
-            ReportRejectedReason::TooOld => "Report timestamp is too old.",
         }
+    }
+}
+
+impl From<&ReportRejectionReason> for TaskUploadIncrementor {
+    fn from(value: &ReportRejectionReason) -> Self {
+        match value {
+            ReportRejectionReason::IntervalCollected => TaskUploadIncrementor::IntervalCollected,
+            ReportRejectionReason::DecryptFailure => TaskUploadIncrementor::ReportDecryptFailure,
+            ReportRejectionReason::DecodeFailure => TaskUploadIncrementor::ReportDecodeFailure,
+            ReportRejectionReason::TaskExpired => TaskUploadIncrementor::TaskExpired,
+            ReportRejectionReason::Expired => TaskUploadIncrementor::ReportExpired,
+            ReportRejectionReason::TooEarly => TaskUploadIncrementor::ReportTooEarly,
+            ReportRejectionReason::OutdatedHpkeConfig(_) => {
+                TaskUploadIncrementor::ReportOutdatedKey
+            }
+        }
+    }
+}
+
+impl Display for ReportRejectionReason {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
     }
 }
 
@@ -199,8 +266,11 @@ impl Error {
             Error::InvalidConfiguration(_) => "invalid_configuration",
             Error::MessageDecode(_) => "message_decode",
             Error::Message(_) => "message",
-            Error::ReportRejected(_, _, _, _) => "report_rejected",
-            Error::ReportTooEarly(_, _, _) => "report_too_early",
+            Error::ReportRejected(rejection) => match rejection.reason {
+                ReportRejectionReason::TooEarly => "report_too_early",
+                ReportRejectionReason::OutdatedHpkeConfig(_) => "outdated_hpke_config",
+                _ => "report_rejected",
+            },
             Error::InvalidMessage(_, _) => "unrecognized_message",
             Error::StepMismatch { .. } => "step_mismatch",
             Error::UnrecognizedTask(_) => "unrecognized_task",
@@ -209,7 +279,6 @@ impl Error {
             Error::DeletedCollectionJob(_) => "deleted_collection_job",
             Error::AbandonedCollectionJob(_) => "abandoned_collection_job",
             Error::UnrecognizedCollectionJob(_) => "unrecognized_collection_job",
-            Error::OutdatedHpkeConfig(_, _) => "outdated_hpke_config",
             Error::UnauthorizedRequest(_) => "unauthorized_request",
             Error::Datastore(_) => "datastore",
             Error::Vdaf(_) => "vdaf",

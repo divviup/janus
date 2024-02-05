@@ -1,4 +1,4 @@
-use super::{Aggregator, Config, Error};
+use super::{error::ReportRejectionReason, Aggregator, Config, Error};
 use crate::aggregator::problem_details::{ProblemDetailsConnExt, ProblemDocument};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -8,6 +8,7 @@ use janus_core::{
     http::extract_bearer_token,
     taskprov::TASKPROV_HEADER,
     time::Clock,
+    Runtime,
 };
 use janus_messages::{
     codec::Decode, problem_type::DapProblemType, query_type::TimeInterval, taskprov::TaskConfig,
@@ -45,11 +46,21 @@ impl Handler for Error {
             Error::InvalidConfiguration(_) => conn.with_status(Status::InternalServerError),
             Error::MessageDecode(_) => conn
                 .with_problem_document(&ProblemDocument::new_dap(DapProblemType::InvalidMessage)),
-            Error::ReportRejected(task_id, _, _, reason) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::ReportRejected)
-                    .with_task_id(task_id)
-                    .with_detail(reason.detail()),
-            ),
+            Error::ReportRejected(rejection) => match rejection.reason() {
+                ReportRejectionReason::OutdatedHpkeConfig(_) => conn.with_problem_document(
+                    &ProblemDocument::new_dap(DapProblemType::OutdatedConfig)
+                        .with_task_id(rejection.task_id()),
+                ),
+                ReportRejectionReason::TooEarly => conn.with_problem_document(
+                    &ProblemDocument::new_dap(DapProblemType::ReportTooEarly)
+                        .with_task_id(rejection.task_id()),
+                ),
+                _ => conn.with_problem_document(
+                    &ProblemDocument::new_dap(DapProblemType::ReportRejected)
+                        .with_task_id(rejection.task_id())
+                        .with_detail(rejection.reason().detail()),
+                ),
+            },
             Error::InvalidMessage(task_id, _) => {
                 let mut doc = ProblemDocument::new_dap(DapProblemType::InvalidMessage);
                 if let Some(task_id) = task_id {
@@ -85,12 +96,6 @@ impl Handler for Error {
                 .with_collection_job_id(collection_job_id),
             ),
             Error::UnrecognizedCollectionJob(_) => conn.with_status(Status::NotFound),
-            Error::OutdatedHpkeConfig(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::OutdatedConfig).with_task_id(task_id),
-            ),
-            Error::ReportTooEarly(task_id, _, _) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::ReportTooEarly).with_task_id(task_id),
-            ),
             Error::UnauthorizedRequest(task_id) => conn.with_problem_document(
                 &ProblemDocument::new_dap(DapProblemType::UnauthorizedRequest)
                     .with_task_id(task_id),
@@ -239,13 +244,18 @@ pub(crate) static COLLECTION_JOB_ROUTE: &str = "tasks/:task_id/collection_jobs/:
 pub(crate) static AGGREGATE_SHARES_ROUTE: &str = "tasks/:task_id/aggregate_shares";
 
 /// Constructs a Trillium handler for the aggregator.
-pub async fn aggregator_handler<C: Clock>(
+pub async fn aggregator_handler<C, R>(
     datastore: Arc<Datastore<C>>,
     clock: C,
+    runtime: R,
     meter: &Meter,
     cfg: Config,
-) -> Result<impl Handler, Error> {
-    let aggregator = Arc::new(Aggregator::new(datastore, clock, meter, cfg).await?);
+) -> Result<impl Handler, Error>
+where
+    C: Clock,
+    R: Runtime + Send + Sync + 'static,
+{
+    let aggregator = Arc::new(Aggregator::new(datastore, clock, runtime, meter, cfg).await?);
     aggregator_handler_with_aggregator(aggregator, meter).await
 }
 
@@ -687,7 +697,7 @@ mod tests {
             },
             collection_job_tests::setup_collection_job_test_case,
             empty_batch_aggregations,
-            error::ReportRejectedReason,
+            error::ReportRejectionReason,
             http_handlers::{
                 aggregator_handler, aggregator_handler_with_aggregator,
                 test_util::{decode_response_body, take_problem_details},
@@ -731,6 +741,7 @@ mod tests {
         test_util::{
             dummy_vdaf::{self, AggregationParam, OutputShare},
             install_test_trace_subscriber, run_vdaf,
+            runtime::TestRuntime,
         },
         time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
@@ -781,6 +792,7 @@ mod tests {
         let handler = aggregator_handler(
             datastore.clone(),
             clock.clone(),
+            TestRuntime::default(),
             &noop_meter(),
             default_aggregator_config(),
         )
@@ -876,6 +888,7 @@ mod tests {
             crate::aggregator::Aggregator::new(
                 datastore.clone(),
                 clock.clone(),
+                TestRuntime::default(),
                 &noop_meter(),
                 Config::default(),
             )
@@ -1024,6 +1037,7 @@ mod tests {
             crate::aggregator::Aggregator::new(
                 datastore.clone(),
                 clock.clone(),
+                TestRuntime::default(),
                 &noop_meter(),
                 cfg,
             )
@@ -1201,7 +1215,7 @@ mod tests {
             "reportRejected",
             "Report could not be processed.",
             task.id(),
-            Some(ReportRejectedReason::TooOld.detail()),
+            Some(ReportRejectionReason::Expired.detail()),
         )
         .await;
 
@@ -1291,7 +1305,7 @@ mod tests {
             "reportRejected",
             "Report could not be processed.",
             task_expire_soon.id(),
-            Some(ReportRejectedReason::TaskExpired.detail()),
+            Some(ReportRejectionReason::TaskExpired.detail()),
         )
         .await;
 
@@ -1319,7 +1333,7 @@ mod tests {
             "reportRejected",
             "Report could not be processed.",
             leader_task.id(),
-            Some(ReportRejectedReason::PublicShareDecodeFailure.detail()),
+            Some(ReportRejectionReason::DecodeFailure.detail()),
         )
         .await;
 
@@ -1344,7 +1358,7 @@ mod tests {
             "reportRejected",
             "Report could not be processed.",
             leader_task.id(),
-            Some(ReportRejectedReason::LeaderDecryptFailure.detail()),
+            Some(ReportRejectionReason::DecryptFailure.detail()),
         )
         .await;
 
@@ -1381,7 +1395,7 @@ mod tests {
             "reportRejected",
             "Report could not be processed.",
             leader_task.id(),
-            Some(ReportRejectedReason::LeaderInputShareDecodeFailure.detail()),
+            Some(ReportRejectionReason::DecodeFailure.detail()),
         )
         .await;
 
@@ -2203,6 +2217,7 @@ mod tests {
         let handler = aggregator_handler(
             datastore.clone(),
             clock.clone(),
+            TestRuntime::default(),
             &noop_meter(),
             default_aggregator_config(),
         )
