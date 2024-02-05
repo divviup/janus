@@ -72,9 +72,9 @@ prio.workspace = true
 prometheus = { version = "0.13.3", optional = true }
 rand = { workspace = true, features = ["min_const_gen"] }
 regex = "1"
-reqwest = { version = "0.11.23", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.11.24", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.17.7"
-routefinder = "0.5.3"
+routefinder = "0.5.4"
 rustls = "0.22.2"
 rustls-pemfile = "2.0.0"
 serde.workspace = true
@@ -110,6 +110,7 @@ assert_matches.workspace = true
 janus_aggregator = { path = ".", features = ["fpvec_bounded_l2", "test-util"] }
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
 mockito = "1.2.0"
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
 rstest.workspace = true
 tempfile = "3.9.0"
 tokio = { version = "1", features = ["test-util"] } # ensure this remains compatible with the non-dev dependency

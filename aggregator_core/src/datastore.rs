@@ -5,7 +5,8 @@ use self::models::{
     AggregatorRole, AuthenticationTokenType, Batch, BatchAggregation, CollectionJob,
     CollectionJobState, CollectionJobStateCode, GlobalHpkeKeypair, HpkeKeyState,
     LeaderStoredReport, Lease, LeaseToken, OutstandingBatch, ReportAggregation,
-    ReportAggregationState, ReportAggregationStateCode, SqlInterval,
+    ReportAggregationState, ReportAggregationStateCode, SqlInterval, TaskUploadCounter,
+    TaskUploadIncrementor,
 };
 use crate::{
     query_type::{AccumulableQueryType, CollectableQueryType},
@@ -31,7 +32,7 @@ use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
     KeyValue,
 };
-use postgres_types::{FromSql, Json, ToSql};
+use postgres_types::{FromSql, Json, Timestamp, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
     topology::ping_pong::PingPongTransition,
@@ -56,7 +57,7 @@ use std::{
 };
 use tokio::{sync::Barrier, try_join};
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row, Statement, ToStatement};
-use tracing::error;
+use tracing::{error, Level};
 use url::Url;
 
 pub mod models;
@@ -707,7 +708,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Fetch the task parameters corresponing to the provided `task_id`.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_aggregator_task(
         &self,
         task_id: &TaskId,
@@ -740,7 +741,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Fetch all the tasks in the database.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_aggregator_tasks(&self) -> Result<Vec<AggregatorTask>, Error> {
         let stmt = self
             .prepare_cached(
@@ -939,7 +940,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Retrieves report & report aggregation metrics for a given task: either a tuple
     /// `Some((report_count, report_aggregation_count))`, or None if the task does not exist.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_task_metrics(&self, task_id: &TaskId) -> Result<Option<(u64, u64)>, Error> {
         let stmt = self
             .prepare_cached(
@@ -981,7 +982,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// IDs in lexicographic order, but may not retrieve the IDs of all tasks in a single call. To
     /// retrieve additional task IDs, make additional calls to this method while specifying the
     /// `lower_bound` parameter to be the last task ID retrieved from the previous call.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_task_ids(&self, lower_bound: Option<TaskId>) -> Result<Vec<TaskId>, Error> {
         let lower_bound = lower_bound.map(|task_id| task_id.as_ref().to_vec());
         let stmt = self
@@ -1000,7 +1001,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// get_client_report retrieves a client report by ID.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_client_report<const SEED_SIZE: usize, A>(
         &self,
         vdaf: &A,
@@ -1176,7 +1177,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// relies on this assumption to find relevant reports without consulting collection jobs. For
     /// VDAFs that do have a different aggregation parameter,
     /// `get_unaggregated_client_report_ids_by_collect_for_task` should be used instead.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_unaggregated_client_reports_for_task<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
@@ -1238,7 +1239,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// should generally only be called on report IDs returned from
     /// `get_unaggregated_client_report_ids_for_task`, as part of the same transaction, for any
     /// client reports that are not added to an aggregation job.
-    #[tracing::instrument(skip(self, report_ids), err)]
+    #[tracing::instrument(skip(self, report_ids), err(level = Level::DEBUG))]
     pub async fn mark_reports_unaggregated(
         &self,
         task_id: &TaskId,
@@ -1307,7 +1308,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Determines whether the given task includes any client reports which have not yet started the
     /// aggregation process in the given interval.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn interval_has_unaggregated_reports(
         &self,
         task_id: &TaskId,
@@ -1341,7 +1342,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// Return the number of reports in the provided task whose timestamp falls within the provided
     /// interval, regardless of whether the reports have been aggregated or collected. Applies only
     /// to time-interval queries.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn count_client_reports_for_interval(
         &self,
         task_id: &TaskId,
@@ -1376,7 +1377,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Return the number of reports in the provided task & batch, regardless of whether the reports
     /// have been aggregated or collected. Applies only to fixed-size queries.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn count_client_reports_for_batch_id(
         &self,
         task_id: &TaskId,
@@ -1413,7 +1414,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// the associated encrypted helper share. Returns `Ok(())` if the write succeeds, or if there
     /// was already a row in the table matching `new_report`. Returns an error if something goes
     /// wrong or if the report ID is already in use with different values.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_client_report<const SEED_SIZE: usize, A>(
         &self,
         vdaf: &A,
@@ -1593,7 +1594,7 @@ impl<C: Clock> Transaction<'_, C> {
     ///
     /// Returns `Err(Error::MutationTargetAlreadyExists)` if an attempt to mutate an existing row
     /// (e.g., changing the timestamp for a known report ID) is detected.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_report_share(
         &self,
         task_id: &TaskId,
@@ -1631,7 +1632,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// get_aggregation_job retrieves an aggregation job by ID.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_aggregation_job<
         const SEED_SIZE: usize,
         Q: QueryType,
@@ -1669,7 +1670,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// get_aggregation_jobs_for_task returns all aggregation jobs for a given task ID.
     #[cfg(feature = "test-util")]
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_aggregation_jobs_for_task<
         const SEED_SIZE: usize,
         Q: QueryType,
@@ -1743,7 +1744,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// aggregation jobs. At most `maximum_acquire_count` jobs are acquired. The job is acquired
     /// with a "lease" that will time out; the desired duration of the lease is a parameter, and the
     /// returned lease provides the absolute timestamp at which the lease is no longer live.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn acquire_incomplete_aggregation_jobs(
         &self,
         lease_duration: &StdDuration,
@@ -1816,7 +1817,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// release_aggregation_job releases an acquired (via e.g. acquire_incomplete_aggregation_jobs)
     /// aggregation job. It returns an error if the aggregation job has no current lease.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn release_aggregation_job(
         &self,
         lease: &Lease<AcquiredAggregationJob>,
@@ -1857,7 +1858,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// put_aggregation_job stores an aggregation job.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_aggregation_job<
         const SEED_SIZE: usize,
         Q: QueryType,
@@ -1934,7 +1935,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// update_aggregation_job updates a stored aggregation job.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn update_aggregation_job<
         const SEED_SIZE: usize,
         Q: QueryType,
@@ -1978,7 +1979,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Check whether the report has ever been aggregated with the given parameter, for an
     /// aggregation job besides the given one.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn check_other_report_aggregation_exists<const SEED_SIZE: usize, A>(
         &self,
         task_id: &TaskId,
@@ -2018,7 +2019,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// get_report_aggregation gets a report aggregation by ID.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_report_aggregation<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
@@ -2079,7 +2080,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// get_report_aggregations_for_aggregation_job retrieves all report aggregations associated
     /// with a given aggregation job, ordered by their natural ordering.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_report_aggregations_for_aggregation_job<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
@@ -2339,7 +2340,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// put_report_aggregation stores aggregation data for a single report.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_report_aggregation<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
@@ -2399,7 +2400,7 @@ impl<C: Clock> Transaction<'_, C> {
         Ok(())
     }
 
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn update_report_aggregation<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
@@ -2466,7 +2467,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Returns the collection job for the provided ID, or `None` if no such collection job exists.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_collection_job<
         const SEED_SIZE: usize,
         Q: QueryType,
@@ -2518,7 +2519,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Returns all collection jobs for the given task which include the given timestamp. Applies
     /// only to time-interval tasks.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_collection_jobs_including_time<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
@@ -2567,7 +2568,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Returns all collection jobs for the given task whose collect intervals intersect with the
     /// given interval. Applies only to time-interval tasks.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_collection_jobs_intersecting_interval<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
@@ -2622,7 +2623,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Retrieves all collection jobs for the given batch ID. Multiple collection jobs may be
     /// returned with distinct aggregation parameters. Applies only to fixed-size tasks.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_collection_jobs_by_batch_id<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
@@ -2785,7 +2786,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Stores a new collection job.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_collection_job<
         const SEED_SIZE: usize,
         Q: CollectableQueryType,
@@ -2867,7 +2868,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// collection jobs. At most `maximum_acquire_count` jobs are acquired. The job is acquired with
     /// a "lease" that will time out; the desired duration of the lease is a parameter, and the
     /// lease expiration time is returned.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn acquire_incomplete_collection_jobs(
         &self,
         lease_duration: &StdDuration,
@@ -2935,7 +2936,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// release_collection_job releases an acquired (via e.g. acquire_incomplete_collection_jobs)
     /// collect job. It returns an error if the collection job has no current lease.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn release_collection_job(
         &self,
         lease: &Lease<AcquiredCollectionJob>,
@@ -2975,7 +2976,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Updates an existing collection job.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn update_collection_job<
         const SEED_SIZE: usize,
         Q: QueryType,
@@ -3046,7 +3047,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Retrieves an existing batch aggregation.
-    #[tracing::instrument(skip(self, aggregation_parameter), err)]
+    #[tracing::instrument(skip(self, aggregation_parameter), err(level = Level::DEBUG))]
     pub async fn get_batch_aggregation<
         const SEED_SIZE: usize,
         Q: QueryType,
@@ -3103,7 +3104,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Retrieves all batch aggregations stored for a given batch, identified by task ID, batch
     /// identifier, and aggregation parameter.
-    #[tracing::instrument(skip(self, aggregation_parameter), err)]
+    #[tracing::instrument(skip(self, aggregation_parameter), err(level = Level::DEBUG))]
     pub async fn get_batch_aggregations_for_batch<
         const SEED_SIZE: usize,
         Q: QueryType,
@@ -3247,7 +3248,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Store a new `batch_aggregations` row in the datastore.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_batch_aggregation<
         const SEED_SIZE: usize,
         Q: AccumulableQueryType,
@@ -3342,7 +3343,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Update an existing `batch_aggregations` row with the values from the provided batch
     /// aggregation.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn update_batch_aggregation<
         const SEED_SIZE: usize,
         Q: QueryType,
@@ -3408,7 +3409,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Fetch an [`AggregateShareJob`] from the datastore corresponding to given parameters, or
     /// `None` if no such job exists.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_aggregate_share_job<
         const SEED_SIZE: usize,
         Q: QueryType,
@@ -3455,7 +3456,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Returns all aggregate share jobs for the given task which include the given timestamp.
     /// Applies only to time-interval tasks.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_aggregate_share_jobs_including_time<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
@@ -3506,7 +3507,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Returns all aggregate share jobs for the given task whose collect intervals intersect with
     /// the given interval. Applies only to time-interval tasks.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_aggregate_share_jobs_intersecting_interval<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
@@ -3558,7 +3559,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// Returns all aggregate share jobs for the given task with the given batch identifier.
     /// Multiple aggregate share jobs may be returned with distinct aggregation parameters.
     /// Applies only to fixed-size tasks.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_aggregate_share_jobs_by_batch_id<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16>,
@@ -3669,7 +3670,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Put an `aggregate_share_job` row into the datastore.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_aggregate_share_job<
         const SEED_SIZE: usize,
         Q: CollectableQueryType,
@@ -3748,7 +3749,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Writes an outstanding batch. (This method does not take an [`OutstandingBatch`] as several
     /// of the included values are read implicitly.)
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_outstanding_batch(
         &self,
         task_id: &TaskId,
@@ -3813,7 +3814,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Retrieves all [`OutstandingBatch`]es for a given task and time bucket, if applicable.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_outstanding_batches(
         &self,
         task_id: &TaskId,
@@ -3920,7 +3921,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Deletes an outstanding batch.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn delete_outstanding_batch(
         &self,
         task_id: &TaskId,
@@ -3947,7 +3948,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Retrieves an outstanding batch for the given task with at least the given number of
     /// successfully-aggregated reports.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_filled_outstanding_batch(
         &self,
         task_id: &TaskId,
@@ -3989,7 +3990,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Puts a `batch` into the datastore. Returns `MutationTargetAlreadyExists` if the batch is
     /// already stored.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_batch<
         const SEED_SIZE: usize,
         Q: AccumulableQueryType,
@@ -4066,7 +4067,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Updates a given `batch` in the datastore. Returns `MutationTargetNotFound` if no such batch
     /// is currently stored.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn update_batch<
         const SEED_SIZE: usize,
         Q: QueryType,
@@ -4112,7 +4113,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Gets a given `batch` from the datastore, based on the primary key. Returns `None` if no such
     /// batch is stored in the datastore.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_batch<
         const SEED_SIZE: usize,
         Q: QueryType,
@@ -4218,19 +4219,46 @@ impl<C: Clock> Transaction<'_, C> {
     /// Deletes old client reports for a given task, that is, client reports whose timestamp is
     /// older than the task's report expiry age. Up to `limit` client reports will be deleted.
     /// Returns the number of client reports deleted.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn delete_expired_client_reports(
         &self,
         task_id: &TaskId,
         limit: u64,
     ) -> Result<u64, Error> {
-        let stmt = self
+        // Calculation of a report timestamp threshold is split apart from the main body of the
+        // query so that the query planner can see concrete timestamp value, compare it against the
+        // client_timestamp column's histogram, and make an accurate row count estimate. If the
+        // threshold is determined in a single query via a join, the query planner is not able to
+        // predict the task's report_expiry_age, and the accuracy of the row count estimate suffers.
+        let stmt_1 = self
+            .prepare_cached(
+                "SELECT
+                    id,
+                    COALESCE(
+                        $2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL,
+                        '-infinity'::TIMESTAMP
+                    ) AS threshold
+                FROM tasks WHERE tasks.task_id = $1",
+            )
+            .await?;
+        let row = self
+            .query_one(
+                &stmt_1,
+                &[
+                    /* task_id */ &task_id.get_encoded(),
+                    /* now */ &self.clock.now().as_naive_date_time()?,
+                ],
+            )
+            .await?;
+        let id = row.get::<_, i64>("id");
+        let threshold = row.get::<_, Timestamp<NaiveDateTime>>("threshold");
+
+        let stmt_2 = self
             .prepare_cached(
                 "WITH client_reports_to_delete AS (
                     SELECT client_reports.id FROM client_reports
-                    JOIN tasks ON tasks.id = client_reports.task_id
-                    WHERE tasks.task_id = $1
-                      AND client_reports.client_timestamp < COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                    WHERE client_reports.task_id = $1
+                        AND client_reports.client_timestamp < $2::TIMESTAMP
                     LIMIT $3
                 )
                 DELETE FROM client_reports
@@ -4239,10 +4267,10 @@ impl<C: Clock> Transaction<'_, C> {
             )
             .await?;
         self.execute(
-            &stmt,
+            &stmt_2,
             &[
-                /* task_id */ &task_id.get_encoded(),
-                /* now */ &self.clock.now().as_naive_date_time()?,
+                /* id */ &id,
+                /* threshold */ &threshold,
                 /* limit */ &i64::try_from(limit)?,
             ],
         )
@@ -4255,7 +4283,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// older than the task's report expiry age. Up to `limit` aggregation jobs will be deleted,
     /// along with all related aggregation artifacts. Returns the number of aggregation jobs
     /// deleted.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn delete_expired_aggregation_artifacts(
         &self,
         task_id: &TaskId,
@@ -4312,7 +4340,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// Up to `limit` batches will be deleted, along with all related collection artifacts.
     ///
     /// Returns the number of batches deleted.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn delete_expired_collection_artifacts(
         &self,
         task_id: &TaskId,
@@ -4377,7 +4405,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Retrieve all global HPKE keypairs.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_global_hpke_keypairs(&self) -> Result<Vec<GlobalHpkeKeypair>, Error> {
         let stmt = self
             .prepare_cached(
@@ -4393,7 +4421,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Retrieve a global HPKE keypair by config ID.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_global_hpke_keypair(
         &self,
         config_id: &HpkeConfigId,
@@ -4430,7 +4458,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Unconditionally and fully drop a keypair. This is a dangerous operation,
     /// since report shares encrypted with this key will no longer be decryptable.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn delete_global_hpke_keypair(&self, config_id: &HpkeConfigId) -> Result<(), Error> {
         let stmt = self
             .prepare_cached("DELETE FROM global_hpke_keys WHERE config_id = $1;")
@@ -4441,7 +4469,7 @@ impl<C: Clock> Transaction<'_, C> {
         )
     }
 
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn set_global_hpke_keypair_state(
         &self,
         config_id: &HpkeConfigId,
@@ -4469,7 +4497,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     // Inserts a new global HPKE keypair and places it in the [`HpkeKeyState::Pending`] state.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_global_hpke_keypair(&self, hpke_keypair: &HpkeKeypair) -> Result<(), Error> {
         let hpke_config_id = u8::from(*hpke_keypair.config().id()) as i16;
         let hpke_config = hpke_keypair.config().get_encoded();
@@ -4504,7 +4532,7 @@ impl<C: Clock> Transaction<'_, C> {
         )
     }
 
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_taskprov_peer_aggregators(&self) -> Result<Vec<PeerAggregator>, Error> {
         let stmt = self
             .prepare_cached(
@@ -4574,7 +4602,7 @@ impl<C: Clock> Transaction<'_, C> {
             .collect()
     }
 
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn get_taskprov_peer_aggregator(
         &self,
         aggregator_url: &Url,
@@ -4700,7 +4728,7 @@ impl<C: Clock> Transaction<'_, C> {
         ))
     }
 
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn put_taskprov_peer_aggregator(
         &self,
         peer_aggregator: &PeerAggregator,
@@ -4827,7 +4855,7 @@ impl<C: Clock> Transaction<'_, C> {
         Ok(())
     }
 
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn delete_taskprov_peer_aggregator(
         &self,
         aggregator_url: &Url,
@@ -4843,6 +4871,75 @@ impl<C: Clock> Transaction<'_, C> {
             )
             .await?;
         check_single_row_mutation(self.execute(&stmt, &[&aggregator_url, &role]).await?)
+    }
+
+    /// Get the [`TaskUploadCounter`] for a task. This is aggregated across all shards. Returns
+    /// `None` if the task doesn't exist.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn get_task_upload_counter(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Option<TaskUploadCounter>, Error> {
+        let stmt = self
+            .prepare_cached(
+                "SELECT
+                    SUM(interval_collected)::BIGINT AS interval_collected,
+                    SUM(report_decode_failure)::BIGINT AS report_decode_failure,
+                    SUM(report_decrypt_failure)::BIGINT AS report_decrypt_failure,
+                    SUM(report_expired)::BIGINT AS report_expired,
+                    SUM(report_outdated_key)::BIGINT AS report_outdated_key,
+                    SUM(report_success)::BIGINT AS report_success,
+                    SUM(report_too_early)::BIGINT AS report_too_early,
+                    SUM(task_expired)::BIGINT AS task_expired
+                FROM task_upload_counters
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+            )
+            .await?;
+
+        let row = self.query_one(&stmt, &[task_id.as_ref()]).await?;
+        let interval_collected = row.get_nullable_bigint_and_convert("interval_collected")?;
+        Ok(match interval_collected {
+            Some(interval_collected) => Some(TaskUploadCounter {
+                interval_collected,
+                // The remaining columns should exist if the first one did, due to a DEFAULT 0
+                // clause, so we don't need to treat these as nullable.
+                report_decode_failure: row.get_bigint_and_convert("report_decode_failure")?,
+                report_decrypt_failure: row.get_bigint_and_convert("report_decrypt_failure")?,
+                report_expired: row.get_bigint_and_convert("report_expired")?,
+                report_outdated_key: row.get_bigint_and_convert("report_outdated_key")?,
+                report_success: row.get_bigint_and_convert("report_success")?,
+                report_too_early: row.get_bigint_and_convert("report_too_early")?,
+                task_expired: row.get_bigint_and_convert("task_expired")?,
+            }),
+            None => None,
+        })
+    }
+
+    /// Add one to the counter associated with the given [`TaskId`]. The column to increment is given
+    /// by [`TaskUploadIncrementor`]. This is sharded, requiring an `ord` parameter to determine which
+    /// shard to add to. `ord` should be randomly generated by the caller.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn increment_task_upload_counter(
+        &self,
+        task_id: &TaskId,
+        ord: u64,
+        incrementor: &TaskUploadIncrementor,
+    ) -> Result<(), Error> {
+        // SQL injection safety: The possible inputs of TaskUploadIncrementor and the resulting
+        // .column() are constrained to values that are known to be safe for interpolation. The
+        // calling function cannot supply arbitrary strings.
+        let column = incrementor.column();
+        let stmt = format!(
+            "INSERT INTO task_upload_counters (task_id, ord, {column})
+                 VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, 1)
+             ON CONFLICT (task_id, ord) DO UPDATE
+                 SET {column} = task_upload_counters.{column} + 1"
+        );
+        let stmt = self.prepare_cached(&stmt).await?;
+        check_single_row_mutation(
+            self.execute(&stmt, &[task_id.as_ref(), &i64::try_from(ord)?])
+                .await?,
+        )
     }
 }
 

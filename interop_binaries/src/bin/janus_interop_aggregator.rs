@@ -14,6 +14,7 @@ use janus_aggregator_core::{
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     time::RealClock,
+    Runtime, TokioRuntime,
 };
 use janus_interop_binaries::{
     status::{ERROR, SUCCESS},
@@ -129,8 +130,9 @@ async fn handle_add_task(
         .context("error adding task to database")
 }
 
-async fn make_handler(
+async fn make_handler<R: Runtime + Send + Sync + 'static>(
     datastore: Arc<Datastore<RealClock>>,
+    runtime: R,
     meter: &Meter,
     dap_serving_prefix: String,
 ) -> anyhow::Result<impl Handler> {
@@ -138,6 +140,7 @@ async fn make_handler(
     let dap_handler = aggregator_handler(
         Arc::clone(&datastore),
         RealClock::default(),
+        runtime,
         meter,
         aggregator::Config {
             max_upload_batch_size: 100,
@@ -247,6 +250,7 @@ async fn main() -> anyhow::Result<()> {
         // endpoints.
         let handler = make_handler(
             Arc::clone(&datastore),
+            TokioRuntime,
             &ctx.meter,
             ctx.config.dap_serving_prefix,
         )

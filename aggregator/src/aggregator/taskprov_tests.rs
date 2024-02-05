@@ -34,7 +34,7 @@ use janus_core::{
     },
     report_id::ReportIdChecksumExt,
     taskprov::TASKPROV_HEADER,
-    test_util::{install_test_trace_subscriber, VdafTranscript},
+    test_util::{install_test_trace_subscriber, runtime::TestRuntime, VdafTranscript},
     time::{Clock, DurationExt, MockClock, TimeExt},
     vdaf::VERIFY_KEY_LENGTH,
 };
@@ -118,6 +118,7 @@ impl TaskprovTestCase {
         let handler = aggregator_handler(
             Arc::clone(&datastore),
             clock.clone(),
+            TestRuntime::default(),
             &noop_meter(),
             Config {
                 taskprov_config: TaskprovConfig { enabled: true },

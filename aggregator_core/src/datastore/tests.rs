@@ -5,6 +5,7 @@ use crate::{
             AggregationJobState, Batch, BatchAggregation, BatchAggregationState, BatchState,
             CollectionJob, CollectionJobState, GlobalHpkeKeypair, HpkeKeyState, LeaderStoredReport,
             Lease, OutstandingBatch, ReportAggregation, ReportAggregationState, SqlInterval,
+            TaskUploadCounter, TaskUploadIncrementor,
         },
         schema_versions_template,
         test_util::{ephemeral_datastore_schema_version, generate_aead_key, EphemeralDatastore},
@@ -5569,6 +5570,80 @@ async fn delete_expired_client_reports(ephemeral_datastore: EphemeralDatastore) 
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
+async fn delete_expired_client_reports_noop(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
+
+    let clock = MockClock::default();
+    let ds = ephemeral_datastore.datastore(clock.clone()).await;
+    let vdaf = dummy_vdaf::Vdaf::new();
+
+    // Setup.
+    let (task_id, new_report_id, old_report_id) = ds
+        .run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                let task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
+                    .with_report_expiry_age(None)
+                    .build()
+                    .leader_view()
+                    .unwrap();
+                tx.put_aggregator_task(&task).await?;
+
+                let old_report = LeaderStoredReport::new_dummy(
+                    *task.id(),
+                    OLDEST_ALLOWED_REPORT_TIMESTAMP
+                        .sub(&Duration::from_seconds(1))
+                        .unwrap(),
+                );
+                let new_report =
+                    LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &old_report)
+                    .await?;
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &new_report)
+                    .await?;
+
+                Ok((
+                    *task.id(),
+                    *new_report.metadata().id(),
+                    *old_report.metadata().id(),
+                ))
+            })
+        })
+        .await
+        .unwrap();
+
+    // Run.
+    let deleted_report_count = ds
+        .run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                tx.delete_expired_client_reports(&task_id, u64::try_from(i64::MAX)?)
+                    .await
+            })
+        })
+        .await
+        .unwrap();
+
+    // Verify.
+    assert_eq!(0, deleted_report_count);
+    let want_report_ids = HashSet::from([new_report_id, old_report_id]);
+    let got_report_ids = ds
+        .run_unnamed_tx(|tx| {
+            let vdaf = vdaf.clone();
+            Box::pin(async move {
+                let task_client_reports = tx.get_client_reports_for_task(&vdaf, &task_id).await?;
+                Ok(HashSet::from_iter(
+                    task_client_reports
+                        .into_iter()
+                        .map(|report| *report.metadata().id()),
+                ))
+            })
+        })
+        .await
+        .unwrap();
+    assert_eq!(want_report_ids, got_report_ids);
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
 async fn delete_expired_aggregation_artifacts(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
 
@@ -7371,4 +7446,66 @@ async fn reject_expired_reports_with_same_id(ephemeral_datastore: EphemeralDatas
         })
         .await;
     assert_matches!(result, Err(Error::MutationTargetAlreadyExists));
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
+    let clock = MockClock::default();
+    let datastore = ephemeral_datastore.datastore(clock.clone()).await;
+
+    let task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
+        .build()
+        .leader_view()
+        .unwrap();
+
+    datastore.put_aggregator_task(&task).await.unwrap();
+
+    datastore
+        .run_unnamed_tx(|tx| {
+            let task_id = *task.id();
+            Box::pin(async move {
+                let counter = tx.get_task_upload_counter(&task_id).await.unwrap();
+                assert_eq!(counter, None);
+
+                for case in [
+                    (TaskUploadIncrementor::IntervalCollected, 2),
+                    (TaskUploadIncrementor::ReportDecodeFailure, 4),
+                    (TaskUploadIncrementor::ReportDecryptFailure, 6),
+                    (TaskUploadIncrementor::ReportExpired, 8),
+                    (TaskUploadIncrementor::ReportOutdatedKey, 10),
+                    (TaskUploadIncrementor::ReportSuccess, 100),
+                    (TaskUploadIncrementor::ReportTooEarly, 25),
+                    (TaskUploadIncrementor::TaskExpired, 12),
+                ] {
+                    let ord = thread_rng().gen_range(0..32);
+                    try_join_all(
+                        (0..case.1)
+                            .map(|_| tx.increment_task_upload_counter(&task_id, ord, &case.0)),
+                    )
+                    .await
+                    .unwrap();
+                }
+
+                let counter = tx.get_task_upload_counter(&task_id).await.unwrap();
+                assert_eq!(
+                    counter,
+                    Some(TaskUploadCounter {
+                        interval_collected: 2,
+                        report_decode_failure: 4,
+                        report_decrypt_failure: 6,
+                        report_expired: 8,
+                        report_outdated_key: 10,
+                        report_success: 100,
+                        report_too_early: 25,
+                        task_expired: 12,
+                    })
+                );
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
 }
