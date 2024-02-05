@@ -777,7 +777,7 @@ pub mod test_util {
         },
         time::DurationExt,
         url_ensure_trailing_slash,
-        vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
+        vdaf::{VdafInstance, VERIFY_KEY_LENGTH, VERIFY_KEY_LENGTH_HMACSHA256_AES128},
     };
     use janus_messages::{
         AggregationJobId, CollectionJobId, Duration, HpkeConfigId, Role, TaskId, Time,
@@ -793,8 +793,11 @@ pub mod test_util {
             | VdafInstance::FakeFailsPrepInit
             | VdafInstance::FakeFailsPrepStep => 0,
 
-            // All "real" VDAFs use a verify key of length 16 currently. (Poplar1 may not, but it's
-            // not yet done being specified, so choosing 16 bytes is fine for testing.)
+            VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. } => {
+                VERIFY_KEY_LENGTH_HMACSHA256_AES128
+            }
+
+            // All other VDAFs (Prio3 as-specified and Poplar1) have the same verify key length.
             _ => VERIFY_KEY_LENGTH,
         }
     }

@@ -346,7 +346,32 @@ async fn janus_in_process_sum_vec() {
     .await;
 
     submit_measurements_and_verify_aggregate(
-        "",
+        "janus_in_process_sum_vec",
+        &janus_pair.task_parameters,
+        (janus_pair.leader.port(), janus_pair.helper.port()),
+        &ClientBackend::InProcess,
+    )
+    .await;
+}
+
+/// This test exercises Prio3SumVecField64MultiproofHmacSha256Aes128 with Janus as both the leader
+/// and the helper.
+#[tokio::test(flavor = "multi_thread")]
+async fn janus_in_process_customized_sum_vec() {
+    install_test_trace_subscriber();
+
+    let janus_pair = JanusInProcessPair::new(
+        VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+            bits: 16,
+            length: 15,
+            chunk_length: 16,
+        },
+        QueryType::TimeInterval,
+    )
+    .await;
+
+    submit_measurements_and_verify_aggregate(
+        "janus_in_process_customized_sum_vec",
         &janus_pair.task_parameters,
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &ClientBackend::InProcess,

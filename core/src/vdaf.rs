@@ -1,10 +1,27 @@
 use derivative::Derivative;
 use janus_messages::taskprov;
+use prio::{
+    field::Field64,
+    flp::{
+        gadgets::{Mul, ParallelSum},
+        types::SumVec,
+    },
+    vdaf::{prio3::Prio3, xof::XofHmacSha256Aes128, VdafError},
+};
 use serde::{Deserialize, Serialize};
 use std::str;
 
-/// The length of the verify key parameter for Prio3 & Poplar1 VDAF instantiations.
+/// The length of the verify key parameter for Prio3 and Poplar1 VDAF instantiations using
+/// [`XofTurboShake128`][prio::vdaf::xof::XofTurboShake128].
 pub const VERIFY_KEY_LENGTH: usize = 16;
+
+/// Private use algorithm ID for a customized version of Prio3SumVec. This value was chosen for
+/// interoperability with Daphne.
+const ALGORITHM_ID_PRIO3_SUM_VEC_FIELD64_MULTIPROOF_HMACSHA256_AES128: u32 = 0xFFFF_1003;
+
+/// The length of the verify key parameter when using [`XofHmacSha256Aes128`]. This XOF is not part
+/// of the VDAF specification.
+pub const VERIFY_KEY_LENGTH_HMACSHA256_AES128: usize = 32;
 
 /// Bitsize parameter for the `Prio3FixedPointBoundedL2VecSum` VDAF.
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -54,6 +71,13 @@ pub enum VdafInstance {
     Prio3Sum { bits: usize },
     /// A vector of `Prio3` sums.
     Prio3SumVec {
+        bits: usize,
+        length: usize,
+        chunk_length: usize,
+    },
+    /// Prio3SumVec with additional customizations: a smaller field, three proofs, and a different
+    /// XOF.
+    Prio3SumVecField64MultiproofHmacSha256Aes128 {
         bits: usize,
         length: usize,
         chunk_length: usize,
@@ -123,65 +147,27 @@ impl TryFrom<&taskprov::VdafType> for VdafInstance {
     }
 }
 
+pub type Prio3SumVecField64MultiproofHmacSha256Aes128 =
+    Prio3<SumVec<Field64, ParallelSum<Field64, Mul<Field64>>>, XofHmacSha256Aes128, 32>;
+
+/// Construct a customized Prio3SumVec VDAF, using the [`Field64`] field, three proofs, and
+/// [`XofHmacSha256Aes128`] as the XOF.
+pub fn new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
+    bits: usize,
+    length: usize,
+    chunk_length: usize,
+) -> Result<Prio3SumVecField64MultiproofHmacSha256Aes128, VdafError> {
+    Prio3::new(
+        2,
+        3,
+        ALGORITHM_ID_PRIO3_SUM_VEC_FIELD64_MULTIPROOF_HMACSHA256_AES128,
+        SumVec::new(bits, length, chunk_length)?,
+    )
+}
+
 /// Internal implementation details of [`vdaf_dispatch`](crate::vdaf_dispatch).
 #[macro_export]
 macro_rules! vdaf_dispatch_impl_base {
-    // Provide the dispatched type only, don't construct a VDAF instance.
-    (impl match base $vdaf_instance:expr, (_, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
-        match $vdaf_instance {
-            ::janus_core::vdaf::VdafInstance::Prio3Count => {
-                type $Vdaf = ::prio::vdaf::prio3::Prio3Count;
-                const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
-                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
-                $body
-            }
-
-            ::janus_core::vdaf::VdafInstance::Prio3CountVec { length } => {
-                type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
-                const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
-                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
-                $body
-            }
-
-            ::janus_core::vdaf::VdafInstance::Prio3Sum { bits } => {
-                type $Vdaf = ::prio::vdaf::prio3::Prio3Sum;
-                const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
-                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
-                $body
-            }
-
-            ::janus_core::vdaf::VdafInstance::Prio3SumVec { bits, length } => {
-                type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
-                const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
-                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
-                $body
-            }
-
-            ::janus_core::vdaf::VdafInstance::Prio3Histogram { buckets } => {
-                type $Vdaf = ::prio::vdaf::prio3::Prio3Histogram;
-                const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
-                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
-                $body
-            }
-
-            ::janus_core::vdaf::VdafInstance::Poplar1 { bits } => {
-                type $Vdaf = ::prio::vdaf::poplar1::Poplar1<::prio::vdaf::prg::PrgSha3, 16>;
-                const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
-                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
-                $body
-            }
-
-            _ => unreachable!(),
-        }
-    };
-
-    // Construct a VDAF instance, and provide that to the block as well.
     (impl match base $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
         match $vdaf_instance {
             ::janus_core::vdaf::VdafInstance::Prio3Count => {
@@ -238,6 +224,25 @@ macro_rules! vdaf_dispatch_impl_base {
                 $body
             }
 
+            ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                bits,
+                length,
+                chunk_length,
+            } => {
+                let $vdaf =
+                    janus_core::vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
+                        *bits,
+                        *length,
+                        *chunk_length,
+                    )?;
+                type $Vdaf = janus_core::vdaf::Prio3SumVecField64MultiproofHmacSha256Aes128;
+                const $VERIFY_KEY_LEN: usize =
+                    ::janus_core::vdaf::VERIFY_KEY_LENGTH_HMACSHA256_AES128;
+                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
+                let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
+                $body
+            }
+
             ::janus_core::vdaf::VdafInstance::Prio3Histogram {
                 length,
                 chunk_length,
@@ -269,19 +274,6 @@ macro_rules! vdaf_dispatch_impl_base {
 #[cfg(feature = "fpvec_bounded_l2")]
 #[macro_export]
 macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
-    // Provide the dispatched type only, don't construct a VDAF instance.
-    (impl match fpvec_bounded_l2 $vdaf_instance:expr, (_, $Vdaf:ident, $VERIFY_KEY_LEN:ident) => $body:tt) => {
-        match $vdaf_instance {
-            ::janus_core::vdaf::VdafInstance::Prio3FixedPointBoundedL2VecSum { bitsize, dp_strategy, length } => {
-                const $VERIFY_KEY_LEN: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
-                janus_core::vdaf_dispatch_impl_fpvec_bounded_l2!(@dispatch_bitsize bitsize, $Vdaf => $body)
-            }
-
-            _ => unreachable!(),
-        }
-    };
-
-    // Construct a VDAF instance, and provide that to the block as well.
     (impl match fpvec_bounded_l2 $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
         match $vdaf_instance {
             ::janus_core::vdaf::VdafInstance::Prio3FixedPointBoundedL2VecSum { bitsize, dp_strategy, length } => {
@@ -335,38 +327,6 @@ macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
 #[cfg(feature = "test-util")]
 #[macro_export]
 macro_rules! vdaf_dispatch_impl_test_util {
-    // Provide the dispatched type only, don't construct a VDAF instance.
-    (impl match test_util $vdaf_instance:expr, (_, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
-        match $vdaf_instance {
-            ::janus_core::vdaf::VdafInstance::Fake => {
-                type $Vdaf = ::janus_core::test_util::dummy_vdaf::Vdaf;
-                const $VERIFY_KEY_LEN: usize = 0;
-                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
-                $body
-            }
-
-            ::janus_core::vdaf::VdafInstance::FakeFailsPrepInit => {
-                type $Vdaf = ::janus_core::test_util::dummy_vdaf::Vdaf;
-                const $VERIFY_KEY_LEN: usize = 0;
-                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
-                $body
-            }
-
-            ::janus_core::vdaf::VdafInstance::FakeFailsPrepStep => {
-                type $Vdaf = ::janus_core::test_util::dummy_vdaf::Vdaf;
-                const $VERIFY_KEY_LEN: usize = 0;
-                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                let $dp_strategy = janus_core::dp::NoDifferentialPrivacy;
-                $body
-            }
-
-            _ => unreachable!(),
-        }
-    };
-
-    // Construct a VDAF instance, and provide that to the block as well.
     (impl match test_util $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
         match $vdaf_instance {
             ::janus_core::vdaf::VdafInstance::Fake => {
@@ -424,39 +384,13 @@ macro_rules! vdaf_dispatch_impl_test_util {
 #[cfg(all(feature = "fpvec_bounded_l2", feature = "test-util"))]
 #[macro_export]
 macro_rules! vdaf_dispatch_impl {
-    // Provide the dispatched type only, don't construct a VDAF instance.
-    (impl match all $vdaf_instance:expr, (_, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
-        match $vdaf_instance {
-            ::janus_core::vdaf::VdafInstance::Prio3Count
-            | ::janus_core::vdaf::VdafInstance::Prio3CountVec { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. }
-            | ::janus_core::vdaf::VdafInstance::Poplar1 { .. } => {
-                ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, (_, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
-            }
-
-            ::janus_core::vdaf::VdafInstance::Prio3FixedPointBoundedL2VecSum { .. } => {
-                ::janus_core::vdaf_dispatch_impl_fpvec_bounded_l2!(impl match fpvec_bounded_l2 $vdaf_instance, (_, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
-            }
-
-            ::janus_core::vdaf::VdafInstance::Fake
-            | ::janus_core::vdaf::VdafInstance::FakeFailsPrepInit
-            | ::janus_core::vdaf::VdafInstance::FakeFailsPrepStep => {
-                ::janus_core::vdaf_dispatch_impl_test_util!(impl match test_util $vdaf_instance, (_, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
-            }
-
-            _ => panic!("VDAF {:?} is not yet supported", $vdaf_instance),
-        }
-    };
-
-    // Construct a VDAF instance, and provide that to the block as well.
     (impl match all $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
         match $vdaf_instance {
             ::janus_core::vdaf::VdafInstance::Prio3Count
             | ::janus_core::vdaf::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
+            | ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. }
             | ::janus_core::vdaf::VdafInstance::Poplar1 { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
@@ -481,33 +415,13 @@ macro_rules! vdaf_dispatch_impl {
 #[cfg(all(feature = "fpvec_bounded_l2", not(feature = "test-util")))]
 #[macro_export]
 macro_rules! vdaf_dispatch_impl {
-    // Provide the dispatched type only, don't construct a VDAF instance.
-    (impl match all $vdaf_instance:expr, (_, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
-        match $vdaf_instance {
-            ::janus_core::vdaf::VdafInstance::Prio3Count
-            | ::janus_core::vdaf::VdafInstance::Prio3CountVec { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. }
-            | ::janus_core::vdaf::VdafInstance::Poplar1 { .. } => {
-                ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, (_, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
-            }
-
-            ::janus_core::vdaf::VdafInstance::Prio3FixedPointBoundedL2VecSum { .. } => {
-                ::janus_core::vdaf_dispatch_impl_fpvec_bounded_l2!(impl match fpvec_bounded_l2 $vdaf_instance, (_, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
-            }
-
-            _ => panic!("VDAF {:?} is not yet supported", $vdaf_instance),
-        }
-    };
-
-    // Construct a VDAF instance, and provide that to the block as well.
     (impl match all $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
         match $vdaf_instance {
             ::janus_core::vdaf::VdafInstance::Prio3Count
             | ::janus_core::vdaf::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
+            | ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. }
             | ::janus_core::vdaf::VdafInstance::Poplar1 { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
@@ -526,35 +440,13 @@ macro_rules! vdaf_dispatch_impl {
 #[cfg(all(not(feature = "fpvec_bounded_l2"), feature = "test-util"))]
 #[macro_export]
 macro_rules! vdaf_dispatch_impl {
-    // Provide the dispatched type only, don't construct a VDAF instance.
-    (impl match all $vdaf_instance:expr, (_, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
-        match $vdaf_instance {
-            ::janus_core::vdaf::VdafInstance::Prio3Count
-            | ::janus_core::vdaf::VdafInstance::Prio3CountVec { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. }
-            | ::janus_core::vdaf::VdafInstance::Poplar1 { .. } => {
-                ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, (_, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
-            }
-
-            ::janus_core::vdaf::VdafInstance::Fake
-            | ::janus_core::vdaf::VdafInstance::FakeFailsPrepInit
-            | ::janus_core::vdaf::VdafInstance::FakeFailsPrepStep => {
-                ::janus_core::vdaf_dispatch_impl_test_util!(impl match test_util $vdaf_instance, (_, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
-            }
-
-            _ => panic!("VDAF {:?} is not yet supported", $vdaf_instance),
-        }
-    };
-
-    // Construct a VDAF instance, and provide that to the block as well.
     (impl match all $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
         match $vdaf_instance {
             ::janus_core::vdaf::VdafInstance::Prio3Count
             | ::janus_core::vdaf::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
+            | ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. }
             | ::janus_core::vdaf::VdafInstance::Poplar1 { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
@@ -575,29 +467,13 @@ macro_rules! vdaf_dispatch_impl {
 #[cfg(all(not(feature = "fpvec_bounded_l2"), not(feature = "test-util")))]
 #[macro_export]
 macro_rules! vdaf_dispatch_impl {
-    // Provide the dispatched type only, don't construct a VDAF instance.
-    (impl match all $vdaf_instance:expr, (_, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
-        match $vdaf_instance {
-            ::janus_core::vdaf::VdafInstance::Prio3Count
-            | ::janus_core::vdaf::VdafInstance::Prio3CountVec { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
-            | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. }
-            | ::janus_core::vdaf::VdafInstance::Poplar1 { .. } => {
-                ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, (_, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
-            }
-
-            _ => panic!("VDAF {:?} is not yet supported", $vdaf_instance),
-        }
-    };
-
-    // Construct a VDAF instance, and provide that to the block as well.
     (impl match all $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
         match $vdaf_instance {
             ::janus_core::vdaf::VdafInstance::Prio3Count
             | ::janus_core::vdaf::VdafInstance::Prio3CountVec { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Sum { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3SumVec { .. }
+            | ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. }
             | ::janus_core::vdaf::VdafInstance::Prio3Histogram { .. }
             | ::janus_core::vdaf::VdafInstance::Poplar1 { .. } => {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
@@ -694,6 +570,48 @@ mod tests {
                 },
                 Token::Str("bits"),
                 Token::U64(64),
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_tokens(
+            &VdafInstance::Prio3SumVec {
+                bits: 1,
+                length: 8,
+                chunk_length: 3,
+            },
+            &[
+                Token::StructVariant {
+                    name: "VdafInstance",
+                    variant: "Prio3SumVec",
+                    len: 3,
+                },
+                Token::Str("bits"),
+                Token::U64(1),
+                Token::Str("length"),
+                Token::U64(8),
+                Token::Str("chunk_length"),
+                Token::U64(3),
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_tokens(
+            &VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                bits: 1,
+                length: 8,
+                chunk_length: 3,
+            },
+            &[
+                Token::StructVariant {
+                    name: "VdafInstance",
+                    variant: "Prio3SumVecField64MultiproofHmacSha256Aes128",
+                    len: 3,
+                },
+                Token::Str("bits"),
+                Token::U64(1),
+                Token::Str("length"),
+                Token::U64(8),
+                Token::Str("chunk_length"),
+                Token::U64(3),
                 Token::StructVariantEnd,
             ],
         );

@@ -111,6 +111,19 @@ impl TypeWithNoise<NoDifferentialPrivacy>
     }
 }
 
+impl TypeWithNoise<NoDifferentialPrivacy>
+    for prio::flp::types::SumVec<Field64, ParallelSum<Field64, Mul<Field64>>>
+{
+    fn add_noise_to_result(
+        &self,
+        _dp_strategy: &NoDifferentialPrivacy,
+        _agg_result: &mut [Self::Field],
+        _num_measurements: usize,
+    ) -> Result<(), prio::flp::FlpError> {
+        Ok(())
+    }
+}
+
 #[cfg(feature = "fpvec_bounded_l2")]
 impl<T, SPoly, SBlindPoly> TypeWithNoise<NoDifferentialPrivacy>
     for FixedPointBoundedL2VecSum<T, SPoly, SBlindPoly>
