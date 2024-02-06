@@ -848,7 +848,7 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
     ds.run_tx("test-unaggregated-reports", |tx| {
         let (task, first_unaggregated_report) = (task.clone(), first_unaggregated_report.clone());
         Box::pin(async move {
-            tx.mark_reports_unaggregated(task.id(), &[*first_unaggregated_report.metadata().id()])
+            tx.mark_report_unaggregated(task.id(), first_unaggregated_report.metadata().id())
                 .await
         })
     })

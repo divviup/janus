@@ -205,6 +205,7 @@ impl TimeExt for Time {
         &self,
         time_precision: &Duration,
     ) -> Result<Self, janus_messages::Error> {
+        // This function will return an error if and only if `time_precision` is 0.
         let rem = self
             .as_seconds_since_epoch()
             .checked_rem(time_precision.as_seconds())
