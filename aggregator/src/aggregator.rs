@@ -1172,6 +1172,7 @@ enum VdafOps {
 /// length, also for explicitly specifying type parameters.
 macro_rules! vdaf_ops_dispatch {
     ($vdaf_ops:expr, ($vdaf:pat_param, $verify_key:pat_param, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
+        #[allow(unused_braces)]
         match $vdaf_ops {
             crate::aggregator::VdafOps::Prio3Count(vdaf, verify_key) => {
                 let $vdaf = vdaf;

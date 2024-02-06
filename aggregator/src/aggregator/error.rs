@@ -144,6 +144,9 @@ pub enum Error {
     /// An error occurred when trying to ensure differential privacy.
     #[error("differential privacy error: {0}")]
     DifferentialPrivacy(VdafError),
+    /// the http client disconnected while we were still executing
+    #[error("http client disconnect")]
+    ClientDisconnected,
 }
 
 /// Contains details that describe the report and why it was rejected.
@@ -307,6 +310,7 @@ impl Error {
             Error::BadRequest(_) => "bad_request",
             Error::InvalidTask(_, _) => "invalid_task",
             Error::DifferentialPrivacy(_) => "differential_privacy",
+            Error::ClientDisconnected => "client_disconnected",
         }
     }
 }
