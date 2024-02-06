@@ -2108,7 +2108,6 @@ dependencies = [
  "regex",
  "reqwest",
  "ring 0.17.8",
- "routefinder",
  "rstest",
  "rustc_version",
  "rustls 0.22.2",
