@@ -33,10 +33,7 @@ use janus_interop_binaries::{
     ContainerLogsDropGuard,
 };
 use janus_messages::Role;
-use std::{
-    net::{Ipv4Addr, SocketAddr},
-    time::Duration,
-};
+use std::net::{Ipv4Addr, SocketAddr};
 #[cfg(feature = "testcontainer")]
 use testcontainers::{clients::Cli, RunnableImage};
 use trillium_tokio::Stopper;
@@ -186,8 +183,8 @@ impl JanusInProcess {
                 worker_lease_duration_secs: 10,
                 worker_lease_clock_skew_allowance_secs: 1,
                 maximum_attempts_before_failure: 3,
-                http_request_timeout: Duration::from_secs(30),
-                http_request_connection_timeout: Duration::from_secs(10),
+                http_request_timeout_secs: 30,
+                http_request_connection_timeout_secs: 10,
             },
             taskprov_config: TaskprovConfig::default(),
             batch_aggregation_shard_count: 32,
@@ -203,8 +200,8 @@ impl JanusInProcess {
                 worker_lease_duration_secs: 10,
                 worker_lease_clock_skew_allowance_secs: 1,
                 maximum_attempts_before_failure: 3,
-                http_request_timeout: Duration::from_secs(30),
-                http_request_connection_timeout: Duration::from_secs(10),
+                http_request_timeout_secs: 30,
+                http_request_connection_timeout_secs: 10,
             },
             batch_aggregation_shard_count: 32,
         };

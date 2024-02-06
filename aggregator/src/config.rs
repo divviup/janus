@@ -7,7 +7,6 @@ use std::{
     fmt::Debug,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
-    time::Duration,
 };
 use url::Url;
 
@@ -155,23 +154,23 @@ pub struct JobDriverConfig {
     /// The number of attempts to drive a work item before it is placed in a permanent failure
     /// state.
     pub maximum_attempts_before_failure: usize,
-    /// Timeout to apply when making connections to the server for HTTP requests. See
+    /// Timeout to apply when establishing connections to the helper for HTTP requests. See
     /// [`reqwest::ClientBuilder::connect_timeout`] for details.
     #[serde(default = "JobDriverConfig::default_http_connection_timeout")]
-    pub http_request_connection_timeout: Duration,
-    /// Timeout to apply to requests overall when making HTTP requests. See
-    /// [`reqwest::ClientBuilder::timeout`] for details.
+    pub http_request_connection_timeout_secs: u64,
+    /// Timeout to apply to HTTP requests overall (including connection establishment) when
+    /// communicating with the helper. See [`reqwest::ClientBuilder::timeout`] for details.
     #[serde(default = "JobDriverConfig::default_http_request_timeout")]
-    pub http_request_timeout: Duration,
+    pub http_request_timeout_secs: u64,
 }
 
 impl JobDriverConfig {
-    fn default_http_connection_timeout() -> Duration {
-        Duration::from_secs(10)
+    fn default_http_connection_timeout() -> u64 {
+        10
     }
 
-    fn default_http_request_timeout() -> Duration {
-        Duration::from_secs(30)
+    fn default_http_request_timeout() -> u64 {
+        30
     }
 }
 
@@ -270,8 +269,9 @@ mod tests {
             worker_lease_duration_secs: 600,
             worker_lease_clock_skew_allowance_secs: 60,
             maximum_attempts_before_failure: 5,
-            http_request_connection_timeout: JobDriverConfig::default_http_connection_timeout(),
-            http_request_timeout: JobDriverConfig::default_http_request_timeout(),
+            http_request_connection_timeout_secs: JobDriverConfig::default_http_connection_timeout(
+            ),
+            http_request_timeout_secs: JobDriverConfig::default_http_request_timeout(),
         })
     }
 
