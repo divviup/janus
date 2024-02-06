@@ -474,30 +474,6 @@ async fn handle_collection_start(
             .await?
         }
 
-        (
-            ParsedQuery::FixedSize(fixed_size_query),
-            VdafInstance::Prio3CountVec {
-                length,
-                chunk_length,
-            },
-        ) => {
-            let vdaf = Prio3::new_sum_vec_multithreaded(2, 1, length, chunk_length)
-                .context("failed to construct Prio3CountVec VDAF")?;
-            handle_collect_generic(
-                http_client,
-                task_state,
-                Query::new_fixed_size(fixed_size_query),
-                vdaf,
-                &agg_param,
-                |selector| Some(*selector.batch_id()),
-                |result| {
-                    let converted = result.iter().cloned().map(NumberAsString).collect();
-                    AggregationResult::NumberVec(converted)
-                },
-            )
-            .await?
-        }
-
         #[cfg(feature = "fpvec_bounded_l2")]
         (
             ParsedQuery::FixedSize(fixed_size_query),

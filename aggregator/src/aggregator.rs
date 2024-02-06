@@ -858,15 +858,6 @@ impl<C: Clock> TaskAggregator<C> {
                 VdafOps::Prio3Count(Arc::new(vdaf), verify_key)
             }
 
-            VdafInstance::Prio3CountVec {
-                length,
-                chunk_length,
-            } => {
-                let vdaf = Prio3::new_sum_vec_multithreaded(2, 1, *length, *chunk_length)?;
-                let verify_key = task.vdaf_verify_key()?;
-                VdafOps::Prio3CountVec(Arc::new(vdaf), verify_key)
-            }
-
             VdafInstance::Prio3Sum { bits } => {
                 let vdaf = Prio3::new_sum(2, *bits)?;
                 let verify_key = task.vdaf_verify_key()?;
@@ -1147,7 +1138,6 @@ mod vdaf_ops_strategies {
 #[allow(clippy::enum_variant_names)]
 enum VdafOps {
     Prio3Count(Arc<Prio3Count>, VerifyKey<VERIFY_KEY_LENGTH>),
-    Prio3CountVec(Arc<Prio3SumVecMultithreaded>, VerifyKey<VERIFY_KEY_LENGTH>),
     Prio3Sum(Arc<Prio3Sum>, VerifyKey<VERIFY_KEY_LENGTH>),
     Prio3SumVec(Arc<Prio3SumVecMultithreaded>, VerifyKey<VERIFY_KEY_LENGTH>),
     Prio3SumVecField64MultiproofHmacSha256Aes128(
@@ -1187,16 +1177,6 @@ macro_rules! vdaf_ops_dispatch {
                 let $vdaf = vdaf;
                 let $verify_key = verify_key;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Count;
-                const $VERIFY_KEY_LENGTH: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
-                type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
-                let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);
-                $body
-            }
-
-            crate::aggregator::VdafOps::Prio3CountVec(vdaf, verify_key) => {
-                let $vdaf = vdaf;
-                let $verify_key = verify_key;
-                type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::vdaf::VERIFY_KEY_LENGTH;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
                 let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);

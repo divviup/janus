@@ -66,7 +66,6 @@ VDAF Algorithm and Parameters:
 
           Possible values:
           - count:                          Prio3Count
-          - countvec:                       Prio3CountVec
           - sum:                            Prio3Sum
           - sumvec:                         Prio3SumVec
           - histogram:                      Prio3Histogram
@@ -75,7 +74,7 @@ VDAF Algorithm and Parameters:
           - fixedpoint64bitboundedl2vecsum: Prio3FixedPoint64BitBoundedL2VecSum
 
       --length <LENGTH>
-          Number of vector elements, when used with --vdaf=countvec and --vdaf=sumvec or number of histogram buckets, when used with --vdaf=histogram
+          Number of vector elements, when used with --vdaf=sumvec or number of histogram buckets, when used with --vdaf=histogram
 
       --bits <BITS>
           Bit length of measurements, for use with --vdaf=sum and --vdaf=sumvec

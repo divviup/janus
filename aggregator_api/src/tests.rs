@@ -88,7 +88,7 @@ async fn get_config() {
         Status::Ok,
         concat!(
             r#"{"protocol":"DAP-07","dap_url":"https://dap.url/","role":"Either","vdafs":"#,
-            r#"["Prio3Count","Prio3Sum","Prio3Histogram","Prio3CountVec","Prio3SumVec"],"#,
+            r#"["Prio3Count","Prio3Sum","Prio3Histogram","Prio3SumVec"],"#,
             r#""query_types":["TimeInterval","FixedSize"],"#,
             r#""features":["TokenHash"]}"#,
         )
@@ -1621,7 +1621,8 @@ fn post_task_req_serialization() {
                 max_batch_size: Some(999),
                 batch_time_window_size: None,
             },
-            vdaf: VdafInstance::Prio3CountVec {
+            vdaf: VdafInstance::Prio3SumVec {
+                bits: 1,
                 length: 5,
                 chunk_length: 2,
             },
@@ -1663,9 +1664,11 @@ fn post_task_req_serialization() {
             Token::Str("vdaf"),
             Token::StructVariant {
                 name: "VdafInstance",
-                variant: "Prio3CountVec",
-                len: 2,
+                variant: "Prio3SumVec",
+                len: 3,
             },
+            Token::Str("bits"),
+            Token::U64(1),
             Token::Str("length"),
             Token::U64(5),
             Token::Str("chunk_length"),
@@ -1731,7 +1734,8 @@ fn post_task_req_serialization() {
                 max_batch_size: Some(999),
                 batch_time_window_size: None,
             },
-            vdaf: VdafInstance::Prio3CountVec {
+            vdaf: VdafInstance::Prio3SumVec {
+                bits: 1,
                 length: 5,
                 chunk_length: 2,
             },
@@ -1777,9 +1781,11 @@ fn post_task_req_serialization() {
             Token::Str("vdaf"),
             Token::StructVariant {
                 name: "VdafInstance",
-                variant: "Prio3CountVec",
-                len: 2,
+                variant: "Prio3SumVec",
+                len: 3,
             },
+            Token::Str("bits"),
+            Token::U64(1),
             Token::Str("length"),
             Token::U64(5),
             Token::Str("chunk_length"),
@@ -1873,7 +1879,8 @@ fn task_resp_serialization() {
             max_batch_size: Some(999),
             batch_time_window_size: None,
         },
-        VdafInstance::Prio3CountVec {
+        VdafInstance::Prio3SumVec {
+            bits: 1,
             length: 5,
             chunk_length: 2,
         },
@@ -1939,9 +1946,11 @@ fn task_resp_serialization() {
             Token::Str("vdaf"),
             Token::StructVariant {
                 name: "VdafInstance",
-                variant: "Prio3CountVec",
-                len: 2,
+                variant: "Prio3SumVec",
+                len: 3,
             },
+            Token::Str("bits"),
+            Token::U64(1),
             Token::Str("length"),
             Token::U64(5),
             Token::Str("chunk_length"),

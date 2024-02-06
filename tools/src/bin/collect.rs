@@ -65,8 +65,6 @@ impl From<clap::Error> for Error {
 enum VdafType {
     /// Prio3Count
     Count,
-    /// Prio3CountVec
-    CountVec,
     /// Prio3Sum
     Sum,
     /// Prio3SumVec
@@ -329,8 +327,8 @@ struct Options {
         display_order = 0
     )]
     vdaf: VdafType,
-    /// Number of vector elements, when used with --vdaf=countvec and --vdaf=sumvec or number of
-    /// histogram buckets, when used with --vdaf=histogram
+    /// Number of vector elements, when used with --vdaf=sumvec or number of histogram buckets, when
+    /// used with --vdaf=histogram
     #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
     length: Option<usize>,
     /// Bit length of measurements, for use with --vdaf=sum and --vdaf=sumvec
@@ -480,13 +478,6 @@ macro_rules! options_vdaf_dispatch {
         match ($options.vdaf, $options.length, $options.bits) {
             (VdafType::Count, None, None) => {
                 let $vdaf = Prio3::new_count(2).map_err(|err| Error::Anyhow(err.into()))?;
-                $body
-            }
-            (VdafType::CountVec, Some(length), None) => {
-                // We can take advantage of the fact that Prio3SumVec unsharding does not use the
-                // chunk_length parameter and avoid asking the user for it.
-                let $vdaf =
-                    Prio3::new_sum_vec(2, 1, length, 1).map_err(|err| Error::Anyhow(err.into()))?;
                 $body
             }
             (VdafType::Sum, None, Some(bits)) => {
@@ -890,14 +881,6 @@ mod tests {
             "1000".to_string(),
         ]);
 
-        let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend(["--vdaf=countvec".to_string(), "--bits=3".to_string()]);
-        let bad_options = Options::try_parse_from(bad_arguments).unwrap();
-        assert_matches!(
-            run(bad_options).await.unwrap_err(),
-            Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
-        );
-
         #[cfg(feature = "fpvec_bounded_l2")]
         {
             let mut bad_arguments = base_arguments.clone();
@@ -956,10 +939,6 @@ mod tests {
             run(bad_options).await.unwrap_err(),
             Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
         );
-
-        let mut good_arguments = base_arguments.clone();
-        good_arguments.extend(["--vdaf=countvec".to_string(), "--length=10".to_string()]);
-        Options::try_parse_from(good_arguments).unwrap();
 
         let mut good_arguments = base_arguments.clone();
         good_arguments.extend(["--vdaf=sum".to_string(), "--bits=8".to_string()]);

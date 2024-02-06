@@ -45,7 +45,6 @@ pub(crate) enum SupportedVdaf {
     Prio3Sum,
     Prio3Histogram,
     Prio3SumVec,
-    Prio3CountVec,
 }
 
 #[derive(Serialize)]

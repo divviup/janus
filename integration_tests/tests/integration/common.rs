@@ -552,53 +552,6 @@ pub async fn submit_measurements_and_verify_aggregate(
             )
             .await;
         }
-        VdafInstance::Prio3CountVec {
-            length,
-            chunk_length,
-        } => {
-            let vdaf = Prio3::new_sum_vec_multithreaded(2, 1, *length, *chunk_length).unwrap();
-
-            let measurements = iter::repeat_with(|| {
-                iter::repeat_with(|| random::<bool>() as u128)
-                    .take(*length)
-                    .collect::<Vec<_>>()
-            })
-            .take(total_measurements)
-            .collect::<Vec<_>>();
-            let aggregate_result =
-                measurements
-                    .iter()
-                    .fold(vec![0u128; *length], |mut accumulator, measurement| {
-                        for (sum, elem) in accumulator.iter_mut().zip(measurement.iter()) {
-                            *sum += *elem;
-                        }
-                        accumulator
-                    });
-            let test_case = AggregationTestCase {
-                measurements,
-                aggregation_parameter: (),
-                aggregate_result,
-            };
-
-            let client_implementation = client_backend
-                .build(
-                    test_name,
-                    task_parameters,
-                    (leader_port, helper_port),
-                    vdaf.clone(),
-                )
-                .await
-                .unwrap();
-
-            submit_measurements_and_verify_aggregate_generic(
-                task_parameters,
-                leader_port,
-                vdaf,
-                &test_case,
-                &client_implementation,
-            )
-            .await;
-        }
         _ => panic!("Unsupported VdafInstance: {:?}", task_parameters.vdaf),
     }
 }

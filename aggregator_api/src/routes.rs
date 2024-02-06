@@ -41,7 +41,6 @@ pub(super) async fn get_config(
             SupportedVdaf::Prio3Count,
             SupportedVdaf::Prio3Sum,
             SupportedVdaf::Prio3Histogram,
-            SupportedVdaf::Prio3CountVec,
             SupportedVdaf::Prio3SumVec,
         ],
         query_types: vec![
