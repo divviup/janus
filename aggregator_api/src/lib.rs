@@ -21,7 +21,7 @@ use trillium::{
     Status,
     Status::{NotAcceptable, UnsupportedMediaType},
 };
-use trillium_api::{api, Halt, State};
+use trillium_api::{api, cancel_on_disconnect, Halt, State};
 use trillium_opentelemetry::metrics;
 use trillium_router::{Router, RouterConnExt};
 use url::Url;
@@ -88,50 +88,59 @@ pub fn aggregator_api_handler<C: Clock>(
         ReplaceMimeTypes,
         // Main functionality router.
         Router::new()
-            .get("/", instrumented(api(get_config)))
-            .get("/task_ids", instrumented(api(get_task_ids::<C>)))
-            .post("/tasks", instrumented(api(post_task::<C>)))
-            .get("/tasks/:task_id", instrumented(api(get_task::<C>)))
-            .delete("/tasks/:task_id", instrumented(api(delete_task::<C>)))
+            .get("/", instrumented(cancel_on_disconnect(get_config)))
+            .get(
+                "/task_ids",
+                instrumented(cancel_on_disconnect(get_task_ids::<C>)),
+            )
+            .post("/tasks", instrumented(cancel_on_disconnect(post_task::<C>)))
+            .get(
+                "/tasks/:task_id",
+                instrumented(cancel_on_disconnect(get_task::<C>)),
+            )
+            .delete(
+                "/tasks/:task_id",
+                instrumented(cancel_on_disconnect(delete_task::<C>)),
+            )
             .get(
                 "/tasks/:task_id/metrics/uploads",
-                instrumented(api(get_task_upload_metrics::<C>)),
+                instrumented(cancel_on_disconnect(get_task_upload_metrics::<C>)),
             )
             .get(
                 "/tasks/:task_id/metrics",
-                instrumented(api(get_task_metrics::<C>)),
+                instrumented(cancel_on_disconnect(get_task_metrics::<C>)),
             )
             .get(
                 "/hpke_configs",
-                instrumented(api(get_global_hpke_configs::<C>)),
+                instrumented(cancel_on_disconnect(get_global_hpke_configs::<C>)),
             )
             .get(
                 "/hpke_configs/:config_id",
-                instrumented(api(get_global_hpke_config::<C>)),
+                instrumented(cancel_on_disconnect(get_global_hpke_config::<C>)),
             )
             .put(
                 "/hpke_configs",
-                instrumented(api(put_global_hpke_config::<C>)),
+                instrumented(cancel_on_disconnect(put_global_hpke_config::<C>)),
             )
             .patch(
                 "/hpke_configs/:config_id",
-                instrumented(api(patch_global_hpke_config::<C>)),
+                instrumented(cancel_on_disconnect(patch_global_hpke_config::<C>)),
             )
             .delete(
                 "/hpke_configs/:config_id",
-                instrumented(api(delete_global_hpke_config::<C>)),
+                instrumented(cancel_on_disconnect(delete_global_hpke_config::<C>)),
             )
             .get(
                 "/taskprov/peer_aggregators",
-                instrumented(api(get_taskprov_peer_aggregators::<C>)),
+                instrumented(cancel_on_disconnect(get_taskprov_peer_aggregators::<C>)),
             )
             .post(
                 "/taskprov/peer_aggregators",
-                instrumented(api(post_taskprov_peer_aggregator::<C>)),
+                instrumented(cancel_on_disconnect(post_taskprov_peer_aggregator::<C>)),
             )
             .delete(
                 "/taskprov/peer_aggregators",
-                instrumented(api(delete_taskprov_peer_aggregator::<C>)),
+                instrumented(cancel_on_disconnect(delete_taskprov_peer_aggregator::<C>)),
             ),
     )
 }
@@ -218,29 +227,5 @@ impl Handler for Error {
                 .with_body(err.to_string()),
         }
         .halt()
-    }
-}
-
-trait ConnExt {
-    fn task_id_param(&self) -> Result<TaskId, Error>;
-    fn hpke_config_id_param(&self) -> Result<HpkeConfigId, Error>;
-}
-
-impl ConnExt for Conn {
-    fn task_id_param(&self) -> Result<TaskId, Error> {
-        TaskId::from_str(
-            self.param("task_id")
-                .ok_or_else(|| Error::Internal("Missing task_id parameter".to_string()))?,
-        )
-        .map_err(|err| Error::BadRequest(format!("{:?}", err)))
-    }
-
-    fn hpke_config_id_param(&self) -> Result<HpkeConfigId, Error> {
-        Ok(HpkeConfigId::from(
-            self.param("config_id")
-                .ok_or_else(|| Error::Internal("Missing config_id parameter".to_string()))?
-                .parse::<u8>()
-                .map_err(|_| Error::BadRequest("Invalid config_id parameter".to_string()))?,
-        ))
     }
 }

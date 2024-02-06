@@ -5,7 +5,7 @@ use crate::{
         PatchGlobalHpkeConfigReq, PostTaskReq, PostTaskprovPeerAggregatorReq,
         PutGlobalHpkeConfigReq, SupportedVdaf, TaskResp, TaskprovPeerAggregatorResp,
     },
-    Config, ConnExt, Error,
+    Config, Error,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
@@ -25,14 +25,14 @@ use janus_messages::{
 use querystring::querify;
 use rand::random;
 use ring::digest::{digest, SHA256};
-use std::{str::FromStr, sync::Arc, unreachable};
+use std::{ops::Deref, str::FromStr, sync::Arc, unreachable};
 use trillium::{Conn, Status};
-use trillium_api::{Json, State};
+use trillium_api::{Json, State, TryFromConn};
+use trillium_router::RouterConnExt;
 
-pub(super) async fn get_config(
-    _: &mut Conn,
-    State(config): State<Arc<Config>>,
-) -> Json<AggregatorApiConfig> {
+type Store<C> = State<Arc<Datastore<C>>>;
+
+pub(super) async fn get_config(State(config): State<Arc<Config>>) -> Json<AggregatorApiConfig> {
     Json(AggregatorApiConfig {
         protocol: "DAP-07",
         dap_url: config.public_dap_url.clone(),
@@ -52,18 +52,24 @@ pub(super) async fn get_config(
     })
 }
 
-pub(super) async fn get_task_ids<C: Clock>(
-    conn: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
-) -> Result<Json<GetTaskIdsResp>, Error> {
-    const PAGINATION_TOKEN_KEY: &str = "pagination_token";
-    let lower_bound = querify(conn.querystring())
-        .into_iter()
-        .find(|&(k, _)| k == PAGINATION_TOKEN_KEY)
-        .map(|(_, v)| TaskId::from_str(v))
-        .transpose()
-        .map_err(|err| Error::BadRequest(format!("Couldn't parse pagination_token: {:?}", err)))?;
+struct LowerBound(Option<TaskId>);
+#[async_trait]
+impl TryFromConn for LowerBound {
+    type Error = Error;
+    async fn try_from_conn(conn: &mut Conn) -> Result<Self, Self::Error> {
+        querify(conn.querystring())
+            .into_iter()
+            .find(|&(k, _)| k == "pagination_token")
+            .map(|(_, v)| TaskId::from_str(v))
+            .transpose()
+            .map(Self)
+            .map_err(|err| Error::BadRequest(format!("Couldn't parse pagination_token: {:?}", err)))
+    }
+}
 
+pub(super) async fn get_task_ids<C: Clock>(
+    (LowerBound(lower_bound), ds): (LowerBound, Store<C>),
+) -> Result<Json<GetTaskIdsResp>, Error> {
     let task_ids = ds
         .run_tx("get_task_ids", |tx| {
             Box::pin(async move { tx.get_task_ids(lower_bound).await })
@@ -78,8 +84,7 @@ pub(super) async fn get_task_ids<C: Clock>(
 }
 
 pub(super) async fn post_task<C: Clock>(
-    _: &mut Conn,
-    (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PostTaskReq>),
+    (ds, req): (Store<C>, Json<PostTaskReq>),
 ) -> Result<Json<TaskResp>, Error> {
     if !matches!(req.role, Role::Leader | Role::Helper) {
         return Err(Error::BadRequest(format!("invalid role {}", req.role)));
@@ -222,9 +227,51 @@ pub(super) async fn post_task<C: Clock>(
     Ok(Json(task_resp))
 }
 
+struct TaskIdParam(TaskId);
+impl Deref for TaskIdParam {
+    type Target = TaskId;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[async_trait]
+impl TryFromConn for TaskIdParam {
+    type Error = Error;
+    async fn try_from_conn(conn: &mut Conn) -> Result<Self, Self::Error> {
+        TaskId::from_str(
+            conn.param("task_id")
+                .ok_or_else(|| Error::Internal("Missing task_id parameter".to_string()))?,
+        )
+        .map_err(|err| Error::BadRequest(format!("{:?}", err)))
+        .map(Self)
+    }
+}
+
+struct HpkeConfigIdParam(HpkeConfigId);
+impl Deref for HpkeConfigIdParam {
+    type Target = HpkeConfigId;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+#[async_trait]
+impl TryFromConn for HpkeConfigIdParam {
+    type Error = Error;
+    async fn try_from_conn(conn: &mut Conn) -> Result<Self, Self::Error> {
+        Ok(Self(HpkeConfigId::from(
+            conn.param("config_id")
+                .ok_or_else(|| Error::Internal("Missing config_id parameter".to_string()))?
+                .parse::<u8>()
+                .map_err(|_| Error::BadRequest("Invalid config_id parameter".to_string()))?,
+        )))
+    }
+}
+
 pub(super) async fn get_task<C: Clock>(
-    conn: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
+    (task_id, ds): (TaskIdParam, Store<C>),
 ) -> Result<Json<TaskResp>, Error> {
     let task_id = conn.task_id_param()?;
 
@@ -241,10 +288,8 @@ pub(super) async fn get_task<C: Clock>(
 }
 
 pub(super) async fn delete_task<C: Clock>(
-    conn: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
+    (TaskIdParam(task_id), ds): (TaskIdParam, Store<C>),
 ) -> Result<Status, Error> {
-    let task_id = conn.task_id_param()?;
     match ds
         .run_tx("delete_task", |tx| {
             Box::pin(async move { tx.delete_task(&task_id).await })
@@ -257,11 +302,8 @@ pub(super) async fn delete_task<C: Clock>(
 }
 
 pub(super) async fn get_task_metrics<C: Clock>(
-    conn: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
+    (task_id, ds): (TaskIdParam, Store<C>),
 ) -> Result<Json<GetTaskMetricsResp>, Error> {
-    let task_id = conn.task_id_param()?;
-
     let (reports, report_aggregations) = ds
         .run_tx("get_task_metrics", |tx| {
             Box::pin(async move { tx.get_task_metrics(&task_id).await })
@@ -276,10 +318,8 @@ pub(super) async fn get_task_metrics<C: Clock>(
 }
 
 pub(super) async fn get_task_upload_metrics<C: Clock>(
-    conn: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
+    (task_id, ds): (TaskIdParam, Store<C>),
 ) -> Result<Json<GetTaskUploadMetricsResp>, Error> {
-    let task_id = conn.task_id_param()?;
     Ok(Json(GetTaskUploadMetricsResp(
         ds.run_tx("get_task_upload_metrics", |tx| {
             Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
@@ -290,8 +330,7 @@ pub(super) async fn get_task_upload_metrics<C: Clock>(
 }
 
 pub(super) async fn get_global_hpke_configs<C: Clock>(
-    _: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
+    ds: Store<C>,
 ) -> Result<Json<Vec<GlobalHpkeConfigResp>>, Error> {
     Ok(Json(
         ds.run_tx("get_global_hpke_configs", |tx| {
@@ -305,10 +344,8 @@ pub(super) async fn get_global_hpke_configs<C: Clock>(
 }
 
 pub(super) async fn get_global_hpke_config<C: Clock>(
-    conn: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
+    (hpke_config_id, ds): (HpkeConfigIdParam, Store<C>),
 ) -> Result<Json<GlobalHpkeConfigResp>, Error> {
-    let config_id = conn.hpke_config_id_param()?;
     Ok(Json(GlobalHpkeConfigResp::from(
         ds.run_tx("get_global_hpke_config", |tx| {
             Box::pin(async move { tx.get_global_hpke_keypair(&config_id).await })
@@ -319,8 +356,7 @@ pub(super) async fn get_global_hpke_config<C: Clock>(
 }
 
 pub(super) async fn put_global_hpke_config<C: Clock>(
-    _: &mut Conn,
-    (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PutGlobalHpkeConfigReq>),
+    (ds, req): (Store<C>, Json<PutGlobalHpkeConfigReq>),
 ) -> Result<(Status, Json<GlobalHpkeConfigResp>), Error> {
     let existing_keypairs = ds
         .run_tx("put_global_hpke_config_determine_id", |tx| {
@@ -363,11 +399,8 @@ pub(super) async fn put_global_hpke_config<C: Clock>(
 }
 
 pub(super) async fn patch_global_hpke_config<C: Clock>(
-    conn: &mut Conn,
-    (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PatchGlobalHpkeConfigReq>),
+    (config_id, ds, req): (HpkeConfigIdParam, Store<C>, Json<PatchGlobalHpkeConfigReq>),
 ) -> Result<Status, Error> {
-    let config_id = conn.hpke_config_id_param()?;
-
     ds.run_tx("patch_hpke_global_keypair", |tx| {
         Box::pin(async move {
             tx.set_global_hpke_keypair_state(&config_id, &req.state)
@@ -380,10 +413,8 @@ pub(super) async fn patch_global_hpke_config<C: Clock>(
 }
 
 pub(super) async fn delete_global_hpke_config<C: Clock>(
-    conn: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
+    (config_id, ds): (HpkeConfigIdParam, Store<C>),
 ) -> Result<Status, Error> {
-    let config_id = conn.hpke_config_id_param()?;
     match ds
         .run_tx("delete_global_hpke_config", |tx| {
             Box::pin(async move { tx.delete_global_hpke_keypair(&config_id).await })
@@ -396,8 +427,7 @@ pub(super) async fn delete_global_hpke_config<C: Clock>(
 }
 
 pub(super) async fn get_taskprov_peer_aggregators<C: Clock>(
-    _: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
+    ds: Store<C>,
 ) -> Result<Json<Vec<TaskprovPeerAggregatorResp>>, Error> {
     Ok(Json(
         ds.run_tx("get_taskprov_peer_aggregators", |tx| {
@@ -417,11 +447,7 @@ pub(super) async fn get_taskprov_peer_aggregators<C: Clock>(
 /// token rotation cumbersome and fragile. Since token rotation is the main use case for updating
 /// an existing peer aggregator, we will resolve peer aggregator updates in that issue.
 pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
-    _: &mut Conn,
-    (State(ds), Json(req)): (
-        State<Arc<Datastore<C>>>,
-        Json<PostTaskprovPeerAggregatorReq>,
-    ),
+    (ds, Json(req)): (Store<C>, Json<PostTaskprovPeerAggregatorReq>),
 ) -> Result<(Status, Json<TaskprovPeerAggregatorResp>), Error> {
     let to_insert = PeerAggregator::new(
         req.endpoint,
@@ -451,11 +477,7 @@ pub(super) async fn post_taskprov_peer_aggregator<C: Clock>(
 }
 
 pub(super) async fn delete_taskprov_peer_aggregator<C: Clock>(
-    _: &mut Conn,
-    (State(ds), Json(req)): (
-        State<Arc<Datastore<C>>>,
-        Json<DeleteTaskprovPeerAggregatorReq>,
-    ),
+    (ds, req): (Store<C>, Json<DeleteTaskprovPeerAggregatorReq>),
 ) -> Result<Status, Error> {
     match ds
         .run_tx("delete_taskprov_peer_aggregator", |tx| {
