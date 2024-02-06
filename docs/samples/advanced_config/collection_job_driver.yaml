@@ -89,13 +89,13 @@ maximum_attempts_before_failure: 10
 
 # Timeout to apply when establishing connections to the helper for HTTP requests, in seconds. See
 # https://docs.rs/reqwest/latest/reqwest/struct.ClientBuilder.html#method.connect_timeout for
-# details. (optional)
+# details. (optional; defaults to 10 seconds)
 http_request_connection_timeout_secs: 10
 
 # Timeout to apply to HTTP requests overall (including connection establishment) when communicating
 # with the helper. See
 # https://docs.rs/reqwest/latest/reqwest/struct.ClientBuilder.html#method.timeout for details.
-# (optional)
+# (optional; defaults to 30 seconds)
 http_request_timeout_secs: 30
 
 # Number of sharded database records per batch aggregation. Must not be less
