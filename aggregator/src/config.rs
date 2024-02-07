@@ -158,6 +158,24 @@ pub struct JobDriverConfig {
     /// The number of attempts to drive a work item before it is placed in a permanent failure
     /// state.
     pub maximum_attempts_before_failure: usize,
+    /// Timeout to apply when establishing connections to the helper for HTTP requests. See
+    /// [`reqwest::ClientBuilder::connect_timeout`] for details.
+    #[serde(default = "JobDriverConfig::default_http_connection_timeout")]
+    pub http_request_connection_timeout_secs: u64,
+    /// Timeout to apply to HTTP requests overall (including connection establishment) when
+    /// communicating with the helper. See [`reqwest::ClientBuilder::timeout`] for details.
+    #[serde(default = "JobDriverConfig::default_http_request_timeout")]
+    pub http_request_timeout_secs: u64,
+}
+
+impl JobDriverConfig {
+    fn default_http_connection_timeout() -> u64 {
+        10
+    }
+
+    fn default_http_request_timeout() -> u64 {
+        30
+    }
 }
 
 // TODO(#2252): This custom deserializer is for backwards-compatibility with Janus 0.6.3 and below.
@@ -171,6 +189,8 @@ impl<'de> Deserialize<'de> for JobDriverConfig {
             max_concurrent_job_workers: usize,
             worker_lease_duration_secs: u64,
             worker_lease_clock_skew_allowance_secs: u64,
+            http_request_connection_timeout_secs: Option<u64>,
+            http_request_timeout_secs: Option<u64>,
             maximum_attempts_before_failure: usize,
         }
         let inner = JobDriverConfigInner::deserialize(deserializer)?;
@@ -182,12 +202,20 @@ impl<'de> Deserialize<'de> for JobDriverConfig {
             })
             .ok_or(D::Error::custom("required field job_discovery_interval_secs is missing"))?;
 
+        let http_request_connection_timeout_secs = inner
+            .http_request_connection_timeout_secs
+            .unwrap_or_else(JobDriverConfig::default_http_connection_timeout);
+        let http_request_timeout_secs = inner
+            .http_request_timeout_secs
+            .unwrap_or_else(JobDriverConfig::default_http_request_timeout);
         Ok(Self {
             job_discovery_interval_secs,
             max_concurrent_job_workers: inner.max_concurrent_job_workers,
             worker_lease_duration_secs: inner.worker_lease_duration_secs,
             worker_lease_clock_skew_allowance_secs: inner.worker_lease_clock_skew_allowance_secs,
             maximum_attempts_before_failure: inner.maximum_attempts_before_failure,
+            http_request_connection_timeout_secs,
+            http_request_timeout_secs,
         })
     }
 }
@@ -287,6 +315,9 @@ mod tests {
             worker_lease_duration_secs: 600,
             worker_lease_clock_skew_allowance_secs: 60,
             maximum_attempts_before_failure: 5,
+            http_request_connection_timeout_secs: JobDriverConfig::default_http_connection_timeout(
+            ),
+            http_request_timeout_secs: JobDriverConfig::default_http_request_timeout(),
         })
     }
 
