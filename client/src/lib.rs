@@ -87,29 +87,12 @@ impl ClientParameters {
         helper_aggregator_endpoint: Url,
         time_precision: Duration,
     ) -> Self {
-        Self::new_with_backoff(
-            task_id,
-            leader_aggregator_endpoint,
-            helper_aggregator_endpoint,
-            time_precision,
-            http_request_exponential_backoff(),
-        )
-    }
-
-    /// Creates a new set of client task parameters with non-default HTTP request retry parameters.
-    pub fn new_with_backoff(
-        task_id: TaskId,
-        leader_aggregator_endpoint: Url,
-        helper_aggregator_endpoint: Url,
-        time_precision: Duration,
-        http_request_retry_parameters: ExponentialBackoff,
-    ) -> Self {
         Self {
             task_id,
             leader_aggregator_endpoint: url_ensure_trailing_slash(leader_aggregator_endpoint),
             helper_aggregator_endpoint: url_ensure_trailing_slash(helper_aggregator_endpoint),
             time_precision,
-            http_request_retry_parameters,
+            http_request_retry_parameters: http_request_exponential_backoff(),
         }
     }
 
@@ -192,6 +175,10 @@ async fn aggregator_hpke_config(
 /// Construct a [`reqwest::Client`] suitable for use in a DAP [`Client`].
 pub fn default_http_client() -> Result<reqwest::Client, Error> {
     Ok(reqwest::Client::builder()
+        // Clients wishing to override these timeouts may provide their own
+        // values using ClientBuilder::with_http_client.
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
         .user_agent(CLIENT_USER_AGENT)
         .build()?)
 }
@@ -690,13 +677,13 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let server_url = Url::parse(&server.url()).unwrap();
         let http_client = &default_http_client().unwrap();
-        let client_parameters = ClientParameters::new_with_backoff(
+        let mut client_parameters = ClientParameters::new(
             random(),
             server_url.clone(),
             server_url,
             Duration::from_seconds(1),
-            test_http_request_exponential_backoff(),
         );
+        client_parameters.http_request_retry_parameters = test_http_request_exponential_backoff();
 
         let keypair = generate_test_hpke_config_and_private_key();
         let hpke_config_list = HpkeConfigList::new(Vec::from([keypair.config().clone()]));
@@ -727,13 +714,13 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let server_url = Url::parse(&server.url()).unwrap();
         let http_client = &default_http_client().unwrap();
-        let client_parameters = ClientParameters::new_with_backoff(
+        let mut client_parameters = ClientParameters::new(
             random(),
             server_url.clone(),
             server_url,
             Duration::from_seconds(1),
-            test_http_request_exponential_backoff(),
         );
+        client_parameters.http_request_retry_parameters = test_http_request_exponential_backoff();
 
         let encoded_bad_hpke_config = hex!(
             "64" // HpkeConfigId

@@ -21,6 +21,14 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
     let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
         reqwest::Client::builder()
             .user_agent(CLIENT_USER_AGENT)
+            .timeout(Duration::from_secs(
+                ctx.config.job_driver_config.http_request_timeout_secs,
+            ))
+            .connect_timeout(Duration::from_secs(
+                ctx.config
+                    .job_driver_config
+                    .http_request_connection_timeout_secs,
+            ))
             .build()
             .context("couldn't create HTTP client")?,
         &ctx.meter,
@@ -152,6 +160,8 @@ mod tests {
                 worker_lease_duration_secs: 600,
                 worker_lease_clock_skew_allowance_secs: 60,
                 maximum_attempts_before_failure: 5,
+                http_request_timeout_secs: 10,
+                http_request_connection_timeout_secs: 30,
             },
             batch_aggregation_shard_count: 32,
             taskprov_config: TaskprovConfig::default(),
