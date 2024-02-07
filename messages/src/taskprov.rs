@@ -2,7 +2,7 @@
 //!
 //! [1]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
 
-use crate::{Duration, Error, Role, Time, Url};
+use crate::{Duration, Error, Time, Url};
 use anyhow::anyhow;
 use derivative::Derivative;
 use prio::codec::{
@@ -17,8 +17,10 @@ use std::{fmt::Debug, io::Cursor};
 pub struct TaskConfig {
     /// Opaque info specific for a task.
     task_info: Vec<u8>,
-    /// List of URLs where the aggregator's API endpoints can be found.
-    aggregator_endpoints: Vec<Url>,
+    /// Leader DAP API endpoint.
+    leader_aggregator_endpoint: Url,
+    /// Helper DAP API endpoint.
+    helper_aggregator_endpoint: Url,
     /// Determines the properties that all batches for this task must have.
     query_config: QueryConfig,
     /// Time up to which Clients are expected to upload to this task.
@@ -30,34 +32,36 @@ pub struct TaskConfig {
 impl TaskConfig {
     pub fn new(
         task_info: Vec<u8>,
-        aggregator_endpoints: Vec<Url>,
+        leader_aggregator_endpoint: Url,
+        helper_aggregator_endpoint: Url,
         query_config: QueryConfig,
         task_expiration: Time,
         vdaf_config: VdafConfig,
     ) -> Result<Self, Error> {
         if task_info.is_empty() {
-            Err(Error::InvalidParameter("task_info must not be empty"))
-        } else if aggregator_endpoints.is_empty() {
-            Err(Error::InvalidParameter(
-                "aggregator_endpoints must not be empty",
-            ))
-        } else {
-            Ok(Self {
-                task_info,
-                aggregator_endpoints,
-                query_config,
-                task_expiration,
-                vdaf_config,
-            })
+            return Err(Error::InvalidParameter("task_info must not be empty"));
         }
+
+        Ok(Self {
+            task_info,
+            leader_aggregator_endpoint,
+            helper_aggregator_endpoint,
+            query_config,
+            task_expiration,
+            vdaf_config,
+        })
     }
 
     pub fn task_info(&self) -> &[u8] {
         self.task_info.as_ref()
     }
 
-    pub fn aggregator_endpoints(&self) -> &[Url] {
-        self.aggregator_endpoints.as_ref()
+    pub fn leader_aggregator_endpoint(&self) -> &Url {
+        &self.leader_aggregator_endpoint
+    }
+
+    pub fn helper_aggregator_endpoint(&self) -> &Url {
+        &self.helper_aggregator_endpoint
     }
 
     pub fn query_config(&self) -> &QueryConfig {
@@ -71,34 +75,27 @@ impl TaskConfig {
     pub fn vdaf_config(&self) -> &VdafConfig {
         &self.vdaf_config
     }
-
-    /// Returns the [`Url`] relative to which the server performing `role` serves its API.
-    pub fn aggregator_url(&self, role: &Role) -> Result<&Url, Error> {
-        let index = role.index().ok_or(Error::InvalidParameter(role.as_str()))?;
-        Ok(&self.aggregator_endpoints[index])
-    }
 }
 
 impl Encode for TaskConfig {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         encode_u8_items(bytes, &(), &self.task_info)?;
-        encode_u16_items(bytes, &(), &self.aggregator_endpoints)?;
-        self.query_config.encode(bytes)?;
+        self.leader_aggregator_endpoint.encode(bytes)?;
+        self.helper_aggregator_endpoint.encode(bytes)?;
+        encode_u16_items(bytes, &(), &self.query_config.get_encoded()?)?;
         self.task_expiration.encode(bytes)?;
-        self.vdaf_config.encode(bytes)
+        encode_u16_items(bytes, &(), &self.vdaf_config.get_encoded()?)?;
+        Ok(())
     }
 
     fn encoded_len(&self) -> Option<usize> {
         Some(
             (1 + self.task_info.len())
-                + (2 + self
-                    .aggregator_endpoints
-                    .iter()
-                    // Unwrap safety: url.encoded_len() always returns Some.
-                    .fold(0, |acc, url| acc + url.encoded_len().unwrap()))
-                + self.query_config.encoded_len()?
+                + self.leader_aggregator_endpoint.encoded_len()?
+                + self.helper_aggregator_endpoint.encoded_len()?
+                + (2 + self.query_config.encoded_len()?)
                 + self.task_expiration.encoded_len()?
-                + self.vdaf_config.encoded_len()?,
+                + (2 + self.vdaf_config.encoded_len()?),
         )
     }
 }
@@ -111,20 +108,19 @@ impl Decode for TaskConfig {
                 anyhow!("task_info must not be empty").into(),
             ));
         }
-
-        let aggregator_endpoints = decode_u16_items(&(), bytes)?;
-        if aggregator_endpoints.is_empty() {
-            return Err(CodecError::Other(
-                anyhow!("aggregator_endpoints must not be empty").into(),
-            ));
-        }
+        let leader_aggregator_endpoint = Url::decode(bytes)?;
+        let helper_aggregator_endpoint = Url::decode(bytes)?;
+        let query_config = QueryConfig::get_decoded(&decode_u16_items(&(), bytes)?)?;
+        let task_expiration = Time::decode(bytes)?;
+        let vdaf_config = VdafConfig::get_decoded(&decode_u16_items(&(), bytes)?)?;
 
         Ok(Self {
             task_info,
-            aggregator_endpoints,
-            query_config: QueryConfig::decode(bytes)?,
-            task_expiration: Time::decode(bytes)?,
-            vdaf_config: VdafConfig::decode(bytes)?,
+            leader_aggregator_endpoint,
+            helper_aggregator_endpoint,
+            query_config,
+            task_expiration,
+            vdaf_config,
         })
     }
 }
@@ -180,66 +176,44 @@ impl QueryConfig {
 
 impl Encode for QueryConfig {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        match self.query {
-            Query::Reserved => Query::RESERVED.encode(bytes)?,
-            Query::TimeInterval => Query::TIME_INTERVAL.encode(bytes)?,
-            Query::FixedSize { .. } => Query::FIXED_SIZE.encode(bytes)?,
-        };
         self.time_precision.encode(bytes)?;
         self.max_batch_query_count.encode(bytes)?;
         self.min_batch_size.encode(bytes)?;
-        if let Query::FixedSize { max_batch_size } = self.query {
-            max_batch_size.encode(bytes)?;
-        }
-
+        self.query.encode(bytes)?;
         Ok(())
     }
 
     fn encoded_len(&self) -> Option<usize> {
         Some(
-            1 + self.time_precision.encoded_len()?
+            self.time_precision.encoded_len()?
                 + self.max_batch_query_count.encoded_len()?
                 + self.min_batch_size.encoded_len()?
-                + match self.query {
-                    Query::FixedSize { max_batch_size } => max_batch_size.encoded_len()?,
-                    _ => 0,
-                },
+                + self.query.encoded_len()?,
         )
     }
 }
 
 impl Decode for QueryConfig {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let query_type = u8::decode(bytes)?;
+        let time_precision = Duration::decode(bytes)?;
+        let max_batch_query_count = u16::decode(bytes)?;
+        let min_batch_size = u32::decode(bytes)?;
+        let query = Query::decode(bytes)?;
+
         Ok(Self {
-            time_precision: Duration::decode(bytes)?,
-            max_batch_query_count: u16::decode(bytes)?,
-            min_batch_size: u32::decode(bytes)?,
-            query: match query_type {
-                Query::RESERVED => Query::Reserved,
-                Query::TIME_INTERVAL => Query::TimeInterval,
-                Query::FIXED_SIZE => Query::FixedSize {
-                    max_batch_size: u32::decode(bytes)?,
-                },
-                val => {
-                    return Err(CodecError::Other(
-                        anyhow!("unexpected QueryType value {}", val).into(),
-                    ))
-                }
-            },
+            time_precision,
+            max_batch_query_count,
+            min_batch_size,
+            query,
         })
     }
 }
 
 /// A query type and its associated parameter(s).
 ///
-/// The redefinition of Query relative to the parent mod is for two reasons:
-///   - The type of Query is not known at compile time. For queries of unknown
-///     type, using the parent mod would require decoding it for each query
-///     type until success.
-///   - The parent mod decoding logic assumes that the query type is encoded
-///     directly adjacent to its associated parameters. This is not the case
-///     in taskprov.
+/// The redefinition of Query relative to the parent mod is because the type of Query is not known
+/// at compile time. For queries of unknown type, using the parent mod would require attempting
+/// decoding for each query type until success.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Query {
@@ -252,6 +226,45 @@ impl Query {
     const RESERVED: u8 = 0;
     const TIME_INTERVAL: u8 = 1;
     const FIXED_SIZE: u8 = 2;
+}
+
+impl Encode for Query {
+    fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        match self {
+            Query::Reserved => Query::RESERVED.encode(bytes)?,
+            Query::TimeInterval => Query::TIME_INTERVAL.encode(bytes)?,
+            Query::FixedSize { max_batch_size } => {
+                Query::FIXED_SIZE.encode(bytes)?;
+                max_batch_size.encode(bytes)?;
+            }
+        };
+        Ok(())
+    }
+
+    fn encoded_len(&self) -> Option<usize> {
+        Some(match self {
+            Query::Reserved | Query::TimeInterval => 1,
+            Query::FixedSize { .. } => 5,
+        })
+    }
+}
+
+impl Decode for Query {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let query_type = u8::decode(bytes)?;
+        Ok(match query_type {
+            Query::RESERVED => Query::Reserved,
+            Query::TIME_INTERVAL => Query::TimeInterval,
+            Query::FIXED_SIZE => Query::FixedSize {
+                max_batch_size: u32::decode(bytes)?,
+            },
+            val => {
+                return Err(CodecError::Other(
+                    anyhow!("unexpected QueryType value {}", val).into(),
+                ))
+            }
+        })
+    }
 }
 
 /// Describes all VDAF parameters.
@@ -280,22 +293,24 @@ impl VdafConfig {
 
 impl Encode for VdafConfig {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
-        self.dp_config.encode(bytes)?;
+        encode_u16_items(bytes, &(), &self.dp_config.get_encoded()?)?;
         self.vdaf_type.encode(bytes)
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        Some(self.dp_config.encoded_len()? + self.vdaf_type.encoded_len()?)
+        Some((2 + self.dp_config.encoded_len()?) + self.vdaf_type.encoded_len()?)
     }
 }
 
 impl Decode for VdafConfig {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let ret = Self {
-            dp_config: DpConfig::decode(bytes)?,
-            vdaf_type: VdafType::decode(bytes)?,
-        };
-        Ok(ret)
+        let dp_config = DpConfig::get_decoded(&decode_u16_items(&(), bytes)?)?;
+        let vdaf_type = VdafType::decode(bytes)?;
+
+        Ok(Self {
+            dp_config,
+            vdaf_type,
+        })
     }
 }
 
@@ -335,39 +350,47 @@ impl VdafType {
     const PRIO3SUMVEC: u32 = 0x00000002;
     const PRIO3HISTOGRAM: u32 = 0x00000003;
     const POPLAR1: u32 = 0x00001000;
+
+    fn vdaf_type_code(&self) -> u32 {
+        match self {
+            Self::Prio3Count => Self::PRIO3COUNT,
+            Self::Prio3Sum { .. } => Self::PRIO3SUM,
+            Self::Prio3SumVec { .. } => Self::PRIO3SUMVEC,
+            Self::Prio3Histogram { .. } => Self::PRIO3HISTOGRAM,
+            Self::Poplar1 { .. } => Self::POPLAR1,
+        }
+    }
 }
 
 impl Encode for VdafType {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
+        self.vdaf_type_code().encode(bytes)?;
         match self {
-            Self::Prio3Count => Self::PRIO3COUNT.encode(bytes),
+            Self::Prio3Count => (),
             Self::Prio3Sum { bits } => {
-                Self::PRIO3SUM.encode(bytes)?;
-                bits.encode(bytes)
+                bits.encode(bytes)?;
             }
             Self::Prio3SumVec {
                 bits,
                 length,
                 chunk_length,
             } => {
-                Self::PRIO3SUMVEC.encode(bytes)?;
                 bits.encode(bytes)?;
                 length.encode(bytes)?;
-                chunk_length.encode(bytes)
+                chunk_length.encode(bytes)?;
             }
             Self::Prio3Histogram {
                 length,
                 chunk_length,
             } => {
-                Self::PRIO3HISTOGRAM.encode(bytes)?;
                 length.encode(bytes)?;
-                chunk_length.encode(bytes)
+                chunk_length.encode(bytes)?;
             }
             Self::Poplar1 { bits } => {
-                Self::POPLAR1.encode(bytes)?;
-                bits.encode(bytes)
+                bits.encode(bytes)?;
             }
         }
+        Ok(())
     }
 
     fn encoded_len(&self) -> Option<usize> {
@@ -385,27 +408,32 @@ impl Encode for VdafType {
 
 impl Decode for VdafType {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        match u32::decode(bytes)? {
-            Self::PRIO3COUNT => Ok(Self::Prio3Count),
-            Self::PRIO3SUM => Ok(Self::Prio3Sum {
+        let vdaf_type_code = u32::decode(bytes)?;
+        let vdaf_type = match vdaf_type_code {
+            Self::PRIO3COUNT => Self::Prio3Count,
+            Self::PRIO3SUM => Self::Prio3Sum {
                 bits: u8::decode(bytes)?,
-            }),
-            Self::PRIO3SUMVEC => Ok(Self::Prio3SumVec {
+            },
+            Self::PRIO3SUMVEC => Self::Prio3SumVec {
                 bits: u8::decode(bytes)?,
                 length: u32::decode(bytes)?,
                 chunk_length: u32::decode(bytes)?,
-            }),
-            Self::PRIO3HISTOGRAM => Ok(Self::Prio3Histogram {
+            },
+            Self::PRIO3HISTOGRAM => Self::Prio3Histogram {
                 length: u32::decode(bytes)?,
                 chunk_length: u32::decode(bytes)?,
-            }),
-            Self::POPLAR1 => Ok(Self::Poplar1 {
+            },
+            Self::POPLAR1 => Self::Poplar1 {
                 bits: u16::decode(bytes)?,
-            }),
-            val => Err(CodecError::Other(
-                anyhow!("unexpected Self value {}", val).into(),
-            )),
-        }
+            },
+            val => {
+                return Err(CodecError::Other(
+                    anyhow!("unexpected VDAF type code value {}", val).into(),
+                ))
+            }
+        };
+
+        Ok(vdaf_type)
     }
 }
 
@@ -462,27 +490,31 @@ impl DpMechanism {
 impl Encode for DpMechanism {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         match self {
-            Self::Reserved => Self::RESERVED.encode(bytes),
-            Self::None => Self::NONE.encode(bytes),
-        }
+            Self::Reserved => Self::RESERVED.encode(bytes)?,
+            Self::None => Self::NONE.encode(bytes)?,
+        };
+        Ok(())
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        match self {
-            Self::Reserved | Self::None => Some(1),
-        }
+        Some(1)
     }
 }
 
 impl Decode for DpMechanism {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        match u8::decode(bytes)? {
-            Self::RESERVED => Ok(Self::Reserved),
-            Self::NONE => Ok(Self::None),
-            val => Err(CodecError::Other(
-                anyhow!("unexpected DpMechanism value {}", val).into(),
-            )),
-        }
+        let dp_mechanism_code = u8::decode(bytes)?;
+        let dp_mechanism = match dp_mechanism_code {
+            Self::RESERVED => Self::Reserved,
+            Self::NONE => Self::None,
+            val => {
+                return Err(CodecError::Other(
+                    anyhow!("unexpected DpMechanism value {}", val).into(),
+                ))
+            }
+        };
+
+        Ok(dp_mechanism)
     }
 }
 
@@ -495,23 +527,50 @@ mod tests {
     #[test]
     fn roundtrip_dp_config() {
         roundtrip_encoding(&[
-            (DpConfig::new(DpMechanism::Reserved), "00"),
-            (DpConfig::new(DpMechanism::None), "01"),
+            (
+                DpConfig::new(DpMechanism::Reserved),
+                concat!(
+                    "00",   // dp_mechanism
+                ),
+            ),
+            (
+                DpConfig::new(DpMechanism::None),
+                concat!(
+                    "01",   // dp_mechanism
+                ),
+            ),
         ])
     }
 
     #[test]
     fn roundtrip_vdaf_type() {
         roundtrip_encoding(&[
-            (VdafType::Prio3Count, "00000000"),
+            (
+                VdafType::Prio3Count,
+                concat!(
+                    "00000000", // vdaf_type_code
+                ),
+            ),
             (
                 VdafType::Prio3Sum { bits: u8::MIN },
-                concat!("00000001", "00"),
+                concat!(
+                    "00000001", // vdaf_type_code
+                    "00"        // bits
+                ),
             ),
-            (VdafType::Prio3Sum { bits: 0x80 }, concat!("00000001", "80")),
+            (
+                VdafType::Prio3Sum { bits: 0x80 },
+                concat!(
+                    "00000001", // vdaf_type_code
+                    "80"        // bits
+                ),
+            ),
             (
                 VdafType::Prio3Sum { bits: u8::MAX },
-                concat!("00000001", "FF"),
+                concat!(
+                    "00000001", // vdaf_type_code
+                    "FF",       // bits
+                ),
             ),
             (
                 VdafType::Prio3SumVec {
@@ -520,7 +579,7 @@ mod tests {
                     chunk_length: 14,
                 },
                 concat!(
-                    "00000002", // algorithm ID
+                    "00000002", // vdaf_type_code
                     "08",       // bits
                     "0000000C", // length
                     "0000000E"  // chunk_length
@@ -532,22 +591,31 @@ mod tests {
                     chunk_length: 18,
                 },
                 concat!(
-                    "00000003", // algorithm ID
+                    "00000003", // vdaf_type_code
                     "00000100", // length
                     "00000012", // chunk_length
                 ),
             ),
             (
                 VdafType::Poplar1 { bits: u16::MIN },
-                concat!("00001000", "0000"),
+                concat!(
+                    "00001000", // vdaf_type_code
+                    "0000",     // bits
+                ),
             ),
             (
                 VdafType::Poplar1 { bits: 0xABAB },
-                concat!("00001000", "ABAB"),
+                concat!(
+                    "00001000", // vdaf_type_code
+                    "ABAB",     // bits
+                ),
             ),
             (
                 VdafType::Poplar1 { bits: u16::MAX },
-                concat!("00001000", "FFFF"),
+                concat!(
+                    "00001000", // vdaf_type_code
+                    "FFFF"      // bits
+                ),
             ),
         ])
     }
@@ -557,7 +625,17 @@ mod tests {
         roundtrip_encoding(&[
             (
                 VdafConfig::new(DpConfig::new(DpMechanism::None), VdafType::Prio3Count).unwrap(),
-                concat!("01", "00000000"),
+                concat!(
+                    concat!(
+                        // dp_config
+                        "0001", // dp_config length
+                        "01",   // dp_mechanism
+                    ),
+                    concat!(
+                        // vdaf_type
+                        "00000000", // vdaf_type_code
+                    ),
+                ),
             ),
             (
                 VdafConfig::new(
@@ -565,7 +643,18 @@ mod tests {
                     VdafType::Prio3Sum { bits: 0x42 },
                 )
                 .unwrap(),
-                concat!("01", concat!("00000001", "42")),
+                concat!(
+                    concat!(
+                        // dp_config
+                        "0001", // dp_config length
+                        "01",   // dp_mechanism
+                    ),
+                    concat!(
+                        // vdaf_type
+                        "00000001", // vdaf_type_code
+                        "42",       // bits
+                    ),
+                ),
             ),
             (
                 VdafConfig::new(
@@ -577,7 +666,20 @@ mod tests {
                     },
                 )
                 .unwrap(),
-                concat!("01", concat!("00000002", "08", "0000000C", "0000000E")),
+                concat!(
+                    concat!(
+                        // dp_config
+                        "0001", // dp_config length
+                        "01",   // dp_mechanism
+                    ),
+                    concat!(
+                        // vdaf_type
+                        "00000002", // vdaf_type_code
+                        "08",       // bits
+                        "0000000C", // length
+                        "0000000E", // chunk_length
+                    )
+                ),
             ),
             (
                 VdafConfig::new(
@@ -588,7 +690,19 @@ mod tests {
                     },
                 )
                 .unwrap(),
-                concat!("01", concat!("00000003", "0000000A", "00000004")),
+                concat!(
+                    concat!(
+                        // dp_config
+                        "0001", //dp_config length
+                        "01",   // dp_mechanism
+                    ),
+                    concat!(
+                        // vdaf_type
+                        "00000003", // vdaf_type_code
+                        "0000000A", // length
+                        "00000004", // chunk_length
+                    ),
+                ),
             ),
         ]);
     }
@@ -604,10 +718,10 @@ mod tests {
                     Query::TimeInterval,
                 ),
                 concat!(
-                    "01",               // query type
-                    "000000000000003C", // time precision
-                    "0040",             // max batch query count
-                    "00000024",         // min batch size
+                    "000000000000003C", // time_precision
+                    "0040",             // max_batch_query_count
+                    "00000024",         // min_batch_size
+                    "01",               // query_type
                 ),
             ),
             (
@@ -620,11 +734,11 @@ mod tests {
                     },
                 ),
                 concat!(
-                    "02",               // query type
-                    "0000000000000000", // time precision
-                    "0000",             // max batch query count
-                    "00000000",         // min batch size
-                    "00000000",         // max batch size
+                    "0000000000000000", // time_precision
+                    "0000",             // max_batch_query_count
+                    "00000000",         // min_batch_size
+                    "02",               // query_type
+                    "00000000",         // max_batch_size
                 ),
             ),
             (
@@ -637,11 +751,11 @@ mod tests {
                     },
                 ),
                 concat!(
-                    "02",               // query type
-                    "000000000000003C", // time precision
-                    "0040",             // max batch query count
-                    "00000024",         // min batch size
-                    "0000FAFA",         // max batch size
+                    "000000000000003C", // time_precision
+                    "0040",             // max_batch_query_count
+                    "00000024",         // min_batch_size
+                    "02",               // query_type
+                    "0000FAFA",         // max_batch_size
                 ),
             ),
             (
@@ -654,11 +768,50 @@ mod tests {
                     },
                 ),
                 concat!(
-                    "02",               // query type
-                    "FFFFFFFFFFFFFFFF", // time precision
-                    "FFFF",             // max batch query count
-                    "FFFFFFFF",         // min batch size
-                    "FFFFFFFF",         // max batch size
+                    "FFFFFFFFFFFFFFFF", // time_precision
+                    "FFFF",             // max_batch_query_count
+                    "FFFFFFFF",         // min_batch_size
+                    "02",               // query_type
+                    "FFFFFFFF",         // max_batch_size
+                ),
+            ),
+        ])
+    }
+
+    #[test]
+    fn roundtrip_query() {
+        roundtrip_encoding(&[
+            (
+                Query::TimeInterval,
+                concat!(
+                    "01", // query_type
+                ),
+            ),
+            (
+                Query::FixedSize {
+                    max_batch_size: u32::MIN,
+                },
+                concat!(
+                    "02",       // query_type
+                    "00000000", // max_batch_size
+                ),
+            ),
+            (
+                Query::FixedSize {
+                    max_batch_size: 0xFAFA,
+                },
+                concat!(
+                    "02",       // query_type
+                    "0000FAFA", // max_batch_size
+                ),
+            ),
+            (
+                Query::FixedSize {
+                    max_batch_size: u32::MAX,
+                },
+                concat!(
+                    "02",       // query_type
+                    "FFFFFFFF", // max_batch_size
                 ),
             ),
         ])
@@ -670,10 +823,8 @@ mod tests {
             (
                 TaskConfig::new(
                     "foobar".as_bytes().to_vec(),
-                    vec![
-                        Url::try_from("https://example.com/".as_ref()).unwrap(),
-                        Url::try_from("https://another.example.com/".as_ref()).unwrap(),
-                    ],
+                    Url::try_from("https://example.com/".as_ref()).unwrap(),
+                    Url::try_from("https://another.example.com/".as_ref()).unwrap(),
                     QueryConfig::new(
                         Duration::from_seconds(0xAAAA),
                         0xBBBB,
@@ -694,37 +845,45 @@ mod tests {
                         "666F6F626172"  // opaque data
                     ),
                     concat!(
-                        // aggregator_endpoints
-                        "0034", // length of all vector contents
-                        concat!(
-                            "0014",                                     // length
-                            "68747470733A2F2F6578616D706C652E636F6D2F"  // contents
-                        ),
-                        concat!(
-                            "001C",                                                     // length
-                            "68747470733A2F2F616E6F746865722E6578616D706C652E636F6D2F"  // contents
-                        ),
+                        // leader_aggregator_url
+                        "0014",                                     // length
+                        "68747470733A2F2F6578616D706C652E636F6D2F"  // contents
+                    ),
+                    concat!(
+                        // helper_aggregator_url
+                        "001C",                                                     // length
+                        "68747470733A2F2F616E6F746865722E6578616D706C652E636F6D2F"  // contents
                     ),
                     concat!(
                         // query_config
-                        "02",               // query type
-                        "000000000000AAAA", // time precision
-                        "BBBB",             // max batch query count
-                        "0000CCCC",         // min batch size
-                        "0000DDDD",         // max batch size
+                        "0013",             // query_config length
+                        "000000000000AAAA", // time_precision
+                        "BBBB",             // max_batch_query_count
+                        "0000CCCC",         // min_batch_size
+                        "02",               // query_type
+                        "0000DDDD",         // max_batch_size
                     ),
                     "000000000000EEEE", // task_expiration
                     concat!(
                         // vdaf_config
-                        "01",       // dp_config
-                        "00000000", // vdaf_type
+                        "0007", // vdaf_config length
+                        concat!(
+                            // dp_config
+                            "0001", // dp_config length
+                            "01",   // dp_config
+                        ),
+                        concat!(
+                            // vdaf_type
+                            "00000000", // vdaf_type_code
+                        ),
                     ),
                 ),
             ),
             (
                 TaskConfig::new(
                     "f".as_bytes().to_vec(),
-                    vec![Url::try_from("https://example.com".as_ref()).unwrap()],
+                    Url::try_from("https://example.com/".as_ref()).unwrap(),
+                    Url::try_from("https://another.example.com/".as_ref()).unwrap(),
                     QueryConfig::new(
                         Duration::from_seconds(0xAAAA),
                         0xBBBB,
@@ -749,29 +908,38 @@ mod tests {
                         "66"  // opaque data
                     ),
                     concat!(
-                        // aggregator_endpoints
-                        "0015", // length of all vector contents
-                        concat!(
-                            "0013",                                   // length
-                            "68747470733A2F2F6578616D706C652E636F6D"  // contents
-                        ),
+                        // leader_aggregator_url
+                        "0014",                                     // length
+                        "68747470733A2F2F6578616D706C652E636F6D2F"  // contents
+                    ),
+                    concat!(
+                        // helper_aggregator_url
+                        "001C",                                                     // length
+                        "68747470733A2F2F616E6F746865722E6578616D706C652E636F6D2F"  // contents
                     ),
                     concat!(
                         // query_config
-                        "01",               // query type
-                        "000000000000AAAA", // time precision
-                        "BBBB",             // max batch query count
-                        "0000CCCC",         // min batch size
+                        "000F",             // query_config length
+                        "000000000000AAAA", // time_precision
+                        "BBBB",             // max_batch_query_count
+                        "0000CCCC",         // min_batch_size
+                        "01",               // query_type
                     ),
                     "000000000000EEEE", // task_expiration
                     concat!(
                         // vdaf_config
-                        "01",       // dp_config
-                        "00000003", // vdaf_type
+                        "000F", // vdaf_config length
                         concat!(
+                            // dp_config
+                            "0001", // dp_config length
+                            "01",   // dp_mechanism
+                        ),
+                        concat!(
+                            // vdaf_type
+                            "00000003", // vdaf_type_code
                             "0000000A", // length
-                            "00000004"  // chunk_length
-                        )
+                            "00000004", // chunk_length
+                        ),
                     ),
                 ),
             ),
@@ -786,67 +954,36 @@ mod tests {
                         "00", // length
                     ),
                     concat!(
-                        // aggregator_endpoints
-                        "0003", // length of all vector contents
+                        // leader_aggregator_url
+                        "0014",                                     // length
+                        "68747470733A2F2F6578616D706C652E636F6D2F"  // contents
+                    ),
+                    concat!(
+                        // helper_aggregator_url
+                        "001C",                                                     // length
+                        "68747470733A2F2F616E6F746865722E6578616D706C652E636F6D2F"  // contents
+                    ),
+                    concat!(
+                        // query_config
+                        "000F",             // query_config length
+                        "000000000000AAAA", // time_precision
+                        "BBBB",             // max_batch_query_count
+                        "0000CCCC",         // min_batch_size
+                        "01",               // query_type
+                    ),
+                    "000000000000EEEE", // task_expiration
+                    concat!(
+                        // vdaf_config
+                        "0007", // vdaf_config length
                         concat!(
-                            "0001", // length
-                            "68"    // contents
+                            // dp_config
+                            "0001", // dp_config length
+                            "01",   // dp_config
                         ),
-                    ),
-                    concat!(
-                        // query_config
-                        "01",               // query type
-                        "000000000000AAAA", // time precision
-                        "BBBB",             // max batch query count
-                        "0000CCCC",         // min batch size
-                    ),
-                    "000000000000EEEE", // task_expiration
-                    concat!(
-                        // vdaf_config
-                        "01",       // dp_config
-                        "00000002", // vdaf_type
                         concat!(
-                            // buckets
-                            "000008",           // length
-                            "000000000000FFFF"  // bucket
-                        )
-                    ),
-                ))
-                .unwrap(),
-            ),
-            Err(CodecError::Other(_))
-        );
-
-        // Empty aggregator_urls
-        assert_matches!(
-            TaskConfig::get_decoded(
-                &hex::decode(concat!(
-                    concat!(
-                        // task_info
-                        "01", // length
-                        "66"  // opaque data
-                    ),
-                    concat!(
-                        // aggregator_endpoints
-                        "0000", // length of all vector contents
-                    ),
-                    concat!(
-                        // query_config
-                        "01",               // query type
-                        "000000000000AAAA", // time precision
-                        "BBBB",             // max batch query count
-                        "0000CCCC",         // min batch size
-                    ),
-                    "000000000000EEEE", // task_expiration
-                    concat!(
-                        // vdaf_config
-                        "01",       // dp_config
-                        "00000002", // vdaf_type
-                        concat!(
-                            // buckets
-                            "000008",           // length
-                            "000000000000FFFF"  // bucket
-                        )
+                            // vdaf_type
+                            "00000000", // vdaf_type_code
+                        ),
                     ),
                 ))
                 .unwrap(),

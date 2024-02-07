@@ -47,8 +47,9 @@ use janus_messages::{
     },
     AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq,
     AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
-    AggregationJobStep, BatchSelector, Duration, Interval, PartialBatchSelector, PrepareContinue,
-    PrepareInit, PrepareResp, PrepareStepResult, ReportIdChecksum, ReportShare, Role, TaskId, Time,
+    AggregationJobStep, BatchSelector, Duration, Extension, ExtensionType, Interval,
+    PartialBatchSelector, PrepareContinue, PrepareError, PrepareInit, PrepareResp,
+    PrepareStepResult, ReportIdChecksum, ReportShare, Role, TaskId, Time,
 };
 use prio::{
     idpf::IdpfInput,
@@ -135,10 +136,8 @@ impl TaskprovTestCase {
         let task_expiration = clock.now().add(&Duration::from_hours(24).unwrap()).unwrap();
         let task_config = TaskConfig::new(
             Vec::from("foobar".as_bytes()),
-            Vec::from([
-                "https://leader.example.com/".as_bytes().try_into().unwrap(),
-                "https://helper.example.com/".as_bytes().try_into().unwrap(),
-            ]),
+            "https://leader.example.com/".as_bytes().try_into().unwrap(),
+            "https://helper.example.com/".as_bytes().try_into().unwrap(),
             QueryConfig::new(
                 time_precision,
                 max_batch_query_count,
@@ -206,6 +205,20 @@ impl TaskprovTestCase {
         ReportShare,
         Poplar1AggregationParam,
     ) {
+        self.next_report_share_with_extensions(Vec::from([Extension::new(
+            ExtensionType::Taskprov,
+            Vec::new(),
+        )]))
+    }
+
+    fn next_report_share_with_extensions(
+        &self,
+        extensions: Vec<Extension>,
+    ) -> (
+        VdafTranscript<16, TestVdaf>,
+        ReportShare,
+        Poplar1AggregationParam,
+    ) {
         let aggregation_param =
             Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[true])]))
                 .unwrap();
@@ -217,6 +230,7 @@ impl TaskprovTestCase {
             aggregation_param.clone(),
         )
         .with_hpke_config(self.global_hpke_key.config().clone())
+        .with_extensions(extensions)
         .next_report_share(&measurement);
         (transcript, report_share, aggregation_param)
     }
@@ -370,6 +384,172 @@ async fn taskprov_aggregate_init() {
 }
 
 #[tokio::test]
+async fn taskprov_aggregate_init_missing_extension() {
+    let test = TaskprovTestCase::new().await;
+
+    let (transcript, report_share, aggregation_param) =
+        test.next_report_share_with_extensions(Vec::new());
+    let batch_id = random();
+    let request = AggregationJobInitializeReq::new(
+        aggregation_param.get_encoded().unwrap(),
+        PartialBatchSelector::new_fixed_size(batch_id),
+        Vec::from([PrepareInit::new(
+            report_share.clone(),
+            transcript.leader_prepare_transitions[0].message.clone(),
+        )]),
+    );
+    let aggregation_job_id: AggregationJobId = random();
+
+    let auth = test
+        .peer_aggregator
+        .primary_aggregator_auth_token()
+        .request_authentication();
+
+    let mut test_conn = put(test
+        .task
+        .aggregation_job_uri(&aggregation_job_id)
+        .unwrap()
+        .path())
+    .with_request_header(auth.0, auth.1)
+    .with_request_header(
+        KnownHeaderName::ContentType,
+        AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+    )
+    .with_request_header(
+        TASKPROV_HEADER,
+        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+    )
+    .with_request_body(request.get_encoded().unwrap())
+    .run_async(&test.handler)
+    .await;
+
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_headers!(
+        &test_conn,
+        "content-type" => (AggregationJobResp::MEDIA_TYPE)
+    );
+    let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+
+    assert_eq!(aggregate_resp.prepare_resps().len(), 1);
+    let prepare_step = aggregate_resp.prepare_resps().first().unwrap();
+    assert_eq!(prepare_step.report_id(), report_share.metadata().id(),);
+    assert_eq!(
+        prepare_step.result(),
+        &PrepareStepResult::Reject(PrepareError::InvalidMessage),
+    );
+
+    let (aggregation_jobs, got_task) = test
+        .datastore
+        .run_unnamed_tx(|tx| {
+            let task_id = test.task_id;
+            Box::pin(async move {
+                Ok((
+                    tx.get_aggregation_jobs_for_task::<16, FixedSize, TestVdaf>(&task_id)
+                        .await
+                        .unwrap(),
+                    tx.get_aggregator_task(&task_id).await.unwrap(),
+                ))
+            })
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(aggregation_jobs.len(), 1);
+    assert!(
+        aggregation_jobs[0].task_id().eq(&test.task_id)
+            && aggregation_jobs[0].id().eq(&aggregation_job_id)
+            && aggregation_jobs[0].partial_batch_identifier().eq(&batch_id)
+            && aggregation_jobs[0]
+                .state()
+                .eq(&AggregationJobState::Finished)
+    );
+    assert_eq!(test.task.taskprov_helper_view().unwrap(), got_task.unwrap());
+}
+
+#[tokio::test]
+async fn taskprov_aggregate_init_malformed_extension() {
+    let test = TaskprovTestCase::new().await;
+
+    let (transcript, report_share, aggregation_param) =
+        test.next_report_share_with_extensions(Vec::new());
+    let batch_id = random();
+    let request = AggregationJobInitializeReq::new(
+        aggregation_param.get_encoded().unwrap(),
+        PartialBatchSelector::new_fixed_size(batch_id),
+        Vec::from([PrepareInit::new(
+            report_share.clone(),
+            transcript.leader_prepare_transitions[0].message.clone(),
+        )]),
+    );
+    let aggregation_job_id: AggregationJobId = random();
+
+    let auth = test
+        .peer_aggregator
+        .primary_aggregator_auth_token()
+        .request_authentication();
+
+    let mut test_conn = put(test
+        .task
+        .aggregation_job_uri(&aggregation_job_id)
+        .unwrap()
+        .path())
+    .with_request_header(auth.0, auth.1)
+    .with_request_header(
+        KnownHeaderName::ContentType,
+        AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+    )
+    .with_request_header(
+        TASKPROV_HEADER,
+        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+    )
+    .with_request_body(request.get_encoded().unwrap())
+    .run_async(&test.handler)
+    .await;
+
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_headers!(
+        &test_conn,
+        "content-type" => (AggregationJobResp::MEDIA_TYPE)
+    );
+    let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+
+    assert_eq!(aggregate_resp.prepare_resps().len(), 1);
+    let prepare_step = aggregate_resp.prepare_resps().first().unwrap();
+    assert_eq!(prepare_step.report_id(), report_share.metadata().id(),);
+    assert_eq!(
+        prepare_step.result(),
+        &PrepareStepResult::Reject(PrepareError::InvalidMessage),
+    );
+
+    let (aggregation_jobs, got_task) = test
+        .datastore
+        .run_unnamed_tx(|tx| {
+            let task_id = test.task_id;
+            Box::pin(async move {
+                Ok((
+                    tx.get_aggregation_jobs_for_task::<16, FixedSize, TestVdaf>(&task_id)
+                        .await
+                        .unwrap(),
+                    tx.get_aggregator_task(&task_id).await.unwrap(),
+                ))
+            })
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(aggregation_jobs.len(), 1);
+    assert!(
+        aggregation_jobs[0].task_id().eq(&test.task_id)
+            && aggregation_jobs[0].id().eq(&aggregation_job_id)
+            && aggregation_jobs[0].partial_batch_identifier().eq(&batch_id)
+            && aggregation_jobs[0]
+                .state()
+                .eq(&AggregationJobState::Finished)
+    );
+    assert_eq!(test.task.taskprov_helper_view().unwrap(), got_task.unwrap());
+}
+
+#[tokio::test]
 async fn taskprov_opt_out_task_expired() {
     let test = TaskprovTestCase::new().await;
 
@@ -448,10 +628,8 @@ async fn taskprov_opt_out_mismatched_task_id() {
         .unwrap();
     let another_task_config = TaskConfig::new(
         Vec::from("foobar".as_bytes()),
-        Vec::from([
-            "https://leader.example.com/".as_bytes().try_into().unwrap(),
-            "https://helper.example.com/".as_bytes().try_into().unwrap(),
-        ]),
+        "https://leader.example.com/".as_bytes().try_into().unwrap(),
+        "https://helper.example.com/".as_bytes().try_into().unwrap(),
         // Query configuration is different from the normal test case.
         QueryConfig::new(
             Duration::from_seconds(1),
@@ -507,86 +685,6 @@ async fn taskprov_opt_out_mismatched_task_id() {
 }
 
 #[tokio::test]
-async fn taskprov_opt_out_missing_aggregator() {
-    let test = TaskprovTestCase::new().await;
-
-    let (transcript, report_share, _) = test.next_report_share();
-    let batch_id = random();
-    let request = AggregationJobInitializeReq::new(
-        ().get_encoded().unwrap(),
-        PartialBatchSelector::new_fixed_size(batch_id),
-        Vec::from([PrepareInit::new(
-            report_share.clone(),
-            transcript.leader_prepare_transitions[0].message.clone(),
-        )]),
-    );
-
-    let aggregation_job_id: AggregationJobId = random();
-
-    let task_expiration = test
-        .clock
-        .now()
-        .add(&Duration::from_hours(24).unwrap())
-        .unwrap();
-    let another_task_config = TaskConfig::new(
-        Vec::from("foobar".as_bytes()),
-        // Only one aggregator!
-        Vec::from(["https://leader.example.com/".as_bytes().try_into().unwrap()]),
-        QueryConfig::new(
-            Duration::from_seconds(1),
-            100,
-            100,
-            TaskprovQuery::FixedSize {
-                max_batch_size: 100,
-            },
-        ),
-        task_expiration,
-        VdafConfig::new(
-            DpConfig::new(DpMechanism::None),
-            VdafType::Poplar1 { bits: 1 },
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    let another_task_config_encoded = another_task_config.get_encoded().unwrap();
-    let another_task_id: TaskId = digest(&SHA256, &another_task_config_encoded)
-        .as_ref()
-        .try_into()
-        .unwrap();
-
-    let auth = test
-        .peer_aggregator
-        .primary_aggregator_auth_token()
-        .request_authentication();
-
-    let mut test_conn = put(format!(
-        "/tasks/{another_task_id}/aggregation_jobs/{aggregation_job_id}"
-    ))
-    .with_request_header(auth.0, auth.1)
-    .with_request_header(
-        KnownHeaderName::ContentType,
-        AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
-    )
-    .with_request_header(
-        TASKPROV_HEADER,
-        URL_SAFE_NO_PAD.encode(another_task_config_encoded),
-    )
-    .with_request_body(request.get_encoded().unwrap())
-    .run_async(&test.handler)
-    .await;
-    assert_eq!(test_conn.status(), Some(Status::BadRequest));
-    assert_eq!(
-        take_problem_details(&mut test_conn).await,
-        json!({
-            "status": Status::BadRequest as u16,
-            "type": "urn:ietf:params:ppm:dap:error:invalidMessage",
-            "title": "The message type for a response was incorrect or the payload was malformed.",
-            "taskid": format!("{}", another_task_id),
-        })
-    );
-}
-
-#[tokio::test]
 async fn taskprov_opt_out_peer_aggregator_wrong_role() {
     let test = TaskprovTestCase::new().await;
 
@@ -611,10 +709,8 @@ async fn taskprov_opt_out_peer_aggregator_wrong_role() {
     let another_task_config = TaskConfig::new(
         Vec::from("foobar".as_bytes()),
         // Attempt to configure leader as a helper.
-        Vec::from([
-            "https://helper.example.com/".as_bytes().try_into().unwrap(),
-            "https://leader.example.com/".as_bytes().try_into().unwrap(),
-        ]),
+        "https://helper.example.com/".as_bytes().try_into().unwrap(),
+        "https://leader.example.com/".as_bytes().try_into().unwrap(),
         QueryConfig::new(
             Duration::from_seconds(1),
             100,
@@ -693,11 +789,9 @@ async fn taskprov_opt_out_peer_aggregator_does_not_exist() {
         .unwrap();
     let another_task_config = TaskConfig::new(
         Vec::from("foobar".as_bytes()),
-        Vec::from([
-            // Some non-existent aggregator.
-            "https://foobar.example.com/".as_bytes().try_into().unwrap(),
-            "https://leader.example.com/".as_bytes().try_into().unwrap(),
-        ]),
+        // Some non-existent aggregator.
+        "https://foobar.example.com/".as_bytes().try_into().unwrap(),
+        "https://leader.example.com/".as_bytes().try_into().unwrap(),
         QueryConfig::new(
             Duration::from_seconds(1),
             100,
