@@ -317,6 +317,8 @@ async fn aggregation_job_driver_shutdown() {
             worker_lease_duration_secs: 600,
             worker_lease_clock_skew_allowance_secs: 60,
             maximum_attempts_before_failure: 5,
+            http_request_timeout_secs: 10,
+            http_request_connection_timeout_secs: 30,
         },
         taskprov_config: TaskprovConfig { enabled: false },
         batch_aggregation_shard_count: 32,
@@ -346,6 +348,8 @@ async fn collection_job_driver_shutdown() {
             worker_lease_duration_secs: 600,
             worker_lease_clock_skew_allowance_secs: 60,
             maximum_attempts_before_failure: 5,
+            http_request_timeout_secs: 10,
+            http_request_connection_timeout_secs: 30,
         },
         batch_aggregation_shard_count: 32,
     };

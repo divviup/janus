@@ -142,6 +142,10 @@ static COLLECTOR_USER_AGENT: &str = concat!(
 /// Construct a [`reqwest::Client`] suitable for use in a DAP [`Collector`].
 pub fn default_http_client() -> Result<reqwest::Client, Error> {
     Ok(reqwest::Client::builder()
+        // Clients may override default timeouts using
+        // CollectorBuilder::with_http_client
+        .timeout(StdDuration::from_secs(30))
+        .connect_timeout(StdDuration::from_secs(10))
         .user_agent(COLLECTOR_USER_AGENT)
         .build()?)
 }
