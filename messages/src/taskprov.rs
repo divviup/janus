@@ -211,13 +211,9 @@ impl Decode for QueryConfig {
 
 /// A query type and its associated parameter(s).
 ///
-/// The redefinition of Query relative to the parent mod is for two reasons:
-///   - The type of Query is not known at compile time. For queries of unknown
-///     type, using the parent mod would require decoding it for each query
-///     type until success.
-///   - The parent mod decoding logic assumes that the query type is encoded
-///     directly adjacent to its associated parameters. This is not the case
-///     in taskprov.
+/// The redefinition of Query relative to the parent mod is because the type of Query is not known
+/// at compile time. For queries of unknown type, using the parent mod would require attempting
+/// decoding for each query type until success.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Query {
@@ -232,7 +228,6 @@ impl Query {
     const FIXED_SIZE: u8 = 2;
 }
 
-// XXX: write roundtrip_query (to test encoded_len)
 impl Encode for Query {
     fn encode(&self, bytes: &mut Vec<u8>) -> Result<(), CodecError> {
         match self {
@@ -789,7 +784,7 @@ mod tests {
             (
                 Query::TimeInterval,
                 concat!(
-                    "01",               // query_type
+                    "01", // query_type
                 ),
             ),
             (

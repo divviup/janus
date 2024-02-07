@@ -1927,7 +1927,7 @@ impl VdafOps {
                         debug!(
                             task_id = %task.id(),
                             metadata = ?prepare_init.report_share().metadata(),
-                            "Taskprov task received report with unexpected taskprov extension",
+                            "Non-taskprov task received report with unexpected taskprov extension",
                         );
                         aggregate_step_failure_counter
                             .add(1, &[KeyValue::new("type", "unexpected_taskprov_extension")]);
