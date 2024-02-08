@@ -332,6 +332,14 @@ pub enum VdafType {
         /// Size of each proof chunk.
         chunk_length: u32,
     },
+    Prio3SumVecField64MultiproofHmacSha256Aes128 {
+        /// Bit length of each summand.
+        bits: u8,
+        /// Number of summands.
+        length: u32,
+        /// Size of each proof chunk.
+        chunk_length: u32,
+    },
     Prio3Histogram {
         /// Number of buckets.
         length: u32,
@@ -349,6 +357,7 @@ impl VdafType {
     const PRIO3SUM: u32 = 0x00000001;
     const PRIO3SUMVEC: u32 = 0x00000002;
     const PRIO3HISTOGRAM: u32 = 0x00000003;
+    const PRIO3SUMVECFIELD64MULTIPROOFHMACSHA256AES128: u32 = 0xFFFF1003;
     const POPLAR1: u32 = 0x00001000;
 
     fn vdaf_type_code(&self) -> u32 {
@@ -356,6 +365,9 @@ impl VdafType {
             Self::Prio3Count => Self::PRIO3COUNT,
             Self::Prio3Sum { .. } => Self::PRIO3SUM,
             Self::Prio3SumVec { .. } => Self::PRIO3SUMVEC,
+            Self::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. } => {
+                Self::PRIO3SUMVECFIELD64MULTIPROOFHMACSHA256AES128
+            }
             Self::Prio3Histogram { .. } => Self::PRIO3HISTOGRAM,
             Self::Poplar1 { .. } => Self::POPLAR1,
         }
@@ -371,6 +383,15 @@ impl Encode for VdafType {
                 bits.encode(bytes)?;
             }
             Self::Prio3SumVec {
+                bits,
+                length,
+                chunk_length,
+            } => {
+                bits.encode(bytes)?;
+                length.encode(bytes)?;
+                chunk_length.encode(bytes)?;
+            }
+            Self::Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 bits,
                 length,
                 chunk_length,
@@ -399,6 +420,7 @@ impl Encode for VdafType {
                 Self::Prio3Count => 0,
                 Self::Prio3Sum { .. } => 1,
                 Self::Prio3SumVec { .. } => 9,
+                Self::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. } => 9,
                 Self::Prio3Histogram { .. } => 8,
                 Self::Poplar1 { .. } => 2,
             },
@@ -419,6 +441,13 @@ impl Decode for VdafType {
                 length: u32::decode(bytes)?,
                 chunk_length: u32::decode(bytes)?,
             },
+            Self::PRIO3SUMVECFIELD64MULTIPROOFHMACSHA256AES128 => {
+                Self::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                    bits: u8::decode(bytes)?,
+                    length: u32::decode(bytes)?,
+                    chunk_length: u32::decode(bytes)?,
+                }
+            }
             Self::PRIO3HISTOGRAM => Self::Prio3Histogram {
                 length: u32::decode(bytes)?,
                 chunk_length: u32::decode(bytes)?,
@@ -586,6 +615,19 @@ mod tests {
                 ),
             ),
             (
+                VdafType::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                    bits: 8,
+                    length: 12,
+                    chunk_length: 14,
+                },
+                concat!(
+                    "FFFF1003", // vdaf_type_code
+                    "08",       // bits
+                    "0000000C", // length
+                    "0000000E"  // chunk_length
+                ),
+            ),
+            (
                 VdafType::Prio3Histogram {
                     length: 256,
                     chunk_length: 18,
@@ -675,6 +717,31 @@ mod tests {
                     concat!(
                         // vdaf_type
                         "00000002", // vdaf_type_code
+                        "08",       // bits
+                        "0000000C", // length
+                        "0000000E", // chunk_length
+                    )
+                ),
+            ),
+            (
+                VdafConfig::new(
+                    DpConfig::new(DpMechanism::None),
+                    VdafType::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                        bits: 8,
+                        length: 12,
+                        chunk_length: 14,
+                    },
+                )
+                .unwrap(),
+                concat!(
+                    concat!(
+                        // dp_config
+                        "0001", // dp_config length
+                        "01",   // dp_mechanism
+                    ),
+                    concat!(
+                        // vdaf_type
+                        "FFFF1003", // vdaf_type_code
                         "08",       // bits
                         "0000000C", // length
                         "0000000E", // chunk_length
