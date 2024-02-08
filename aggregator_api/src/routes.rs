@@ -458,7 +458,7 @@ pub(super) async fn delete_taskprov_peer_aggregator<C: Clock>(
         Json<DeleteTaskprovPeerAggregatorReq>,
     ),
 ) -> Result<Status, Error> {
-    match ds
+    let res = ds
         .run_tx("delete_taskprov_peer_aggregator", |tx| {
             let req = req.clone();
             Box::pin(async move {
@@ -466,8 +466,8 @@ pub(super) async fn delete_taskprov_peer_aggregator<C: Clock>(
                     .await
             })
         })
-        .await
-    {
+        .await;
+    match res {
         Ok(_) | Err(datastore::Error::MutationTargetNotFound) => Ok(Status::NoContent),
         Err(err) => Err(err.into()),
     }
