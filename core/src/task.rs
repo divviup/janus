@@ -81,7 +81,7 @@ impl TryFrom<&taskprov::VdafType> for VdafInstance {
     }
 }
 
-fn bucket_count(buckets: &Vec<u64>, f: &mut fmt::Formatter) -> fmt::Result {
+fn bucket_count(buckets: &[u64], f: &mut fmt::Formatter) -> fmt::Result {
     write!(f, "[{} buckets]", buckets.len() + 1)
 }
 
