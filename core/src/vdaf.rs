@@ -130,6 +130,24 @@ impl TryFrom<&taskprov::VdafType> for VdafInstance {
             taskprov::VdafType::Prio3Sum { bits } => Ok(Self::Prio3Sum {
                 bits: *bits as usize,
             }),
+            taskprov::VdafType::Prio3SumVec {
+                bits,
+                length,
+                chunk_length,
+            } => Ok(Self::Prio3SumVec {
+                bits: *bits as usize,
+                length: *length as usize,
+                chunk_length: *chunk_length as usize,
+            }),
+            taskprov::VdafType::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                bits,
+                length,
+                chunk_length,
+            } => Ok(Self::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                bits: *bits as usize,
+                length: *length as usize,
+                chunk_length: *chunk_length as usize,
+            }),
             taskprov::VdafType::Prio3Histogram {
                 length,
                 chunk_length,
