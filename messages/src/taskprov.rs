@@ -342,7 +342,7 @@ impl VdafType {
     const POPLAR1: u32 = 0x00001000;
 }
 
-fn fmt_histogram(buckets: &Vec<u64>, f: &mut Formatter) -> Result<(), fmt::Error> {
+fn fmt_histogram(buckets: &[u64], f: &mut Formatter) -> Result<(), fmt::Error> {
     write!(f, "num_buckets: {}", buckets.len())
 }
 
