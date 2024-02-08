@@ -680,14 +680,14 @@ impl<C: Clock> Aggregator<C> {
         // enter this section and redundantly query the database. This could be costly at high QPS.
 
         // Slow path: retrieve task, create a task aggregator, store it to the cache, then return it.
-        match self
+        let task_opt = self
             .datastore
             .run_tx("task_aggregator_get_task", |tx| {
                 let task_id = *task_id;
                 Box::pin(async move { tx.get_aggregator_task(&task_id).await })
             })
-            .await?
-        {
+            .await?;
+        match task_opt {
             Some(task) => {
                 let task_agg =
                     Arc::new(TaskAggregator::new(task, Arc::clone(&self.report_writer))?);
