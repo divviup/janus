@@ -163,12 +163,14 @@ impl Handler for Error {
     }
 }
 
-/// The number of seconds we send in the Access-Control-Max-Age header. This determines for how
-/// long clients will cache the results of CORS preflight requests. Of popular browsers, Mozilla
-/// Firefox has the highest Max-Age cap, at 24 hours, so we use that. Our CORS preflight handlers
-/// are tightly scoped to relevant endpoints, and our CORS settings are unlikely to change.
-/// See: <https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Max-Age>.
-const CORS_PREFLIGHT_CACHE_AGE: &str = "86400"; //24 * 60 * 60;
+/// The number of seconds we send in the Access-Control-Max-Age header. This determines for how long
+/// clients will cache the results of CORS preflight requests. Of popular browsers, Mozilla Firefox
+/// has the highest Max-Age cap, at 24 hours, so we use that (`24 * 60 * 60 = 86400`). Our CORS
+/// preflight handlers are tightly scoped to relevant endpoints, and our CORS settings are unlikely
+/// to change.  See [Access-Control-Max-Age on mdn][mdn].
+///
+/// [mdn]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Max-Age
+const CORS_PREFLIGHT_CACHE_AGE: &str = "86400";
 
 /// Wrapper around a type that implements [`Encode`]. It acts as a Trillium handler, encoding the
 /// inner object and sending it as the response body, setting the Content-Type header to the
