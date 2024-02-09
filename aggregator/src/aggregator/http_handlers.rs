@@ -22,13 +22,12 @@ use opentelemetry::{
 };
 use prio::codec::Encode;
 use ring::digest::{digest, SHA256};
-use routefinder::Captures;
 use serde::Deserialize;
 use std::{borrow::Cow, time::Duration as StdDuration};
 use std::{io::Cursor, sync::Arc};
 use tracing::warn;
 use trillium::{Conn, Handler, KnownHeaderName, Status};
-use trillium_api::{api, State};
+use trillium_api::{api, State, TryFromConn};
 use trillium_caching_headers::CacheControlDirective;
 use trillium_opentelemetry::metrics;
 use trillium_router::{Router, RouterConnExt};
@@ -153,6 +152,7 @@ impl Handler for Error {
                 &ProblemDocument::new_dap(DapProblemType::InvalidTask).with_task_id(task_id),
             ),
             Error::DifferentialPrivacy(_) => conn.with_status(Status::InternalServerError),
+            Error::ClientDisconnected => conn,
         };
 
         if matches!(conn.status(), Some(status) if status.is_server_error()) {
@@ -163,12 +163,14 @@ impl Handler for Error {
     }
 }
 
-/// The number of seconds we send in the Access-Control-Max-Age header. This determines for how
-/// long clients will cache the results of CORS preflight requests. Of popular browsers, Mozilla
-/// Firefox has the highest Max-Age cap, at 24 hours, so we use that. Our CORS preflight handlers
-/// are tightly scoped to relevant endpoints, and our CORS settings are unlikely to change.
-/// See: <https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Max-Age>.
-const CORS_PREFLIGHT_CACHE_AGE: u32 = 24 * 60 * 60;
+/// The number of seconds we send in the Access-Control-Max-Age header. This determines for how long
+/// clients will cache the results of CORS preflight requests. Of popular browsers, Mozilla Firefox
+/// has the highest Max-Age cap, at 24 hours, so we use that (`24 * 60 * 60 = 86400`). Our CORS
+/// preflight handlers are tightly scoped to relevant endpoints, and our CORS settings are unlikely
+/// to change.  See [Access-Control-Max-Age on mdn][mdn].
+///
+/// [mdn]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Max-Age
+const CORS_PREFLIGHT_CACHE_AGE: &str = "86400";
 
 /// Wrapper around a type that implements [`Encode`]. It acts as a Trillium handler, encoding the
 /// inner object and sending it as the response body, setting the Content-Type header to the
@@ -349,22 +351,31 @@ struct HpkeConfigQuery {
     task_id: Option<String>,
 }
 
+#[async_trait]
+impl TryFromConn for HpkeConfigQuery {
+    type Error = Error;
+    async fn try_from_conn(conn: &mut Conn) -> Result<Self, Self::Error> {
+        serde_urlencoded::from_str(conn.querystring())
+            .map_err(|err| Error::BadRequest(format!("couldn't parse query string: {err}")))
+    }
+}
+
 /// API handler for the "/hpke_config" GET endpoint.
 async fn hpke_config<C: Clock>(
     conn: &mut Conn,
-    State(aggregator): State<Arc<Aggregator<C>>>,
+    (State(aggregator), query): (State<Arc<Aggregator<C>>>, HpkeConfigQuery),
 ) -> Result<(CacheControlDirective, EncodedBody<HpkeConfigList>), Error> {
-    let query = serde_urlencoded::from_str::<HpkeConfigQuery>(conn.querystring())
-        .map_err(|err| Error::BadRequest(format!("couldn't parse query string: {err}")))?;
-    let hpke_config_list = aggregator
-        .handle_hpke_config(query.task_id.as_ref().map(AsRef::as_ref))
-        .await?;
+    let hpke_config_list = conn
+        .cancel_on_disconnect(
+            aggregator.handle_hpke_config(query.task_id.as_ref().map(AsRef::as_ref)),
+        )
+        .await
+        .ok_or(Error::ClientDisconnected)??;
 
     // Handle CORS, if the request header is present.
-    if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
+    if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin).cloned() {
         // Unconditionally allow CORS requests from all origins.
-        let origin = origin.clone();
-        conn.headers_mut()
+        conn.response_headers_mut()
             .insert(KnownHeaderName::AccessControlAllowOrigin, origin);
     }
 
@@ -376,40 +387,37 @@ async fn hpke_config<C: Clock>(
 
 /// Handler for CORS preflight requests to "/hpke_config".
 async fn hpke_config_cors_preflight(mut conn: Conn) -> Conn {
-    conn.headers_mut().insert(KnownHeaderName::Allow, "GET");
     if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
         let origin = origin.clone();
-        let request_headers = conn.headers_mut();
-        request_headers.insert(KnownHeaderName::AccessControlAllowOrigin, origin);
-        request_headers.insert(KnownHeaderName::AccessControlAllowMethods, "GET");
-        request_headers.insert(
+        let response_headers = conn.response_headers_mut();
+        response_headers.insert(KnownHeaderName::AccessControlAllowOrigin, origin);
+        response_headers.insert(KnownHeaderName::AccessControlAllowMethods, "GET");
+        response_headers.insert(
             KnownHeaderName::AccessControlMaxAge,
-            format!("{CORS_PREFLIGHT_CACHE_AGE}"),
+            CORS_PREFLIGHT_CACHE_AGE,
         );
     }
-    conn.set_status(Status::Ok);
-    conn
+
+    conn.with_status(Status::Ok)
+        .with_header(KnownHeaderName::Allow, "GET")
 }
 
 /// API handler for the "/tasks/.../reports" PUT endpoint.
 async fn upload<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures), body): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-        Vec<u8>,
-    ),
+    (State(aggregator), body): (State<Arc<Aggregator<C>>>, Vec<u8>),
 ) -> Result<Status, Arc<Error>> {
     validate_content_type(conn, Report::MEDIA_TYPE).map_err(Arc::new)?;
 
-    let task_id = parse_task_id(&captures).map_err(Arc::new)?;
-    aggregator.handle_upload(&task_id, &body).await?;
+    let task_id = parse_task_id(conn).map_err(Arc::new)?;
+    conn.cancel_on_disconnect(aggregator.handle_upload(&task_id, &body))
+        .await
+        .ok_or(Error::ClientDisconnected)??;
 
     // Handle CORS, if the request header is present.
-    if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
+    if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin).cloned() {
         // Unconditionally allow CORS requests from all origins.
-        let origin = origin.clone();
-        conn.headers_mut()
+        conn.response_headers_mut()
             .insert(KnownHeaderName::AccessControlAllowOrigin, origin);
     }
 
@@ -418,49 +426,45 @@ async fn upload<C: Clock>(
 
 /// Handler for CORS preflight requests to "/tasks/.../reports".
 async fn upload_cors_preflight(mut conn: Conn) -> Conn {
-    conn.headers_mut().insert(KnownHeaderName::Allow, "PUT");
-    if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin) {
-        let origin = origin.clone();
-        let request_headers = conn.headers_mut();
-        request_headers.insert(KnownHeaderName::AccessControlAllowOrigin, origin);
-        request_headers.insert(KnownHeaderName::AccessControlAllowMethods, "PUT");
-        request_headers.insert(KnownHeaderName::AccessControlAllowHeaders, "content-type");
-        request_headers.insert(
+    if let Some(origin) = conn.request_headers().get(KnownHeaderName::Origin).cloned() {
+        let response_headers = conn.response_headers_mut();
+        response_headers.insert(KnownHeaderName::AccessControlAllowOrigin, origin);
+        response_headers.insert(KnownHeaderName::AccessControlAllowMethods, "PUT");
+        response_headers.insert(KnownHeaderName::AccessControlAllowHeaders, "content-type");
+        response_headers.insert(
             KnownHeaderName::AccessControlMaxAge,
-            format!("{CORS_PREFLIGHT_CACHE_AGE}"),
+            CORS_PREFLIGHT_CACHE_AGE,
         );
     }
-    conn.set_status(Status::Ok);
-    conn
+
+    conn.with_status(Status::Ok)
+        .with_header(KnownHeaderName::Allow, "PUT")
 }
 
 /// API handler for the "/tasks/.../aggregation_jobs/..." PUT endpoint.
 async fn aggregation_jobs_put<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures), body): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-        Vec<u8>,
-    ),
+    (State(aggregator), body): (State<Arc<Aggregator<C>>>, Vec<u8>),
 ) -> Result<EncodedBody<AggregationJobResp>, Error> {
     validate_content_type(
         conn,
         AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
     )?;
 
-    let task_id = parse_task_id(&captures)?;
-    let aggregation_job_id = parse_aggregation_job_id(&captures)?;
+    let task_id = parse_task_id(conn)?;
+    let aggregation_job_id = parse_aggregation_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
     let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
-    let response = aggregator
-        .handle_aggregate_init(
+    let response = conn
+        .cancel_on_disconnect(aggregator.handle_aggregate_init(
             &task_id,
             &aggregation_job_id,
             &body,
             auth_token,
             taskprov_task_config.as_ref(),
-        )
-        .await?;
+        ))
+        .await
+        .ok_or(Error::ClientDisconnected)??;
 
     Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))
 }
@@ -468,27 +472,24 @@ async fn aggregation_jobs_put<C: Clock>(
 /// API handler for the "/tasks/.../aggregation_jobs/..." POST endpoint.
 async fn aggregation_jobs_post<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures), body): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-        Vec<u8>,
-    ),
+    (State(aggregator), body): (State<Arc<Aggregator<C>>>, Vec<u8>),
 ) -> Result<EncodedBody<AggregationJobResp>, Error> {
     validate_content_type(conn, AggregationJobContinueReq::MEDIA_TYPE)?;
 
-    let task_id = parse_task_id(&captures)?;
-    let aggregation_job_id = parse_aggregation_job_id(&captures)?;
+    let task_id = parse_task_id(conn)?;
+    let aggregation_job_id = parse_aggregation_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
     let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
-    let response = aggregator
-        .handle_aggregate_continue(
+    let response = conn
+        .cancel_on_disconnect(aggregator.handle_aggregate_continue(
             &task_id,
             &aggregation_job_id,
             &body,
             auth_token,
             taskprov_task_config.as_ref(),
-        )
-        .await?;
+        ))
+        .await
+        .ok_or(Error::ClientDisconnected)??;
 
     Ok(EncodedBody::new(response, AggregationJobResp::MEDIA_TYPE))
 }
@@ -496,44 +497,42 @@ async fn aggregation_jobs_post<C: Clock>(
 /// API handler for the "/tasks/.../aggregation_jobs/..." DELETE endpoint.
 async fn aggregation_jobs_delete<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures)): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-    ),
+    State(aggregator): State<Arc<Aggregator<C>>>,
 ) -> Result<Status, Error> {
-    let task_id = parse_task_id(&captures)?;
-    let aggregation_job_id = parse_aggregation_job_id(&captures)?;
+    let task_id = parse_task_id(conn)?;
+    let aggregation_job_id = parse_aggregation_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
     let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
 
-    aggregator
-        .handle_aggregate_delete(
-            &task_id,
-            &aggregation_job_id,
-            auth_token,
-            taskprov_task_config.as_ref(),
-        )
-        .await?;
+    conn.cancel_on_disconnect(aggregator.handle_aggregate_delete(
+        &task_id,
+        &aggregation_job_id,
+        auth_token,
+        taskprov_task_config.as_ref(),
+    ))
+    .await
+    .ok_or(Error::ClientDisconnected)??;
     Ok(Status::NoContent)
 }
 
 /// API handler for the "/tasks/.../collection_jobs/..." PUT endpoint.
 async fn collection_jobs_put<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures), body): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-        Vec<u8>,
-    ),
+    (State(aggregator), body): (State<Arc<Aggregator<C>>>, Vec<u8>),
 ) -> Result<Status, Error> {
     validate_content_type(conn, CollectionReq::<TimeInterval>::MEDIA_TYPE)?;
 
-    let task_id = parse_task_id(&captures)?;
-    let collection_job_id = parse_collection_job_id(&captures)?;
+    let task_id = parse_task_id(conn)?;
+    let collection_job_id = parse_collection_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
-    aggregator
-        .handle_create_collection_job(&task_id, &collection_job_id, &body, auth_token)
-        .await?;
+    conn.cancel_on_disconnect(aggregator.handle_create_collection_job(
+        &task_id,
+        &collection_job_id,
+        &body,
+        auth_token,
+    ))
+    .await
+    .ok_or(Error::ClientDisconnected)??;
 
     Ok(Status::Created)
 }
@@ -541,20 +540,22 @@ async fn collection_jobs_put<C: Clock>(
 /// API handler for the "/tasks/.../collection_jobs/..." POST endpoint.
 async fn collection_jobs_post<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures)): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-    ),
+    State(aggregator): State<Arc<Aggregator<C>>>,
 ) -> Result<(), Error> {
-    let task_id = parse_task_id(&captures)?;
-    let collection_job_id = parse_collection_job_id(&captures)?;
+    let task_id = parse_task_id(conn)?;
+    let collection_job_id = parse_collection_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
-    let response_opt = aggregator
-        .handle_get_collection_job(&task_id, &collection_job_id, auth_token)
-        .await?;
+    let response_opt = conn
+        .cancel_on_disconnect(aggregator.handle_get_collection_job(
+            &task_id,
+            &collection_job_id,
+            auth_token,
+        ))
+        .await
+        .ok_or(Error::ClientDisconnected)??;
     match response_opt {
         Some(response_bytes) => {
-            conn.headers_mut().insert(
+            conn.response_headers_mut().insert(
                 KnownHeaderName::ContentType,
                 Collection::<TimeInterval>::MEDIA_TYPE,
             );
@@ -569,37 +570,40 @@ async fn collection_jobs_post<C: Clock>(
 /// API handler for the "/tasks/.../collection_jobs/..." DELETE endpoint.
 async fn collection_jobs_delete<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures)): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-    ),
+    State(aggregator): State<Arc<Aggregator<C>>>,
 ) -> Result<Status, Error> {
-    let task_id = parse_task_id(&captures)?;
-    let collection_job_id = parse_collection_job_id(&captures)?;
+    let task_id = parse_task_id(conn)?;
+    let collection_job_id = parse_collection_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
-    aggregator
-        .handle_delete_collection_job(&task_id, &collection_job_id, auth_token)
-        .await?;
+    conn.cancel_on_disconnect(aggregator.handle_delete_collection_job(
+        &task_id,
+        &collection_job_id,
+        auth_token,
+    ))
+    .await
+    .ok_or(Error::ClientDisconnected)??;
     Ok(Status::NoContent)
 }
 
 /// API handler for the "/tasks/.../aggregate_shares" POST endpoint.
 async fn aggregate_shares<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures), body): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-        Vec<u8>,
-    ),
+    (State(aggregator), body): (State<Arc<Aggregator<C>>>, Vec<u8>),
 ) -> Result<EncodedBody<AggregateShare>, Error> {
     validate_content_type(conn, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)?;
 
-    let task_id = parse_task_id(&captures)?;
+    let task_id = parse_task_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
     let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
-    let share = aggregator
-        .handle_aggregate_share(&task_id, &body, auth_token, taskprov_task_config.as_ref())
-        .await?;
+    let share = conn
+        .cancel_on_disconnect(aggregator.handle_aggregate_share(
+            &task_id,
+            &body,
+            auth_token,
+            taskprov_task_config.as_ref(),
+        ))
+        .await
+        .ok_or(Error::ClientDisconnected)??;
 
     Ok(EncodedBody::new(share, AggregateShare::MEDIA_TYPE))
 }
@@ -620,10 +624,10 @@ fn validate_content_type(conn: &Conn, expected_media_type: &'static str) -> Resu
     }
 }
 
-/// Parse a [`TaskId`] from the "task_id" parameter in a set of path parameter [`Captures`].
-fn parse_task_id(captures: &Captures) -> Result<TaskId, Error> {
-    let encoded = captures
-        .get("task_id")
+/// Parse a [`TaskId`] from the "task_id" parameter in a set of path parameter
+fn parse_task_id(conn: &Conn) -> Result<TaskId, Error> {
+    let encoded = conn
+        .param("task_id")
         .ok_or_else(|| Error::Internal("task_id parameter is missing from captures".to_string()))?;
     encoded
         .parse()
@@ -631,9 +635,8 @@ fn parse_task_id(captures: &Captures) -> Result<TaskId, Error> {
 }
 
 /// Parse an [`AggregationJobId`] from the "aggregation_job_id" parameter in a set of path parameter
-/// [`Captures`].
-fn parse_aggregation_job_id(captures: &Captures) -> Result<AggregationJobId, Error> {
-    let encoded = captures.get("aggregation_job_id").ok_or_else(|| {
+fn parse_aggregation_job_id(conn: &Conn) -> Result<AggregationJobId, Error> {
+    let encoded = conn.param("aggregation_job_id").ok_or_else(|| {
         Error::Internal("aggregation_job_id parameter is missing from captures".to_string())
     })?;
     encoded
@@ -642,9 +645,8 @@ fn parse_aggregation_job_id(captures: &Captures) -> Result<AggregationJobId, Err
 }
 
 /// Parse an [`CollectionJobId`] from the "collection_job_id" parameter in a set of path parameter
-/// [`Captures`].
-fn parse_collection_job_id(captures: &Captures) -> Result<CollectionJobId, Error> {
-    let encoded = captures.get("collection_job_id").ok_or_else(|| {
+fn parse_collection_job_id(conn: &Conn) -> Result<CollectionJobId, Error> {
+    let encoded = conn.param("collection_job_id").ok_or_else(|| {
         Error::Internal("collection_job_id parameter is missing from captures".to_string())
     })?;
     encoded
