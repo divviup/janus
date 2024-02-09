@@ -1,11 +1,7 @@
 use crate::aggregator::{query_type::UploadableQueryType, Error};
 use async_trait::async_trait;
 use futures::future::join_all;
-use janus_aggregator_core::datastore::{
-    self,
-    models::{LeaderStoredReport, TaskUploadIncrementor},
-    Datastore, Transaction,
-};
+use janus_aggregator_core::datastore::{self, models::LeaderStoredReport, Datastore, Transaction};
 use janus_core::{time::Clock, Runtime};
 use janus_messages::TaskId;
 use prio::vdaf;
@@ -173,13 +169,15 @@ impl<C: Clock> ReportWriteBatcher<C> {
                         join_all(report_results.iter().map(|report_result| async move {
                             match report_result {
                                 Ok(report_writer) => report_writer.write_report(tx, ord).await,
-                                Err(rejection) => {
-                                    tx.increment_task_upload_counter(
-                                        rejection.task_id(),
-                                        ord,
-                                        &rejection.reason().into(),
-                                    )
-                                    .await?;
+                                Err(_rejection) => {
+                                    // Incrementing upload counters disabled for now
+                                    // https://github.com/divviup/janus/issues/2654
+                                    // tx.increment_task_upload_counter(
+                                    //     rejection.task_id(),
+                                    //     ord,
+                                    //     &rejection.reason().into(),
+                                    // )
+                                    // .await?;
                                     Ok(())
                                 }
                             }
@@ -273,7 +271,7 @@ where
         self.report.task_id()
     }
 
-    async fn write_report(&self, tx: &Transaction<C>, ord: u64) -> Result<(), Error> {
+    async fn write_report(&self, tx: &Transaction<C>, _ord: u64) -> Result<(), Error> {
         // Some validation requires we query the database. Thus it's still possible to reject a
         // report at this stage.
         match Q::validate_uploaded_report(tx, self.vdaf.as_ref(), &self.report).await {
@@ -283,12 +281,14 @@ where
                     .await;
                 match result {
                     Ok(_) => {
-                        tx.increment_task_upload_counter(
-                            self.report.task_id(),
-                            ord,
-                            &TaskUploadIncrementor::ReportSuccess,
-                        )
-                        .await?;
+                        // Incrementing task counters disabled for now
+                        // https://github.com/divviup/janus/issues/2654
+                        // tx.increment_task_upload_counter(
+                        //     self.report.task_id(),
+                        //     ord,
+                        //     &TaskUploadIncrementor::ReportSuccess,
+                        // )
+                        // .await?;
                         Ok(())
                     }
                     // Assume this was a duplicate report, return OK but don't increment the counter
@@ -298,13 +298,15 @@ where
                 }
             }
             Err(error) => {
-                if let Error::ReportRejected(rejection) = error {
-                    tx.increment_task_upload_counter(
-                        rejection.task_id(),
-                        ord,
-                        &rejection.reason().into(),
-                    )
-                    .await?;
+                if let Error::ReportRejected(_rejection) = error {
+                    // Incrementing task counters disabled for now
+                    // https://github.com/divviup/janus/issues/2654
+                    // tx.increment_task_upload_counter(
+                    //     rejection.task_id(),
+                    //     ord,
+                    //     &rejection.reason().into(),
+                    // )
+                    // .await?;
                 }
                 Err(error)
             }
