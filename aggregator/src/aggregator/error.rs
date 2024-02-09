@@ -144,7 +144,7 @@ pub enum Error {
     /// An error occurred when trying to ensure differential privacy.
     #[error("differential privacy error: {0}")]
     DifferentialPrivacy(VdafError),
-    /// the http client disconnected while we were still executing
+    /// The http client disconnected while we were still executing.
     #[error("http client disconnect")]
     ClientDisconnected,
 }
