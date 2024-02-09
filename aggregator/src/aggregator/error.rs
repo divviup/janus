@@ -12,6 +12,8 @@ use prio::{topology::ping_pong::PingPongError, vdaf::VdafError};
 use std::{
     fmt::{self, Display, Formatter},
     num::TryFromIntError,
+    ops::Deref,
+    sync::Arc,
 };
 use tracing::info;
 
@@ -144,6 +146,25 @@ pub enum Error {
     /// An error occurred when trying to ensure differential privacy.
     #[error("differential privacy error: {0}")]
     DifferentialPrivacy(VdafError),
+}
+
+/// A newtype around `Arc<Error>`. This is needed to host a customized implementation of
+/// `trillium::Handler`.
+#[derive(Clone)]
+pub(crate) struct ArcError(Arc<Error>);
+
+impl From<Arc<Error>> for ArcError {
+    fn from(value: Arc<Error>) -> Self {
+        Self(value)
+    }
+}
+
+impl Deref for ArcError {
+    type Target = Error;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 /// Contains details that describe the report and why it was rejected.

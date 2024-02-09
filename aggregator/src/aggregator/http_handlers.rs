@@ -1,4 +1,7 @@
-use super::{error::ReportRejectionReason, Aggregator, Config, Error};
+use super::{
+    error::{ArcError, ReportRejectionReason},
+    Aggregator, Config, Error,
+};
 use crate::aggregator::problem_details::{ProblemDetailsConnExt, ProblemDocument};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -37,129 +40,140 @@ use trillium_router::{Router, RouterConnExt};
 #[derive(Clone, Copy)]
 struct ErrorCode(&'static str);
 
-#[async_trait]
-impl Handler for Error {
-    async fn run(&self, mut conn: Conn) -> Conn {
-        let error_code = self.error_code();
-        conn.set_state(ErrorCode(error_code));
-        let conn = match self {
-            Error::InvalidConfiguration(_) => conn.with_status(Status::InternalServerError),
-            Error::MessageDecode(_) => conn
-                .with_problem_document(&ProblemDocument::new_dap(DapProblemType::InvalidMessage)),
-            Error::ResponseEncode(_) => conn.with_status(Status::InternalServerError),
-            Error::ReportRejected(rejection) => match rejection.reason() {
-                ReportRejectionReason::OutdatedHpkeConfig(_) => conn.with_problem_document(
-                    &ProblemDocument::new_dap(DapProblemType::OutdatedConfig)
-                        .with_task_id(rejection.task_id()),
-                ),
-                ReportRejectionReason::TooEarly => conn.with_problem_document(
-                    &ProblemDocument::new_dap(DapProblemType::ReportTooEarly)
-                        .with_task_id(rejection.task_id()),
-                ),
-                _ => conn.with_problem_document(
-                    &ProblemDocument::new_dap(DapProblemType::ReportRejected)
-                        .with_task_id(rejection.task_id())
-                        .with_detail(rejection.reason().detail()),
-                ),
-            },
-            Error::InvalidMessage(task_id, _) => {
-                let mut doc = ProblemDocument::new_dap(DapProblemType::InvalidMessage);
-                if let Some(task_id) = task_id {
-                    doc = doc.with_task_id(task_id);
-                }
-                conn.with_problem_document(&doc)
-            }
-            Error::StepMismatch { task_id, .. } => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::StepMismatch).with_task_id(task_id),
+async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
+    let error_code = error.error_code();
+    conn.set_state(ErrorCode(error_code));
+    let conn = match error {
+        Error::InvalidConfiguration(_) => conn.with_status(Status::InternalServerError),
+        Error::MessageDecode(_) => {
+            conn.with_problem_document(&ProblemDocument::new_dap(DapProblemType::InvalidMessage))
+        }
+        Error::ResponseEncode(_) => conn.with_status(Status::InternalServerError),
+        Error::ReportRejected(rejection) => match rejection.reason() {
+            ReportRejectionReason::OutdatedHpkeConfig(_) => conn.with_problem_document(
+                &ProblemDocument::new_dap(DapProblemType::OutdatedConfig)
+                    .with_task_id(rejection.task_id()),
             ),
-            Error::UnrecognizedTask(task_id) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::UnrecognizedTask).with_task_id(task_id),
+            ReportRejectionReason::TooEarly => conn.with_problem_document(
+                &ProblemDocument::new_dap(DapProblemType::ReportTooEarly)
+                    .with_task_id(rejection.task_id()),
             ),
-            Error::MissingTaskId => {
-                conn.with_problem_document(&ProblemDocument::new_dap(DapProblemType::MissingTaskId))
+            _ => conn.with_problem_document(
+                &ProblemDocument::new_dap(DapProblemType::ReportRejected)
+                    .with_task_id(rejection.task_id())
+                    .with_detail(rejection.reason().detail()),
+            ),
+        },
+        Error::InvalidMessage(task_id, _) => {
+            let mut doc = ProblemDocument::new_dap(DapProblemType::InvalidMessage);
+            if let Some(task_id) = task_id {
+                doc = doc.with_task_id(task_id);
             }
-            Error::UnrecognizedAggregationJob(task_id, aggregation_job_id) => conn
-                .with_problem_document(
-                    &ProblemDocument::new_dap(DapProblemType::UnrecognizedAggregationJob)
-                        .with_task_id(task_id)
-                        .with_aggregation_job_id(aggregation_job_id),
-                ),
-            Error::DeletedAggregationJob(task_id, aggregation_job_id) => conn
-                .with_problem_document(
-                    &ProblemDocument::new(
-                        "https://docs.divviup.org/references/janus-errors#aggregation-job-deleted",
-                        "The aggregation job has been deleted.",
-                        Status::Gone,
-                    )
+            conn.with_problem_document(&doc)
+        }
+        Error::StepMismatch { task_id, .. } => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::StepMismatch).with_task_id(task_id),
+        ),
+        Error::UnrecognizedTask(task_id) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::UnrecognizedTask).with_task_id(task_id),
+        ),
+        Error::MissingTaskId => {
+            conn.with_problem_document(&ProblemDocument::new_dap(DapProblemType::MissingTaskId))
+        }
+        Error::UnrecognizedAggregationJob(task_id, aggregation_job_id) => conn
+            .with_problem_document(
+                &ProblemDocument::new_dap(DapProblemType::UnrecognizedAggregationJob)
                     .with_task_id(task_id)
                     .with_aggregation_job_id(aggregation_job_id),
-                ),
-            Error::DeletedCollectionJob(_, _) => conn.with_status(Status::NoContent),
-            Error::AbandonedCollectionJob(task_id, collection_job_id) => conn
-                .with_problem_document(
-                    &ProblemDocument::new(
-                        "https://docs.divviup.org/references/janus-errors#collection-job-abandoned",
-                        "The collection job has been abandoned.",
-                        Status::InternalServerError,
-                    )
-                    .with_detail(concat!(
-                    "An internal problem has caused the server to stop processing this collection ",
-                    "job. The job is no longer collectable. Contact the server operators for ",
-                    "assistance."
-                    ))
-                    .with_task_id(task_id)
-                    .with_collection_job_id(collection_job_id),
-                ),
-            Error::UnrecognizedCollectionJob(_, _) => conn.with_status(Status::NotFound),
+            ),
+        Error::DeletedAggregationJob(task_id, aggregation_job_id) => conn.with_problem_document(
+            &ProblemDocument::new(
+                "https://docs.divviup.org/references/janus-errors#aggregation-job-deleted",
+                "The aggregation job has been deleted.",
+                Status::Gone,
+            )
+            .with_task_id(task_id)
+            .with_aggregation_job_id(aggregation_job_id),
+        ),
+        Error::DeletedCollectionJob(_, _) => conn.with_status(Status::NoContent),
+        Error::AbandonedCollectionJob(task_id, collection_job_id) => conn.with_problem_document(
+            &ProblemDocument::new(
+                "https://docs.divviup.org/references/janus-errors#collection-job-abandoned",
+                "The collection job has been abandoned.",
+                Status::InternalServerError,
+            )
+            .with_detail(concat!(
+                "An internal problem has caused the server to stop processing this collection ",
+                "job. The job is no longer collectable. Contact the server operators for ",
+                "assistance."
+            ))
+            .with_task_id(task_id)
+            .with_collection_job_id(collection_job_id),
+        ),
+        Error::UnrecognizedCollectionJob(_, _) => conn.with_status(Status::NotFound),
 
-            Error::UnauthorizedRequest(task_id) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::UnauthorizedRequest)
-                    .with_task_id(task_id),
-            ),
-            Error::InvalidBatchSize(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::InvalidBatchSize).with_task_id(task_id),
-            ),
-            Error::BatchInvalid(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::BatchInvalid).with_task_id(task_id),
-            ),
-            Error::BatchOverlap(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::BatchOverlap).with_task_id(task_id),
-            ),
-            Error::BatchMismatch(inner) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::BatchMismatch)
-                    .with_task_id(&inner.task_id)
-                    .with_detail(&inner.to_string()),
-            ),
-            Error::BatchQueriedTooManyTimes(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::BatchQueriedTooManyTimes)
-                    .with_task_id(task_id),
-            ),
-            Error::Hpke(_)
-            | Error::Datastore(_)
-            | Error::Vdaf(_)
-            | Error::Internal(_)
-            | Error::Url(_)
-            | Error::Message(_)
-            | Error::HttpClient(_)
-            | Error::Http { .. }
-            | Error::TaskParameters(_) => conn.with_status(Status::InternalServerError),
-            Error::AggregateShareRequestRejected(_, _) => conn.with_status(Status::BadRequest),
-            Error::EmptyAggregation(task_id) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::InvalidMessage).with_task_id(task_id),
-            ),
-            Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
-            Error::BadRequest(_) => conn.with_status(Status::BadRequest),
-            Error::InvalidTask(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::InvalidTask).with_task_id(task_id),
-            ),
-            Error::DifferentialPrivacy(_) => conn.with_status(Status::InternalServerError),
-        };
+        Error::UnauthorizedRequest(task_id) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::UnauthorizedRequest).with_task_id(task_id),
+        ),
+        Error::InvalidBatchSize(task_id, _) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::InvalidBatchSize).with_task_id(task_id),
+        ),
+        Error::BatchInvalid(task_id, _) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::BatchInvalid).with_task_id(task_id),
+        ),
+        Error::BatchOverlap(task_id, _) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::BatchOverlap).with_task_id(task_id),
+        ),
+        Error::BatchMismatch(inner) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::BatchMismatch)
+                .with_task_id(&inner.task_id)
+                .with_detail(&inner.to_string()),
+        ),
+        Error::BatchQueriedTooManyTimes(task_id, _) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::BatchQueriedTooManyTimes)
+                .with_task_id(task_id),
+        ),
+        Error::Hpke(_)
+        | Error::Datastore(_)
+        | Error::Vdaf(_)
+        | Error::Internal(_)
+        | Error::Url(_)
+        | Error::Message(_)
+        | Error::HttpClient(_)
+        | Error::Http { .. }
+        | Error::TaskParameters(_) => conn.with_status(Status::InternalServerError),
+        Error::AggregateShareRequestRejected(_, _) => conn.with_status(Status::BadRequest),
+        Error::EmptyAggregation(task_id) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::InvalidMessage).with_task_id(task_id),
+        ),
+        Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
+        Error::BadRequest(_) => conn.with_status(Status::BadRequest),
+        Error::InvalidTask(task_id, _) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::InvalidTask).with_task_id(task_id),
+        ),
+        Error::DifferentialPrivacy(_) => conn.with_status(Status::InternalServerError),
+    };
 
-        if matches!(conn.status(), Some(status) if status.is_server_error()) {
-            warn!(error_code, error=?self, "Error handling endpoint");
-        }
+    if matches!(conn.status(), Some(status) if status.is_server_error()) {
+        warn!(error_code, ?error, "Error handling endpoint");
+    }
 
-        conn
+    conn
+}
+
+#[async_trait]
+impl Handler for Error {
+    async fn run(&self, conn: Conn) -> Conn {
+        run_error_handler(self, conn).await
+    }
+}
+
+// This implementation on a newtype avoids a warning in the generic <Arc<impl Handler> as
+// Handler>::init() implementation. We can suppress this, since this handler does not use init().
+#[async_trait]
+impl Handler for ArcError {
+    async fn run(&self, conn: Conn) -> Conn {
+        run_error_handler(self, conn).await
     }
 }
 
@@ -399,7 +413,7 @@ async fn upload<C: Clock>(
         State<Captures<'static, 'static>>,
         Vec<u8>,
     ),
-) -> Result<Status, Arc<Error>> {
+) -> Result<Status, ArcError> {
     validate_content_type(conn, Report::MEDIA_TYPE).map_err(Arc::new)?;
 
     let task_id = parse_task_id(&captures).map_err(Arc::new)?;
