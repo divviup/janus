@@ -817,10 +817,13 @@ mod tests {
     use assert_matches::assert_matches;
     use futures::future::try_join_all;
     use janus_aggregator_core::{
-        datastore::models::{
-            AggregateShareJob, AggregationJob, AggregationJobState, Batch, BatchAggregation,
-            BatchAggregationState, BatchState, CollectionJob, CollectionJobState, HpkeKeyState,
-            ReportAggregation, ReportAggregationState,
+        datastore::{
+            models::{
+                AggregateShareJob, AggregationJob, AggregationJobState, Batch, BatchAggregation,
+                BatchAggregationState, BatchState, CollectionJob, CollectionJobState, HpkeKeyState,
+                ReportAggregation, ReportAggregationState,
+            },
+            test_util::EphemeralDatastoreBuilder,
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
         task::{test_util::TaskBuilder, QueryType, VerifyKey},
@@ -1554,7 +1557,21 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn upload_handler_error_fanout() {
         install_test_trace_subscriber();
-        let (clock, ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+        let clock = MockClock::default();
+        let ephemeral_datastore = EphemeralDatastoreBuilder::new()
+            .with_database_pool_wait_timeout(Some(StdDuration::from_millis(100)))
+            .build()
+            .await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let handler = aggregator_handler(
+            datastore.clone(),
+            clock.clone(),
+            TestRuntime::default(),
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
 
         const REPORT_EXPIRY_AGE: u64 = 1_000_000;
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)

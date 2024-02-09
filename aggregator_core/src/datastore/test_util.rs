@@ -172,93 +172,151 @@ impl EphemeralDatastore {
     }
 }
 
-/// Create a new, empty EphemeralDatastore with all schema migrations up to the specified version
-/// applied to it.
-pub async fn ephemeral_datastore_schema_version(schema_version: i64) -> EphemeralDatastore {
-    let db = EphemeralDatabase::shared().await;
-    let db_name = format!("janus_test_{}", hex::encode(random::<[u8; 16]>()));
-    trace!("Creating ephemeral postgres datastore {db_name}");
+/// Builder to configure a new [`EphemeralDatastore`].
+pub struct EphemeralDatastoreBuilder {
+    schema_version: i64,
+    database_pool_wait_timeout: Option<Duration>,
+    database_pool_create_timeout: Option<Duration>,
+    database_pool_recycle_timeout: Option<Duration>,
+}
 
-    // Create Postgres DB.
-    //
-    // Since this is the first connection we're establishing since the container has been created,
-    // retry this a few times. The database may not be ready yet.
-    let backoff = ExponentialBackoffBuilder::new()
-        .with_initial_interval(Duration::from_millis(500))
-        .with_max_interval(Duration::from_millis(500))
-        .with_max_elapsed_time(Some(Duration::from_secs(5)))
-        .build();
-    let (client, conn) = retry(backoff, || {
-        let connection_string = db.connection_string("postgres");
-        async move {
-            connect(&connection_string, NoTls)
-                .await
-                .map_err(|err| backoff::Error::Transient {
-                    err,
-                    retry_after: None,
-                })
+impl Default for EphemeralDatastoreBuilder {
+    fn default() -> Self {
+        Self {
+            schema_version: *SUPPORTED_SCHEMA_VERSIONS
+                .iter()
+                .max()
+                .expect("SUPPORTED_SCHEMA_VERSIONS is empty"),
+            database_pool_wait_timeout: Some(Duration::from_secs(10)),
+            database_pool_create_timeout: Some(Duration::from_secs(10)),
+            database_pool_recycle_timeout: Some(Duration::from_secs(10)),
         }
-    })
-    .await
-    .unwrap();
+    }
+}
 
-    tokio::spawn(async move { conn.await.unwrap() }); // automatically stops after Client is dropped
-    client
-        .batch_execute(&format!("CREATE DATABASE {db_name}"))
+impl EphemeralDatastoreBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_schema_version(mut self, schema_version: i64) -> Self {
+        self.schema_version = schema_version;
+        self
+    }
+
+    pub fn with_database_pool_wait_timeout(
+        mut self,
+        database_pool_wait_timeout: Option<Duration>,
+    ) -> Self {
+        self.database_pool_wait_timeout = database_pool_wait_timeout;
+        self
+    }
+
+    pub fn with_database_pool_create_timeout(
+        mut self,
+        database_pool_create_timeout: Option<Duration>,
+    ) -> Self {
+        self.database_pool_create_timeout = database_pool_create_timeout;
+        self
+    }
+
+    pub fn with_database_pool_recycle_timeout(
+        mut self,
+        database_pool_recycle_timeout: Option<Duration>,
+    ) -> Self {
+        self.database_pool_recycle_timeout = database_pool_recycle_timeout;
+        self
+    }
+
+    pub async fn build(self) -> EphemeralDatastore {
+        let db = EphemeralDatabase::shared().await;
+        let db_name = format!("janus_test_{}", hex::encode(random::<[u8; 16]>()));
+        trace!("Creating ephemeral postgres datastore {db_name}");
+
+        // Create Postgres DB.
+        //
+        // Since this is the first connection we're establishing since the container has been created,
+        // retry this a few times. The database may not be ready yet.
+        let backoff = ExponentialBackoffBuilder::new()
+            .with_initial_interval(Duration::from_millis(500))
+            .with_max_interval(Duration::from_millis(500))
+            .with_max_elapsed_time(Some(Duration::from_secs(5)))
+            .build();
+        let (client, conn) = retry(backoff, || {
+            let connection_string = db.connection_string("postgres");
+            async move {
+                connect(&connection_string, NoTls)
+                    .await
+                    .map_err(|err| backoff::Error::Transient {
+                        err,
+                        retry_after: None,
+                    })
+            }
+        })
         .await
         .unwrap();
 
-    let connection_string = db.connection_string(&db_name);
+        tokio::spawn(async move { conn.await.unwrap() }); // automatically stops after Client is dropped
+        client
+            .batch_execute(&format!("CREATE DATABASE {db_name}"))
+            .await
+            .unwrap();
 
-    let mut connection = PgConnection::connect(&connection_string).await.unwrap();
+        let connection_string = db.connection_string(&db_name);
 
-    // We deliberately avoid using sqlx::migrate! or other compile-time macros to ensure that
-    // changes to the migration scripts will be picked up by every run of the tests.
-    let migrations_path = PathBuf::from_str(env!("CARGO_MANIFEST_DIR"))
-        .unwrap()
-        .join("../db");
-    let mut migrator = Migrator::new(migrations_path).await.unwrap();
+        let mut connection = PgConnection::connect(&connection_string).await.unwrap();
 
-    migrator.migrations = migrator
-        .migrations
-        .iter()
-        .filter(|migration| migration.version <= schema_version)
-        .cloned()
-        .collect();
+        // We deliberately avoid using sqlx::migrate! or other compile-time macros to ensure that
+        // changes to the migration scripts will be picked up by every run of the tests.
+        let migrations_path = PathBuf::from_str(env!("CARGO_MANIFEST_DIR"))
+            .unwrap()
+            .join("../db");
+        let mut migrator = Migrator::new(migrations_path).await.unwrap();
 
-    migrator.run(&mut connection).await.unwrap();
+        migrator.migrations = migrator
+            .migrations
+            .iter()
+            .filter(|migration| migration.version <= self.schema_version)
+            .cloned()
+            .collect();
 
-    // Create a connection pool for the newly-created database.
-    let cfg = Config::from_str(&connection_string).unwrap();
-    let conn_mgr = Manager::new(cfg, NoTls);
-    let pool = Pool::builder(conn_mgr)
-        .runtime(deadpool::Runtime::Tokio1)
-        .timeouts(Timeouts {
-            wait: Some(Duration::from_secs(10)),
-            create: Some(Duration::from_secs(10)),
-            recycle: Some(Duration::from_secs(10)),
-        })
-        .build()
-        .unwrap();
+        migrator.run(&mut connection).await.unwrap();
 
-    EphemeralDatastore {
-        _db: db,
-        connection_string,
-        pool,
-        datastore_key_bytes: generate_aead_key_bytes(),
-        migrator,
+        // Create a connection pool for the newly-created database.
+        let cfg = Config::from_str(&connection_string).unwrap();
+        let conn_mgr = Manager::new(cfg, NoTls);
+        let pool = Pool::builder(conn_mgr)
+            .runtime(deadpool::Runtime::Tokio1)
+            .timeouts(Timeouts {
+                wait: self.database_pool_wait_timeout,
+                create: self.database_pool_create_timeout,
+                recycle: self.database_pool_recycle_timeout,
+            })
+            .build()
+            .unwrap();
+
+        EphemeralDatastore {
+            _db: db,
+            connection_string,
+            pool,
+            datastore_key_bytes: generate_aead_key_bytes(),
+            migrator,
+        }
     }
+}
+
+/// Create a new, empty EphemeralDatastore with all schema migrations up to the specified version
+/// applied to it.
+pub async fn ephemeral_datastore_schema_version(schema_version: i64) -> EphemeralDatastore {
+    EphemeralDatastoreBuilder::new()
+        .with_schema_version(schema_version)
+        .build()
+        .await
 }
 
 /// Creates a new, empty EphemeralDatastore with all schema migrations applied to it.
 pub async fn ephemeral_datastore() -> EphemeralDatastore {
-    ephemeral_datastore_schema_version(
-        *SUPPORTED_SCHEMA_VERSIONS
-            .iter()
-            .max()
-            .expect("SUPPORTED_SCHEMA_VERSIONS is empty"),
-    )
-    .await
+    EphemeralDatastoreBuilder::new().build().await
 }
 
 /// Creates a new, empty EphemeralDatabase by applying all available schema migrations,
