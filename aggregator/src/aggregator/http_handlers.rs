@@ -825,7 +825,7 @@ mod tests {
         report_id::ReportIdChecksumExt,
         test_util::{
             dummy_vdaf::{self, AggregationParam, OutputShare},
-            run_vdaf,
+            install_test_trace_subscriber, run_vdaf,
             runtime::TestRuntime,
         },
         time::{Clock, DurationExt, MockClock, TimeExt},
@@ -853,7 +853,8 @@ mod tests {
     };
     use rand::random;
     use serde_json::json;
-    use std::{collections::HashMap, sync::Arc};
+    use std::{collections::HashMap, sync::Arc, time::Duration as StdDuration};
+    use tokio::time::sleep;
     use trillium::{KnownHeaderName, Status};
     use trillium_testing::{
         assert_headers,
@@ -1532,6 +1533,99 @@ mod tests {
                 .unwrap(),
             test_conn.status().unwrap() as u16 as u64
         );
+    }
+
+    /// This test exercises distribution of transaction-wide errors to multiple clients that have
+    /// their uploads in the same batch.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_handler_error_fanout() {
+        install_test_trace_subscriber();
+        let (clock, ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+
+        const REPORT_EXPIRY_AGE: u64 = 1_000_000;
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
+            .build();
+
+        let leader_task = task.leader_view().unwrap();
+        datastore.put_aggregator_task(&leader_task).await.unwrap();
+
+        // Use trillium_tokio instead of trillium_testing so we can send reqeusts in parallel and
+        // better match production use cases.
+        let server_handle = trillium_tokio::config()
+            .without_signals()
+            .with_host("127.0.0.1")
+            .with_port(0)
+            .spawn(handler);
+        let server_info = server_handle.info().await;
+        let socket_addr = server_info.tcp_socket_addr().unwrap();
+
+        let client = reqwest::Client::new();
+        let mut url = task.report_upload_uri().unwrap();
+        url.set_scheme("http").unwrap();
+        url.set_host(Some("127.0.0.1")).unwrap();
+        url.set_port(Some(socket_addr.port())).unwrap();
+
+        // Upload one report and wait for it to finish, to prepopulate the aggregator's task cache.
+        let report: Report = create_report(&leader_task, clock.now());
+        let response = client
+            .put(url.clone())
+            .header("Content-Type", Report::MEDIA_TYPE)
+            .body(report.get_encoded().unwrap())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), 200);
+
+        // Use up the connection pool's connections to cause a transaction-level error in the next
+        // uploads.
+        let exhaust_pool_task_handle = tokio::spawn({
+            let pool = ephemeral_datastore.pool().clone();
+            async move {
+                let mut connections = Vec::new();
+                loop {
+                    connections.push(pool.get().await);
+                }
+            }
+        });
+
+        // Wait for the pool to be exhausted by the above task.
+        let pool = ephemeral_datastore.pool();
+        while pool.status().available > 0 {
+            sleep(StdDuration::from_millis(100)).await;
+        }
+
+        // Upload many reports in parallel, to be sure we exercise upload batching.
+        let upload_task_handles = (0..10)
+            .map(|_| {
+                tokio::spawn({
+                    let leader_task = leader_task.clone();
+                    let clock = clock.clone();
+                    let client = client.clone();
+                    let url = url.clone();
+                    async move {
+                        let report = create_report(&leader_task, clock.now());
+                        let response = client
+                            .put(url)
+                            .header("Content-Type", Report::MEDIA_TYPE)
+                            .body(report.get_encoded().unwrap())
+                            .send()
+                            .await
+                            .unwrap();
+                        assert_eq!(response.status().as_u16(), 500);
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        drop(client);
+
+        for handle in upload_task_handles.into_iter() {
+            handle.await.unwrap();
+        }
+
+        exhaust_pool_task_handle.abort();
+
+        server_handle.stop().await;
     }
 
     #[tokio::test]

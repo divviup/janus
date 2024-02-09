@@ -4,7 +4,7 @@ use crate::{
 };
 use backoff::{future::retry, ExponentialBackoffBuilder};
 use chrono::NaiveDateTime;
-use deadpool_postgres::{Manager, Pool};
+use deadpool_postgres::{Manager, Pool, Timeouts};
 use janus_core::{
     test_util::testcontainers::Postgres,
     time::{Clock, MockClock, TimeExt},
@@ -231,7 +231,15 @@ pub async fn ephemeral_datastore_schema_version(schema_version: i64) -> Ephemera
     // Create a connection pool for the newly-created database.
     let cfg = Config::from_str(&connection_string).unwrap();
     let conn_mgr = Manager::new(cfg, NoTls);
-    let pool = Pool::builder(conn_mgr).build().unwrap();
+    let pool = Pool::builder(conn_mgr)
+        .runtime(deadpool::Runtime::Tokio1)
+        .timeouts(Timeouts {
+            wait: Some(Duration::from_secs(10)),
+            create: Some(Duration::from_secs(10)),
+            recycle: Some(Duration::from_secs(10)),
+        })
+        .build()
+        .unwrap();
 
     EphemeralDatastore {
         _db: db,
