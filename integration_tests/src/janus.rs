@@ -161,6 +161,7 @@ impl JanusInProcess {
             batch_aggregation_shard_count: 32,
             task_counter_shard_count: 64,
             global_hpke_configs_refresh_interval: None,
+            enable_task_counters: true,
         };
         let aggregation_job_creator_options = AggregationJobCreatorOptions {
             common: common_binary_options.clone(),

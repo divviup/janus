@@ -1,7 +1,11 @@
 use crate::aggregator::{query_type::UploadableQueryType, Error};
 use async_trait::async_trait;
 use futures::future::join_all;
-use janus_aggregator_core::datastore::{self, models::LeaderStoredReport, Datastore, Transaction};
+use janus_aggregator_core::datastore::{
+    self,
+    models::{LeaderStoredReport, TaskUploadIncrementor},
+    Datastore, Transaction,
+};
 use janus_core::{time::Clock, Runtime};
 use janus_messages::TaskId;
 use prio::vdaf;
@@ -31,6 +35,7 @@ impl<C: Clock> ReportWriteBatcher<C> {
     pub fn new<R: Runtime + Send + Sync + 'static>(
         ds: Arc<Datastore<C>>,
         runtime: R,
+        enable_task_counters: bool,
         counter_shard_count: u64,
         max_batch_size: usize,
         max_batch_write_delay: Duration,
@@ -44,6 +49,7 @@ impl<C: Clock> ReportWriteBatcher<C> {
                 ds,
                 runtime_clone,
                 report_rx,
+                enable_task_counters,
                 counter_shard_count,
                 max_batch_size,
                 max_batch_write_delay,
@@ -94,6 +100,7 @@ impl<C: Clock> ReportWriteBatcher<C> {
         ds: Arc<Datastore<C>>,
         runtime: Arc<R>,
         mut report_rx: ReportWriteBatcherReceiver<C>,
+        enable_task_counters: bool,
         counter_shard_count: u64,
         max_batch_size: usize,
         max_batch_write_delay: Duration,
@@ -136,7 +143,13 @@ impl<C: Clock> ReportWriteBatcher<C> {
                 let report_results =
                     replace(&mut report_results, Vec::with_capacity(max_batch_size));
                 runtime.spawn(async move {
-                    Self::write_batch(ds, counter_shard_count, report_results).await;
+                    Self::write_batch(
+                        ds,
+                        enable_task_counters,
+                        counter_shard_count,
+                        report_results,
+                    )
+                    .await;
                 });
             }
         }
@@ -145,6 +158,7 @@ impl<C: Clock> ReportWriteBatcher<C> {
     #[tracing::instrument(skip_all)]
     async fn write_batch(
         ds: Arc<Datastore<C>>,
+        enable_task_counters: bool,
         counter_shard_count: u64,
         mut report_results: Vec<(ReportResult<C>, Option<ResultSender>)>,
     ) {
@@ -168,16 +182,20 @@ impl<C: Clock> ReportWriteBatcher<C> {
                     Ok(
                         join_all(report_results.iter().map(|report_result| async move {
                             match report_result {
-                                Ok(report_writer) => report_writer.write_report(tx, ord).await,
-                                Err(_rejection) => {
-                                    // Incrementing upload counters disabled for now
-                                    // https://github.com/divviup/janus/issues/2654
-                                    // tx.increment_task_upload_counter(
-                                    //     rejection.task_id(),
-                                    //     ord,
-                                    //     &rejection.reason().into(),
-                                    // )
-                                    // .await?;
+                                Ok(report_writer) => {
+                                    report_writer
+                                        .write_report(tx, enable_task_counters, ord)
+                                        .await
+                                }
+                                Err(rejection) => {
+                                    if enable_task_counters {
+                                        tx.increment_task_upload_counter(
+                                            rejection.task_id(),
+                                            ord,
+                                            &rejection.reason().into(),
+                                        )
+                                        .await?;
+                                    }
                                     Ok(())
                                 }
                             }
@@ -220,7 +238,12 @@ impl<C: Clock> ReportWriteBatcher<C> {
 #[async_trait]
 pub trait ReportWriter<C: Clock>: Debug + Send + Sync {
     fn task_id(&self) -> &TaskId;
-    async fn write_report(&self, tx: &Transaction<C>, ord: u64) -> Result<(), Error>;
+    async fn write_report(
+        &self,
+        tx: &Transaction<C>,
+        enable_task_counters: bool,
+        ord: u64,
+    ) -> Result<(), Error>;
 }
 
 #[derive(Debug)]
@@ -271,7 +294,12 @@ where
         self.report.task_id()
     }
 
-    async fn write_report(&self, tx: &Transaction<C>, _ord: u64) -> Result<(), Error> {
+    async fn write_report(
+        &self,
+        tx: &Transaction<C>,
+        enable_task_counters: bool,
+        ord: u64,
+    ) -> Result<(), Error> {
         // Some validation requires we query the database. Thus it's still possible to reject a
         // report at this stage.
         match Q::validate_uploaded_report(tx, self.vdaf.as_ref(), &self.report).await {
@@ -281,14 +309,14 @@ where
                     .await;
                 match result {
                     Ok(_) => {
-                        // Incrementing task counters disabled for now
-                        // https://github.com/divviup/janus/issues/2654
-                        // tx.increment_task_upload_counter(
-                        //     self.report.task_id(),
-                        //     ord,
-                        //     &TaskUploadIncrementor::ReportSuccess,
-                        // )
-                        // .await?;
+                        if enable_task_counters {
+                            tx.increment_task_upload_counter(
+                                self.report.task_id(),
+                                ord,
+                                &TaskUploadIncrementor::ReportSuccess,
+                            )
+                            .await?;
+                        }
                         Ok(())
                     }
                     // Assume this was a duplicate report, return OK but don't increment the counter
@@ -298,15 +326,15 @@ where
                 }
             }
             Err(error) => {
-                if let Error::ReportRejected(_rejection) = error {
-                    // Incrementing task counters disabled for now
-                    // https://github.com/divviup/janus/issues/2654
-                    // tx.increment_task_upload_counter(
-                    //     rejection.task_id(),
-                    //     ord,
-                    //     &rejection.reason().into(),
-                    // )
-                    // .await?;
+                if let Error::ReportRejected(rejection) = error {
+                    if enable_task_counters {
+                        tx.increment_task_upload_counter(
+                            rejection.task_id(),
+                            ord,
+                            &rejection.reason().into(),
+                        )
+                        .await?;
+                    }
                 }
                 Err(error)
             }

@@ -371,6 +371,10 @@ pub struct Config {
     /// specify this.
     #[serde(default)]
     pub global_hpke_configs_refresh_interval: Option<u64>,
+
+    /// Enables counting report uploads. Experimental.
+    #[serde(default)]
+    pub enable_task_counters: bool,
 }
 
 fn default_task_counter_shard_count() -> u64 {
@@ -428,6 +432,7 @@ impl Config {
                 self.max_upload_batch_write_delay_ms,
             ),
             batch_aggregation_shard_count: self.batch_aggregation_shard_count,
+            enable_task_counters: self.enable_task_counters,
             task_counter_shard_count: self.task_counter_shard_count,
             taskprov_config: self.taskprov_config,
             global_hpke_configs_refresh_interval: match self.global_hpke_configs_refresh_interval {
@@ -515,6 +520,7 @@ mod tests {
             task_counter_shard_count: 64,
             taskprov_config: TaskprovConfig::default(),
             global_hpke_configs_refresh_interval: None,
+            enable_task_counters: true,
         })
     }
 
