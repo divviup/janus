@@ -78,7 +78,7 @@ use prio::{
 use rand::random;
 use reqwest::{
     header::{HeaderValue, ToStrError, CONTENT_TYPE, RETRY_AFTER},
-    Response, StatusCode,
+    StatusCode,
 };
 pub use retry_after;
 use retry_after::{FromHeaderValueError, RetryAfter};
@@ -124,10 +124,9 @@ pub enum Error {
 }
 
 impl Error {
-    /// Construct an error from an HTTP response's status and problem details document, if present
-    /// in the body.
-    async fn from_http_response(response: Response) -> Error {
-        Error::Http(Box::new(HttpErrorResponse::from_response(response).await))
+    /// Construct an error from an HTTP error response.
+    fn from_http_error_response(http_error_response: HttpErrorResponse) -> Error {
+        Error::Http(Box::new(http_error_response))
     }
 }
 
@@ -496,19 +495,21 @@ impl<V: vdaf::Collector> Collector<V> {
             .await;
 
         match response_res {
-            // Successful response or unretryable error status code:
+            // Successful response.
             Ok(response) => {
                 let status = response.status();
-                if status.is_client_error() || status.is_server_error() {
-                    return Err(Error::from_http_response(response).await);
-                } else if status != StatusCode::CREATED {
-                    // Incorrect success status code:
+                if status != StatusCode::CREATED {
+                    // Incorrect success status code.
                     return Err(Error::Http(Box::new(status.into())));
                 }
             }
-            // Retryable error status code, but ran out of retries:
-            Err(Ok(response)) => return Err(Error::from_http_response(response).await),
-            // Lower level errors, either unretryable or ran out of retries:
+
+            // HTTP-level error.
+            Err(Ok(http_error_response)) => {
+                return Err(Error::from_http_error_response(http_error_response))
+            }
+
+            // Network-level error.
             Err(Err(error)) => return Err(Error::HttpClient(error)),
         };
 
@@ -538,7 +539,7 @@ impl<V: vdaf::Collector> Collector<V> {
             .await;
 
         let response = match response_res {
-            // Successful response or unretryable error status code:
+            // Successful response.
             Ok(response) => {
                 let status = response.status();
                 match status {
@@ -551,17 +552,18 @@ impl<V: vdaf::Collector> Collector<V> {
                             .transpose()?;
                         return Ok(PollResult::NotReady(retry_after_opt));
                     }
-                    _ if status.is_client_error() || status.is_server_error() => {
-                        return Err(Error::from_http_response(response).await);
-                    }
                     _ => {
                         return Err(Error::Http(Box::new(HttpErrorResponse::from(status))));
                     }
                 }
             }
-            // Retryable error status code, but ran out of retries:
-            Err(Ok(response)) => return Err(Error::from_http_response(response).await),
-            // Lower level errors, either unretryable or ran out of retries:
+
+            // HTTP-level error.
+            Err(Ok(http_error_response)) => {
+                return Err(Error::from_http_error_response(http_error_response))
+            }
+
+            // Network-level error.
             Err(Err(error)) => return Err(Error::HttpClient(error)),
         };
 
@@ -573,7 +575,7 @@ impl<V: vdaf::Collector> Collector<V> {
             return Err(Error::BadContentType(Some(content_type.clone())));
         }
 
-        let collect_response = CollectionMessage::<Q>::get_decoded(&response.bytes().await?)?;
+        let collect_response = CollectionMessage::<Q>::get_decoded(response.body())?;
 
         let aggregate_shares = [
             (
@@ -725,23 +727,23 @@ impl<V: vdaf::Collector> Collector<V> {
             .await;
 
         match response_res {
-            // Successful response or unretryable error status code:
+            // Successful response.
             Ok(response) => {
+                // Accept any success status code -- DAP is not prescriptive about status codes
+                // for this response.
                 let status = response.status();
-                if status.is_client_error() || status.is_server_error() {
-                    Err(Error::from_http_response(response).await)
-                } else if status.is_success() {
-                    // Accept any success status code -- DAP is not prescriptive about status codes
-                    // for this response.
-                    Ok(())
-                } else {
-                    // Redirect status codes and invalid status codes are not expected.
-                    Err(Error::Http(Box::new(status.into())))
+                if !status.is_success() {
+                    return Err(Error::Http(Box::new(status.into())));
                 }
+                Ok(())
             }
-            // Retryable error status code, but ran out of retries:
-            Err(Ok(response)) => Err(Error::from_http_response(response).await),
-            // Lower level errors, either unretryable or ran out of retries:
+
+            // HTTP-level error.
+            Err(Ok(http_error_response)) => {
+                Err(Error::from_http_error_response(http_error_response))
+            }
+
+            // Network-level error.
             Err(Err(error)) => Err(Error::HttpClient(error)),
         }
     }

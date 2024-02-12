@@ -1,7 +1,10 @@
 //! Provides a simple interface for retrying fallible HTTP requests.
 
+use crate::http::HttpErrorResponse;
 use backoff::{future::retry, ExponentialBackoff};
+use bytes::Bytes;
 use futures::Future;
+use http::HeaderMap;
 use reqwest::StatusCode;
 use std::{error::Error as StdError, time::Duration};
 use tracing::{debug, warn};
@@ -51,19 +54,49 @@ pub fn test_http_request_exponential_backoff() -> ExponentialBackoff {
     }
 }
 
-/// Executes the provided request function and awaits the returned future, retrying using the
-/// parameters in the provided `ExponentialBackoff` if the [`reqwest::Error`] returned by
-/// `request_fn` is:
+/// HttpResponse represents an HTTP response. It will typically be returned from
+/// [`retry_http_request`].
+#[derive(Debug)]
+pub struct HttpResponse {
+    status: StatusCode,
+    headers: HeaderMap,
+    body: Bytes,
+}
+
+impl HttpResponse {
+    /// Returns the HTTP status code associated with this HTTP response.
+    pub fn status(&self) -> StatusCode {
+        self.status
+    }
+
+    /// Returns the headers associated with this HTTP response.
+    pub fn headers(&self) -> &HeaderMap {
+        &self.headers
+    }
+
+    /// Returns the body of the HTTP response.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+}
+
+/// Executes the provided HTTP request function, retrying using the parameters in the provided
+/// `ExponentialBackoff` if the [`reqwest::Error`] returned by `request_fn` is:
 ///
 ///   - a timeout
 ///   - a problem establishing a connection
 ///   - an HTTP status code indicating a server error
 ///   - HTTP status code 429 Too Many Requests
 ///
-/// If the request eventually succeeds, the value returned by `request_fn` is returned. If an
-/// unretryable failure occurs or enough transient failures occur, then `Err(ret)` is returned,
-/// where `ret` is the `Result<reqwest::Response, reqwest::Error>` returned by the last call to
-/// `request_fn`. Retryable failures are logged.
+/// If the request eventually succeeds, an [`HttpResponse`] corresponding to the request returned by
+/// `request_fn` is returned.
+///
+/// If an unretryable failure occurs or enough transient failures occur, then `Err(ret)` is
+/// returned, where `ret` is the `Result<HttpErrorResponse, reqwest::Error>` corresponding to the
+/// last call to `request_fn`. `HttpErrorResponse` is populated when the result was a successful
+/// HTTP transaction indicating a failure, while `reqwest::Error` is populated when there is an
+/// HTTP-level error such as a connection failure, timeout, or I/O error. Retryable failures are
+/// logged.
 ///
 /// # TODOs:
 ///
@@ -71,48 +104,63 @@ pub fn test_http_request_exponential_backoff() -> ExponentialBackoff {
 /// that a caller could opt to retry when it sees 408 Request Timeout, but since none of the servers
 /// this is currently used to communicate with ever return those statuses, we don't yet need that
 /// feature.
+#[allow(clippy::result_large_err)]
 pub async fn retry_http_request<RequestFn, ResultFuture>(
     backoff: ExponentialBackoff,
     request_fn: RequestFn,
-) -> Result<reqwest::Response, Result<reqwest::Response, reqwest::Error>>
+) -> Result<HttpResponse, Result<HttpErrorResponse, reqwest::Error>>
 where
     RequestFn: Fn() -> ResultFuture,
     ResultFuture: Future<Output = Result<reqwest::Response, reqwest::Error>>,
 {
-    retry(backoff, || async {
-        // In all branches in this match, we wrap the reqwest::Response or reqwest::Error up in a
-        // Result<reqwest::Response, backoff::Error<Result<reqwest::Response, reqwest::Error>>>>,
-        // which allows us to retry on certain HTTP status codes without discarding the
-        // reqwest::Response, which the caller may need in order to examine its body or headers.
-        match request_fn().await {
-            Ok(response) => {
-                if is_retryable_http_status(response.status()) {
-                    warn!(?response, "encountered retryable server error");
-                    return Err(backoff::Error::transient(Ok(response)));
-                }
-
-                Ok(response)
+    fn check_reqwest_result<T>(
+        rslt: Result<T, reqwest::Error>,
+    ) -> Result<T, backoff::Error<Result<HttpErrorResponse, reqwest::Error>>> {
+        rslt.map_err(|err| {
+            if err.is_timeout() || err.is_connect() {
+                warn!(?err, "Encountered retryable connection error");
+                return backoff::Error::transient(Err(err));
             }
-            Err(error) => {
-                if error.is_timeout() || error.is_connect() {
-                    warn!(?error, "encountered retryable error");
-                    return Err(backoff::Error::transient(Err(error)));
-                }
 
-                if let Some(io_error) = find_io_error(&error) {
-                    if let std::io::ErrorKind::ConnectionRefused
-                    | std::io::ErrorKind::ConnectionReset
-                    | std::io::ErrorKind::ConnectionAborted = io_error.kind()
-                    {
-                        warn!(?error, "encountered retryable error");
-                        return Err(backoff::Error::transient(Err(error)));
-                    }
+            if let Some(io_error) = find_io_error(&err) {
+                if let std::io::ErrorKind::ConnectionRefused
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted = io_error.kind()
+                {
+                    warn!(?err, "Encountered retryable connection error");
+                    return backoff::Error::transient(Err(err));
                 }
+            }
 
-                debug!("encountered non-retryable error");
-                Err(backoff::Error::permanent(Err(error)))
+            debug!("Encountered non-retryable connection error");
+            backoff::Error::permanent(Err(err))
+        })
+    }
+
+    retry(backoff, || async {
+        let response = check_reqwest_result(request_fn().await)?;
+        let status = response.status();
+        if status.is_server_error() || status.is_client_error() {
+            if is_retryable_http_status(status) {
+                warn!(?response, "Encountered retryable HTTP error");
+                return Err(backoff::Error::transient(Ok(
+                    HttpErrorResponse::from_response(response).await,
+                )));
+            } else {
+                warn!(?response, "Encountered non-retryable HTTP error");
+                return Err(backoff::Error::permanent(Ok(
+                    HttpErrorResponse::from_response(response).await,
+                )));
             }
         }
+        let headers = response.headers().clone();
+        let body = check_reqwest_result(response.bytes().await)?;
+
+        Ok(HttpResponse {
+            status,
+            headers,
+            body,
+        })
     })
     .await
 }
@@ -142,7 +190,7 @@ mod tests {
             .mock("GET", "/")
             .with_status(StatusCode::NOT_FOUND.as_u16().into())
             .with_header("some-header", "some-value")
-            .with_body("some-body")
+            .with_body("some-body") // once told me
             .expect(1)
             .create_async()
             .await;
@@ -150,20 +198,15 @@ mod tests {
         let http_client = reqwest::Client::builder().build().unwrap();
 
         // HTTP 404 should cause the client to give up after a single attempt, and the caller should
-        // get `Ok(reqwest::Response)`.
+        // get `Err(Ok(HttpErrorResponse))`.
         let response = retry_http_request(test_http_request_exponential_backoff(), || async {
             http_client.get(server.url()).send().await
         })
         .await
+        .unwrap_err()
         .unwrap();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        assert_eq!(
-            response.headers().get("some-header").unwrap(),
-            &"some-value"
-        );
-        assert_eq!(response.text().await.unwrap(), "some-body".to_string());
-
         mock_404.assert_async().await;
     }
 
@@ -184,8 +227,8 @@ mod tests {
         let http_client = reqwest::Client::builder().build().unwrap();
 
         // We expect to eventually give up in the face of repeated HTTP 500, but the caller expects
-        // a `reqwest::Response` so they can examine the status code, headers and response body,
-        // which you can't get from a `reqwest::Error`.
+        // an `HttpErrorResponse` so they can examine the error, which you can't get from a
+        // `reqwest::Error`.
         let response = retry_http_request(test_http_request_exponential_backoff(), || async {
             http_client.get(server.url()).send().await
         })
@@ -194,11 +237,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(
-            response.headers().get("some-header").unwrap(),
-            &"some-value"
-        );
-        assert_eq!(response.text().await.unwrap(), "some-body".to_string());
         mock_500.assert_async().await;
     }
 
@@ -220,6 +258,7 @@ mod tests {
             http_client.get(server.url()).send().await
         })
         .await
+        .unwrap_err()
         .unwrap();
 
         assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
