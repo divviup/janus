@@ -1142,13 +1142,13 @@ dependencies = [
 
 [[package]]
 name = "divviup-client"
-version = "0.1.8"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93b7c5005788531d809ec53b720f366566cc744103e59d8940bd958022cd266b"
+checksum = "5644860528fd2351ba40e80df4a6d99de8b5b6b034b0dfd7267162c984ce30b5"
 dependencies = [
  "base64",
  "email_address",
- "janus_messages 0.6.9",
+ "janus_messages 0.6.14",
  "log",
  "pad-adapter",
  "serde",
@@ -2408,9 +2408,9 @@ dependencies = [
 
 [[package]]
 name = "janus_messages"
-version = "0.6.9"
+version = "0.6.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b4f80a209fb184b8d2854942914aaebe60c40d2f9a8849909059dacbab72b67"
+checksum = "f73baa72c8a4e955f3ac9b2179dd88425c2f430e9782f6a5276588b0fdc4e20d"
 dependencies = [
  "anyhow",
  "base64",
@@ -2828,6 +2828,12 @@ dependencies = [
  "smallvec",
  "zeroize",
 ]
+
+[[package]]
+name = "num-conv"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51d515d32fb182ee37cda2ccdcb92950d6a3c2893aa280e540671c2cd0f3b1d9"
 
 [[package]]
 name = "num-integer"
@@ -4816,12 +4822,13 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.3.31"
+version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f657ba42c3f86e7680e53c8cd3af8abbe56b5491790b46e22e19c0d57463583e"
+checksum = "c8248b6521bb14bc45b4067159b9b6ad792e2d6d754d6c41fb50e29fefe38749"
 dependencies = [
  "deranged",
  "itoa",
+ "num-conv",
  "powerfmt",
  "serde",
  "time-core",
@@ -4836,10 +4843,11 @@ checksum = "ef927ca75afb808a4d64dd374f00a2adf8d0fcff8e7b184af886c3c87ec4a3f3"
 
 [[package]]
 name = "time-macros"
-version = "0.2.16"
+version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26197e33420244aeb70c3e8c78376ca46571bc4e701e4791c2cd9f57dcb3a43f"
+checksum = "7ba3a3ef41e6672a2f0f001392bb5dcd3ff0a9992d618ca761a11c3121547774"
 dependencies = [
+ "num-conv",
  "time-core",
 ]
 
