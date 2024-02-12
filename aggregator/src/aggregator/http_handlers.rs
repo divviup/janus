@@ -1,4 +1,7 @@
-use super::{error::ReportRejectionReason, Aggregator, Config, Error};
+use super::{
+    error::{ArcError, ReportRejectionReason},
+    Aggregator, Config, Error,
+};
 use crate::aggregator::problem_details::{ProblemDetailsConnExt, ProblemDocument};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -37,129 +40,140 @@ use trillium_router::{Router, RouterConnExt};
 #[derive(Clone, Copy)]
 struct ErrorCode(&'static str);
 
-#[async_trait]
-impl Handler for Error {
-    async fn run(&self, mut conn: Conn) -> Conn {
-        let error_code = self.error_code();
-        conn.set_state(ErrorCode(error_code));
-        let conn = match self {
-            Error::InvalidConfiguration(_) => conn.with_status(Status::InternalServerError),
-            Error::MessageDecode(_) => conn
-                .with_problem_document(&ProblemDocument::new_dap(DapProblemType::InvalidMessage)),
-            Error::ResponseEncode(_) => conn.with_status(Status::InternalServerError),
-            Error::ReportRejected(rejection) => match rejection.reason() {
-                ReportRejectionReason::OutdatedHpkeConfig(_) => conn.with_problem_document(
-                    &ProblemDocument::new_dap(DapProblemType::OutdatedConfig)
-                        .with_task_id(rejection.task_id()),
-                ),
-                ReportRejectionReason::TooEarly => conn.with_problem_document(
-                    &ProblemDocument::new_dap(DapProblemType::ReportTooEarly)
-                        .with_task_id(rejection.task_id()),
-                ),
-                _ => conn.with_problem_document(
-                    &ProblemDocument::new_dap(DapProblemType::ReportRejected)
-                        .with_task_id(rejection.task_id())
-                        .with_detail(rejection.reason().detail()),
-                ),
-            },
-            Error::InvalidMessage(task_id, _) => {
-                let mut doc = ProblemDocument::new_dap(DapProblemType::InvalidMessage);
-                if let Some(task_id) = task_id {
-                    doc = doc.with_task_id(task_id);
-                }
-                conn.with_problem_document(&doc)
-            }
-            Error::StepMismatch { task_id, .. } => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::StepMismatch).with_task_id(task_id),
+async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
+    let error_code = error.error_code();
+    conn.set_state(ErrorCode(error_code));
+    let conn = match error {
+        Error::InvalidConfiguration(_) => conn.with_status(Status::InternalServerError),
+        Error::MessageDecode(_) => {
+            conn.with_problem_document(&ProblemDocument::new_dap(DapProblemType::InvalidMessage))
+        }
+        Error::ResponseEncode(_) => conn.with_status(Status::InternalServerError),
+        Error::ReportRejected(rejection) => match rejection.reason() {
+            ReportRejectionReason::OutdatedHpkeConfig(_) => conn.with_problem_document(
+                &ProblemDocument::new_dap(DapProblemType::OutdatedConfig)
+                    .with_task_id(rejection.task_id()),
             ),
-            Error::UnrecognizedTask(task_id) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::UnrecognizedTask).with_task_id(task_id),
+            ReportRejectionReason::TooEarly => conn.with_problem_document(
+                &ProblemDocument::new_dap(DapProblemType::ReportTooEarly)
+                    .with_task_id(rejection.task_id()),
             ),
-            Error::MissingTaskId => {
-                conn.with_problem_document(&ProblemDocument::new_dap(DapProblemType::MissingTaskId))
+            _ => conn.with_problem_document(
+                &ProblemDocument::new_dap(DapProblemType::ReportRejected)
+                    .with_task_id(rejection.task_id())
+                    .with_detail(rejection.reason().detail()),
+            ),
+        },
+        Error::InvalidMessage(task_id, _) => {
+            let mut doc = ProblemDocument::new_dap(DapProblemType::InvalidMessage);
+            if let Some(task_id) = task_id {
+                doc = doc.with_task_id(task_id);
             }
-            Error::UnrecognizedAggregationJob(task_id, aggregation_job_id) => conn
-                .with_problem_document(
-                    &ProblemDocument::new_dap(DapProblemType::UnrecognizedAggregationJob)
-                        .with_task_id(task_id)
-                        .with_aggregation_job_id(aggregation_job_id),
-                ),
-            Error::DeletedAggregationJob(task_id, aggregation_job_id) => conn
-                .with_problem_document(
-                    &ProblemDocument::new(
-                        "https://docs.divviup.org/references/janus-errors#aggregation-job-deleted",
-                        "The aggregation job has been deleted.",
-                        Status::Gone,
-                    )
+            conn.with_problem_document(&doc)
+        }
+        Error::StepMismatch { task_id, .. } => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::StepMismatch).with_task_id(task_id),
+        ),
+        Error::UnrecognizedTask(task_id) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::UnrecognizedTask).with_task_id(task_id),
+        ),
+        Error::MissingTaskId => {
+            conn.with_problem_document(&ProblemDocument::new_dap(DapProblemType::MissingTaskId))
+        }
+        Error::UnrecognizedAggregationJob(task_id, aggregation_job_id) => conn
+            .with_problem_document(
+                &ProblemDocument::new_dap(DapProblemType::UnrecognizedAggregationJob)
                     .with_task_id(task_id)
                     .with_aggregation_job_id(aggregation_job_id),
-                ),
-            Error::DeletedCollectionJob(_, _) => conn.with_status(Status::NoContent),
-            Error::AbandonedCollectionJob(task_id, collection_job_id) => conn
-                .with_problem_document(
-                    &ProblemDocument::new(
-                        "https://docs.divviup.org/references/janus-errors#collection-job-abandoned",
-                        "The collection job has been abandoned.",
-                        Status::InternalServerError,
-                    )
-                    .with_detail(concat!(
-                    "An internal problem has caused the server to stop processing this collection ",
-                    "job. The job is no longer collectable. Contact the server operators for ",
-                    "assistance."
-                    ))
-                    .with_task_id(task_id)
-                    .with_collection_job_id(collection_job_id),
-                ),
-            Error::UnrecognizedCollectionJob(_, _) => conn.with_status(Status::NotFound),
+            ),
+        Error::DeletedAggregationJob(task_id, aggregation_job_id) => conn.with_problem_document(
+            &ProblemDocument::new(
+                "https://docs.divviup.org/references/janus-errors#aggregation-job-deleted",
+                "The aggregation job has been deleted.",
+                Status::Gone,
+            )
+            .with_task_id(task_id)
+            .with_aggregation_job_id(aggregation_job_id),
+        ),
+        Error::DeletedCollectionJob(_, _) => conn.with_status(Status::NoContent),
+        Error::AbandonedCollectionJob(task_id, collection_job_id) => conn.with_problem_document(
+            &ProblemDocument::new(
+                "https://docs.divviup.org/references/janus-errors#collection-job-abandoned",
+                "The collection job has been abandoned.",
+                Status::InternalServerError,
+            )
+            .with_detail(concat!(
+                "An internal problem has caused the server to stop processing this collection ",
+                "job. The job is no longer collectable. Contact the server operators for ",
+                "assistance."
+            ))
+            .with_task_id(task_id)
+            .with_collection_job_id(collection_job_id),
+        ),
+        Error::UnrecognizedCollectionJob(_, _) => conn.with_status(Status::NotFound),
 
-            Error::UnauthorizedRequest(task_id) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::UnauthorizedRequest)
-                    .with_task_id(task_id),
-            ),
-            Error::InvalidBatchSize(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::InvalidBatchSize).with_task_id(task_id),
-            ),
-            Error::BatchInvalid(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::BatchInvalid).with_task_id(task_id),
-            ),
-            Error::BatchOverlap(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::BatchOverlap).with_task_id(task_id),
-            ),
-            Error::BatchMismatch(inner) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::BatchMismatch)
-                    .with_task_id(&inner.task_id)
-                    .with_detail(&inner.to_string()),
-            ),
-            Error::BatchQueriedTooManyTimes(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::BatchQueriedTooManyTimes)
-                    .with_task_id(task_id),
-            ),
-            Error::Hpke(_)
-            | Error::Datastore(_)
-            | Error::Vdaf(_)
-            | Error::Internal(_)
-            | Error::Url(_)
-            | Error::Message(_)
-            | Error::HttpClient(_)
-            | Error::Http { .. }
-            | Error::TaskParameters(_) => conn.with_status(Status::InternalServerError),
-            Error::AggregateShareRequestRejected(_, _) => conn.with_status(Status::BadRequest),
-            Error::EmptyAggregation(task_id) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::InvalidMessage).with_task_id(task_id),
-            ),
-            Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
-            Error::BadRequest(_) => conn.with_status(Status::BadRequest),
-            Error::InvalidTask(task_id, _) => conn.with_problem_document(
-                &ProblemDocument::new_dap(DapProblemType::InvalidTask).with_task_id(task_id),
-            ),
-            Error::DifferentialPrivacy(_) => conn.with_status(Status::InternalServerError),
-        };
+        Error::UnauthorizedRequest(task_id) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::UnauthorizedRequest).with_task_id(task_id),
+        ),
+        Error::InvalidBatchSize(task_id, _) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::InvalidBatchSize).with_task_id(task_id),
+        ),
+        Error::BatchInvalid(task_id, _) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::BatchInvalid).with_task_id(task_id),
+        ),
+        Error::BatchOverlap(task_id, _) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::BatchOverlap).with_task_id(task_id),
+        ),
+        Error::BatchMismatch(inner) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::BatchMismatch)
+                .with_task_id(&inner.task_id)
+                .with_detail(&inner.to_string()),
+        ),
+        Error::BatchQueriedTooManyTimes(task_id, _) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::BatchQueriedTooManyTimes)
+                .with_task_id(task_id),
+        ),
+        Error::Hpke(_)
+        | Error::Datastore(_)
+        | Error::Vdaf(_)
+        | Error::Internal(_)
+        | Error::Url(_)
+        | Error::Message(_)
+        | Error::HttpClient(_)
+        | Error::Http { .. }
+        | Error::TaskParameters(_) => conn.with_status(Status::InternalServerError),
+        Error::AggregateShareRequestRejected(_, _) => conn.with_status(Status::BadRequest),
+        Error::EmptyAggregation(task_id) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::InvalidMessage).with_task_id(task_id),
+        ),
+        Error::ForbiddenMutation { .. } => conn.with_status(Status::Conflict),
+        Error::BadRequest(_) => conn.with_status(Status::BadRequest),
+        Error::InvalidTask(task_id, _) => conn.with_problem_document(
+            &ProblemDocument::new_dap(DapProblemType::InvalidTask).with_task_id(task_id),
+        ),
+        Error::DifferentialPrivacy(_) => conn.with_status(Status::InternalServerError),
+    };
 
-        if matches!(conn.status(), Some(status) if status.is_server_error()) {
-            warn!(error_code, error=?self, "Error handling endpoint");
-        }
+    if matches!(conn.status(), Some(status) if status.is_server_error()) {
+        warn!(error_code, ?error, "Error handling endpoint");
+    }
 
-        conn
+    conn
+}
+
+#[async_trait]
+impl Handler for Error {
+    async fn run(&self, conn: Conn) -> Conn {
+        run_error_handler(self, conn).await
+    }
+}
+
+// This implementation on a newtype avoids a warning in the generic <Arc<impl Handler> as
+// Handler>::init() implementation. We can suppress this, since this handler does not use init().
+#[async_trait]
+impl Handler for ArcError {
+    async fn run(&self, conn: Conn) -> Conn {
+        run_error_handler(self, conn).await
     }
 }
 
@@ -399,7 +413,7 @@ async fn upload<C: Clock>(
         State<Captures<'static, 'static>>,
         Vec<u8>,
     ),
-) -> Result<Status, Arc<Error>> {
+) -> Result<Status, ArcError> {
     validate_content_type(conn, Report::MEDIA_TYPE).map_err(Arc::new)?;
 
     let task_id = parse_task_id(&captures).map_err(Arc::new)?;
@@ -803,10 +817,13 @@ mod tests {
     use assert_matches::assert_matches;
     use futures::future::try_join_all;
     use janus_aggregator_core::{
-        datastore::models::{
-            AggregateShareJob, AggregationJob, AggregationJobState, Batch, BatchAggregation,
-            BatchAggregationState, BatchState, CollectionJob, CollectionJobState, HpkeKeyState,
-            ReportAggregation, ReportAggregationState,
+        datastore::{
+            models::{
+                AggregateShareJob, AggregationJob, AggregationJobState, Batch, BatchAggregation,
+                BatchAggregationState, BatchState, CollectionJob, CollectionJobState, HpkeKeyState,
+                ReportAggregation, ReportAggregationState,
+            },
+            test_util::EphemeralDatastoreBuilder,
         },
         query_type::{AccumulableQueryType, CollectableQueryType},
         task::{test_util::TaskBuilder, QueryType, VerifyKey},
@@ -825,7 +842,7 @@ mod tests {
         report_id::ReportIdChecksumExt,
         test_util::{
             dummy_vdaf::{self, AggregationParam, OutputShare},
-            run_vdaf,
+            install_test_trace_subscriber, run_vdaf,
             runtime::TestRuntime,
         },
         time::{Clock, DurationExt, MockClock, TimeExt},
@@ -853,7 +870,8 @@ mod tests {
     };
     use rand::random;
     use serde_json::json;
-    use std::{collections::HashMap, sync::Arc};
+    use std::{collections::HashMap, sync::Arc, time::Duration as StdDuration};
+    use tokio::time::sleep;
     use trillium::{KnownHeaderName, Status};
     use trillium_testing::{
         assert_headers,
@@ -1532,6 +1550,113 @@ mod tests {
                 .unwrap(),
             test_conn.status().unwrap() as u16 as u64
         );
+    }
+
+    /// This test exercises distribution of transaction-wide errors to multiple clients that have
+    /// their uploads in the same batch.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_handler_error_fanout() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let ephemeral_datastore = EphemeralDatastoreBuilder::new()
+            .with_database_pool_wait_timeout(Some(StdDuration::from_millis(100)))
+            .build()
+            .await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
+        let handler = aggregator_handler(
+            datastore.clone(),
+            clock.clone(),
+            TestRuntime::default(),
+            &noop_meter(),
+            default_aggregator_config(),
+        )
+        .await
+        .unwrap();
+
+        const REPORT_EXPIRY_AGE: u64 = 1_000_000;
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+            .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
+            .build();
+
+        let leader_task = task.leader_view().unwrap();
+        datastore.put_aggregator_task(&leader_task).await.unwrap();
+
+        // Use trillium_tokio instead of trillium_testing so we can send reqeusts in parallel and
+        // better match production use cases.
+        let server_handle = trillium_tokio::config()
+            .without_signals()
+            .with_host("127.0.0.1")
+            .with_port(0)
+            .spawn(handler);
+        let server_info = server_handle.info().await;
+        let socket_addr = server_info.tcp_socket_addr().unwrap();
+
+        let client = reqwest::Client::new();
+        let mut url = task.report_upload_uri().unwrap();
+        url.set_scheme("http").unwrap();
+        url.set_host(Some("127.0.0.1")).unwrap();
+        url.set_port(Some(socket_addr.port())).unwrap();
+
+        // Upload one report and wait for it to finish, to prepopulate the aggregator's task cache.
+        let report: Report = create_report(&leader_task, clock.now());
+        let response = client
+            .put(url.clone())
+            .header("Content-Type", Report::MEDIA_TYPE)
+            .body(report.get_encoded().unwrap())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), 200);
+
+        // Use up the connection pool's connections to cause a transaction-level error in the next
+        // uploads.
+        let exhaust_pool_task_handle = tokio::spawn({
+            let pool = ephemeral_datastore.pool().clone();
+            async move {
+                let mut connections = Vec::new();
+                loop {
+                    connections.push(pool.get().await);
+                }
+            }
+        });
+
+        // Wait for the pool to be exhausted by the above task.
+        let pool = ephemeral_datastore.pool();
+        while pool.status().available > 0 {
+            sleep(StdDuration::from_millis(100)).await;
+        }
+
+        // Upload many reports in parallel, to be sure we exercise upload batching.
+        let upload_task_handles = (0..10)
+            .map(|_| {
+                tokio::spawn({
+                    let leader_task = leader_task.clone();
+                    let clock = clock.clone();
+                    let client = client.clone();
+                    let url = url.clone();
+                    async move {
+                        let report = create_report(&leader_task, clock.now());
+                        let response = client
+                            .put(url)
+                            .header("Content-Type", Report::MEDIA_TYPE)
+                            .body(report.get_encoded().unwrap())
+                            .send()
+                            .await
+                            .unwrap();
+                        assert_eq!(response.status().as_u16(), 500);
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        drop(client);
+
+        for handle in upload_task_handles.into_iter() {
+            handle.await.unwrap();
+        }
+
+        exhaust_pool_task_handle.abort();
+
+        server_handle.stop().await;
     }
 
     #[tokio::test]
