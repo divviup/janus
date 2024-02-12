@@ -1622,7 +1622,12 @@ mod tests {
 
         // Wait for the pool to be exhausted by the above task.
         let pool = ephemeral_datastore.pool();
-        while pool.status().available > 0 {
+        loop {
+            let status = pool.status();
+            if status.available == 0 && status.size == status.max_size {
+                break;
+            }
+
             sleep(StdDuration::from_millis(100)).await;
         }
 
