@@ -470,7 +470,8 @@ mod tests {
     use http::{header::CONTENT_TYPE, StatusCode};
     use janus_core::{
         hpke::test_util::generate_test_hpke_config_and_private_key,
-        retries::test_http_request_exponential_backoff, test_util::install_test_trace_subscriber,
+        retries::test_util::test_http_request_exponential_backoff,
+        test_util::install_test_trace_subscriber,
     };
     use janus_messages::{Duration, HpkeConfigList, Report, Role, Time};
     use prio::{

@@ -123,10 +123,14 @@ mod tests {
         send_request_to_helper, Error, RequestBody,
     };
     use assert_matches::assert_matches;
+    use bytes::Bytes;
     use futures::future::join_all;
     use http::Method;
     use janus_aggregator_core::test_util::noop_meter;
-    use janus_core::time::{Clock, RealClock};
+    use janus_core::{
+        retries::test_util::LimitedRetryer,
+        time::{Clock, RealClock},
+    };
     use janus_messages::{
         problem_type::{DapProblemType, DapProblemTypeParseError},
         Duration, Interval, ReportIdChecksum,
@@ -312,12 +316,13 @@ mod tests {
                         .await;
                     let actual_error = send_request_to_helper(
                         &Client::new(),
+                        LimitedRetryer::new(0),
                         Method::POST,
                         server.url().parse().unwrap(),
                         "test",
                         Some(RequestBody {
                             content_type: "text/plain",
-                            request: (),
+                            body: Bytes::new(),
                         }),
                         &random(),
                         &request_histogram,

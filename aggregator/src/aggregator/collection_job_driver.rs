@@ -5,6 +5,8 @@ use crate::aggregator::{
     http_handlers::AGGREGATE_SHARES_ROUTE, query_type::CollectableQueryType,
     send_request_to_helper, Error,
 };
+use backoff::backoff::Backoff;
+use bytes::Bytes;
 use derivative::Derivative;
 use futures::future::{try_join_all, BoxFuture};
 use janus_aggregator_core::{
@@ -40,9 +42,10 @@ use super::RequestBody;
 /// Drives a collection job.
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub struct CollectionJobDriver {
+pub struct CollectionJobDriver<B> {
     // Dependencies.
     http_client: reqwest::Client,
+    backoff: B,
     #[derivative(Debug = "ignore")]
     metrics: CollectionJobDriverMetrics,
 
@@ -50,15 +53,20 @@ pub struct CollectionJobDriver {
     batch_aggregation_shard_count: u64,
 }
 
-impl CollectionJobDriver {
+impl<B> CollectionJobDriver<B>
+where
+    B: Backoff + Clone + Send + Sync + 'static,
+{
     /// Create a new [`CollectionJobDriver`].
     pub fn new(
         http_client: reqwest::Client,
+        backoff: B,
         meter: &Meter,
         batch_aggregation_shard_count: u64,
     ) -> Self {
         Self {
             http_client,
+            backoff,
             metrics: CollectionJobDriverMetrics::new(meter),
             batch_aggregation_shard_count,
         }
@@ -239,6 +247,7 @@ impl CollectionJobDriver {
 
         let resp_bytes = send_request_to_helper(
             &self.http_client,
+            self.backoff.clone(),
             Method::POST,
             task.aggregate_shares_uri()?.ok_or_else(|| {
                 Error::InvalidConfiguration("task is not leader and has no aggregate share URI")
@@ -246,7 +255,7 @@ impl CollectionJobDriver {
             AGGREGATE_SHARES_ROUTE,
             Some(RequestBody {
                 content_type: AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
-                request,
+                body: Bytes::from(request.get_encoded()?),
             }),
             // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
             // case, and Janus never acts as the leader with taskprov enabled.
@@ -623,6 +632,7 @@ mod tests {
         test_util::noop_meter,
     };
     use janus_core::{
+        retries::test_util::LimitedRetryer,
         test_util::{
             dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber,
@@ -890,6 +900,7 @@ mod tests {
 
         let collection_job_driver = CollectionJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
+            LimitedRetryer::new(0),
             &noop_meter(),
             1,
         );
@@ -1081,6 +1092,7 @@ mod tests {
 
         let collection_job_driver = CollectionJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
+            LimitedRetryer::new(1),
             &noop_meter(),
             1,
         );
@@ -1139,6 +1151,7 @@ mod tests {
         // Set up the collection job driver
         let collection_job_driver = Arc::new(CollectionJobDriver::new(
             reqwest::Client::new(),
+            LimitedRetryer::new(0),
             &noop_meter(),
             1,
         ));
@@ -1233,6 +1246,7 @@ mod tests {
         // Set up the collection job driver
         let collection_job_driver = Arc::new(CollectionJobDriver::new(
             reqwest::Client::new(),
+            LimitedRetryer::new(0),
             &noop_meter(),
             1,
         ));
@@ -1356,8 +1370,12 @@ mod tests {
             .create_async()
             .await;
 
-        let collection_job_driver =
-            CollectionJobDriver::new(reqwest::Client::new(), &noop_meter(), 1);
+        let collection_job_driver = CollectionJobDriver::new(
+            reqwest::Client::new(),
+            LimitedRetryer::new(0),
+            &noop_meter(),
+            1,
+        );
 
         // Step the collection job. The driver should successfully run the job, but then discard the
         // results when it notices the job has been deleted.

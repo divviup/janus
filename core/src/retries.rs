@@ -1,7 +1,7 @@
 //! Provides a simple interface for retrying fallible HTTP requests.
 
 use crate::http::HttpErrorResponse;
-use backoff::{future::retry_notify, ExponentialBackoff, Notify};
+use backoff::{backoff::Backoff, future::retry_notify, ExponentialBackoff, Notify};
 use bytes::Bytes;
 use futures::Future;
 use http::HeaderMap;
@@ -36,20 +36,6 @@ pub fn http_request_exponential_backoff() -> ExponentialBackoff {
         max_interval: Duration::from_secs(30),
         multiplier: 2.0,
         max_elapsed_time: Some(Duration::from_secs(600)),
-        ..Default::default()
-    }
-}
-
-/// An [`ExponentialBackoff`] with parameters tuned for tests where we don't want to be retrying
-/// for 10 minutes.
-#[cfg(feature = "test-util")]
-#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
-pub fn test_http_request_exponential_backoff() -> ExponentialBackoff {
-    ExponentialBackoff {
-        initial_interval: Duration::from_nanos(1),
-        max_interval: Duration::from_nanos(30),
-        multiplier: 2.0,
-        max_elapsed_time: Some(Duration::from_millis(100)),
         ..Default::default()
     }
 }
@@ -114,7 +100,7 @@ impl<E> Notify<E> for NoopNotify {
 /// feature.
 #[allow(clippy::result_large_err)]
 pub async fn retry_http_request<ResultFuture>(
-    backoff: ExponentialBackoff,
+    backoff: impl Backoff,
     request_fn: impl Fn() -> ResultFuture,
 ) -> Result<HttpResponse, Result<HttpErrorResponse, reqwest::Error>>
 where
@@ -153,7 +139,7 @@ where
 /// feature.
 #[allow(clippy::result_large_err)]
 pub async fn retry_http_request_notify<ResultFuture>(
-    backoff: ExponentialBackoff,
+    backoff: impl Backoff,
     notify: impl Notify<Result<HttpErrorResponse, reqwest::Error>>,
     request_fn: impl Fn() -> ResultFuture,
 ) -> Result<HttpResponse, Result<HttpErrorResponse, reqwest::Error>>
@@ -221,12 +207,59 @@ pub fn is_retryable_http_status(status: StatusCode) -> bool {
         || status == StatusCode::TOO_MANY_REQUESTS
 }
 
+#[cfg(feature = "test-util")]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
+pub mod test_util {
+    use backoff::{backoff::Backoff, ExponentialBackoff};
+    use std::time::Duration;
+
+    /// An [`ExponentialBackoff`] with parameters tuned for tests where we don't want to be retrying
+    /// for 10 minutes.
+    pub fn test_http_request_exponential_backoff() -> ExponentialBackoff {
+        ExponentialBackoff {
+            initial_interval: Duration::from_nanos(1),
+            max_interval: Duration::from_nanos(30),
+            multiplier: 2.0,
+            max_elapsed_time: Some(Duration::from_millis(100)),
+            ..Default::default()
+        }
+    }
+
+    /// A [`Backoff`] that immediately retries a given number of times, and then gives up.
+    #[derive(Clone)]
+    pub struct LimitedRetryer {
+        retries: u64,
+        max_retries: u64,
+    }
+
+    impl LimitedRetryer {
+        pub fn new(max_retries: u64) -> Self {
+            Self {
+                retries: 0,
+                max_retries,
+            }
+        }
+    }
+
+    impl Backoff for LimitedRetryer {
+        fn next_backoff(&mut self) -> Option<Duration> {
+            if self.retries >= self.max_retries {
+                return None;
+            }
+            self.retries += 1;
+            Some(Duration::ZERO)
+        }
+
+        fn reset(&mut self) {
+            self.retries = 0
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
-        retries::{
-            retry_http_request, retry_http_request_notify, test_http_request_exponential_backoff,
-        },
+        retries::{retry_http_request, retry_http_request_notify, test_util::LimitedRetryer},
         test_util::install_test_trace_subscriber,
     };
     use backoff::Notify;
@@ -265,11 +298,9 @@ mod tests {
         // HTTP 404 should cause the client to give up after a single attempt, and the caller should
         // get `Err(Ok(HttpErrorResponse))`.
         let mut notify = NotifyCounter::default();
-        let response = retry_http_request_notify(
-            test_http_request_exponential_backoff(),
-            &mut notify,
-            || async { http_client.get(server.url()).send().await },
-        )
+        let response = retry_http_request_notify(LimitedRetryer::new(10), &mut notify, || async {
+            http_client.get(server.url()).send().await
+        })
         .await
         .unwrap_err()
         .unwrap();
@@ -299,18 +330,16 @@ mod tests {
         // an `HttpErrorResponse` so they can examine the error, which you can't get from a
         // `reqwest::Error`.
         let mut notify = NotifyCounter::default();
-        let response = retry_http_request_notify(
-            test_http_request_exponential_backoff(),
-            &mut notify,
-            || async { http_client.get(server.url()).send().await },
-        )
+        let response = retry_http_request_notify(LimitedRetryer::new(10), &mut notify, || async {
+            http_client.get(server.url()).send().await
+        })
         .await
         .unwrap_err()
         .unwrap();
 
         // We check only that retries occurred, not the specific number of retries, because the
         // number of retries is nondeterministic.
-        assert!(notify.count > 0);
+        assert_eq!(notify.count, 10);
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         mock_500.assert_async().await;
     }
@@ -330,11 +359,9 @@ mod tests {
         let http_client = reqwest::Client::builder().build().unwrap();
 
         let mut notify = NotifyCounter::default();
-        let response = retry_http_request_notify(
-            test_http_request_exponential_backoff(),
-            &mut notify,
-            || async { http_client.get(server.url()).send().await },
-        )
+        let response = retry_http_request_notify(LimitedRetryer::new(10), &mut notify, || async {
+            http_client.get(server.url()).send().await
+        })
         .await
         .unwrap_err()
         .unwrap();
@@ -365,11 +392,9 @@ mod tests {
         let http_client = reqwest::Client::builder().build().unwrap();
 
         let mut notify = NotifyCounter::default();
-        retry_http_request_notify(
-            test_http_request_exponential_backoff(),
-            &mut notify,
-            || async { http_client.get(server.url()).send().await },
-        )
+        retry_http_request_notify(LimitedRetryer::new(10), &mut notify, || async {
+            http_client.get(server.url()).send().await
+        })
         .await
         .unwrap();
 
@@ -401,7 +426,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let err = retry_http_request(test_http_request_exponential_backoff(), || async {
+        let err = retry_http_request(LimitedRetryer::new(0), || async {
             http_client.get(url.clone()).send().await
         })
         .await
@@ -446,7 +471,7 @@ mod tests {
 
         let http_client = reqwest::Client::builder().build().unwrap();
 
-        retry_http_request(test_http_request_exponential_backoff(), || async {
+        retry_http_request(LimitedRetryer::new(0), || async {
             http_client.get(url.clone()).send().await
         })
         .await

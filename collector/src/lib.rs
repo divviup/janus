@@ -761,7 +761,7 @@ mod tests {
         hpke::{
             self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
-        retries::test_http_request_exponential_backoff,
+        retries::test_util::test_http_request_exponential_backoff,
         test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf, VdafTranscript},
     };
     use janus_messages::{
