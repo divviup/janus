@@ -1,24 +1,33 @@
-use crate::aggregator::{query_type::UploadableQueryType, Error};
+use crate::aggregator::{
+    error::{ReportRejection, ReportRejectionReason},
+    query_type::UploadableQueryType,
+    Error,
+};
 use async_trait::async_trait;
-use futures::future::join_all;
+use futures::future::{join_all, try_join_all};
 use janus_aggregator_core::datastore::{
     self,
-    models::{LeaderStoredReport, TaskUploadIncrementor},
+    models::{LeaderStoredReport, TaskUploadCounter},
     Datastore, Transaction,
 };
 use janus_core::{time::Clock, Runtime};
 use janus_messages::TaskId;
 use prio::vdaf;
 use rand::{thread_rng, Rng};
-use std::{fmt::Debug, marker::PhantomData, mem::replace, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    fmt::Debug,
+    marker::PhantomData,
+    mem::replace,
+    sync::{Arc, Mutex as StdMutex},
+    time::Duration,
+};
 use tokio::{
     select,
     sync::{mpsc, oneshot},
     time::{sleep_until, Instant},
 };
 use tracing::debug;
-
-use super::error::ReportRejection;
 
 type ReportResult<C> = Result<Box<dyn ReportWriter<C>>, ReportRejection>;
 
@@ -160,17 +169,8 @@ impl<C: Clock> ReportWriteBatcher<C> {
         ds: Arc<Datastore<C>>,
         enable_task_counters: bool,
         counter_shard_count: u64,
-        mut report_results: Vec<(ReportResult<C>, Option<ResultSender>)>,
+        report_results: Vec<(ReportResult<C>, Option<ResultSender>)>,
     ) {
-        let ord = thread_rng().gen_range(0..counter_shard_count);
-
-        // Sort by task ID to prevent deadlocks with concurrently running transactions. Since we are
-        // using the same ord for all statements, we do not need to sort by ord.
-        report_results.sort_unstable_by_key(|writer| match &writer.0 {
-            Ok(report_writer) => *report_writer.task_id(),
-            Err(rejection) => *rejection.task_id(),
-        });
-
         // Run all report writes concurrently.
         let (report_results, result_senders): (Vec<ReportResult<C>>, Vec<Option<ResultSender>>) =
             report_results.into_iter().unzip();
@@ -179,29 +179,35 @@ impl<C: Clock> ReportWriteBatcher<C> {
             .run_tx("upload", |tx| {
                 let report_results = Arc::clone(&report_results);
                 Box::pin(async move {
-                    Ok(
-                        join_all(report_results.iter().map(|report_result| async move {
+                    let task_upload_counters = Arc::new(TaskUploadCounters::new());
+                    let results = join_all(report_results.iter().map(|report_result| {
+                        let task_upload_counters = Arc::clone(&task_upload_counters);
+                        async move {
                             match report_result {
                                 Ok(report_writer) => {
-                                    report_writer
-                                        .write_report(tx, enable_task_counters, ord)
-                                        .await
+                                    report_writer.write_report(tx, &task_upload_counters).await
                                 }
                                 Err(rejection) => {
-                                    if enable_task_counters {
-                                        tx.increment_task_upload_counter(
-                                            rejection.task_id(),
-                                            ord,
-                                            &rejection.reason().into(),
-                                        )
-                                        .await?;
-                                    }
+                                    task_upload_counters.increment_report_rejection(rejection);
                                     Ok(())
                                 }
                             }
-                        }))
-                        .await,
-                    )
+                        }
+                    }))
+                    .await;
+
+                    if enable_task_counters {
+                        // Unwrap safety: The futures above that took clones of this Arc are done
+                        // by now.
+                        let task_upload_counters = Arc::into_inner(task_upload_counters).unwrap();
+
+                        // Failure of writing counters is considered a whole transaction failure.
+                        // The logic behind it is simple enough that if it is failing, then likely
+                        // something _very_ wrong is going on and we should rollback.
+                        task_upload_counters.write(counter_shard_count, tx).await?;
+                    }
+
+                    Ok(results)
                 })
             })
             .await;
@@ -237,12 +243,10 @@ impl<C: Clock> ReportWriteBatcher<C> {
 
 #[async_trait]
 pub trait ReportWriter<C: Clock>: Debug + Send + Sync {
-    fn task_id(&self) -> &TaskId;
     async fn write_report(
         &self,
         tx: &Transaction<C>,
-        enable_task_counters: bool,
-        ord: u64,
+        task_upload_counters: &TaskUploadCounters,
     ) -> Result<(), Error>;
 }
 
@@ -290,15 +294,10 @@ where
     C: Clock,
     Q: UploadableQueryType,
 {
-    fn task_id(&self) -> &TaskId {
-        self.report.task_id()
-    }
-
     async fn write_report(
         &self,
         tx: &Transaction<C>,
-        enable_task_counters: bool,
-        ord: u64,
+        task_upload_counter: &TaskUploadCounters,
     ) -> Result<(), Error> {
         // Some validation requires we query the database. Thus it's still possible to reject a
         // report at this stage.
@@ -309,14 +308,7 @@ where
                     .await;
                 match result {
                     Ok(_) => {
-                        if enable_task_counters {
-                            tx.increment_task_upload_counter(
-                                self.report.task_id(),
-                                ord,
-                                &TaskUploadIncrementor::ReportSuccess,
-                            )
-                            .await?;
-                        }
+                        task_upload_counter.increment_report_success(self.report.task_id());
                         Ok(())
                     }
                     // Assume this was a duplicate report, return OK but don't increment the counter
@@ -327,17 +319,71 @@ where
             }
             Err(error) => {
                 if let Error::ReportRejected(rejection) = error {
-                    if enable_task_counters {
-                        tx.increment_task_upload_counter(
-                            rejection.task_id(),
-                            ord,
-                            &rejection.reason().into(),
-                        )
-                        .await?;
-                    }
+                    task_upload_counter.increment_report_rejection(&rejection);
                 }
                 Err(error)
             }
         }
+    }
+}
+
+/// A collection of [`TaskUploadCounter`]s.
+#[derive(Debug)]
+pub struct TaskUploadCounters(StdMutex<BTreeMap<TaskId, TaskUploadCounter>>);
+
+impl TaskUploadCounters {
+    pub fn new() -> Self {
+        Self(StdMutex::new(BTreeMap::new()))
+    }
+
+    pub fn increment_report_success(&self, task_id: &TaskId) {
+        // Unwrap safety: panic on mutex poisoning.
+        self.0
+            .lock()
+            .unwrap()
+            .entry(*task_id)
+            .or_insert_with(TaskUploadCounter::new)
+            .increment_report_success();
+    }
+
+    pub fn increment_report_rejection(&self, report_rejection: &ReportRejection) {
+        // Unwrap safety: panic on mutex poisoning.
+        let mut map = self.0.lock().unwrap();
+        let entry = map
+            .entry(*report_rejection.task_id())
+            .or_insert_with(TaskUploadCounter::new);
+
+        match report_rejection.reason() {
+            ReportRejectionReason::IntervalCollected => entry.increment_interval_collected(),
+            ReportRejectionReason::DecryptFailure => entry.increment_report_decrypt_failure(),
+            ReportRejectionReason::DecodeFailure => entry.increment_report_decode_failure(),
+            ReportRejectionReason::TaskExpired => entry.increment_task_expired(),
+            ReportRejectionReason::Expired => entry.increment_report_expired(),
+            ReportRejectionReason::TooEarly => entry.increment_report_too_early(),
+            ReportRejectionReason::OutdatedHpkeConfig(_) => entry.increment_report_outdated_key(),
+        }
+    }
+
+    async fn write<C: Clock>(
+        self,
+        counter_shard_count: u64,
+        tx: &Transaction<'_, C>,
+    ) -> Result<(), datastore::Error> {
+        let ord = thread_rng().gen_range(0..counter_shard_count);
+        // The order of elements returned by a BTreeMap iterator are sorted. This allows us to
+        // discourage database deadlocks when multiple tasks are being incremented in the same
+        // transaction. This doesn't fully prevent deadlocks since we execute the statements
+        // concurrently--it's not guaranteed that order is preserved when the futures are being
+        // advanced.
+        //
+        // Unwrap safety: panic on mutex poisoning.
+        try_join_all(self.0.into_inner().unwrap().into_iter().map(
+            |(task_id, counter)| async move {
+                tx.increment_task_upload_counter(&task_id, ord, &counter)
+                    .await
+            },
+        ))
+        .await?;
+        Ok(())
     }
 }

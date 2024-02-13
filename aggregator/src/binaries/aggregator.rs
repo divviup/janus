@@ -372,13 +372,17 @@ pub struct Config {
     #[serde(default)]
     pub global_hpke_configs_refresh_interval: Option<u64>,
 
-    /// Enables counting report uploads. Experimental.
-    #[serde(default)]
+    /// Enables counting report uploads.
+    #[serde(default = "default_enable_task_counters")]
     pub enable_task_counters: bool,
 }
 
 fn default_task_counter_shard_count() -> u64 {
     32
+}
+
+fn default_enable_task_counters() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

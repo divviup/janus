@@ -5,7 +5,7 @@ use crate::{
             AggregationJobState, Batch, BatchAggregation, BatchAggregationState, BatchState,
             CollectionJob, CollectionJobState, GlobalHpkeKeypair, HpkeKeyState, LeaderStoredReport,
             Lease, OutstandingBatch, ReportAggregation, ReportAggregationState, SqlInterval,
-            TaskUploadCounter, TaskUploadIncrementor,
+            TaskUploadCounter,
         },
         schema_versions_template,
         test_util::{ephemeral_datastore_schema_version, generate_aead_key, EphemeralDatastore},
@@ -7469,24 +7469,28 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
                 let counter = tx.get_task_upload_counter(&task_id).await.unwrap();
                 assert_eq!(counter, None);
 
-                for case in [
-                    (TaskUploadIncrementor::IntervalCollected, 2),
-                    (TaskUploadIncrementor::ReportDecodeFailure, 4),
-                    (TaskUploadIncrementor::ReportDecryptFailure, 6),
-                    (TaskUploadIncrementor::ReportExpired, 8),
-                    (TaskUploadIncrementor::ReportOutdatedKey, 10),
-                    (TaskUploadIncrementor::ReportSuccess, 100),
-                    (TaskUploadIncrementor::ReportTooEarly, 25),
-                    (TaskUploadIncrementor::TaskExpired, 12),
-                ] {
-                    let ord = thread_rng().gen_range(0..32);
-                    try_join_all(
-                        (0..case.1)
-                            .map(|_| tx.increment_task_upload_counter(&task_id, ord, &case.0)),
-                    )
+                let ord = thread_rng().gen_range(0..32);
+                tx.increment_task_upload_counter(
+                    &task_id,
+                    ord,
+                    &TaskUploadCounter::new_with_values(2, 4, 6, 8, 10, 100, 25, 12),
+                )
+                .await
+                .unwrap();
+
+                let ord = thread_rng().gen_range(0..32);
+                tx.increment_task_upload_counter(
+                    &task_id,
+                    ord,
+                    &TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 0, 0, 8),
+                )
+                .await
+                .unwrap();
+
+                let ord = thread_rng().gen_range(0..32);
+                tx.increment_task_upload_counter(&task_id, ord, &TaskUploadCounter::new())
                     .await
                     .unwrap();
-                }
 
                 let counter = tx.get_task_upload_counter(&task_id).await.unwrap();
                 assert_eq!(
@@ -7499,7 +7503,7 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
                         report_outdated_key: 10,
                         report_success: 100,
                         report_too_early: 25,
-                        task_expired: 12,
+                        task_expired: 20,
                     })
                 );
 
