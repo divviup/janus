@@ -7488,7 +7488,7 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
                 .unwrap();
 
                 let ord = thread_rng().gen_range(0..32);
-                tx.increment_task_upload_counter(&task_id, ord, &TaskUploadCounter::new())
+                tx.increment_task_upload_counter(&task_id, ord, &TaskUploadCounter::default())
                     .await
                     .unwrap();
 

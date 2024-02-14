@@ -179,9 +179,9 @@ impl<C: Clock> ReportWriteBatcher<C> {
             .run_tx("upload", |tx| {
                 let report_results = Arc::clone(&report_results);
                 Box::pin(async move {
-                    let task_upload_counters = Arc::new(TaskUploadCounters::new());
+                    let task_upload_counters = TaskUploadCounters::default();
                     let results = join_all(report_results.iter().map(|report_result| {
-                        let task_upload_counters = Arc::clone(&task_upload_counters);
+                        let task_upload_counters = task_upload_counters.clone();
                         async move {
                             match report_result {
                                 Ok(report_writer) => {
@@ -197,10 +197,6 @@ impl<C: Clock> ReportWriteBatcher<C> {
                     .await;
 
                     if enable_task_counters {
-                        // Unwrap safety: The futures above that took clones of this Arc are done
-                        // by now.
-                        let task_upload_counters = Arc::into_inner(task_upload_counters).unwrap();
-
                         // Failure of writing counters is considered a whole transaction failure.
                         // The logic behind it is simple enough that if it is failing, then likely
                         // something _very_ wrong is going on and we should rollback.
@@ -328,20 +324,10 @@ where
 }
 
 /// A collection of [`TaskUploadCounter`]s.
-#[derive(Debug)]
-pub struct TaskUploadCounters(StdMutex<BTreeMap<TaskId, TaskUploadCounter>>);
-
-impl Default for TaskUploadCounters {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+#[derive(Debug, Default, Clone)]
+pub struct TaskUploadCounters(Arc<StdMutex<BTreeMap<TaskId, TaskUploadCounter>>>);
 
 impl TaskUploadCounters {
-    pub fn new() -> Self {
-        Self(StdMutex::new(BTreeMap::new()))
-    }
-
     pub fn increment_report_success(&self, task_id: &TaskId) {
         // Unwrap safety: panic on mutex poisoning.
         self.0
@@ -379,14 +365,17 @@ impl TaskUploadCounters {
         // transaction. This doesn't fully prevent deadlocks since we execute the statements
         // concurrently--it's not guaranteed that order is preserved when the futures are being
         // advanced.
-        //
-        // Unwrap safety: panic on mutex poisoning.
-        try_join_all(self.0.into_inner().unwrap().into_iter().map(
-            |(task_id, counter)| async move {
-                tx.increment_task_upload_counter(&task_id, ord, &counter)
-                    .await
-            },
-        ))
+        try_join_all(
+            Arc::into_inner(self.0)
+                .expect("write() should not be called if there are more than one clone remaining")
+                .into_inner()
+                .unwrap() // Unwrap safety: panic on mutex poisoning.
+                .into_iter()
+                .map(|(task_id, counter)| async move {
+                    tx.increment_task_upload_counter(&task_id, ord, &counter)
+                        .await
+                }),
+        )
         .await?;
         Ok(())
     }

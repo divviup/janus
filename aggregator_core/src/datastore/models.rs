@@ -2003,38 +2003,27 @@ impl GlobalHpkeKeypair {
 }
 
 /// Per-task counts of uploaded reports and upload attempts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TaskUploadCounter {
+    /// Reports that fell into a time interval that had already been collected.
     pub(crate) interval_collected: u64,
+    /// Reports that could not be decoded.
     pub(crate) report_decode_failure: u64,
+    /// Reports that could not be decrypted.
     pub(crate) report_decrypt_failure: u64,
+    /// Reports that contained a timestamp too far in the past.
     pub(crate) report_expired: u64,
+    /// Reports that were encrypted with an old or unknown HPKE key.
     pub(crate) report_outdated_key: u64,
+    /// Reports that were successfully uploaded.
     pub(crate) report_success: u64,
+    /// Reports that contain a timestamp too far in the future.
     pub(crate) report_too_early: u64,
+    /// Reports that were submitted to the task after the task's expiry.
     pub(crate) task_expired: u64,
 }
 
-impl Default for TaskUploadCounter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl TaskUploadCounter {
-    pub fn new() -> Self {
-        Self {
-            interval_collected: 0,
-            report_decode_failure: 0,
-            report_decrypt_failure: 0,
-            report_expired: 0,
-            report_outdated_key: 0,
-            report_success: 0,
-            report_too_early: 0,
-            task_expired: 0,
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     #[cfg(feature = "test-util")]
     pub fn new_with_values(
