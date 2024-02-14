@@ -136,16 +136,19 @@ async fn handle_upload(
         }
 
         VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+            proofs,
             bits,
             length,
             chunk_length,
         } => {
             let measurement = parse_vector_measurement::<u64>(request.measurement.clone())?;
-            let vdaf =
-                new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(bits, length, chunk_length)
-                    .context(
-                        "failed to construct Prio3SumVecField64MultiproofHmacSha256Aes128 VDAF",
-                    )?;
+            let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
+                proofs,
+                bits,
+                length,
+                chunk_length,
+            )
+            .context("failed to construct Prio3SumVecField64MultiproofHmacSha256Aes128 VDAF")?;
             handle_upload_generic(http_client, vdaf, request, measurement).await?;
         }
 

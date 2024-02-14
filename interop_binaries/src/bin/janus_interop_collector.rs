@@ -359,16 +359,19 @@ async fn handle_collection_start(
         (
             ParsedQuery::TimeInterval(batch_interval),
             VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                proofs,
                 bits,
                 length,
                 chunk_length,
             },
         ) => {
-            let vdaf =
-                new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(bits, length, chunk_length)
-                    .context(
-                        "failed to construct Prio3SumVecField64MultiproofHmacSha256Aes128 VDAF",
-                    )?;
+            let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
+                proofs,
+                bits,
+                length,
+                chunk_length,
+            )
+            .context("failed to construct Prio3SumVecField64MultiproofHmacSha256Aes128 VDAF")?;
             handle_collect_generic(
                 http_client,
                 task_state,
@@ -563,16 +566,19 @@ async fn handle_collection_start(
         (
             ParsedQuery::FixedSize(fixed_size_query),
             VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                proofs,
                 bits,
                 length,
                 chunk_length,
             },
         ) => {
-            let vdaf =
-                new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(bits, length, chunk_length)
-                    .context(
-                        "failed to construct Prio3SumVecField64MultiproofHmacSha256Aes128 VDAF",
-                    )?;
+            let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
+                proofs,
+                bits,
+                length,
+                chunk_length,
+            )
+            .context("failed to construct Prio3SumVecField64MultiproofHmacSha256Aes128 VDAF")?;
             handle_collect_generic(
                 http_client,
                 task_state,

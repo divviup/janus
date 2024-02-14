@@ -73,9 +73,10 @@ pub enum VdafInstance {
         length: usize,
         chunk_length: usize,
     },
-    /// Prio3SumVec with additional customizations: a smaller field, three proofs, and a different
-    /// XOF.
+    /// Prio3SumVec with additional customizations: a smaller field, multiple proofs, and a
+    /// different XOF.
     Prio3SumVecField64MultiproofHmacSha256Aes128 {
+        proofs: u8,
         bits: usize,
         length: usize,
         chunk_length: usize,
@@ -143,7 +144,9 @@ impl TryFrom<&taskprov::VdafType> for VdafInstance {
                 bits,
                 length,
                 chunk_length,
+                proofs,
             } => Ok(Self::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                proofs: *proofs,
                 bits: *bits as usize,
                 length: *length as usize,
                 chunk_length: *chunk_length as usize,
@@ -166,16 +169,22 @@ impl TryFrom<&taskprov::VdafType> for VdafInstance {
 pub type Prio3SumVecField64MultiproofHmacSha256Aes128 =
     Prio3<SumVec<Field64, ParallelSum<Field64, Mul<Field64>>>, XofHmacSha256Aes128, 32>;
 
-/// Construct a customized Prio3SumVec VDAF, using the [`Field64`] field, three proofs, and
+/// Construct a customized Prio3SumVec VDAF, using the [`Field64`] field, multiple proofs, and
 /// [`XofHmacSha256Aes128`] as the XOF.
 pub fn new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
+    proofs: u8,
     bits: usize,
     length: usize,
     chunk_length: usize,
 ) -> Result<Prio3SumVecField64MultiproofHmacSha256Aes128, VdafError> {
+    if proofs < 2 {
+        return Err(VdafError::Uncategorized(
+            "Must use at least two proofs with Field64".into(),
+        ));
+    }
     Prio3::new(
         2,
-        3,
+        proofs,
         ALGORITHM_ID_PRIO3_SUM_VEC_FIELD64_MULTIPROOF_HMACSHA256_AES128,
         SumVec::new(bits, length, chunk_length)?,
     )
@@ -223,12 +232,14 @@ macro_rules! vdaf_dispatch_impl_base {
             }
 
             ::janus_core::vdaf::VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                proofs,
                 bits,
                 length,
                 chunk_length,
             } => {
                 let $vdaf =
                     janus_core::vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
+                        *proofs,
                         *bits,
                         *length,
                         *chunk_length,
@@ -572,6 +583,7 @@ mod tests {
         );
         assert_tokens(
             &VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                proofs: 2,
                 bits: 1,
                 length: 8,
                 chunk_length: 3,
@@ -580,8 +592,10 @@ mod tests {
                 Token::StructVariant {
                     name: "VdafInstance",
                     variant: "Prio3SumVecField64MultiproofHmacSha256Aes128",
-                    len: 3,
+                    len: 4,
                 },
+                Token::Str("proofs"),
+                Token::U8(2),
                 Token::Str("bits"),
                 Token::U64(1),
                 Token::Str("length"),

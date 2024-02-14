@@ -84,11 +84,13 @@ fn json_encode_vdaf(vdaf: &VdafInstance) -> Value {
             "chunk_length": format!("{chunk_length}"),
         }),
         VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+            proofs,
             bits,
             length,
             chunk_length,
         } => json!({
             "type": "Prio3SumVecField64MultiproofHmacSha256Aes128",
+            "proofs": format!("{proofs}"),
             "bits": format!("{bits}"),
             "length": format!("{length}"),
             "chunk_length": format!("{chunk_length}"),

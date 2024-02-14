@@ -874,11 +874,13 @@ impl<C: Clock> TaskAggregator<C> {
             }
 
             VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                proofs,
                 bits,
                 length,
                 chunk_length,
             } => {
                 let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
+                    *proofs,
                     *bits,
                     *length,
                     *chunk_length,
