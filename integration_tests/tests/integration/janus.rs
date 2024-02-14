@@ -362,6 +362,7 @@ async fn janus_in_process_customized_sum_vec() {
 
     let janus_pair = JanusInProcessPair::new(
         VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+            proofs: 2,
             bits: 16,
             length: 15,
             chunk_length: 16,

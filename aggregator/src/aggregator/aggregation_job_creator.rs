@@ -316,12 +316,14 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             (
                 task::QueryType::TimeInterval,
                 VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                    proofs,
                     bits,
                     length,
                     chunk_length,
                 },
             ) => {
                 let vdaf = Arc::new(new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
+                    *proofs,
                     *bits,
                     *length,
                     *chunk_length,
@@ -434,12 +436,14 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     batch_time_window_size,
                 },
                 VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                    proofs,
                     bits,
                     length,
                     chunk_length,
                 },
             ) => {
                 let vdaf = Arc::new(new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(
+                    *proofs,
                     *bits,
                     *length,
                     *chunk_length,

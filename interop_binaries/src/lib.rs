@@ -117,6 +117,7 @@ pub enum VdafObject {
         chunk_length: NumberAsString<usize>,
     },
     Prio3SumVecField64MultiproofHmacSha256Aes128 {
+        proofs: NumberAsString<u8>,
         bits: NumberAsString<usize>,
         length: NumberAsString<usize>,
         chunk_length: NumberAsString<usize>,
@@ -154,10 +155,12 @@ impl From<VdafInstance> for VdafObject {
             },
 
             VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                proofs,
                 bits,
                 length,
                 chunk_length,
             } => VdafObject::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                proofs: NumberAsString(proofs),
                 bits: NumberAsString(bits),
                 length: NumberAsString(length),
                 chunk_length: NumberAsString(chunk_length),
@@ -205,10 +208,12 @@ impl From<VdafObject> for VdafInstance {
             },
 
             VdafObject::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                proofs,
                 bits,
                 length,
                 chunk_length,
             } => VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+                proofs: proofs.0,
                 bits: bits.0,
                 length: length.0,
                 chunk_length: chunk_length.0,
