@@ -3,7 +3,7 @@ use itertools::Itertools;
 use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
 use janus_collector::{Collection, Collector};
 use janus_core::{
-    retries::test_http_request_exponential_backoff,
+    retries::test_util::test_http_request_exponential_backoff,
     time::{Clock, RealClock, TimeExt},
     vdaf::VdafInstance,
 };

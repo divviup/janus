@@ -1,9 +1,11 @@
-use std::{collections::HashMap, net::Ipv4Addr, sync::Arc};
-
+use crate::{
+    aggregator::{http_handlers::aggregator_handler, test_util::default_aggregator_config},
+    metrics::{build_opentelemetry_prometheus_meter_provider, prometheus_metrics_server},
+};
 use http::StatusCode;
 use janus_aggregator_core::datastore::test_util::ephemeral_datastore;
 use janus_core::{
-    retries::{retry_http_request, test_http_request_exponential_backoff},
+    retries::{retry_http_request, test_util::test_http_request_exponential_backoff},
     test_util::{install_test_trace_subscriber, runtime::TestRuntime},
     time::MockClock,
 };
@@ -12,12 +14,8 @@ use prometheus::{
     proto::{Metric, MetricType},
     Registry,
 };
+use std::{collections::HashMap, net::Ipv4Addr, sync::Arc};
 use trillium_testing::prelude::get;
-
-use crate::{
-    aggregator::{http_handlers::aggregator_handler, test_util::default_aggregator_config},
-    metrics::{build_opentelemetry_prometheus_meter_provider, prometheus_metrics_server},
-};
 
 #[tokio::test]
 async fn prometheus_metrics_pull() {
@@ -45,7 +43,7 @@ async fn prometheus_metrics_pull() {
         response.headers().get("Content-Type").unwrap(),
         "text/plain; version=0.0.4"
     );
-    let text = response.text().await.unwrap();
+    let text = String::from_utf8(response.body().to_vec()).unwrap();
     assert!(
         text.contains("HELP") && text.contains("TYPE"),
         "Exported metrics: {:?}",
