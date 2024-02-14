@@ -331,6 +331,12 @@ where
 #[derive(Debug)]
 pub struct TaskUploadCounters(StdMutex<BTreeMap<TaskId, TaskUploadCounter>>);
 
+impl Default for TaskUploadCounters {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TaskUploadCounters {
     pub fn new() -> Self {
         Self(StdMutex::new(BTreeMap::new()))
@@ -342,7 +348,7 @@ impl TaskUploadCounters {
             .lock()
             .unwrap()
             .entry(*task_id)
-            .or_insert_with(TaskUploadCounter::new)
+            .or_default()
             .increment_report_success();
     }
 
@@ -351,7 +357,7 @@ impl TaskUploadCounters {
         let mut map = self.0.lock().unwrap();
         let entry = map
             .entry(*report_rejection.task_id())
-            .or_insert_with(TaskUploadCounter::new);
+            .or_default();
 
         match report_rejection.reason() {
             ReportRejectionReason::IntervalCollected => entry.increment_interval_collected(),

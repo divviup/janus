@@ -4936,7 +4936,7 @@ impl<C: Clock> Transaction<'_, C> {
                 report_too_early = task_upload_counters.report_too_early + $9,
                 task_expired = task_upload_counters.task_expired + $10";
 
-        let stmt = self.prepare_cached(&stmt).await?;
+        let stmt = self.prepare_cached(stmt).await?;
         check_single_row_mutation(
             self.execute(
                 &stmt,

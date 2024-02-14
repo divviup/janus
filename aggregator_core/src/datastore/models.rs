@@ -2015,6 +2015,12 @@ pub struct TaskUploadCounter {
     pub(crate) task_expired: u64,
 }
 
+impl Default for TaskUploadCounter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TaskUploadCounter {
     pub fn new() -> Self {
         Self {
