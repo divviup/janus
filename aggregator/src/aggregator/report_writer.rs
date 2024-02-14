@@ -355,9 +355,7 @@ impl TaskUploadCounters {
     pub fn increment_report_rejection(&self, report_rejection: &ReportRejection) {
         // Unwrap safety: panic on mutex poisoning.
         let mut map = self.0.lock().unwrap();
-        let entry = map
-            .entry(*report_rejection.task_id())
-            .or_default();
+        let entry = map.entry(*report_rejection.task_id()).or_default();
 
         match report_rejection.reason() {
             ReportRejectionReason::IntervalCollected => entry.increment_interval_collected(),
