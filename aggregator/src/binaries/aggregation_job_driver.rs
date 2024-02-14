@@ -31,6 +31,7 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
             ))
             .build()
             .context("couldn't create HTTP client")?,
+        ctx.config.job_driver_config.retry_config(),
         &ctx.meter,
         ctx.config.batch_aggregation_shard_count,
     ));
@@ -97,6 +98,9 @@ impl BinaryOptions for Options {
 /// worker_lease_duration_secs: 600
 /// worker_lease_clock_skew_allowance_secs: 60
 /// maximum_attempts_before_failure: 5
+/// retry_initial_interval_millis: 1000
+/// retry_max_interval_millis: 30000
+/// retry_max_elapsed_time_millis: 300000
 /// batch_aggregation_shard_count: 32
 /// taskprov_config:
 ///   enabled: false
@@ -162,6 +166,9 @@ mod tests {
                 maximum_attempts_before_failure: 5,
                 http_request_timeout_secs: 10,
                 http_request_connection_timeout_secs: 30,
+                retry_initial_interval_millis: 1000,
+                retry_max_interval_millis: 30_000,
+                retry_max_elapsed_time_millis: 300_000,
             },
             batch_aggregation_shard_count: 32,
             taskprov_config: TaskprovConfig::default(),
