@@ -1,6 +1,7 @@
 //! Configuration for various Janus binaries.
 
 use crate::{metrics::MetricsConfiguration, trace::TraceConfiguration};
+use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
 use derivative::Derivative;
 use serde::{
     de::{DeserializeOwned, Error as _},
@@ -10,6 +11,7 @@ use std::{
     fmt::Debug,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
+    time::Duration,
 };
 use tracing::warn;
 use url::Url;
@@ -135,6 +137,9 @@ pub struct TaskprovConfig {
 /// worker_lease_duration_secs: 600
 /// worker_lease_clock_skew_allowance_secs: 60
 /// maximum_attempts_before_failure: 5
+/// retry_initial_interval_millis: 1000
+/// retry_max_interval_millis: 30000
+/// retry_max_elapsed_time_millis: 300000
 /// "#;
 ///
 /// let _decoded: JobDriverConfig = serde_yaml::from_str(yaml_config).unwrap();
@@ -158,23 +163,57 @@ pub struct JobDriverConfig {
     /// The number of attempts to drive a work item before it is placed in a permanent failure
     /// state.
     pub maximum_attempts_before_failure: usize,
+
     /// Timeout to apply when establishing connections to the helper for HTTP requests. See
     /// [`reqwest::ClientBuilder::connect_timeout`] for details.
-    #[serde(default = "JobDriverConfig::default_http_connection_timeout")]
+    #[serde(default = "JobDriverConfig::default_http_connection_timeout_secs")]
     pub http_request_connection_timeout_secs: u64,
     /// Timeout to apply to HTTP requests overall (including connection establishment) when
     /// communicating with the helper. See [`reqwest::ClientBuilder::timeout`] for details.
-    #[serde(default = "JobDriverConfig::default_http_request_timeout")]
+    #[serde(default = "JobDriverConfig::default_http_request_timeout_secs")]
     pub http_request_timeout_secs: u64,
+
+    /// The initial interval, in milliseconds, to wait before retrying a retryable HTTP request.
+    #[serde(default = "JobDriverConfig::default_retry_initial_interval_millis")]
+    pub retry_initial_interval_millis: u64,
+    /// The maximum interval, in milliseconds, to wait before retrying a retryable HTTP request.
+    #[serde(default = "JobDriverConfig::default_retry_max_interval_millis")]
+    pub retry_max_interval_millis: u64,
+    /// The maximum elapsed time, in milliseconds, to wait before giving up on retrying a retryable
+    /// HTTP request.
+    #[serde(default = "JobDriverConfig::default_retry_max_elapsed_time_millis")]
+    pub retry_max_elapsed_time_millis: u64,
 }
 
 impl JobDriverConfig {
-    fn default_http_connection_timeout() -> u64 {
+    pub fn retry_config(&self) -> ExponentialBackoff {
+        ExponentialBackoffBuilder::new()
+            .with_initial_interval(Duration::from_millis(self.retry_initial_interval_millis))
+            .with_max_interval(Duration::from_millis(self.retry_max_interval_millis))
+            .with_max_elapsed_time(Some(Duration::from_millis(
+                self.retry_max_elapsed_time_millis,
+            )))
+            .build()
+    }
+
+    fn default_http_connection_timeout_secs() -> u64 {
         10
     }
 
-    fn default_http_request_timeout() -> u64 {
+    fn default_http_request_timeout_secs() -> u64 {
         30
+    }
+
+    fn default_retry_initial_interval_millis() -> u64 {
+        1000
+    }
+
+    fn default_retry_max_interval_millis() -> u64 {
+        30_000
+    }
+
+    fn default_retry_max_elapsed_time_millis() -> u64 {
+        300_000
     }
 }
 
@@ -192,6 +231,16 @@ impl<'de> Deserialize<'de> for JobDriverConfig {
             http_request_connection_timeout_secs: Option<u64>,
             http_request_timeout_secs: Option<u64>,
             maximum_attempts_before_failure: usize,
+            /// The initial interval, in milliseconds, to wait before retrying a retryable HTTP request.
+            #[serde(default = "JobDriverConfig::default_retry_initial_interval_millis")]
+            pub retry_initial_interval_millis: u64,
+            /// The maximum interval, in milliseconds, to wait before retrying a retryable HTTP request.
+            #[serde(default = "JobDriverConfig::default_retry_max_interval_millis")]
+            pub retry_max_interval_millis: u64,
+            /// The maximum elapsed time, in milliseconds, to wait before giving up on retrying a retryable
+            /// HTTP request.
+            #[serde(default = "JobDriverConfig::default_retry_max_elapsed_time_millis")]
+            pub retry_max_elapsed_time_millis: u64,
         }
         let inner = JobDriverConfigInner::deserialize(deserializer)?;
         let job_discovery_interval_secs = inner
@@ -204,10 +253,10 @@ impl<'de> Deserialize<'de> for JobDriverConfig {
 
         let http_request_connection_timeout_secs = inner
             .http_request_connection_timeout_secs
-            .unwrap_or_else(JobDriverConfig::default_http_connection_timeout);
+            .unwrap_or_else(JobDriverConfig::default_http_connection_timeout_secs);
         let http_request_timeout_secs = inner
             .http_request_timeout_secs
-            .unwrap_or_else(JobDriverConfig::default_http_request_timeout);
+            .unwrap_or_else(JobDriverConfig::default_http_request_timeout_secs);
         Ok(Self {
             job_discovery_interval_secs,
             max_concurrent_job_workers: inner.max_concurrent_job_workers,
@@ -216,6 +265,9 @@ impl<'de> Deserialize<'de> for JobDriverConfig {
             maximum_attempts_before_failure: inner.maximum_attempts_before_failure,
             http_request_connection_timeout_secs,
             http_request_timeout_secs,
+            retry_initial_interval_millis: inner.retry_initial_interval_millis,
+            retry_max_interval_millis: inner.retry_max_interval_millis,
+            retry_max_elapsed_time_millis: inner.retry_max_elapsed_time_millis,
         })
     }
 }
@@ -315,9 +367,11 @@ mod tests {
             worker_lease_duration_secs: 600,
             worker_lease_clock_skew_allowance_secs: 60,
             maximum_attempts_before_failure: 5,
-            http_request_connection_timeout_secs: JobDriverConfig::default_http_connection_timeout(
-            ),
-            http_request_timeout_secs: JobDriverConfig::default_http_request_timeout(),
+            http_request_connection_timeout_secs: 10,
+            http_request_timeout_secs: 30,
+            retry_initial_interval_millis: 1000,
+            retry_max_interval_millis: 30_000,
+            retry_max_elapsed_time_millis: 300_000,
         })
     }
 

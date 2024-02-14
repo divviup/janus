@@ -14,6 +14,7 @@ use crate::{
     config::TaskprovConfig,
     Operation,
 };
+use backoff::{backoff::Backoff, Notify};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -45,7 +46,7 @@ use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::{self, HpkeApplicationInfo, HpkeKeypair, Label},
-    http::HttpErrorResponse,
+    retries::retry_http_request_notify,
     time::{Clock, DurationExt, IntervalExt, TimeExt},
     vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
     Runtime,
@@ -87,7 +88,7 @@ use std::{
     fmt::Debug,
     hash::Hash,
     panic,
-    sync::Arc,
+    sync::{Arc, Mutex as SyncMutex},
     time::{Duration as StdDuration, Instant},
 };
 use tokio::{sync::Mutex, try_join};
@@ -3164,97 +3165,132 @@ fn empty_batch_aggregations<
     .collect()
 }
 
+#[derive(Clone)]
+struct RequestBody {
+    content_type: &'static str,
+    body: Bytes,
+}
+
+struct RequestTimer<'a> {
+    // Mutable state.
+    start: SyncMutex<Option<Instant>>,
+
+    // Immutable state.
+    http_request_duration_histogram: &'a Histogram<f64>,
+    domain: Arc<str>,
+    endpoint: &'static str,
+    method: Arc<str>,
+}
+
+impl<'a> RequestTimer<'a> {
+    fn new(
+        http_request_duration_histogram: &'a Histogram<f64>,
+        domain: Arc<str>,
+        endpoint: &'static str,
+        method: Arc<str>,
+    ) -> Self {
+        Self {
+            start: SyncMutex::new(None),
+            http_request_duration_histogram,
+            domain,
+            endpoint,
+            method,
+        }
+    }
+
+    fn start_attempt(&self) {
+        *self.start.lock().unwrap() = Some(Instant::now())
+    }
+
+    fn finish_attempt(&self, status: &'static str) {
+        let start = self
+            .start
+            .lock()
+            .unwrap()
+            .take()
+            .expect("RequestTimer: finish_attempt called without calling start_attempt");
+        self.http_request_duration_histogram.record(
+            start.elapsed().as_secs_f64(),
+            &[
+                KeyValue::new("status", status),
+                KeyValue::new("domain", Arc::clone(&self.domain)),
+                KeyValue::new("endpoint", self.endpoint),
+                KeyValue::new("method", Arc::clone(&self.method)),
+            ],
+        )
+    }
+}
+
+impl<'a, E> Notify<E> for &RequestTimer<'a> {
+    fn notify(&mut self, _: E, _: std::time::Duration) {
+        self.finish_attempt("error")
+    }
+}
+
 /// Convenience method to perform an HTTP request to the helper. This includes common
 /// metrics and error handling functionality.
 #[tracing::instrument(
     skip(
         http_client,
+        backoff,
         url,
-        request,
+        request_body,
         auth_token,
         http_request_duration_histogram,
     ),
     fields(url = %url),
     err(level = Level::DEBUG),
 )]
-async fn send_request_to_helper<T: Encode>(
+async fn send_request_to_helper(
     http_client: &Client,
+    backoff: impl Backoff,
     method: Method,
     url: Url,
     route_label: &'static str,
-    content_type: &str,
-    request: T,
+    request_body: Option<RequestBody>,
     auth_token: &AuthenticationToken,
     http_request_duration_histogram: &Histogram<f64>,
 ) -> Result<Bytes, Error> {
-    let domain = url.domain().unwrap_or_default().to_string();
-    let request_body = request.get_encoded();
     let (auth_header, auth_value) = auth_token.request_authentication();
-    let method_string = method.as_str().to_string();
+    let domain = Arc::from(url.domain().unwrap_or_default());
+    let method_str = Arc::from(method.as_str());
+    let timer = RequestTimer::new(
+        http_request_duration_histogram,
+        domain,
+        route_label,
+        method_str,
+    );
 
-    let start = Instant::now();
-    let response_result = http_client
-        .request(method, url)
-        .header(CONTENT_TYPE, content_type)
-        .header(auth_header, auth_value)
-        .body(request_body)
-        .send()
-        .await;
-    let response = match response_result {
-        Ok(response) => response,
-        Err(error) => {
-            http_request_duration_histogram.record(
-                start.elapsed().as_secs_f64(),
-                &[
-                    KeyValue::new("status", "error"),
-                    KeyValue::new("domain", domain),
-                    KeyValue::new("endpoint", route_label),
-                    KeyValue::new("method", method_string),
-                ],
-            );
-            return Err(error.into());
+    let result = retry_http_request_notify(backoff, &timer, || async {
+        timer.start_attempt();
+        let mut request = http_client
+            .request(method.clone(), url.clone())
+            .header(auth_header, auth_value.as_str());
+        if let Some(request_body) = request_body.clone() {
+            request = request
+                .header(CONTENT_TYPE, request_body.content_type)
+                .body(request_body.body)
+        };
+        request.send().await
+    })
+    .await;
+
+    match result {
+        // Successful response.
+        Ok(response) => {
+            timer.finish_attempt("success");
+            Ok(response.body().clone())
         }
-    };
 
-    let status = response.status();
-    if !status.is_success() {
-        http_request_duration_histogram.record(
-            start.elapsed().as_secs_f64(),
-            &[
-                KeyValue::new("status", "error"),
-                KeyValue::new("domain", domain),
-                KeyValue::new("endpoint", route_label),
-                KeyValue::new("method", method_string),
-            ],
-        );
-        return Err(Error::Http(Box::new(
-            HttpErrorResponse::from_response(response).await,
-        )));
-    }
-
-    match response.bytes().await {
-        Ok(response_body) => {
-            http_request_duration_histogram.record(
-                start.elapsed().as_secs_f64(),
-                &[
-                    KeyValue::new("status", "success"),
-                    KeyValue::new("domain", domain),
-                    KeyValue::new("endpoint", route_label),
-                    KeyValue::new("method", method_string),
-                ],
-            );
-            Ok(response_body)
+        // HTTP-level error.
+        Err(Ok(http_error_response)) => {
+            timer.finish_attempt("error");
+            Err(Error::Http(Box::new(http_error_response)))
         }
-        Err(error) => {
-            http_request_duration_histogram.record(
-                start.elapsed().as_secs_f64(),
-                &[
-                    KeyValue::new("status", "error"),
-                    KeyValue::new("domain", domain),
-                    KeyValue::new("endpoint", route_label),
-                    KeyValue::new("method", method_string),
-                ],
-            );
+
+        // Network-level error.
+        Err(Err(error)) => {
+            timer.finish_attempt("error");
             Err(error.into())
         }
     }

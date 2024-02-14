@@ -2289,6 +2289,7 @@ dependencies = [
  "assert_matches",
  "backoff",
  "base64",
+ "bytes",
  "chrono",
  "derivative",
  "fixed",

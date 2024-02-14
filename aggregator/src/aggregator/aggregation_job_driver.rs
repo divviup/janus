@@ -2,9 +2,11 @@ use super::{error::handle_ping_pong_error, Error};
 use crate::aggregator::{
     accumulator::Accumulator, aggregate_step_failure_counter,
     aggregation_job_writer::AggregationJobWriter, http_handlers::AGGREGATION_JOB_ROUTE,
-    query_type::CollectableQueryType, send_request_to_helper,
+    query_type::CollectableQueryType, send_request_to_helper, RequestBody,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, Result};
+use backoff::backoff::Backoff;
+use bytes::Bytes;
 use derivative::Derivative;
 use futures::future::{try_join_all, BoxFuture};
 use janus_aggregator_core::{
@@ -45,9 +47,14 @@ use tracing::{debug, error, info, trace_span, warn};
 
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub struct AggregationJobDriver {
+pub struct AggregationJobDriver<B> {
+    // Configuration.
     batch_aggregation_shard_count: u64,
+
+    // Dependencies.
     http_client: reqwest::Client,
+    backoff: B,
+
     #[derivative(Debug = "ignore")]
     aggregate_step_failure_counter: Counter<u64>,
     #[derivative(Debug = "ignore")]
@@ -58,12 +65,16 @@ pub struct AggregationJobDriver {
     http_request_duration_histogram: Histogram<f64>,
 }
 
-impl AggregationJobDriver {
+impl<B> AggregationJobDriver<B>
+where
+    B: Backoff + Clone + Send + Sync + 'static,
+{
     pub fn new(
         http_client: reqwest::Client,
+        backoff: B,
         meter: &Meter,
         batch_aggregation_shard_count: u64,
-    ) -> AggregationJobDriver {
+    ) -> Self {
         let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
 
         let job_cancel_counter = meter
@@ -88,9 +99,10 @@ impl AggregationJobDriver {
             .with_unit(Unit::new("s"))
             .init();
 
-        AggregationJobDriver {
+        Self {
             batch_aggregation_shard_count,
             http_client,
+            backoff,
             aggregate_step_failure_counter,
             job_cancel_counter,
             job_retry_counter,
@@ -435,6 +447,7 @@ impl AggregationJobDriver {
 
             let resp_bytes = send_request_to_helper(
                 &self.http_client,
+                self.backoff.clone(),
                 Method::PUT,
                 task.aggregation_job_uri(aggregation_job.id())?
                     .ok_or_else(|| {
@@ -443,8 +456,10 @@ impl AggregationJobDriver {
                         )
                     })?,
                 AGGREGATION_JOB_ROUTE,
-                AggregationJobInitializeReq::<Q>::MEDIA_TYPE,
-                req,
+                Some(RequestBody {
+                    content_type: AggregationJobInitializeReq::<Q>::MEDIA_TYPE,
+                    body: Bytes::from(req.get_encoded()),
+                }),
                 // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
                 // case, and Janus never acts as the leader with taskprov enabled.
                 task.aggregator_auth_token().ok_or_else(|| {
@@ -541,14 +556,17 @@ impl AggregationJobDriver {
 
         let resp_bytes = send_request_to_helper(
             &self.http_client,
+            self.backoff.clone(),
             Method::POST,
             task.aggregation_job_uri(aggregation_job.id())?
                 .ok_or_else(|| {
                     Error::InvalidConfiguration("task is not leader and has no aggregate share URI")
                 })?,
             AGGREGATION_JOB_ROUTE,
-            AggregationJobContinueReq::MEDIA_TYPE,
-            req,
+            Some(RequestBody {
+                content_type: AggregationJobContinueReq::MEDIA_TYPE,
+                body: Bytes::from(req.get_encoded()),
+            }),
             // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
             // case, and Janus never acts as the leader with taskprov enabled.
             task.aggregator_auth_token()
@@ -1029,6 +1047,7 @@ mod tests {
     use janus_core::{
         hpke::test_util::generate_test_hpke_config_and_private_key,
         report_id::ReportIdChecksumExt,
+        retries::test_util::LimitedRetryer,
         test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
         time::{Clock, IntervalExt, MockClock, TimeExt},
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
@@ -1232,6 +1251,7 @@ mod tests {
         .await;
         let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
             reqwest::Client::new(),
+            LimitedRetryer::new(0),
             &noop_meter(),
             32,
         ));
@@ -1539,19 +1559,9 @@ mod tests {
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
         let aggregation_job_driver = AggregationJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
+            LimitedRetryer::new(1),
             &noop_meter(),
             32,
-        );
-        let error = aggregation_job_driver
-            .step_aggregation_job(ds.clone(), Arc::new(lease.clone()))
-            .await
-            .unwrap_err();
-        assert_matches!(
-            error,
-            Error::Http(error_response) => {
-                assert_eq!(error_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-                assert_eq!(*error_response.dap_problem_type().unwrap(), DapProblemType::UnauthorizedRequest);
-            }
         );
         aggregation_job_driver
             .step_aggregation_job(ds.clone(), Arc::new(lease))
@@ -1836,6 +1846,7 @@ mod tests {
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
         let aggregation_job_driver = AggregationJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
+            LimitedRetryer::new(0),
             &noop_meter(),
             32,
         );
@@ -2192,6 +2203,7 @@ mod tests {
         // Run: create an aggregation job driver & try to step the aggregation we've created.
         let aggregation_job_driver = AggregationJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
+            LimitedRetryer::new(0),
             &noop_meter(),
             32,
         );
@@ -2462,6 +2474,7 @@ mod tests {
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
         let aggregation_job_driver = AggregationJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
+            LimitedRetryer::new(0),
             &noop_meter(),
             32,
         );
@@ -2723,6 +2736,7 @@ mod tests {
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
         let aggregation_job_driver = AggregationJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
+            LimitedRetryer::new(0),
             &noop_meter(),
             32,
         );
@@ -3035,6 +3049,7 @@ mod tests {
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
         let aggregation_job_driver = AggregationJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
+            LimitedRetryer::new(0),
             &noop_meter(),
             32,
         );
@@ -3428,19 +3443,9 @@ mod tests {
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
         let aggregation_job_driver = AggregationJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
+            LimitedRetryer::new(1),
             &noop_meter(),
             32,
-        );
-        let error = aggregation_job_driver
-            .step_aggregation_job(ds.clone(), Arc::new(lease.clone()))
-            .await
-            .unwrap_err();
-        assert_matches!(
-            error,
-            Error::Http(error_response) => {
-                assert_eq!(error_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-                assert_eq!(*error_response.dap_problem_type().unwrap(), DapProblemType::UnrecognizedTask);
-            }
         );
         aggregation_job_driver
             .step_aggregation_job(ds.clone(), Arc::new(lease))
@@ -3679,6 +3684,7 @@ mod tests {
         // Run: create an aggregation job driver & cancel the aggregation job.
         let aggregation_job_driver = AggregationJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
+            LimitedRetryer::new(0),
             &noop_meter(),
             32,
         );
@@ -3839,6 +3845,7 @@ mod tests {
         // Set up the aggregation job driver.
         let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
             reqwest::Client::new(),
+            LimitedRetryer::new(0),
             &noop_meter(),
             32,
         ));
@@ -4054,6 +4061,7 @@ mod tests {
         // Set up the aggregation job driver.
         let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
             reqwest::Client::new(),
+            LimitedRetryer::new(0),
             &noop_meter(),
             32,
         ));

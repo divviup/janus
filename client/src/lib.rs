@@ -20,7 +20,7 @@ use prio::{
     vdaf,
 };
 use rand::random;
-use std::{convert::Infallible, fmt::Debug, io::Cursor, time::SystemTimeError};
+use std::{convert::Infallible, fmt::Debug, time::SystemTimeError};
 use tokio::try_join;
 use url::Url;
 
@@ -137,17 +137,16 @@ async fn aggregator_hpke_config(
         || async { http_client.get(request_url.clone()).send().await },
     )
     .await
-    .or_else(|e| e)?;
+    .map_err(|err| match err {
+        Ok(http_error_response) => Error::Http(Box::new(http_error_response)),
+        Err(error) => error.into(),
+    })?;
     let status = hpke_config_response.status();
     if !status.is_success() {
-        return Err(Error::Http(Box::new(
-            HttpErrorResponse::from_response(hpke_config_response).await,
-        )));
+        return Err(Error::Http(Box::new(HttpErrorResponse::from(status))));
     }
 
-    let hpke_configs = HpkeConfigList::decode(&mut Cursor::new(
-        hpke_config_response.bytes().await?.as_ref(),
-    ))?;
+    let hpke_configs = HpkeConfigList::get_decoded(hpke_config_response.body())?;
 
     if hpke_configs.hpke_configs().is_empty() {
         return Err(Error::UnexpectedServerResponse(
@@ -446,12 +445,14 @@ impl<V: vdaf::Client<16>> Client<V> {
             },
         )
         .await
-        .or_else(|e| e)?;
+        .map_err(|err| match err {
+            Ok(http_error_response) => Error::Http(Box::new(http_error_response)),
+            Err(error) => error.into(),
+        })?;
+
         let status = upload_response.status();
         if !status.is_success() {
-            return Err(Error::Http(Box::new(
-                HttpErrorResponse::from_response(upload_response).await,
-            )));
+            return Err(Error::Http(Box::new(HttpErrorResponse::from(status))));
         }
 
         Ok(())
@@ -466,7 +467,8 @@ mod tests {
     use http::{header::CONTENT_TYPE, StatusCode};
     use janus_core::{
         hpke::test_util::generate_test_hpke_config_and_private_key,
-        retries::test_http_request_exponential_backoff, test_util::install_test_trace_subscriber,
+        retries::test_util::test_http_request_exponential_backoff,
+        test_util::install_test_trace_subscriber,
     };
     use janus_messages::{Duration, HpkeConfigList, Report, Role, Time};
     use prio::{
