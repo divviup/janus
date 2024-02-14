@@ -323,7 +323,8 @@ where
     }
 }
 
-/// A collection of [`TaskUploadCounter`]s.
+/// A collection of [`TaskUploadCounter`]s, grouped by [`TaskId`]. It can be cloned to share it across
+/// futures.
 #[derive(Debug, Default, Clone)]
 pub struct TaskUploadCounters(Arc<StdMutex<BTreeMap<TaskId, TaskUploadCounter>>>);
 
@@ -354,6 +355,14 @@ impl TaskUploadCounters {
         }
     }
 
+    /// Flushes the stored [`TaskUploadCounter`]s to the database.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there are more than one clone of [`Self`] remaining. This function should only be
+    /// called after all other clones have been dropped.
+    ///
+    /// Panics if the inner mutex is poisoned.
     async fn write<C: Clock>(
         self,
         counter_shard_count: u64,
@@ -367,7 +376,7 @@ impl TaskUploadCounters {
         // advanced.
         try_join_all(
             Arc::into_inner(self.0)
-                .expect("write() should not be called if there are more than one clone remaining")
+                .expect("write() should not be called if there is more than one clone remaining")
                 .into_inner()
                 .unwrap() // Unwrap safety: panic on mutex poisoning.
                 .into_iter()
