@@ -3373,17 +3373,17 @@ struct RequestTimer<'a> {
 
     // Immutable state.
     http_request_duration_histogram: &'a Histogram<f64>,
-    domain: String,
-    endpoint: String,
-    method: String,
+    domain: Arc<str>,
+    endpoint: &'static str,
+    method: Arc<str>,
 }
 
 impl<'a> RequestTimer<'a> {
     fn new(
         http_request_duration_histogram: &'a Histogram<f64>,
-        domain: String,
-        endpoint: String,
-        method: String,
+        domain: Arc<str>,
+        endpoint: &'static str,
+        method: Arc<str>,
     ) -> Self {
         Self {
             start: SyncMutex::new(None),
@@ -3409,9 +3409,9 @@ impl<'a> RequestTimer<'a> {
             start.elapsed().as_secs_f64(),
             &[
                 KeyValue::new("status", status),
-                KeyValue::new("domain", self.domain.clone()),
-                KeyValue::new("endpoint", self.endpoint.clone()),
-                KeyValue::new("method", self.method.clone()),
+                KeyValue::new("domain", Arc::clone(&self.domain)),
+                KeyValue::new("endpoint", self.endpoint),
+                KeyValue::new("method", Arc::clone(&self.method)),
             ],
         )
     }
@@ -3448,11 +3448,13 @@ async fn send_request_to_helper(
     http_request_duration_histogram: &Histogram<f64>,
 ) -> Result<Bytes, Error> {
     let (auth_header, auth_value) = auth_token.request_authentication();
+    let domain = Arc::from(url.domain().unwrap_or_default());
+    let method_str = Arc::from(method.as_str());
     let timer = RequestTimer::new(
         http_request_duration_histogram,
-        url.domain().unwrap_or_default().to_string(),
-        route_label.to_string(),
-        method.as_str().to_string(),
+        domain,
+        route_label,
+        method_str,
     );
 
     let result = retry_http_request_notify(backoff, &timer, || async {

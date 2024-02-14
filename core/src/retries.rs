@@ -42,7 +42,7 @@ pub fn http_request_exponential_backoff() -> ExponentialBackoff {
 
 /// HttpResponse represents an HTTP response. It will typically be returned from
 /// [`retry_http_request`].
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct HttpResponse {
     status: StatusCode,
     headers: HeaderMap,

@@ -123,10 +123,9 @@ pub enum Error {
     Message(#[from] janus_messages::Error),
 }
 
-impl Error {
-    /// Construct an error from an HTTP error response.
-    fn from_http_error_response(http_error_response: HttpErrorResponse) -> Error {
-        Error::Http(Box::new(http_error_response))
+impl From<HttpErrorResponse> for Error {
+    fn from(http_error_response: HttpErrorResponse) -> Self {
+        Self::Http(Box::new(http_error_response))
     }
 }
 
@@ -505,9 +504,7 @@ impl<V: vdaf::Collector> Collector<V> {
             }
 
             // HTTP-level error.
-            Err(Ok(http_error_response)) => {
-                return Err(Error::from_http_error_response(http_error_response))
-            }
+            Err(Ok(http_error_response)) => return Err(http_error_response.into()),
 
             // Network-level error.
             Err(Err(error)) => return Err(Error::HttpClient(error)),
@@ -559,9 +556,7 @@ impl<V: vdaf::Collector> Collector<V> {
             }
 
             // HTTP-level error.
-            Err(Ok(http_error_response)) => {
-                return Err(Error::from_http_error_response(http_error_response))
-            }
+            Err(Ok(http_error_response)) => return Err(http_error_response.into()),
 
             // Network-level error.
             Err(Err(error)) => return Err(Error::HttpClient(error)),
@@ -739,9 +734,7 @@ impl<V: vdaf::Collector> Collector<V> {
             }
 
             // HTTP-level error.
-            Err(Ok(http_error_response)) => {
-                Err(Error::from_http_error_response(http_error_response))
-            }
+            Err(Ok(http_error_response)) => Err(http_error_response.into()),
 
             // Network-level error.
             Err(Err(error)) => Err(Error::HttpClient(error)),

@@ -162,11 +162,11 @@ pub struct JobDriverConfig {
 
     /// Timeout to apply when establishing connections to the helper for HTTP requests. See
     /// [`reqwest::ClientBuilder::connect_timeout`] for details.
-    #[serde(default = "JobDriverConfig::default_http_connection_timeout")]
+    #[serde(default = "JobDriverConfig::default_http_connection_timeout_secs")]
     pub http_request_connection_timeout_secs: u64,
     /// Timeout to apply to HTTP requests overall (including connection establishment) when
     /// communicating with the helper. See [`reqwest::ClientBuilder::timeout`] for details.
-    #[serde(default = "JobDriverConfig::default_http_request_timeout")]
+    #[serde(default = "JobDriverConfig::default_http_request_timeout_secs")]
     pub http_request_timeout_secs: u64,
 
     /// The initial interval, in milliseconds, to wait before retrying a retryable HTTP request.
@@ -192,11 +192,11 @@ impl JobDriverConfig {
             .build()
     }
 
-    fn default_http_connection_timeout() -> u64 {
+    fn default_http_connection_timeout_secs() -> u64 {
         10
     }
 
-    fn default_http_request_timeout() -> u64 {
+    fn default_http_request_timeout_secs() -> u64 {
         30
     }
 
