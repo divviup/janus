@@ -941,46 +941,6 @@ impl<C: Clock> Transaction<'_, C> {
         )?)
     }
 
-    /// Retrieves report & report aggregation metrics for a given task: either a tuple
-    /// `Some((report_count, report_aggregation_count))`, or None if the task does not exist.
-    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn get_task_metrics(&self, task_id: &TaskId) -> Result<Option<(u64, u64)>, Error> {
-        let stmt = self
-            .prepare_cached(
-                "SELECT
-                    (SELECT COUNT(*) FROM tasks WHERE task_id = $1) AS task_count,
-                    (SELECT COUNT(*) FROM client_reports
-                     JOIN tasks ON tasks.id = client_reports.task_id
-                     WHERE tasks.task_id = $1
-                       AND client_reports.client_timestamp >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)) AS report_count,
-                    (SELECT COUNT(*) FROM aggregation_jobs
-                     JOIN tasks ON tasks.id = aggregation_jobs.task_id
-                     RIGHT JOIN report_aggregations ON report_aggregations.aggregation_job_id = aggregation_jobs.id AND report_aggregations.task_id = tasks.id
-                     WHERE tasks.task_id = $1
-                       AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)) AS report_aggregation_count",
-            )
-            .await?;
-        let row = self
-            .query_one(
-                &stmt,
-                &[
-                    /* task_id */ &task_id.as_ref(),
-                    /* now */ &self.clock.now().as_naive_date_time()?,
-                ],
-            )
-            .await?;
-
-        let task_count: u64 = row.get_bigint_and_convert("task_count")?;
-        if task_count == 0 {
-            return Ok(None);
-        }
-
-        Ok(Some((
-            row.get_bigint_and_convert("report_count")?,
-            row.get_bigint_and_convert("report_aggregation_count")?,
-        )))
-    }
-
     /// Retrieves task IDs, optionally after some specified lower bound. This method returns tasks
     /// IDs in lexicographic order, but may not retrieve the IDs of all tasks in a single call. To
     /// retrieve additional task IDs, make additional calls to this method while specifying the
