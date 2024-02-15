@@ -1025,10 +1025,11 @@ async fn taskprov_aggregate_share() {
                     batch_id,
                     aggregation_param,
                     0,
-                    BatchAggregationState::Aggregating,
-                    Some(transcript.helper_aggregate_share),
-                    1,
-                    ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
+                    BatchAggregationState::Aggregating {
+                        aggregate_share: Some(transcript.helper_aggregate_share),
+                        report_count: 1,
+                        checksum: ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
+                    },
                 ))
                 .await
                 .unwrap();

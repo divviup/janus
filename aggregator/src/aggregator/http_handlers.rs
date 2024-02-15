@@ -2317,10 +2317,11 @@ mod tests {
                                 batch_id,
                                 AggregationParam(0),
                                 shard,
-                                BatchAggregationState::Collected,
-                                Some(OutputShare().into()),
-                                1,
-                                ReportIdChecksum::for_report_id(&random()),
+                                BatchAggregationState::Collected {
+                                    aggregate_share: Some(OutputShare().into()),
+                                    report_count: 1,
+                                    checksum: ReportIdChecksum::for_report_id(&random()),
+                                },
                             );
                         tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
                     }
@@ -3435,10 +3436,7 @@ mod tests {
                     *agg.batch_identifier(),
                     agg.aggregation_parameter().clone(),
                     0,
-                    BatchAggregationState::Aggregating,
-                    agg.aggregate_share().cloned(),
-                    agg.report_count(),
-                    *agg.checksum(),
+                    agg.state().clone(),
                 )
             })
             .collect();
@@ -3469,10 +3467,11 @@ mod tests {
                 .unwrap(),
                 aggregation_param.clone(),
                 0,
-                BatchAggregationState::Aggregating,
-                Some(aggregate_share),
-                2,
-                checksum,
+                BatchAggregationState::Aggregating {
+                    aggregate_share: Some(aggregate_share),
+                    report_count: 2,
+                    checksum,
+                },
             ),])
         );
 
@@ -3742,10 +3741,7 @@ mod tests {
                     *agg.batch_identifier(),
                     agg.aggregation_parameter().clone(),
                     0,
-                    BatchAggregationState::Aggregating,
-                    agg.aggregate_share().cloned(),
-                    agg.report_count(),
-                    *agg.checksum(),
+                    agg.state().clone(),
                 )
             })
             .reduce(|left, right| left.merged_with(&right).unwrap())
@@ -3781,10 +3777,11 @@ mod tests {
                 .unwrap(),
                 aggregation_param.clone(),
                 0,
-                BatchAggregationState::Aggregating,
-                Some(first_aggregate_share),
-                3,
-                first_checksum,
+                BatchAggregationState::Aggregating {
+                    aggregate_share: Some(first_aggregate_share),
+                    report_count: 3,
+                    checksum: first_checksum,
+                },
             ),
         );
 
@@ -5014,10 +5011,11 @@ mod tests {
                             .unwrap(),
                             dummy_vdaf::AggregationParam(0),
                             0,
-                            BatchAggregationState::Aggregating,
-                            Some(dummy_vdaf::AggregateShare(0)),
-                            10,
-                            ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
+                            BatchAggregationState::Aggregating {
+                                aggregate_share: Some(dummy_vdaf::AggregateShare(0)),
+                                report_count: 10,
+                                checksum: ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
+                            },
                         ),
                     )
                     .await
@@ -5077,10 +5075,11 @@ mod tests {
                             interval,
                             dummy_vdaf::AggregationParam(0),
                             0,
-                            BatchAggregationState::Aggregating,
-                            Some(dummy_vdaf::AggregateShare(0)),
-                            10,
-                            ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
+                            BatchAggregationState::Aggregating {
+                                aggregate_share: Some(dummy_vdaf::AggregateShare(0)),
+                                report_count: 10,
+                                checksum: ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
+                            },
                         ),
                     )
                     .await
@@ -5400,10 +5399,11 @@ mod tests {
                             interval_1,
                             aggregation_param,
                             0,
-                            BatchAggregationState::Aggregating,
-                            Some(dummy_vdaf::AggregateShare(64)),
-                            interval_1_report_count,
-                            interval_1_checksum,
+                            BatchAggregationState::Aggregating {
+                                aggregate_share: Some(dummy_vdaf::AggregateShare(64)),
+                                report_count: interval_1_report_count,
+                                checksum: interval_1_checksum,
+                            },
                         ))
                         .await
                         .unwrap();
@@ -5427,10 +5427,11 @@ mod tests {
                             interval_2,
                             aggregation_param,
                             0,
-                            BatchAggregationState::Aggregating,
-                            Some(dummy_vdaf::AggregateShare(128)),
-                            interval_2_report_count,
-                            interval_2_checksum,
+                            BatchAggregationState::Aggregating {
+                                aggregate_share: Some(dummy_vdaf::AggregateShare(128)),
+                                report_count: interval_2_report_count,
+                                checksum: interval_2_checksum,
+                            },
                         ))
                         .await
                         .unwrap();
@@ -5454,10 +5455,11 @@ mod tests {
                             interval_3,
                             aggregation_param,
                             0,
-                            BatchAggregationState::Aggregating,
-                            Some(dummy_vdaf::AggregateShare(256)),
-                            interval_3_report_count,
-                            interval_3_checksum,
+                            BatchAggregationState::Aggregating {
+                                aggregate_share: Some(dummy_vdaf::AggregateShare(256)),
+                                report_count: interval_3_report_count,
+                                checksum: interval_3_checksum,
+                            },
                         ))
                         .await
                         .unwrap();
@@ -5481,10 +5483,11 @@ mod tests {
                             interval_4,
                             aggregation_param,
                             0,
-                            BatchAggregationState::Aggregating,
-                            Some(dummy_vdaf::AggregateShare(512)),
-                            interval_4_report_count,
-                            interval_4_checksum,
+                            BatchAggregationState::Aggregating {
+                                aggregate_share: Some(dummy_vdaf::AggregateShare(512)),
+                                report_count: interval_4_report_count,
+                                checksum: interval_4_checksum,
+                            },
                         ))
                         .await
                         .unwrap();
@@ -5701,6 +5704,47 @@ mod tests {
                     decoded_aggregate_share, expected_result,
                     "test case: {label:?}, iteration: {iteration}"
                 );
+
+                // Relevant batch aggregations should be scrubbed.
+                datastore
+                    .run_unnamed_tx(|tx| {
+                        let task = task.clone();
+                        let collection_interval = *request.batch_selector().batch_interval();
+
+                        Box::pin(async move {
+                            let batch_aggregations: Vec<_> = try_join_all(
+                                TimeInterval::batch_identifiers_for_collection_identifier(
+                                    &task.leader_view().unwrap(),
+                                    &collection_interval,
+                                )
+                                .map(|batch_identifier| {
+                                    let task_id = *task.id();
+
+                                    async move {
+                                    tx.get_batch_aggregations_for_batch::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                                        &dummy_vdaf::Vdaf::new(),
+                                        &task_id,
+                                        &batch_identifier,
+                                        &dummy_vdaf::AggregationParam(0),
+                                    ).await
+                                }}),
+                            )
+                            .await
+                            .unwrap()
+                            .into_iter()
+                            .flatten()
+                            .collect();
+
+                            assert!(!batch_aggregations.is_empty());
+                            for batch_aggregation in &batch_aggregations {
+                                assert_matches!(batch_aggregation.state(), BatchAggregationState::Scrubbed);
+                            }
+
+                            Ok(())
+                        })
+                    })
+                    .await
+                    .unwrap();
             }
         }
 

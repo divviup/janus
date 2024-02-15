@@ -277,10 +277,11 @@ mod tests {
                             batch_identifier,
                             AggregationParam(0),
                             0,
-                            BatchAggregationState::Collected,
-                            Some(AggregateShare(11)),
-                            1,
-                            random(),
+                            BatchAggregationState::Collected {
+                                aggregate_share: Some(AggregateShare(11)),
+                                report_count: 1,
+                                checksum: random(),
+                            },
                         ),
                     )
                     .await
@@ -464,10 +465,11 @@ mod tests {
                             batch_identifier,
                             AggregationParam(0),
                             0,
-                            BatchAggregationState::Collected,
-                            Some(AggregateShare(11)),
-                            1,
-                            random(),
+                            BatchAggregationState::Collected {
+                                aggregate_share: Some(AggregateShare(11)),
+                                report_count: 1,
+                                checksum: random(),
+                            },
                         ),
                     )
                     .await
@@ -644,10 +646,11 @@ mod tests {
                             batch_id,
                             AggregationParam(0),
                             0,
-                            BatchAggregationState::Collected,
-                            Some(AggregateShare(11)),
-                            1,
-                            random(),
+                            BatchAggregationState::Collected {
+                                aggregate_share: Some(AggregateShare(11)),
+                                report_count: 1,
+                                checksum: random(),
+                            },
                         ),
                     )
                     .await
@@ -840,10 +843,11 @@ mod tests {
                             batch_id,
                             AggregationParam(0),
                             0,
-                            BatchAggregationState::Collected,
-                            Some(AggregateShare(11)),
-                            1,
-                            random(),
+                            BatchAggregationState::Collected {
+                                aggregate_share: Some(AggregateShare(11)),
+                                report_count: 1,
+                                checksum: random(),
+                            },
                         ),
                     )
                     .await

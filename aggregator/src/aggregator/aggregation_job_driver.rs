@@ -3037,10 +3037,11 @@ mod tests {
             Interval::new(batch_interval_start, *task.time_precision()).unwrap(),
             aggregation_param.clone(),
             0,
-            BatchAggregationState::Aggregating,
-            Some(leader_aggregate_share),
-            1,
-            ReportIdChecksum::for_report_id(report.metadata().id()),
+            BatchAggregationState::Aggregating {
+                aggregate_share: Some(leader_aggregate_share),
+                report_count: 1,
+                checksum: ReportIdChecksum::for_report_id(report.metadata().id()),
+            },
         )]);
         let want_active_batch =
             Batch::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>::new(
@@ -3152,10 +3153,7 @@ mod tests {
                     *agg.batch_identifier(),
                     aggregation_param.clone(),
                     0,
-                    *agg.state(),
-                    agg.aggregate_share().cloned(),
-                    agg.report_count(),
-                    *agg.checksum(),
+                    agg.state().clone(),
                 )
             })
             .collect();
@@ -3412,10 +3410,11 @@ mod tests {
             batch_id,
             aggregation_param.clone(),
             0,
-            BatchAggregationState::Aggregating,
-            Some(leader_aggregate_share),
-            1,
-            ReportIdChecksum::for_report_id(report.metadata().id()),
+            BatchAggregationState::Aggregating {
+                aggregate_share: Some(leader_aggregate_share),
+                report_count: 1,
+                checksum: ReportIdChecksum::for_report_id(report.metadata().id()),
+            },
         )]);
         let want_batch = Batch::<VERIFY_KEY_LENGTH, FixedSize, Poplar1<XofTurboShake128, 16>>::new(
             *task.id(),
@@ -3497,10 +3496,7 @@ mod tests {
                     *agg.batch_identifier(),
                     aggregation_param.clone(),
                     0,
-                    *agg.state(),
-                    agg.aggregate_share().cloned(),
-                    agg.report_count(),
-                    *agg.checksum(),
+                    agg.state().clone(),
                 )
             })
             .collect();

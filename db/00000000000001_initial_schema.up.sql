@@ -307,7 +307,8 @@ CREATE TABLE batches(
 -- Specifies the possible states of a batch aggregation.
 CREATE TYPE BATCH_AGGREGATION_STATE AS ENUM(
     'AGGREGATING',  -- this batch aggregation has not been collected & permits further aggregation
-    'COLLECTED'     -- this batch aggregation has been collected & no longer permits aggregation
+    'COLLECTED',    -- this batch aggregation has been collected & no longer permits aggregation
+    'SCRUBBED'      -- this batch aggregation has been scrubbed of data and can no longer be used
 );
 
 -- Information on aggregation for a single batch. This information may be incremental if the VDAF
@@ -319,9 +320,9 @@ CREATE TABLE batch_aggregations(
     aggregation_param          BYTEA NOT NULL,                    -- the aggregation parameter (opaque VDAF message)
     ord                        BIGINT NOT NULL,                   -- the index of this batch aggregation shard, over (task ID, batch_identifier, aggregation_param).
     state                      BATCH_AGGREGATION_STATE NOT NULL,  -- the current state of this batch aggregation
-    aggregate_share            BYTEA,                             -- the (possibly-incremental) aggregate share; NULL only if report_count is 0.
-    report_count               BIGINT NOT NULL,                   -- the (possibly-incremental) client report count
-    checksum                   BYTEA NOT NULL,                    -- the (possibly-incremental) checksum
+    aggregate_share            BYTEA,                             -- the (possibly-incremental) aggregate share; populated unless report_count is 0 or the batch aggregation has been scrubbed.
+    report_count               BIGINT,                            -- the (possibly-incremental) client report count; populated unless the batch aggregation has been scrubbed.
+    checksum                   BYTEA,                             -- the (possibly-incremental) checksum; populated unless the batch aggregation has been scrubbed.
 
     -- creation/update records
     created_at TIMESTAMP NOT NULL,  -- when the row was created
@@ -344,8 +345,8 @@ CREATE TYPE COLLECTION_JOB_STATE AS ENUM(
 -- The leader's view of collect requests from the Collector.
 CREATE TABLE collection_jobs(
     id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    collection_job_id       BYTEA NOT NULL,              -- 16 byte identifier used by collector to refer to this job
     task_id                 BIGINT NOT NULL,             -- the task ID being collected
+    collection_job_id       BYTEA NOT NULL,              -- 16 byte identifier used by collector to refer to this job
     query                   BYTEA NOT NULL,              -- encoded query-type-specific query (corresponds to Query)
     aggregation_param       BYTEA NOT NULL,              -- the aggregation parameter (opaque VDAF message)
     batch_identifier        BYTEA NOT NULL,              -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector)

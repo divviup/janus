@@ -1,15 +1,22 @@
 //! Implements functionality for computing & validating aggregate shares.
 
 use super::Error;
-use janus_aggregator_core::{datastore::models::BatchAggregation, task::AggregatorTask};
+use janus_aggregator_core::{
+    datastore::{
+        self,
+        models::{BatchAggregation, BatchAggregationState},
+    },
+    task::AggregatorTask,
+};
 use janus_core::report_id::ReportIdChecksumExt;
 use janus_messages::{query_type::QueryType, ReportIdChecksum};
 use prio::vdaf::{self, Aggregatable};
 
 /// Computes the aggregate share over the provided batch aggregations.
-/// The assumption is that all aggregation jobs contributing to those batch aggregations have
-/// been driven to completion, and that the query count requirements have been validated for the
-/// included batches.
+///
+/// The assumption is that all aggregation jobs contributing to those batch aggregations have been
+/// driven to completion, and that the query count requirements have been validated for the included
+/// batches.
 #[tracing::instrument(skip(task, batch_aggregations), fields(task_id = ?task.id()), err)]
 pub(crate) async fn compute_aggregate_share<
     const SEED_SIZE: usize,
@@ -35,8 +42,8 @@ pub(crate) async fn compute_aggregate_share<
     // unfinished aggregation jobs were intentionally abandoned by the leader (see issue #104 for
     // more discussion).
     //
-    // On the leader side, we know/assume that we would not be stepping a collection job unless we had
-    // verified that the constituent aggregation jobs were finished.
+    // On the leader side, we know/assume that we would not be stepping a collection job unless we
+    // had verified that the constituent aggregation jobs were finished.
     //
     // In either case, we go ahead and service the aggregate share request with whatever batch
     // aggregations are available now.
@@ -45,22 +52,38 @@ pub(crate) async fn compute_aggregate_share<
     let mut total_aggregate_share: Option<A::AggregateShare> = None;
 
     for batch_aggregation in batch_aggregations {
+        let (aggregate_share, report_count, checksum) = match batch_aggregation.state() {
+            BatchAggregationState::Aggregating {
+                aggregate_share,
+                report_count,
+                checksum,
+            } => (aggregate_share, report_count, checksum),
+            BatchAggregationState::Collected {
+                aggregate_share,
+                report_count,
+                checksum,
+            } => (aggregate_share, report_count, checksum),
+            BatchAggregationState::Scrubbed => {
+                return Err(Error::Datastore(datastore::Error::Scrubbed))
+            }
+        };
+
         // XOR this batch interval's checksum into the overall checksum
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.2
-        total_checksum = total_checksum.combined_with(batch_aggregation.checksum());
+        total_checksum = total_checksum.combined_with(checksum);
 
         // Sum all the report counts
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.2
-        total_report_count += batch_aggregation.report_count();
+        total_report_count += report_count;
 
         match &mut total_aggregate_share {
             Some(share) => {
-                batch_aggregation
-                    .aggregate_share()
+                aggregate_share
+                    .as_ref()
                     .map(|other| share.merge(other))
                     .transpose()?;
             }
-            None => total_aggregate_share = batch_aggregation.aggregate_share().cloned(),
+            None => total_aggregate_share = aggregate_share.clone(),
         }
     }
 

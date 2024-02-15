@@ -85,10 +85,11 @@ impl<const SEED_SIZE: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<SEED_S
                 batch_identifier.clone(),
                 self.aggregation_parameter.clone(),
                 thread_rng().gen_range(0..self.shard_count),
-                BatchAggregationState::Aggregating,
-                Some(A::AggregateShare::from(output_share.clone())),
-                1,
-                ReportIdChecksum::for_report_id(report_id),
+                BatchAggregationState::Aggregating {
+                    aggregate_share: Some(A::AggregateShare::from(output_share.clone())),
+                    report_count: 1,
+                    checksum: ReportIdChecksum::for_report_id(report_id),
+                },
             )
         };
 

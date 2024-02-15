@@ -3119,7 +3119,7 @@ impl VdafOps {
     async fn handle_aggregate_share_generic<
         const SEED_SIZE: usize,
         Q: CollectableQueryType,
-        S: DifferentialPrivacyStrategy + Send + Clone + Sync + 'static,
+        S: DifferentialPrivacyStrategy + Send + Clone + Send + Sync + 'static,
         A: vdaf::AggregatorWithNoise<SEED_SIZE, 16, S> + Send + Sync + 'static,
         C: Clock,
     >(
@@ -3135,7 +3135,6 @@ impl VdafOps {
     where
         A::AggregationParam: Send + Sync + Eq + Hash,
         A::AggregateShare: Send + Sync,
-        S: Send + Sync,
     {
         // Decode request, and verify that it is for the current task. We use an assert to check
         // that the task IDs match as this should be guaranteed by the caller.
@@ -3185,7 +3184,7 @@ impl VdafOps {
                     let aggregation_param = A::AggregationParam::get_decoded(
                         aggregate_share_req.aggregation_parameter(),
                     )?;
-                    let aggregate_share_job = match tx
+                    if let Some(aggregate_share_job) = tx
                         .get_aggregate_share_job(
                             vdaf.as_ref(),
                             task.id(),
@@ -3194,118 +3193,103 @@ impl VdafOps {
                         )
                         .await?
                     {
-                        Some(aggregate_share_job) => {
-                            debug!(
-                                ?aggregate_share_req,
-                                "Serving cached aggregate share job result"
-                            );
-                            aggregate_share_job
-                        }
-                        None => {
-                            debug!(
-                                ?aggregate_share_req,
-                                "Cache miss, computing aggregate share job result"
-                            );
-                            let aggregation_param = A::AggregationParam::get_decoded(
-                                aggregate_share_req.aggregation_parameter(),
-                            )?;
-                            let (batch_aggregations, _) = try_join!(
-                                Q::get_batch_aggregations_for_collection_identifier(
-                                    tx,
-                                    &task,
-                                    vdaf.as_ref(),
-                                    aggregate_share_req.batch_selector().batch_identifier(),
-                                    &aggregation_param
-                                ),
-                                Q::validate_query_count::<SEED_SIZE, C, A>(
-                                    tx,
-                                    vdaf.as_ref(),
-                                    &task,
-                                    aggregate_share_req.batch_selector().batch_identifier(),
-                                    &aggregation_param,
-                                )
-                            )?;
-
-                            // To ensure that concurrent aggregations don't write into a
-                            // currently-nonexistent batch aggregation, we write (empty) batch
-                            // aggregations for any that have not already been written to storage.
-                            let empty_batch_aggregations = empty_batch_aggregations(
-                                &task,
-                                batch_aggregation_shard_count,
-                                aggregate_share_req.batch_selector().batch_identifier(),
-                                &aggregation_param,
-                                &batch_aggregations,
-                            );
-
-                            let (mut helper_aggregate_share, report_count, checksum) =
-                                compute_aggregate_share::<SEED_SIZE, Q, A>(
-                                    &task,
-                                    &batch_aggregations,
-                                )
-                                .await
-                                .map_err(|e| datastore::Error::User(e.into()))?;
-
-                            vdaf.add_noise_to_agg_share(
-                                &dp_strategy,
-                                &aggregation_param,
-                                &mut helper_aggregate_share,
-                                report_count.try_into()?,
-                            )
-                            .map_err(|e| datastore::Error::User(e.into()))?;
-
-                            // Now that we are satisfied that the request is serviceable, we consume
-                            // a query by recording the aggregate share request parameters and the
-                            // result.
-                            let aggregate_share_job = AggregateShareJob::<SEED_SIZE, Q, A>::new(
-                                *task.id(),
-                                aggregate_share_req
-                                    .batch_selector()
-                                    .batch_identifier()
-                                    .clone(),
-                                aggregation_param,
-                                helper_aggregate_share,
-                                report_count,
-                                checksum,
-                            );
-                            try_join!(
-                                tx.put_aggregate_share_job(&aggregate_share_job),
-                                try_join_all(batch_aggregations.into_iter().map(|ba| async move {
-                                    tx.update_batch_aggregation(
-                                        &ba.with_state(BatchAggregationState::Collected),
-                                    )
-                                    .await
-                                })),
-                                try_join_all(
-                                    empty_batch_aggregations
-                                        .iter()
-                                        .map(|ba| tx.put_batch_aggregation(ba))
-                                ),
-                            )?;
-                            aggregate_share_job
-                        }
-                    };
-
-                    // §4.4.4.3: verify total report count and the checksum we computed against
-                    // those reported by the leader.
-                    if aggregate_share_job.report_count() != aggregate_share_req.report_count()
-                        || aggregate_share_job.checksum() != aggregate_share_req.checksum()
-                    {
-                        return Err(datastore::Error::User(
-                            Error::BatchMismatch(Box::new(BatchMismatch {
-                                task_id: *task.id(),
-                                own_checksum: *aggregate_share_job.checksum(),
-                                own_report_count: aggregate_share_job.report_count(),
-                                peer_checksum: *aggregate_share_req.checksum(),
-                                peer_report_count: aggregate_share_req.report_count(),
-                            }))
-                            .into(),
-                        ));
+                        debug!(
+                            ?aggregate_share_req,
+                            "Serving cached aggregate share job result"
+                        );
+                        return Ok(aggregate_share_job);
                     }
 
+                    // This is a new aggregate share request, compute & validate the response.
+                    debug!(
+                        ?aggregate_share_req,
+                        "Cache miss, computing aggregate share job result"
+                    );
+                    let aggregation_param = A::AggregationParam::get_decoded(
+                        aggregate_share_req.aggregation_parameter(),
+                    )?;
+                    let (batch_aggregations, _) = try_join!(
+                        Q::get_batch_aggregations_for_collection_identifier(
+                            tx,
+                            &task,
+                            vdaf.as_ref(),
+                            aggregate_share_req.batch_selector().batch_identifier(),
+                            &aggregation_param
+                        ),
+                        Q::validate_query_count::<SEED_SIZE, C, A>(
+                            tx,
+                            vdaf.as_ref(),
+                            &task,
+                            aggregate_share_req.batch_selector().batch_identifier(),
+                            &aggregation_param,
+                        )
+                    )?;
+
+                    // To ensure that concurrent aggregations don't write into a
+                    // currently-nonexistent batch aggregation, we write (empty) batch
+                    // aggregations for any that have not already been written to storage.
+                    let empty_batch_aggregations = empty_batch_aggregations(
+                        &task,
+                        batch_aggregation_shard_count,
+                        aggregate_share_req.batch_selector().batch_identifier(),
+                        &aggregation_param,
+                        &batch_aggregations,
+                    );
+
+                    let (mut helper_aggregate_share, report_count, checksum) =
+                        compute_aggregate_share::<SEED_SIZE, Q, A>(&task, &batch_aggregations)
+                            .await
+                            .map_err(|e| datastore::Error::User(e.into()))?;
+
+                    vdaf.add_noise_to_agg_share(
+                        &dp_strategy,
+                        &aggregation_param,
+                        &mut helper_aggregate_share,
+                        report_count.try_into()?,
+                    )
+                    .map_err(|e| datastore::Error::User(e.into()))?;
+
+                    // Now that we are satisfied that the request is serviceable, we consume
+                    // a query by recording the aggregate share request parameters and the
+                    // result.
+                    let aggregate_share_job = AggregateShareJob::<SEED_SIZE, Q, A>::new(
+                        *task.id(),
+                        aggregate_share_req
+                            .batch_selector()
+                            .batch_identifier()
+                            .clone(),
+                        aggregation_param,
+                        helper_aggregate_share,
+                        report_count,
+                        checksum,
+                    );
+                    try_join!(
+                        tx.put_aggregate_share_job(&aggregate_share_job),
+                        try_join_all(batch_aggregations.into_iter().map(|ba| async move {
+                            tx.update_batch_aggregation(&ba.scrubbed()).await
+                        })),
+                        try_join_all(empty_batch_aggregations.into_iter().map(|ba| async move {
+                            tx.put_batch_aggregation(&ba.scrubbed()).await
+                        }))
+                    )?;
                     Ok(aggregate_share_job)
                 })
             })
             .await?;
+
+        // §4.4.4.3: Verify total report count and the checksum we computed against those reported
+        // by the leader.
+        if aggregate_share_job.report_count() != aggregate_share_req.report_count()
+            || aggregate_share_job.checksum() != aggregate_share_req.checksum()
+        {
+            return Err(Error::BatchMismatch(Box::new(BatchMismatch {
+                task_id: *task.id(),
+                own_checksum: *aggregate_share_job.checksum(),
+                own_report_count: aggregate_share_job.report_count(),
+                peer_checksum: *aggregate_share_req.checksum(),
+                peer_report_count: aggregate_share_req.report_count(),
+            })));
+        }
 
         // §4.4.4.3: HPKE encrypt aggregate share to the collector. We store *unencrypted* aggregate
         // shares in the datastore so that we can encrypt cached results to the collector HPKE
@@ -3360,10 +3344,11 @@ fn empty_batch_aggregations<
                 batch_identifier,
                 aggregation_param.clone(),
                 ord,
-                BatchAggregationState::Collected,
-                None,
-                0,
-                ReportIdChecksum::default(),
+                BatchAggregationState::Collected {
+                    aggregate_share: None,
+                    report_count: 0,
+                    checksum: ReportIdChecksum::default(),
+                },
             ))
         } else {
             None
