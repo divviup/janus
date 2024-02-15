@@ -18,7 +18,7 @@ use std::{
     collections::BTreeMap,
     fmt::Debug,
     marker::PhantomData,
-    mem::replace,
+    mem::{replace, take},
     sync::{Arc, Mutex as StdMutex},
     time::Duration,
 };
@@ -355,36 +355,29 @@ impl TaskUploadCounters {
         }
     }
 
-    /// Flushes the stored [`TaskUploadCounter`]s to the database.
-    ///
-    /// # Panics
-    ///
-    /// Panics if there are more than one clone of [`Self`] remaining. This function should only be
-    /// called after all other clones have been dropped.
-    ///
-    /// Panics if the inner mutex is poisoned.
+    /// Flushes the stored [`TaskUploadCounter`]s to the database. The stored counters are cleared.
     async fn write<C: Clock>(
-        self,
+        &self,
         counter_shard_count: u64,
         tx: &Transaction<'_, C>,
     ) -> Result<(), datastore::Error> {
+        let map;
+        {
+            // Unwrap safety: panic on mutex poisoning.
+            let mut lock = self.0.lock().unwrap();
+            map = take(&mut *lock);
+        }
         let ord = thread_rng().gen_range(0..counter_shard_count);
+
         // The order of elements returned by a BTreeMap iterator are sorted. This allows us to
         // discourage database deadlocks when multiple tasks are being incremented in the same
         // transaction. This doesn't fully prevent deadlocks since we execute the statements
         // concurrently--it's not guaranteed that order is preserved when the futures are being
         // advanced.
-        try_join_all(
-            Arc::into_inner(self.0)
-                .expect("write() should not be called if there is more than one clone remaining")
-                .into_inner()
-                .unwrap() // Unwrap safety: panic on mutex poisoning.
-                .into_iter()
-                .map(|(task_id, counter)| async move {
-                    tx.increment_task_upload_counter(&task_id, ord, &counter)
-                        .await
-                }),
-        )
+        try_join_all(map.into_iter().map(|(task_id, counter)| async move {
+            tx.increment_task_upload_counter(&task_id, ord, &counter)
+                .await
+        }))
         .await?;
         Ok(())
     }
