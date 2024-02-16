@@ -1,7 +1,4 @@
-use janus_aggregator_core::{
-    datastore::{self, models::TaskUploadIncrementor},
-    task,
-};
+use janus_aggregator_core::{datastore, task};
 use janus_core::http::HttpErrorResponse;
 use janus_messages::{
     AggregationJobId, AggregationJobStep, CollectionJobId, HpkeConfigId, Interval, PrepareError,
@@ -216,22 +213,6 @@ impl ReportRejectionReason {
             ReportRejectionReason::TooEarly => "Report timestamp is too far in the future.",
             ReportRejectionReason::OutdatedHpkeConfig(_) => {
                 "Report is using an outdated HPKE configuration."
-            }
-        }
-    }
-}
-
-impl From<&ReportRejectionReason> for TaskUploadIncrementor {
-    fn from(value: &ReportRejectionReason) -> Self {
-        match value {
-            ReportRejectionReason::IntervalCollected => TaskUploadIncrementor::IntervalCollected,
-            ReportRejectionReason::DecryptFailure => TaskUploadIncrementor::ReportDecryptFailure,
-            ReportRejectionReason::DecodeFailure => TaskUploadIncrementor::ReportDecodeFailure,
-            ReportRejectionReason::TaskExpired => TaskUploadIncrementor::TaskExpired,
-            ReportRejectionReason::Expired => TaskUploadIncrementor::ReportExpired,
-            ReportRejectionReason::TooEarly => TaskUploadIncrementor::ReportTooEarly,
-            ReportRejectionReason::OutdatedHpkeConfig(_) => {
-                TaskUploadIncrementor::ReportOutdatedKey
             }
         }
     }

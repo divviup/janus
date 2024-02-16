@@ -2003,26 +2003,30 @@ impl GlobalHpkeKeypair {
 }
 
 /// Per-task counts of uploaded reports and upload attempts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TaskUploadCounter {
+    /// Reports that fell into a time interval that had already been collected.
     pub(crate) interval_collected: u64,
+    /// Reports that could not be decoded.
     pub(crate) report_decode_failure: u64,
+    /// Reports that could not be decrypted.
     pub(crate) report_decrypt_failure: u64,
+    /// Reports that contained a timestamp too far in the past.
     pub(crate) report_expired: u64,
+    /// Reports that were encrypted with an old or unknown HPKE key.
     pub(crate) report_outdated_key: u64,
+    /// Reports that were successfully uploaded.
     pub(crate) report_success: u64,
+    /// Reports that contain a timestamp too far in the future.
     pub(crate) report_too_early: u64,
+    /// Reports that were submitted to the task after the task's expiry.
     pub(crate) task_expired: u64,
 }
 
 impl TaskUploadCounter {
-    /// Create a new [`TaskUploadCounter`].
-    ///
-    /// This is locked behind test-util since production code shouldn't need to manually create a
-    /// counter.
     #[allow(clippy::too_many_arguments)]
     #[cfg(feature = "test-util")]
-    pub fn new(
+    pub fn new_with_values(
         interval_collected: u64,
         report_decode_failure: u64,
         report_decrypt_failure: u64,
@@ -2043,39 +2047,36 @@ impl TaskUploadCounter {
             task_expired,
         }
     }
-}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskUploadIncrementor {
-    /// A report fell into a time interval that has already been collected.
-    IntervalCollected,
-    /// A report could not be decoded.
-    ReportDecodeFailure,
-    /// A report could not be decrypted.
-    ReportDecryptFailure,
-    /// A report contains a timestamp too far in the past.
-    ReportExpired,
-    /// A report is encrypted with an old or unknown HPKE key.
-    ReportOutdatedKey,
-    /// A report was successfully uploaded.
-    ReportSuccess,
-    /// A report contains a timestamp too far in the future.
-    ReportTooEarly,
-    /// A report was submitted to the task after the task's expiry.
-    TaskExpired,
-}
+    pub fn increment_interval_collected(&mut self) {
+        self.interval_collected += 1
+    }
 
-impl TaskUploadIncrementor {
-    pub(crate) fn column(&self) -> &'static str {
-        match self {
-            TaskUploadIncrementor::IntervalCollected => "interval_collected",
-            TaskUploadIncrementor::ReportDecodeFailure => "report_decode_failure",
-            TaskUploadIncrementor::ReportDecryptFailure => "report_decrypt_failure",
-            TaskUploadIncrementor::ReportExpired => "report_expired",
-            TaskUploadIncrementor::ReportOutdatedKey => "report_outdated_key",
-            TaskUploadIncrementor::ReportSuccess => "report_success",
-            TaskUploadIncrementor::ReportTooEarly => "report_too_early",
-            TaskUploadIncrementor::TaskExpired => "task_expired",
-        }
+    pub fn increment_report_decode_failure(&mut self) {
+        self.report_decode_failure += 1
+    }
+
+    pub fn increment_report_decrypt_failure(&mut self) {
+        self.report_decrypt_failure += 1
+    }
+
+    pub fn increment_report_expired(&mut self) {
+        self.report_expired += 1
+    }
+
+    pub fn increment_report_outdated_key(&mut self) {
+        self.report_outdated_key += 1
+    }
+
+    pub fn increment_report_success(&mut self) {
+        self.report_success += 1
+    }
+
+    pub fn increment_report_too_early(&mut self) {
+        self.report_too_early += 1
+    }
+
+    pub fn increment_task_expired(&mut self) {
+        self.task_expired += 1
     }
 }

@@ -205,6 +205,9 @@ pub struct Config {
     /// the cost of collection.
     pub batch_aggregation_shard_count: u64,
 
+    /// Enables counting report uploads.
+    pub enable_task_counters: bool,
+
     /// Defines the number of shards to break report counters into. Increasing this value will
     /// reduce the amount of database contention during report uploads, while increasing the cost
     /// of getting task metrics.
@@ -223,6 +226,7 @@ impl Default for Config {
             max_upload_batch_size: 1,
             max_upload_batch_write_delay: StdDuration::ZERO,
             batch_aggregation_shard_count: 1,
+            enable_task_counters: false,
             task_counter_shard_count: 32,
             global_hpke_configs_refresh_interval: GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
             taskprov_config: TaskprovConfig::default(),
@@ -241,6 +245,7 @@ impl<C: Clock> Aggregator<C> {
         let report_writer = Arc::new(ReportWriteBatcher::new(
             Arc::clone(&datastore),
             runtime,
+            cfg.enable_task_counters,
             cfg.task_counter_shard_count,
             cfg.max_upload_batch_size,
             cfg.max_upload_batch_write_delay,
@@ -3311,6 +3316,7 @@ pub(crate) mod test_util {
             max_upload_batch_size: 5,
             max_upload_batch_write_delay: Duration::from_millis(100),
             batch_aggregation_shard_count: BATCH_AGGREGATION_SHARD_COUNT,
+            enable_task_counters: true,
             ..Default::default()
         }
     }
@@ -3326,7 +3332,7 @@ mod tests {
     use futures::future::try_join_all;
     use janus_aggregator_core::{
         datastore::{
-            models::{CollectionJob, CollectionJobState},
+            models::{CollectionJob, CollectionJobState, TaskUploadCounter},
             test_util::{ephemeral_datastore, EphemeralDatastore},
             Datastore,
         },
@@ -3472,6 +3478,7 @@ mod tests {
         let (vdaf, aggregator, clock, task, ds, _ephemeral_datastore) = setup_upload_test(Config {
             max_upload_batch_size: 1000,
             max_upload_batch_write_delay: StdDuration::from_millis(500),
+            enable_task_counters: true,
             ..Default::default()
         })
         .await;
@@ -3515,7 +3522,7 @@ mod tests {
             .unwrap();
 
         // Verify that the original report, rather than the modified report, is stored.
-        let (got_report, _got_counter) = ds
+        let (got_report, got_counter) = ds
             .run_unnamed_tx(|tx| {
                 let vdaf = vdaf.clone();
                 let task_id = *task.id();
@@ -3535,12 +3542,10 @@ mod tests {
             .unwrap()
             .eq_report(&vdaf, leader_task.current_hpke_key(), &report));
 
-        // Incrementing upload counters disabled for now
-        // https://github.com/divviup/janus/issues/2654
-        // assert_eq!(
-        //     got_counter,
-        //     Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 1, 0, 0))
-        // )
+        assert_eq!(
+            got_counter,
+            Some(TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 1, 0, 0))
+        )
     }
 
     #[tokio::test]
@@ -3552,6 +3557,7 @@ mod tests {
             setup_upload_test(Config {
                 max_upload_batch_size: BATCH_SIZE,
                 max_upload_batch_write_delay: StdDuration::from_secs(86400),
+                enable_task_counters: true,
                 ..Default::default()
             })
             .await;
@@ -3586,19 +3592,17 @@ mod tests {
 
         assert_eq!(want_report_ids, got_report_ids);
 
-        // Incrementing upload counters disabled for now
-        // https://github.com/divviup/janus/issues/2654
-        // let got_counters = datastore
-        //     .run_unnamed_tx(|tx| {
-        //         let task_id = *task.id();
-        //         Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
-        //     })
-        //     .await
-        //     .unwrap();
-        // assert_eq!(
-        //     got_counters,
-        //     Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 100, 0, 0))
-        // );
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 100, 0, 0))
+        );
     }
 
     #[tokio::test]
@@ -3606,7 +3610,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let mut runtime_manager = TestRuntimeManager::new();
-        let (_, aggregator, clock, task, _datastore, _ephemeral_datastore) =
+        let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
             setup_upload_test_with_runtime(
                 runtime_manager.with_label("aggregator"),
                 default_aggregator_config(),
@@ -3652,19 +3656,17 @@ mod tests {
             .wait_for_completed_tasks("aggregator", 1)
             .await;
 
-        // Incrementing upload counters disabled for now
-        // https://github.com/divviup/janus/issues/2654
-        // let got_counters = datastore
-        //     .run_unnamed_tx(|tx| {
-        //         let task_id = *task.id();
-        //         Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
-        //     })
-        //     .await
-        //     .unwrap();
-        // assert_eq!(
-        //     got_counters,
-        //     Some(TaskUploadCounter::new(0, 0, 0, 0, 1, 0, 0, 0))
-        // )
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new_with_values(0, 0, 0, 0, 1, 0, 0, 0))
+        )
     }
 
     #[tokio::test]
@@ -3695,26 +3697,24 @@ mod tests {
         assert_eq!(task.id(), got_report.task_id());
         assert_eq!(report.metadata(), got_report.metadata());
 
-        // Incrementing upload counters disabled for now
-        // https://github.com/divviup/janus/issues/2654
-        // let got_counters = datastore
-        //     .run_unnamed_tx(|tx| {
-        //         let task_id = *task.id();
-        //         Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
-        //     })
-        //     .await
-        //     .unwrap();
-        // assert_eq!(
-        //     got_counters,
-        //     Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 1, 0, 0))
-        // )
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 1, 0, 0))
+        )
     }
 
     #[tokio::test]
     async fn upload_report_in_the_future_past_clock_skew() {
         install_test_trace_subscriber();
         let mut runtime_manager = TestRuntimeManager::new();
-        let (_, aggregator, clock, task, _datastore, _ephemeral_datastore) =
+        let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
             setup_upload_test_with_runtime(
                 runtime_manager.with_label("aggregator"),
                 default_aggregator_config(),
@@ -3746,19 +3746,17 @@ mod tests {
             .wait_for_completed_tasks("aggregator", 1)
             .await;
 
-        // Incrementing upload counters disabled for now
-        // https://github.com/divviup/janus/issues/2654
-        // let got_counters = datastore
-        //     .run_unnamed_tx(|tx| {
-        //         let task_id = *task.id();
-        //         Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
-        //     })
-        //     .await
-        //     .unwrap();
-        // assert_eq!(
-        //     got_counters,
-        //     Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 0, 1, 0))
-        // )
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 0, 1, 0))
+        )
     }
 
     #[tokio::test]
@@ -3826,19 +3824,17 @@ mod tests {
             .wait_for_completed_tasks("aggregator", 1)
             .await;
 
-        // Incrementing upload counters disabled for now
-        // https://github.com/divviup/janus/issues/2654
-        // let got_counters = datastore
-        //     .run_unnamed_tx(|tx| {
-        //         let task_id = *task.id();
-        //         Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
-        //     })
-        //     .await
-        //     .unwrap();
-        // assert_eq!(
-        //     got_counters,
-        //     Some(TaskUploadCounter::new(1, 0, 0, 0, 0, 0, 0, 0))
-        // )
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new_with_values(1, 0, 0, 0, 0, 0, 0, 0))
+        )
     }
 
     #[tokio::test]
@@ -3960,19 +3956,17 @@ mod tests {
             .wait_for_completed_tasks("aggregator", 1)
             .await;
 
-        // Incrementing upload counters disabled for now
-        // https://github.com/divviup/janus/issues/2654
-        // let got_counters = datastore
-        //     .run_unnamed_tx(|tx| {
-        //         let task_id = *task.id();
-        //         Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
-        //     })
-        //     .await
-        //     .unwrap();
-        // assert_eq!(
-        //     got_counters,
-        //     Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 0, 0, 1))
-        // )
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 0, 0, 1))
+        )
     }
 
     #[tokio::test]
@@ -4018,26 +4012,24 @@ mod tests {
             .wait_for_completed_tasks("aggregator", 1)
             .await;
 
-        // Incrementing upload counters disabled for now
-        // https://github.com/divviup/janus/issues/2654
-        // let got_counters = datastore
-        //     .run_unnamed_tx(|tx| {
-        //         let task_id = *task.id();
-        //         Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
-        //     })
-        //     .await
-        //     .unwrap();
-        // assert_eq!(
-        //     got_counters,
-        //     Some(TaskUploadCounter::new(0, 0, 0, 1, 0, 0, 0, 0))
-        // )
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new_with_values(0, 0, 0, 1, 0, 0, 0, 0))
+        )
     }
 
     #[tokio::test]
     async fn upload_report_faulty_encryption() {
         install_test_trace_subscriber();
         let mut runtime_manager = TestRuntimeManager::new();
-        let (_, aggregator, clock, task, _datastore, _ephemeral_datastore) =
+        let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
             setup_upload_test_with_runtime(
                 runtime_manager.with_label("aggregator"),
                 default_aggregator_config(),
@@ -4076,27 +4068,24 @@ mod tests {
             .wait_for_completed_tasks("aggregator", 1)
             .await;
 
-        // Incrementing upload counters disabled for now
-        // https://github.com/divviup/janus/issues/2654
-        // let got_counters = datastore
-        //     .run_unnamed_tx(|tx| {
-        //         let task_id = *task.id();
-        //         Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
-        //     })
-        //     .await
-        //     .unwrap();
-
-        // assert_eq!(
-        //     got_counters,
-        //     Some(TaskUploadCounter::new(0, 0, 1, 0, 0, 0, 0, 0))
-        // )
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new_with_values(0, 0, 1, 0, 0, 0, 0, 0))
+        )
     }
 
     #[tokio::test]
     async fn upload_report_public_share_decode_failure() {
         install_test_trace_subscriber();
         let mut runtime_manager = TestRuntimeManager::new();
-        let (_, aggregator, clock, task, _datastore, _ephemeral_datastore) =
+        let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
             setup_upload_test_with_runtime(
                 runtime_manager.with_label("aggregator"),
                 default_aggregator_config(),
@@ -4134,26 +4123,24 @@ mod tests {
             .wait_for_completed_tasks("aggregator", 1)
             .await;
 
-        // Incrementing upload counters disabled for now
-        // https://github.com/divviup/janus/issues/2654
-        // let got_counters = datastore
-        //     .run_unnamed_tx(|tx| {
-        //         let task_id = *task.id();
-        //         Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
-        //     })
-        //     .await
-        //     .unwrap();
-        // assert_eq!(
-        //     got_counters,
-        //     Some(TaskUploadCounter::new(0, 1, 0, 0, 0, 0, 0, 0))
-        // )
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new_with_values(0, 1, 0, 0, 0, 0, 0, 0))
+        )
     }
 
     #[tokio::test]
     async fn upload_report_leader_input_share_decode_failure() {
         install_test_trace_subscriber();
         let mut runtime_manager = TestRuntimeManager::new();
-        let (_, aggregator, clock, task, _datastore, _ephemeral_datastore) =
+        let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
             setup_upload_test_with_runtime(
                 runtime_manager.with_label("aggregator"),
                 default_aggregator_config(),
@@ -4202,19 +4189,17 @@ mod tests {
             .wait_for_completed_tasks("aggregator", 1)
             .await;
 
-        // Incrementing upload counters disabled for now
-        // https://github.com/divviup/janus/issues/2654
-        // let got_counters = datastore
-        //     .run_unnamed_tx(|tx| {
-        //         let task_id = *task.id();
-        //         Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
-        //     })
-        //     .await
-        //     .unwrap();
-        // assert_eq!(
-        //     got_counters,
-        //     Some(TaskUploadCounter::new(0, 1, 0, 0, 0, 0, 0, 0))
-        // )
+        let got_counters = datastore
+            .run_unnamed_tx(|tx| {
+                let task_id = *task.id();
+                Box::pin(async move { tx.get_task_upload_counter(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            got_counters,
+            Some(TaskUploadCounter::new_with_values(0, 1, 0, 0, 0, 0, 0, 0))
+        )
     }
 
     pub(crate) fn generate_helper_report_share<V: vdaf::Client<16>>(
