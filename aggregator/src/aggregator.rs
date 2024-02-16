@@ -210,9 +210,6 @@ pub struct Config {
     /// the cost of collection.
     pub batch_aggregation_shard_count: u64,
 
-    /// Enables counting report uploads.
-    pub enable_task_counters: bool,
-
     /// Defines the number of shards to break report counters into. Increasing this value will
     /// reduce the amount of database contention during report uploads, while increasing the cost
     /// of getting task metrics.
@@ -231,7 +228,6 @@ impl Default for Config {
             max_upload_batch_size: 1,
             max_upload_batch_write_delay: StdDuration::ZERO,
             batch_aggregation_shard_count: 1,
-            enable_task_counters: false,
             task_counter_shard_count: 32,
             global_hpke_configs_refresh_interval: GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
             taskprov_config: TaskprovConfig::default(),
@@ -250,7 +246,6 @@ impl<C: Clock> Aggregator<C> {
         let report_writer = Arc::new(ReportWriteBatcher::new(
             Arc::clone(&datastore),
             runtime,
-            cfg.enable_task_counters,
             cfg.task_counter_shard_count,
             cfg.max_upload_batch_size,
             cfg.max_upload_batch_write_delay,
@@ -3526,7 +3521,6 @@ pub(crate) mod test_util {
             max_upload_batch_size: 5,
             max_upload_batch_write_delay: Duration::from_millis(100),
             batch_aggregation_shard_count: BATCH_AGGREGATION_SHARD_COUNT,
-            enable_task_counters: true,
             ..Default::default()
         }
     }
@@ -3692,7 +3686,6 @@ mod tests {
         let (vdaf, aggregator, clock, task, ds, _ephemeral_datastore) = setup_upload_test(Config {
             max_upload_batch_size: 1000,
             max_upload_batch_write_delay: StdDuration::from_millis(500),
-            enable_task_counters: true,
             ..Default::default()
         })
         .await;
@@ -3771,7 +3764,6 @@ mod tests {
             setup_upload_test(Config {
                 max_upload_batch_size: BATCH_SIZE,
                 max_upload_batch_write_delay: StdDuration::from_secs(86400),
-                enable_task_counters: true,
                 ..Default::default()
             })
             .await;

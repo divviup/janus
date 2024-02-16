@@ -44,7 +44,6 @@ impl<C: Clock> ReportWriteBatcher<C> {
     pub fn new<R: Runtime + Send + Sync + 'static>(
         ds: Arc<Datastore<C>>,
         runtime: R,
-        enable_task_counters: bool,
         counter_shard_count: u64,
         max_batch_size: usize,
         max_batch_write_delay: Duration,
@@ -58,7 +57,6 @@ impl<C: Clock> ReportWriteBatcher<C> {
                 ds,
                 runtime_clone,
                 report_rx,
-                enable_task_counters,
                 counter_shard_count,
                 max_batch_size,
                 max_batch_write_delay,
@@ -109,7 +107,6 @@ impl<C: Clock> ReportWriteBatcher<C> {
         ds: Arc<Datastore<C>>,
         runtime: Arc<R>,
         mut report_rx: ReportWriteBatcherReceiver<C>,
-        enable_task_counters: bool,
         counter_shard_count: u64,
         max_batch_size: usize,
         max_batch_write_delay: Duration,
@@ -152,13 +149,7 @@ impl<C: Clock> ReportWriteBatcher<C> {
                 let report_results =
                     replace(&mut report_results, Vec::with_capacity(max_batch_size));
                 runtime.spawn(async move {
-                    Self::write_batch(
-                        ds,
-                        enable_task_counters,
-                        counter_shard_count,
-                        report_results,
-                    )
-                    .await;
+                    Self::write_batch(ds, counter_shard_count, report_results).await;
                 });
             }
         }
@@ -167,7 +158,6 @@ impl<C: Clock> ReportWriteBatcher<C> {
     #[tracing::instrument(name = "ReportWriteBatcher::write_batch", skip_all)]
     async fn write_batch(
         ds: Arc<Datastore<C>>,
-        enable_task_counters: bool,
         counter_shard_count: u64,
         report_results: Vec<(ReportResult<C>, Option<ResultSender>)>,
     ) {
@@ -196,12 +186,10 @@ impl<C: Clock> ReportWriteBatcher<C> {
                     }))
                     .await;
 
-                    if enable_task_counters {
-                        // Failure of writing counters is considered a whole transaction failure.
-                        // The logic behind it is simple enough that if it is failing, then likely
-                        // something _very_ wrong is going on and we should rollback.
-                        task_upload_counters.write(counter_shard_count, tx).await?;
-                    }
+                    // Failure of writing counters is considered a whole transaction failure.
+                    // The logic behind it is simple enough that if it is failing, then likely
+                    // something _very_ wrong is going on and we should rollback.
+                    task_upload_counters.write(counter_shard_count, tx).await?;
 
                     Ok(results)
                 })
