@@ -291,6 +291,7 @@ async fn aggregation_job_creator_shutdown() {
         aggregation_job_creation_interval_secs: 60,
         min_aggregation_job_size: 100,
         max_aggregation_job_size: 100,
+        aggregation_job_creation_report_window: 5000,
     };
 
     graceful_shutdown(trycmd::cargo::cargo_bin!("aggregation_job_creator"), config).await;
