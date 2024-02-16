@@ -151,7 +151,7 @@ CREATE TABLE task_upload_counters(
 
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
     CONSTRAINT task_upload_counters_unique UNIQUE(task_id, ord)
-);
+) WITH (fillfactor = 50);
 
 -- The HPKE public keys (aka configs) and private keys used by a given task.
 CREATE TABLE task_hpke_keys(

@@ -12,7 +12,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use futures::future::try_join_all;
 use janus_aggregator_core::{
     datastore::{
-        models::{HpkeKeyState, TaskUploadCounter, TaskUploadIncrementor},
+        models::{HpkeKeyState, TaskUploadCounter},
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
     },
@@ -765,24 +765,15 @@ async fn get_task_upload_metrics() {
                     .leader_view()
                     .unwrap();
                 let task_id = *task.id();
-                tx.put_aggregator_task(&task).await?;
+                tx.put_aggregator_task(&task).await.unwrap();
 
-                for case in [
-                    (TaskUploadIncrementor::ReportDecryptFailure, 2),
-                    (TaskUploadIncrementor::ReportExpired, 4),
-                    (TaskUploadIncrementor::ReportOutdatedKey, 6),
-                    (TaskUploadIncrementor::ReportSuccess, 100),
-                    (TaskUploadIncrementor::ReportTooEarly, 25),
-                    (TaskUploadIncrementor::TaskExpired, 12),
-                ] {
-                    let ord = thread_rng().gen_range(0..32);
-                    try_join_all(
-                        (0..case.1)
-                            .map(|_| tx.increment_task_upload_counter(&task_id, ord, &case.0)),
-                    )
-                    .await
-                    .unwrap();
-                }
+                tx.increment_task_upload_counter(
+                    &task_id,
+                    1,
+                    &TaskUploadCounter::new_with_values(0, 0, 2, 4, 6, 100, 25, 12),
+                )
+                .await
+                .unwrap();
 
                 Ok(task_id)
             })
@@ -798,9 +789,9 @@ async fn get_task_upload_metrics() {
             .run_async(&handler)
             .await,
         Status::Ok,
-        serde_json::to_string(&GetTaskUploadMetricsResp(TaskUploadCounter::new(
-            0, 0, 2, 4, 6, 100, 25, 12
-        )))
+        serde_json::to_string(&GetTaskUploadMetricsResp(
+            TaskUploadCounter::new_with_values(0, 0, 2, 4, 6, 100, 25, 12)
+        ))
         .unwrap(),
     );
 
@@ -1940,7 +1931,7 @@ fn task_resp_serialization() {
 #[test]
 fn get_task_upload_metrics_serialization() {
     assert_ser_tokens(
-        &GetTaskUploadMetricsResp(TaskUploadCounter::new(0, 1, 2, 3, 4, 5, 6, 7)),
+        &GetTaskUploadMetricsResp(TaskUploadCounter::new_with_values(0, 1, 2, 3, 4, 5, 6, 7)),
         &[
             Token::NewtypeStruct {
                 name: "GetTaskUploadMetricsResp",
