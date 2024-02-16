@@ -1234,6 +1234,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     }
 }
 
+#[cfg(feature = "test-util")]
 impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
     for BatchAggregation<SEED_SIZE, Q, A>
 where
@@ -1249,6 +1250,7 @@ where
     }
 }
 
+#[cfg(feature = "test-util")]
 impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
     for BatchAggregation<SEED_SIZE, Q, A>
 where
