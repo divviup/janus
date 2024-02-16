@@ -1055,6 +1055,68 @@ where
 {
 }
 
+/// Metadata from the state of a single client report's ongoing aggregation. This is like
+/// [`ReportAggregation`], but omits the report aggregation state and report shares.
+///
+/// This is only used with report aggregations in the `StartLeader` state.
+#[derive(Clone, Debug)]
+pub struct ReportAggregationMetadata {
+    task_id: TaskId,
+    aggregation_job_id: AggregationJobId,
+    report_id: ReportId,
+    time: Time,
+    ord: u64,
+}
+
+impl ReportAggregationMetadata {
+    /// Creates a new [`ReportAggregationMetadata`].
+    pub fn new(
+        task_id: TaskId,
+        aggregation_job_id: AggregationJobId,
+        report_id: ReportId,
+        time: Time,
+        ord: u64,
+    ) -> Self {
+        Self {
+            task_id,
+            aggregation_job_id,
+            report_id,
+            time,
+            ord,
+        }
+    }
+
+    /// Returns the task ID associated with this report aggregation.
+    pub fn task_id(&self) -> &TaskId {
+        &self.task_id
+    }
+
+    /// Returns the aggregation job ID associated with this report aggregation.
+    pub fn aggregation_job_id(&self) -> &AggregationJobId {
+        &self.aggregation_job_id
+    }
+
+    /// Returns the report ID associated with this report aggregation.
+    pub fn report_id(&self) -> &ReportId {
+        &self.report_id
+    }
+
+    /// Returns the client timestamp associated with this report aggregation.
+    pub fn time(&self) -> &Time {
+        &self.time
+    }
+
+    /// Returns a [`ReportMetadata`] corresponding to this report.
+    pub fn report_metadata(&self) -> ReportMetadata {
+        ReportMetadata::new(self.report_id, self.time)
+    }
+
+    /// Returns the order of this report aggregation in its aggregation job.
+    pub fn ord(&self) -> u64 {
+        self.ord
+    }
+}
+
 /// BatchAggregation corresponds to a row in the `batch_aggregations` table and represents the
 /// possibly-ongoing aggregation of the set of input shares that fall within the batch identified by
 /// `batch_identifier` with the aggregation parameter `aggregation_parameter`. This is the

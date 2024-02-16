@@ -5,8 +5,8 @@ use self::models::{
     AggregatorRole, AuthenticationTokenType, Batch, BatchAggregation, BatchAggregationState,
     BatchAggregationStateCode, CollectionJob, CollectionJobState, CollectionJobStateCode,
     GlobalHpkeKeypair, HpkeKeyState, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
-    ReportAggregation, ReportAggregationState, ReportAggregationStateCode, SqlInterval,
-    TaskUploadCounter,
+    ReportAggregation, ReportAggregationMetadata, ReportAggregationState,
+    ReportAggregationStateCode, SqlInterval, TaskUploadCounter,
 };
 use crate::{
     query_type::{AccumulableQueryType, CollectableQueryType},
@@ -2356,6 +2356,56 @@ impl<C: Clock> Transaction<'_, C> {
                 /* leader_prep_transition */ &encoded_state_values.leader_prep_transition,
                 /* helper_prep_state */ &encoded_state_values.helper_prep_state,
                 /* error_code */ &encoded_state_values.prepare_error,
+                /* created_at */ &self.clock.now().as_naive_date_time()?,
+                /* updated_at */ &self.clock.now().as_naive_date_time()?,
+                /* updated_by */ &self.name,
+                /* now */ &self.clock.now().as_naive_date_time()?,
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Creates a report aggregation in the `StartLeader` state from its metadata.
+    ///
+    /// Report shares are copied directly from the `client_reports` table.
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
+    pub async fn create_leader_report_aggregation(
+        &self,
+        report_aggregation_metadata: &ReportAggregationMetadata,
+    ) -> Result<(), Error> {
+        let stmt = self
+            .prepare_cached(
+                "INSERT INTO report_aggregations
+                    (task_id, aggregation_job_id, client_report_id, client_timestamp, ord,
+                    state, public_share, leader_extensions, leader_input_share,
+                    helper_encrypted_input_share, created_at, updated_at, updated_by)
+                SELECT
+                    tasks.id, aggregation_jobs.id, $3::BYTEA, $4::TIMESTAMP, $5::BIGINT,
+                    'START'::REPORT_AGGREGATION_STATE, client_reports.public_share,
+                    client_reports.extensions, client_reports.leader_input_share,
+                    client_reports.helper_encrypted_input_share, $6, $7, $8
+                FROM aggregation_jobs
+                JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                JOIN client_reports
+                    ON tasks.id = client_reports.task_id
+                    AND client_reports.report_id = $3::BYTEA
+                WHERE tasks.task_id = $1
+                AND aggregation_job_id = $2
+                AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($9::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                ON CONFLICT DO NOTHING",
+            )
+            .await?;
+        self.execute(
+            &stmt,
+            &[
+                /* task_id */ &report_aggregation_metadata.task_id().as_ref(),
+                /* aggregation_job_id */
+                &report_aggregation_metadata.aggregation_job_id().as_ref(),
+                /* client_report_id */ &report_aggregation_metadata.report_id().as_ref(),
+                /* client_timestamp */
+                &report_aggregation_metadata.time().as_naive_date_time()?,
+                /* ord */ &TryInto::<i64>::try_into(report_aggregation_metadata.ord())?,
                 /* created_at */ &self.clock.now().as_naive_date_time()?,
                 /* updated_at */ &self.clock.now().as_naive_date_time()?,
                 /* updated_by */ &self.name,
