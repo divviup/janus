@@ -620,7 +620,11 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
                     .unwrap());
 
                 Ok(tx
-                    .get_unaggregated_client_reports_for_task(&dummy_vdaf::Vdaf::new(), task.id())
+                    .get_unaggregated_client_reports_for_task(
+                        &dummy_vdaf::Vdaf::new(),
+                        task.id(),
+                        5000,
+                    )
                     .await
                     .unwrap())
             })
@@ -649,7 +653,11 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
                     .unwrap());
 
                 Ok(tx
-                    .get_unaggregated_client_reports_for_task(&dummy_vdaf::Vdaf::new(), task.id())
+                    .get_unaggregated_client_reports_for_task(
+                        &dummy_vdaf::Vdaf::new(),
+                        task.id(),
+                        5000,
+                    )
                     .await
                     .unwrap())
             })
@@ -682,7 +690,11 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
                 );
 
                 Ok(tx
-                    .get_unaggregated_client_reports_for_task(&dummy_vdaf::Vdaf::new(), task.id())
+                    .get_unaggregated_client_reports_for_task(
+                        &dummy_vdaf::Vdaf::new(),
+                        task.id(),
+                        5000,
+                    )
                     .await
                     .unwrap())
             })

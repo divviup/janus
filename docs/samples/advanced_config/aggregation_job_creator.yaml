@@ -81,3 +81,7 @@ min_aggregation_job_size: 10
 
 # Maximum aggregation job size, in reports. (required)
 max_aggregation_job_size: 100
+
+# Maximum number of reports to load at a time when creating aggregation jobs.
+# (optional, defaults to 5000)
+aggregation_job_creation_report_window: 5000

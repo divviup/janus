@@ -1148,12 +1148,12 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         vdaf: &A,
         task_id: &TaskId,
+        limit: usize,
     ) -> Result<Vec<LeaderStoredReport<SEED_SIZE, A>>, Error>
     where
         A::InputShare: PartialEq,
         A::PublicShare: PartialEq,
     {
-        // TODO(#269): allow the number of returned results to be controlled?
         let stmt = self
             .prepare_cached(
                 "WITH unaggregated_reports AS (
@@ -1164,7 +1164,7 @@ impl<C: Clock> Transaction<'_, C> {
                       AND client_reports.client_timestamp >= COALESCE($2::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
                     ORDER BY client_timestamp DESC
                     FOR UPDATE OF client_reports SKIP LOCKED
-                    LIMIT 5000
+                    LIMIT $5::BIGINT
                 )
                 UPDATE client_reports SET
                     aggregation_started = TRUE, updated_at = $3, updated_by = $4
@@ -1181,6 +1181,7 @@ impl<C: Clock> Transaction<'_, C> {
                     /* now */ &self.clock.now().as_naive_date_time()?,
                     /* updated_at */ &self.clock.now().as_naive_date_time()?,
                     /* updated_by */ &self.name,
+                    /* limit */ &i64::try_from(limit)?,
                 ],
             )
             .await?;
