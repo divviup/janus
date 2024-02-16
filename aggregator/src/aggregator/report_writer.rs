@@ -361,13 +361,12 @@ impl TaskUploadCounters {
         counter_shard_count: u64,
         tx: &Transaction<'_, C>,
     ) -> Result<(), datastore::Error> {
-        let map;
-        {
+        let ord = thread_rng().gen_range(0..counter_shard_count);
+        let map = {
             // Unwrap safety: panic on mutex poisoning.
             let mut lock = self.0.lock().unwrap();
-            map = take(&mut *lock);
-        }
-        let ord = thread_rng().gen_range(0..counter_shard_count);
+            take(&mut *lock)
+        };
 
         // The order of elements returned by a BTreeMap iterator are sorted. This allows us to
         // discourage database deadlocks when multiple tasks are being incremented in the same
