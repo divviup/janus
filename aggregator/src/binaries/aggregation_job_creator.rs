@@ -19,6 +19,7 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
         Duration::from_secs(ctx.config.aggregation_job_creation_interval_secs),
         ctx.config.min_aggregation_job_size,
         ctx.config.max_aggregation_job_size,
+        ctx.config.aggregation_job_creation_report_window,
     ));
     aggregation_job_creator.run(ctx.stopper).await;
 
@@ -78,6 +79,13 @@ pub struct Config {
     pub min_aggregation_job_size: usize,
     /// The maximum number of client reports to include in an aggregation job.
     pub max_aggregation_job_size: usize,
+    /// Maximum number of reports to load at a time when creating aggregation jobs.
+    #[serde(default = "default_aggregation_job_creation_report_window")]
+    pub aggregation_job_creation_report_window: usize,
+}
+
+fn default_aggregation_job_creation_report_window() -> usize {
+    5000
 }
 
 impl BinaryConfig for Config {
@@ -119,6 +127,7 @@ mod tests {
             aggregation_job_creation_interval_secs: 60,
             min_aggregation_job_size: 100,
             max_aggregation_job_size: 500,
+            aggregation_job_creation_report_window: 5000,
         })
     }
 

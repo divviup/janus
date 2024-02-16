@@ -68,6 +68,8 @@ pub struct AggregationJobCreator<C: Clock> {
     min_aggregation_job_size: usize,
     /// The maximum number of client reports to include in an aggregation job.
     max_aggregation_job_size: usize,
+    /// Maximum number of reports to load at a time when creating aggregation jobs.
+    aggregation_job_creation_report_window: usize,
 }
 
 impl<C: Clock + 'static> AggregationJobCreator<C> {
@@ -78,6 +80,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         aggregation_job_creation_interval: Duration,
         min_aggregation_job_size: usize,
         max_aggregation_job_size: usize,
+        aggregation_job_creation_report_window: usize,
     ) -> AggregationJobCreator<C> {
         assert!(
             max_aggregation_job_size > 0,
@@ -90,6 +93,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             aggregation_job_creation_interval,
             min_aggregation_job_size,
             max_aggregation_job_size,
+            aggregation_job_creation_report_window,
         }
     }
 
@@ -529,11 +533,17 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let this = Arc::clone(&self);
                 let task = Arc::clone(&task);
                 let vdaf = Arc::clone(&vdaf);
+                let aggregation_job_creation_report_window =
+                    self.aggregation_job_creation_report_window;
 
                 Box::pin(async move {
                     // Find some unaggregated client reports.
                     let mut reports = tx
-                        .get_unaggregated_client_reports_for_task(vdaf.as_ref(), task.id())
+                        .get_unaggregated_client_reports_for_task(
+                            vdaf.as_ref(),
+                            task.id(),
+                            aggregation_job_creation_report_window,
+                        )
                         .await?;
                     reports.sort_by_key(|report| *report.metadata().time());
 
@@ -690,11 +700,17 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let this = Arc::clone(&self);
                 let task = Arc::clone(&task);
                 let vdaf = Arc::clone(&vdaf);
+                let aggregation_job_creation_report_window =
+                    self.aggregation_job_creation_report_window;
 
                 Box::pin(async move {
                     // Find unaggregated client reports.
                     let unaggregated_reports = tx
-                        .get_unaggregated_client_reports_for_task(vdaf.as_ref(), task.id())
+                        .get_unaggregated_client_reports_for_task(
+                            vdaf.as_ref(),
+                            task.id(),
+                            aggregation_job_creation_report_window,
+                        )
                         .await?;
 
                     let mut aggregation_job_writer =
@@ -852,6 +868,7 @@ mod tests {
             AGGREGATION_JOB_CREATION_INTERVAL,
             1,
             100,
+            5000,
         ));
         let stopper = Stopper::new();
         let task_handle = task::spawn(Arc::clone(&job_creator).run(stopper.clone()));
@@ -1027,6 +1044,7 @@ mod tests {
             Duration::from_secs(1),
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
+            5000,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -1201,6 +1219,7 @@ mod tests {
             Duration::from_secs(1),
             2,
             100,
+            5000,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -1413,6 +1432,7 @@ mod tests {
             Duration::from_secs(1),
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
+            5000,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -1573,6 +1593,7 @@ mod tests {
             Duration::from_secs(1),
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
+            5000,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -1775,6 +1796,7 @@ mod tests {
             Duration::from_secs(1),
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
+            5000,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -1836,7 +1858,7 @@ mod tests {
 
                 Box::pin(async move {
                     let report_ids = tx
-                        .get_unaggregated_client_reports_for_task(vdaf.as_ref(), task.id())
+                        .get_unaggregated_client_reports_for_task(vdaf.as_ref(), task.id(), 5000)
                         .await
                         .unwrap()
                         .into_iter()
@@ -1942,6 +1964,7 @@ mod tests {
             Duration::from_secs(1),
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
+            5000,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2204,6 +2227,7 @@ mod tests {
             Duration::from_secs(1),
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
+            5000,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
@@ -2495,6 +2519,7 @@ mod tests {
             Duration::from_secs(1),
             MIN_AGGREGATION_JOB_SIZE,
             MAX_AGGREGATION_JOB_SIZE,
+            5000,
         ));
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task(Arc::clone(&task))
