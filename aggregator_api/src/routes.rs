@@ -1,9 +1,9 @@
 use crate::{
     models::{
         AggregatorApiConfig, AggregatorRole, DeleteTaskprovPeerAggregatorReq, GetTaskIdsResp,
-        GetTaskMetricsResp, GetTaskUploadMetricsResp, GlobalHpkeConfigResp,
-        PatchGlobalHpkeConfigReq, PostTaskReq, PostTaskprovPeerAggregatorReq,
-        PutGlobalHpkeConfigReq, SupportedVdaf, TaskResp, TaskprovPeerAggregatorResp,
+        GetTaskUploadMetricsResp, GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PostTaskReq,
+        PostTaskprovPeerAggregatorReq, PutGlobalHpkeConfigReq, SupportedVdaf, TaskResp,
+        TaskprovPeerAggregatorResp,
     },
     Config, ConnExt, Error,
 };
@@ -254,25 +254,6 @@ pub(super) async fn delete_task<C: Clock>(
         Ok(_) | Err(datastore::Error::MutationTargetNotFound) => Ok(Status::NoContent),
         Err(err) => Err(err.into()),
     }
-}
-
-pub(super) async fn get_task_metrics<C: Clock>(
-    conn: &mut Conn,
-    State(ds): State<Arc<Datastore<C>>>,
-) -> Result<Json<GetTaskMetricsResp>, Error> {
-    let task_id = conn.task_id_param()?;
-
-    let (reports, report_aggregations) = ds
-        .run_tx("get_task_metrics", |tx| {
-            Box::pin(async move { tx.get_task_metrics(&task_id).await })
-        })
-        .await?
-        .ok_or(Error::NotFound)?;
-
-    Ok(Json(GetTaskMetricsResp {
-        reports,
-        report_aggregations,
-    }))
 }
 
 pub(super) async fn get_task_upload_metrics<C: Clock>(

@@ -167,12 +167,6 @@ impl TryFrom<&AggregatorTask> for TaskResp {
 }
 
 #[derive(Serialize)]
-pub(crate) struct GetTaskMetricsResp {
-    pub(crate) reports: u64,
-    pub(crate) report_aggregations: u64,
-}
-
-#[derive(Serialize)]
 pub(crate) struct GetTaskUploadMetricsResp(pub(crate) TaskUploadCounter);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
