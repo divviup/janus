@@ -755,7 +755,7 @@ mod tests {
             self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
         retries::test_util::test_http_request_exponential_backoff,
-        test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf, VdafTranscript},
+        test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
     };
     use janus_messages::{
         problem_type::DapProblemType,
@@ -768,7 +768,7 @@ mod tests {
     use prio::{
         codec::Encode,
         field::Field64,
-        vdaf::{self, prio3::Prio3, AggregateShare, OutputShare},
+        vdaf::{self, dummy, prio3::Prio3, AggregateShare, OutputShare},
     };
     use rand::random;
     use reqwest::{
@@ -879,7 +879,7 @@ mod tests {
             "http://example.com/dap".parse().unwrap(),
             AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
             hpke_keypair.clone(),
-            dummy_vdaf::Vdaf::new(),
+            dummy::Vdaf::new(1),
         )
         .unwrap();
 
@@ -893,7 +893,7 @@ mod tests {
             "http://example.com".parse().unwrap(),
             AuthenticationToken::new_bearer_token_from_string("Y29sbGVjdG9yIHRva2Vu").unwrap(),
             hpke_keypair,
-            dummy_vdaf::Vdaf::new(),
+            dummy::Vdaf::new(1),
         )
         .unwrap();
 
@@ -1891,14 +1891,14 @@ mod tests {
     async fn successful_delete() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = dummy_vdaf::Vdaf::new();
+        let vdaf = dummy::Vdaf::new(1);
         let collector = setup_collector(&mut server, vdaf);
 
         let collection_job_id = random();
         let collection_job = CollectionJob::new(
             collection_job_id,
             Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id: random() }),
-            dummy_vdaf::AggregationParam(1),
+            dummy::AggregationParam(1),
         );
         let matcher = collection_uri_regex_matcher(&collector.task_id);
 
@@ -1928,14 +1928,14 @@ mod tests {
     async fn failed_delete() {
         install_test_trace_subscriber();
         let mut server = mockito::Server::new_async().await;
-        let vdaf = dummy_vdaf::Vdaf::new();
+        let vdaf = dummy::Vdaf::new(1);
         let collector = setup_collector(&mut server, vdaf);
 
         let collection_job_id = random();
         let collection_job = CollectionJob::new(
             collection_job_id,
             Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id: random() }),
-            dummy_vdaf::AggregationParam(1),
+            dummy::AggregationParam(1),
         );
         let matcher = collection_uri_regex_matcher(&collector.task_id);
 

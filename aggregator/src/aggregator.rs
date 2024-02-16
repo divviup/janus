@@ -39,8 +39,6 @@ use janus_aggregator_core::{
     task::{self, AggregatorTask, VerifyKey},
     taskprov::PeerAggregator,
 };
-#[cfg(feature = "test-util")]
-use janus_core::test_util::dummy_vdaf;
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{
@@ -71,7 +69,7 @@ use opentelemetry::{
 #[cfg(feature = "fpvec_bounded_l2")]
 use prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded;
 #[cfg(feature = "test-util")]
-use prio::vdaf::{PrepareTransition, VdafError};
+use prio::vdaf::{dummy, PrepareTransition, VdafError};
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     dp::DifferentialPrivacyStrategy,
@@ -928,11 +926,11 @@ impl<C: Clock> TaskAggregator<C> {
             }
 
             #[cfg(feature = "test-util")]
-            VdafInstance::Fake => VdafOps::Fake(Arc::new(dummy_vdaf::Vdaf::new())),
+            VdafInstance::Fake => VdafOps::Fake(Arc::new(dummy::Vdaf::new(1))),
 
             #[cfg(feature = "test-util")]
             VdafInstance::FakeFailsPrepInit => VdafOps::Fake(Arc::new(
-                dummy_vdaf::Vdaf::new().with_prep_init_fn(|_| -> Result<(), VdafError> {
+                dummy::Vdaf::new(1).with_prep_init_fn(|_| -> Result<(), VdafError> {
                     Err(VdafError::Uncategorized(
                         "FakeFailsPrepInit failed at prep_init".to_string(),
                     ))
@@ -941,8 +939,8 @@ impl<C: Clock> TaskAggregator<C> {
 
             #[cfg(feature = "test-util")]
             VdafInstance::FakeFailsPrepStep => {
-                VdafOps::Fake(Arc::new(dummy_vdaf::Vdaf::new().with_prep_step_fn(
-                    || -> Result<PrepareTransition<dummy_vdaf::Vdaf, 0, 16>, VdafError> {
+                VdafOps::Fake(Arc::new(dummy::Vdaf::new(1).with_prep_step_fn(
+                    |_| -> Result<PrepareTransition<dummy::Vdaf, 0, 16>, VdafError> {
                         Err(VdafError::Uncategorized(
                             "FakeFailsPrepStep failed at prep_step".to_string(),
                         ))
@@ -1166,7 +1164,7 @@ enum VdafOps {
         VerifyKey<VERIFY_KEY_LENGTH>,
     ),
     #[cfg(feature = "test-util")]
-    Fake(Arc<dummy_vdaf::Vdaf>),
+    Fake(Arc<dummy::Vdaf>),
 }
 
 /// Emits a match block dispatching on a [`VdafOps`] object. Takes a `&VdafOps` as the first
@@ -1299,7 +1297,7 @@ macro_rules! vdaf_ops_dispatch {
             crate::aggregator::VdafOps::Fake(vdaf) => {
                 let $vdaf = vdaf;
                 let $verify_key = &VerifyKey::new([]);
-                type $Vdaf = ::janus_core::test_util::dummy_vdaf::Vdaf;
+                type $Vdaf = ::prio::vdaf::dummy::Vdaf;
                 const $VERIFY_KEY_LENGTH: usize = 0;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
                 let $dp_strategy = &Arc::new(janus_core::dp::NoDifferentialPrivacy);

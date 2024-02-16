@@ -21,9 +21,7 @@ use janus_aggregator_core::{
 };
 use janus_core::{
     auth_tokens::{AuthenticationToken, DAP_AUTH_HEADER},
-    test_util::{
-        dummy_vdaf, install_test_trace_subscriber, run_vdaf, runtime::TestRuntime, VdafTranscript,
-    },
+    test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntime, VdafTranscript},
     time::{Clock, MockClock, TimeExt as _},
     vdaf::VdafInstance,
 };
@@ -36,7 +34,7 @@ use prio::{
     codec::Encode,
     idpf::IdpfInput,
     vdaf::{
-        self,
+        self, dummy,
         poplar1::{Poplar1, Poplar1AggregationParam},
         xof::XofTurboShake128,
     },
@@ -179,12 +177,12 @@ pub(super) struct AggregationJobInitTestCase<
     _ephemeral_datastore: EphemeralDatastore,
 }
 
-pub(super) async fn setup_aggregate_init_test() -> AggregationJobInitTestCase<0, dummy_vdaf::Vdaf> {
+pub(super) async fn setup_aggregate_init_test() -> AggregationJobInitTestCase<0, dummy::Vdaf> {
     setup_aggregate_init_test_for_vdaf(
-        dummy_vdaf::Vdaf::new(),
+        dummy::Vdaf::new(1),
         VdafInstance::Fake,
-        dummy_vdaf::AggregationParam(0),
-        (),
+        dummy::AggregationParam(0),
+        0,
     )
     .await
 }
@@ -330,10 +328,10 @@ pub(crate) async fn put_aggregation_job(
 #[tokio::test]
 async fn aggregation_job_init_authorization_dap_auth_token() {
     let test_case = setup_aggregate_init_test_without_sending_request(
-        dummy_vdaf::Vdaf::new(),
+        dummy::Vdaf::new(1),
         VdafInstance::Fake,
-        dummy_vdaf::AggregationParam(0),
-        (),
+        dummy::AggregationParam(0),
+        0,
         AuthenticationToken::DapAuth(random()),
     )
     .await;
@@ -366,10 +364,10 @@ async fn aggregation_job_init_authorization_dap_auth_token() {
 #[tokio::test]
 async fn aggregation_job_init_malformed_authorization_header(#[case] header_value: &'static str) {
     let test_case = setup_aggregate_init_test_without_sending_request(
-        dummy_vdaf::Vdaf::new(),
+        dummy::Vdaf::new(1),
         VdafInstance::Fake,
-        dummy_vdaf::AggregationParam(0),
-        (),
+        dummy::AggregationParam(0),
+        0,
         AuthenticationToken::Bearer(random()),
     )
     .await;
@@ -401,10 +399,10 @@ async fn aggregation_job_init_malformed_authorization_header(#[case] header_valu
 #[tokio::test]
 async fn aggregation_job_init_unexpected_taskprov_extension() {
     let test_case = setup_aggregate_init_test_without_sending_request(
-        dummy_vdaf::Vdaf::new(),
+        dummy::Vdaf::new(1),
         VdafInstance::Fake,
-        dummy_vdaf::AggregationParam(0),
-        (),
+        dummy::AggregationParam(0),
+        0,
         random(),
     )
     .await;
@@ -416,11 +414,11 @@ async fn aggregation_job_init_unexpected_taskprov_extension() {
             ExtensionType::Taskprov,
             Vec::new(),
         )]))
-        .next(&())
+        .next(&0)
         .0;
     let report_id = *prepare_init.report_share().metadata().id();
     let aggregation_job_init_req = AggregationJobInitializeReq::new(
-        dummy_vdaf::AggregationParam(1).get_encoded().unwrap(),
+        dummy::AggregationParam(1).get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
         Vec::from([prepare_init]),
     );
@@ -448,7 +446,7 @@ async fn aggregation_job_mutation_aggregation_job() {
 
     // Put the aggregation job again, but with a different aggregation parameter.
     let mutated_aggregation_job_init_req = AggregationJobInitializeReq::new(
-        dummy_vdaf::AggregationParam(1).get_encoded().unwrap(),
+        dummy::AggregationParam(1).get_encoded().unwrap(),
         PartialBatchSelector::new_time_interval(),
         test_case.aggregation_job_init_req.prepare_inits().to_vec(),
     );
@@ -477,13 +475,13 @@ async fn aggregation_job_mutation_report_shares() {
         // Include a different report share than was included previously
         [
             &prepare_inits[0..prepare_inits.len() - 1],
-            &[test_case.prepare_init_generator.next(&()).0],
+            &[test_case.prepare_init_generator.next(&0).0],
         ]
         .concat(),
         // Include an extra report share than was included previously
         [
             prepare_inits,
-            &[test_case.prepare_init_generator.next(&()).0],
+            &[test_case.prepare_init_generator.next(&0).0],
         ]
         .concat(),
         // Reverse the order of the reports
@@ -547,10 +545,10 @@ async fn aggregation_job_mutation_report_aggregations() {
 #[tokio::test]
 async fn aggregation_job_intolerable_clock_skew() {
     let mut test_case = setup_aggregate_init_test_without_sending_request(
-        dummy_vdaf::Vdaf::new(),
+        dummy::Vdaf::new(1),
         VdafInstance::Fake,
-        dummy_vdaf::AggregationParam(0),
-        (),
+        dummy::AggregationParam(0),
+        0,
         AuthenticationToken::Bearer(random()),
     )
     .await;
@@ -571,7 +569,7 @@ async fn aggregation_job_intolerable_clock_skew() {
                             .add(test_case.task.tolerable_clock_skew())
                             .unwrap(),
                     ),
-                    &(),
+                    &0,
                 )
                 .0,
             // Barely intolerable.
@@ -588,7 +586,7 @@ async fn aggregation_job_intolerable_clock_skew() {
                             .add(&Duration::from_seconds(1))
                             .unwrap(),
                     ),
-                    &(),
+                    &0,
                 )
                 .0,
         ]),

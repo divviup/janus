@@ -10,7 +10,14 @@ version.workspace = true
 
 [features]
 default = []
-test-util = ["dep:hex", "dep:sqlx", "dep:testcontainers", "janus_core/test-util", "janus_messages/test-util"]
+test-util = [
+    "dep:hex",
+    "dep:sqlx",
+    "dep:testcontainers",
+    "janus_core/test-util",
+    "janus_messages/test-util",
+    "prio/test-util"
+]
 
 [dependencies]
 anyhow.workspace = true

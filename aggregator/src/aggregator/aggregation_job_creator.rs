@@ -772,7 +772,7 @@ mod tests {
     };
     use janus_core::{
         hpke::test_util::generate_test_hpke_config_and_private_key,
-        test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf},
+        test_util::{install_test_trace_subscriber, run_vdaf},
         time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
     };
@@ -782,7 +782,7 @@ mod tests {
         AggregationJobStep, Interval, PrepareError, ReportId, ReportMetadata, Role, TaskId, Time,
     };
     use prio::vdaf::{
-        self,
+        self, dummy,
         prio3::{Prio3, Prio3Count},
     };
     use rand::random;
@@ -865,7 +865,7 @@ mod tests {
                 tx.put_client_report(vdaf.as_ref(), &leader_report)
                     .await
                     .unwrap();
-                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &helper_report)
+                tx.put_client_report(&dummy::Vdaf::new(1), &helper_report)
                     .await
                     .unwrap();
                 Ok(())
@@ -932,13 +932,10 @@ mod tests {
                             read_and_verify_aggregate_info_for_task::<
                                 0,
                                 TimeInterval,
-                                dummy_vdaf::Vdaf,
+                                dummy::Vdaf,
                                 _,
                             >(
-                                tx,
-                                &dummy_vdaf::Vdaf::new(),
-                                helper_task.id(),
-                                &HashMap::new(),
+                                tx, &dummy::Vdaf::new(1), helper_task.id(), &HashMap::new()
                             )
                             .await;
                         Ok((

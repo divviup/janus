@@ -12,7 +12,6 @@ use std::{fmt::Debug, sync::Once};
 use tracing_log::LogTracer;
 use tracing_subscriber::{prelude::*, EnvFilter, Registry};
 
-pub mod dummy_vdaf;
 pub mod kubernetes;
 pub mod runtime;
 pub mod testcontainers;
