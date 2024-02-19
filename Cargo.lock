@@ -1142,9 +1142,9 @@ dependencies = [
 
 [[package]]
 name = "divviup-client"
-version = "0.1.9"
+version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5644860528fd2351ba40e80df4a6d99de8b5b6b034b0dfd7267162c984ce30b5"
+checksum = "c80de79efcebc9783d4934153f74f837e9c04ea6ac618fba3574c7586a9f5ec8"
 dependencies = [
  "base64",
  "email_address",
@@ -5287,9 +5287,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-client"
-version = "0.5.4"
+version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f29d743ad54935b37a883cddc1569862cbe68cf8c0a0feba6d36df2cf0547f0a"
+checksum = "033e800afc0e2b7e3f4c1745037df38b9f9f447c510717af0a7c1434c6f81b50"
 dependencies = [
  "crossbeam-queue",
  "dashmap",
@@ -5319,9 +5319,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-http"
-version = "0.3.13"
+version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6997c0854d48d4f117bad350a0e1ac3f64e8cc3b639b3834be5f3fba382f488"
+checksum = "f8afd3a7e9a46df93d81229fcd2011e089ed522c55ef633edee8893a23cb88e9"
 dependencies = [
  "encoding_rs",
  "futures-lite 2.2.0",
