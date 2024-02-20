@@ -25,7 +25,6 @@ use opentelemetry::{
 };
 use prio::codec::Encode;
 use ring::digest::{digest, SHA256};
-use routefinder::Captures;
 use serde::Deserialize;
 use std::{borrow::Cow, time::Duration as StdDuration};
 use std::{io::Cursor, sync::Arc};
@@ -408,15 +407,11 @@ async fn hpke_config_cors_preflight(mut conn: Conn) -> Conn {
 /// API handler for the "/tasks/.../reports" PUT endpoint.
 async fn upload<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures), body): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-        Vec<u8>,
-    ),
+    (State(aggregator), body): (State<Arc<Aggregator<C>>>, Vec<u8>),
 ) -> Result<Status, ArcError> {
     validate_content_type(conn, Report::MEDIA_TYPE).map_err(Arc::new)?;
 
-    let task_id = parse_task_id(&captures).map_err(Arc::new)?;
+    let task_id = parse_task_id(conn).map_err(Arc::new)?;
     aggregator.handle_upload(&task_id, &body).await?;
 
     // Handle CORS, if the request header is present.
@@ -451,19 +446,15 @@ async fn upload_cors_preflight(mut conn: Conn) -> Conn {
 /// API handler for the "/tasks/.../aggregation_jobs/..." PUT endpoint.
 async fn aggregation_jobs_put<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures), body): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-        Vec<u8>,
-    ),
+    (State(aggregator), body): (State<Arc<Aggregator<C>>>, Vec<u8>),
 ) -> Result<EncodedBody<AggregationJobResp>, Error> {
     validate_content_type(
         conn,
         AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
     )?;
 
-    let task_id = parse_task_id(&captures)?;
-    let aggregation_job_id = parse_aggregation_job_id(&captures)?;
+    let task_id = parse_task_id(conn)?;
+    let aggregation_job_id = parse_aggregation_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
     let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
     let response = aggregator
@@ -482,16 +473,12 @@ async fn aggregation_jobs_put<C: Clock>(
 /// API handler for the "/tasks/.../aggregation_jobs/..." POST endpoint.
 async fn aggregation_jobs_post<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures), body): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-        Vec<u8>,
-    ),
+    (State(aggregator), body): (State<Arc<Aggregator<C>>>, Vec<u8>),
 ) -> Result<EncodedBody<AggregationJobResp>, Error> {
     validate_content_type(conn, AggregationJobContinueReq::MEDIA_TYPE)?;
 
-    let task_id = parse_task_id(&captures)?;
-    let aggregation_job_id = parse_aggregation_job_id(&captures)?;
+    let task_id = parse_task_id(conn)?;
+    let aggregation_job_id = parse_aggregation_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
     let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
     let response = aggregator
@@ -510,13 +497,10 @@ async fn aggregation_jobs_post<C: Clock>(
 /// API handler for the "/tasks/.../aggregation_jobs/..." DELETE endpoint.
 async fn aggregation_jobs_delete<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures)): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-    ),
+    State(aggregator): State<Arc<Aggregator<C>>>,
 ) -> Result<Status, Error> {
-    let task_id = parse_task_id(&captures)?;
-    let aggregation_job_id = parse_aggregation_job_id(&captures)?;
+    let task_id = parse_task_id(conn)?;
+    let aggregation_job_id = parse_aggregation_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
     let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
 
@@ -534,16 +518,12 @@ async fn aggregation_jobs_delete<C: Clock>(
 /// API handler for the "/tasks/.../collection_jobs/..." PUT endpoint.
 async fn collection_jobs_put<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures), body): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-        Vec<u8>,
-    ),
+    (State(aggregator), body): (State<Arc<Aggregator<C>>>, Vec<u8>),
 ) -> Result<Status, Error> {
     validate_content_type(conn, CollectionReq::<TimeInterval>::MEDIA_TYPE)?;
 
-    let task_id = parse_task_id(&captures)?;
-    let collection_job_id = parse_collection_job_id(&captures)?;
+    let task_id = parse_task_id(conn)?;
+    let collection_job_id = parse_collection_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
     aggregator
         .handle_create_collection_job(&task_id, &collection_job_id, &body, auth_token)
@@ -555,13 +535,10 @@ async fn collection_jobs_put<C: Clock>(
 /// API handler for the "/tasks/.../collection_jobs/..." POST endpoint.
 async fn collection_jobs_post<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures)): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-    ),
+    State(aggregator): State<Arc<Aggregator<C>>>,
 ) -> Result<(), Error> {
-    let task_id = parse_task_id(&captures)?;
-    let collection_job_id = parse_collection_job_id(&captures)?;
+    let task_id = parse_task_id(conn)?;
+    let collection_job_id = parse_collection_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
     let response_opt = aggregator
         .handle_get_collection_job(&task_id, &collection_job_id, auth_token)
@@ -583,13 +560,10 @@ async fn collection_jobs_post<C: Clock>(
 /// API handler for the "/tasks/.../collection_jobs/..." DELETE endpoint.
 async fn collection_jobs_delete<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures)): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-    ),
+    State(aggregator): State<Arc<Aggregator<C>>>,
 ) -> Result<Status, Error> {
-    let task_id = parse_task_id(&captures)?;
-    let collection_job_id = parse_collection_job_id(&captures)?;
+    let task_id = parse_task_id(conn)?;
+    let collection_job_id = parse_collection_job_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
     aggregator
         .handle_delete_collection_job(&task_id, &collection_job_id, auth_token)
@@ -600,15 +574,11 @@ async fn collection_jobs_delete<C: Clock>(
 /// API handler for the "/tasks/.../aggregate_shares" POST endpoint.
 async fn aggregate_shares<C: Clock>(
     conn: &mut Conn,
-    (State(aggregator), State(captures), body): (
-        State<Arc<Aggregator<C>>>,
-        State<Captures<'static, 'static>>,
-        Vec<u8>,
-    ),
+    (State(aggregator), body): (State<Arc<Aggregator<C>>>, Vec<u8>),
 ) -> Result<EncodedBody<AggregateShare>, Error> {
     validate_content_type(conn, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)?;
 
-    let task_id = parse_task_id(&captures)?;
+    let task_id = parse_task_id(conn)?;
     let auth_token = parse_auth_token(&task_id, conn)?;
     let taskprov_task_config = parse_taskprov_header(&aggregator, &task_id, conn)?;
     let share = aggregator
@@ -634,10 +604,10 @@ fn validate_content_type(conn: &Conn, expected_media_type: &'static str) -> Resu
     }
 }
 
-/// Parse a [`TaskId`] from the "task_id" parameter in a set of path parameter [`Captures`].
-fn parse_task_id(captures: &Captures) -> Result<TaskId, Error> {
-    let encoded = captures
-        .get("task_id")
+/// Parse a [`TaskId`] from the "task_id" parameter in a set of path parameter
+fn parse_task_id(conn: &Conn) -> Result<TaskId, Error> {
+    let encoded = conn
+        .param("task_id")
         .ok_or_else(|| Error::Internal("task_id parameter is missing from captures".to_string()))?;
     encoded
         .parse()
@@ -645,9 +615,8 @@ fn parse_task_id(captures: &Captures) -> Result<TaskId, Error> {
 }
 
 /// Parse an [`AggregationJobId`] from the "aggregation_job_id" parameter in a set of path parameter
-/// [`Captures`].
-fn parse_aggregation_job_id(captures: &Captures) -> Result<AggregationJobId, Error> {
-    let encoded = captures.get("aggregation_job_id").ok_or_else(|| {
+fn parse_aggregation_job_id(conn: &Conn) -> Result<AggregationJobId, Error> {
+    let encoded = conn.param("aggregation_job_id").ok_or_else(|| {
         Error::Internal("aggregation_job_id parameter is missing from captures".to_string())
     })?;
     encoded
@@ -656,9 +625,8 @@ fn parse_aggregation_job_id(captures: &Captures) -> Result<AggregationJobId, Err
 }
 
 /// Parse an [`CollectionJobId`] from the "collection_job_id" parameter in a set of path parameter
-/// [`Captures`].
-fn parse_collection_job_id(captures: &Captures) -> Result<CollectionJobId, Error> {
-    let encoded = captures.get("collection_job_id").ok_or_else(|| {
+fn parse_collection_job_id(conn: &Conn) -> Result<CollectionJobId, Error> {
+    let encoded = conn.param("collection_job_id").ok_or_else(|| {
         Error::Internal("collection_job_id parameter is missing from captures".to_string())
     })?;
     encoded
