@@ -5,7 +5,7 @@ use crate::{
             AggregationJobState, Batch, BatchAggregation, BatchAggregationState, BatchState,
             CollectionJob, CollectionJobState, GlobalHpkeKeypair, HpkeKeyState, LeaderStoredReport,
             Lease, OutstandingBatch, ReportAggregation, ReportAggregationMetadata,
-            ReportAggregationState, SqlInterval, TaskUploadCounter,
+            ReportAggregationMetadataState, ReportAggregationState, SqlInterval, TaskUploadCounter,
         },
         schema_versions_template,
         test_util::{ephemeral_datastore_schema_version, generate_aead_key, EphemeralDatastore},
@@ -2563,6 +2563,7 @@ async fn create_report_aggregation_from_client_reports_table(
                     report_id,
                     timestamp,
                     0,
+                    ReportAggregationMetadataState::Start,
                 );
                 tx.create_leader_report_aggregation(&report_aggregation_metadata)
                     .await

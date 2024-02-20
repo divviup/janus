@@ -1055,6 +1055,15 @@ where
 {
 }
 
+/// Limited set of report aggregation states usable with [`ReportAggregationMetadata`].
+///
+/// See also [`ReportAggregationState`].
+#[derive(Clone, Debug)]
+pub enum ReportAggregationMetadataState {
+    Start,
+    Failed { prepare_error: PrepareError },
+}
+
 /// Metadata from the state of a single client report's ongoing aggregation. This is like
 /// [`ReportAggregation`], but omits the report aggregation state and report shares.
 ///
@@ -1066,6 +1075,7 @@ pub struct ReportAggregationMetadata {
     report_id: ReportId,
     time: Time,
     ord: u64,
+    state: ReportAggregationMetadataState,
 }
 
 impl ReportAggregationMetadata {
@@ -1076,6 +1086,7 @@ impl ReportAggregationMetadata {
         report_id: ReportId,
         time: Time,
         ord: u64,
+        state: ReportAggregationMetadataState,
     ) -> Self {
         Self {
             task_id,
@@ -1083,6 +1094,7 @@ impl ReportAggregationMetadata {
             report_id,
             time,
             ord,
+            state,
         }
     }
 
@@ -1114,6 +1126,17 @@ impl ReportAggregationMetadata {
     /// Returns the order of this report aggregation in its aggregation job.
     pub fn ord(&self) -> u64 {
         self.ord
+    }
+
+    /// Returns the state of the report aggregation.
+    pub fn state(&self) -> &ReportAggregationMetadataState {
+        &self.state
+    }
+
+    /// Returns a new [`ReportAggregationMetadata`] corresponding to this report aggregation updated
+    /// to have the given state.
+    pub fn with_state(self, state: ReportAggregationMetadataState) -> Self {
+        Self { state, ..self }
     }
 }
 
