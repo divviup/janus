@@ -47,8 +47,9 @@ pub(super) async fn get_config(
             SupportedQueryType::TimeInterval,
             SupportedQueryType::FixedSize,
         ],
-        // Unconditionally indicate to divviup-api that we support collector auth token hashes
-        features: &["TokenHash"],
+        // Unconditionally indicate to divviup-api that we support collector auth token hashes and
+        // upload metrics.
+        features: &["TokenHash", "UploadMetrics"],
     })
 }
 
