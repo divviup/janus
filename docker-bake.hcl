@@ -71,7 +71,7 @@ target "janus_aggregator" {
     "type=gha,scope=${GITHUB_BASE_REF}-janus",
     "type=gha,scope=${GITHUB_REF_NAME}-janus",
   ]
-  cache-to = ["type=gha,scope=${GITHUB_REF_NAME}-janus,mode=max"]
+  cache-to = ["type=gha,scope=${GITHUB_REF_NAME}-janus,mode=max,ignore-error=true"]
   tags     = ["janus_aggregator:${VERSION}"]
 }
 
@@ -195,7 +195,7 @@ target "janus_interop_aggregator" {
     "type=gha,scope=${GITHUB_BASE_REF}-interop",
     "type=gha,scope=${GITHUB_REF_NAME}-interop",
   ]
-  cache-to = ["type=gha,scope=${GITHUB_REF_NAME}-interop,mode=max"]
+  cache-to = ["type=gha,scope=${GITHUB_REF_NAME}-interop,mode=max,ignore-error=true"]
   tags     = ["janus_interop_aggregator:${VERSION}"]
 }
 
@@ -254,7 +254,7 @@ target "janus_interop_aggregator_small" {
     "type=gha,scope=${GITHUB_BASE_REF}-interop-small",
     "type=gha,scope=${GITHUB_REF_NAME}-interop-small",
   ]
-  cache-to   = ["type=gha,scope=${GITHUB_REF_NAME}-interop-small,mode=max"]
+  cache-to   = ["type=gha,scope=${GITHUB_REF_NAME}-interop-small,mode=max,ignore-error=true"]
   dockerfile = "Dockerfile.interop_aggregator"
 }
 
