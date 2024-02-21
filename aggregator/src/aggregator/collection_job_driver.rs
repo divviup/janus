@@ -343,7 +343,9 @@ where
                         CollectionJobState::Collectable => {
                             try_join!(
                                 tx.update_collection_job::<SEED_SIZE, Q, A>(&collection_job),
-                                try_join_all(batch_aggregations.iter().map(|ba| async move { tx.update_batch_aggregation(&ba.clone().scrubbed()).await })),
+                                try_join_all(batch_aggregations.iter().map(|ba| async move {
+                                    tx.update_batch_aggregation(&ba.clone().scrubbed()).await
+                                })),
                                 tx.release_collection_job(&lease),
                             )?;
                             metrics.jobs_finished_counter.add( 1, &[]);

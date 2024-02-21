@@ -1268,9 +1268,9 @@ pub enum BatchAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_
         /// aggregator. Will only be None if there are no reports.
         #[derivative(Debug = "ignore")]
         aggregate_share: Option<A::AggregateShare>,
-        /// The number of reports currently included in this aggregate sahre.
+        /// The number of reports currently included in this aggregate share.
         report_count: u64,
-        /// Checksum over the aggregated report shares, as described in §4.4.4.3.
+        /// Checksum over the aggregated report shares.
         #[derivative(Debug = "ignore")]
         checksum: ReportIdChecksum,
     },
@@ -1280,9 +1280,9 @@ pub enum BatchAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_
         /// aggregator. Will only be None if there are no reports.
         #[derivative(Debug = "ignore")]
         aggregate_share: Option<A::AggregateShare>,
-        /// The number of reports currently included in this aggregate sahre.
+        /// The number of reports currently included in this aggregate share.
         report_count: u64,
-        /// Checksum over the aggregated report shares, as described in §4.4.4.3.
+        /// Checksum over the aggregated report shares.
         #[derivative(Debug = "ignore")]
         checksum: ReportIdChecksum,
     },
