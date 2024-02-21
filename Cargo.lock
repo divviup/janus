@@ -155,9 +155,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.79"
+version = "1.0.80"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "080e9890a082662b09c1ad45f567faeeb47f22b5fb23895fbe1e651e718e25ca"
+checksum = "5ad32ce52e4161730f7098c077cd2ed6229b5804ccf99e5366be1ab72a98b4e1"
 
 [[package]]
 name = "array-init"
@@ -726,9 +726,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.0"
+version = "4.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80c21025abd42669a92efc996ef13cfb2c5c627858421ea58d5c3b331a6c134f"
+checksum = "c918d541ef2913577a0f9566e9ce27cb35b6df072075769e0b26cb5a554520da"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -736,9 +736,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.0"
+version = "4.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "458bf1f341769dfcf849846f65dffdf9146daa56bcd2a47cb4e1de9915567c99"
+checksum = "9f3e7391dad68afb0c2ede1bf619f579a3dc9c2ec67f089baa397123a2f3d1eb"
 dependencies = [
  "anstream",
  "anstyle",
@@ -1142,9 +1142,9 @@ dependencies = [
 
 [[package]]
 name = "divviup-client"
-version = "0.1.9"
+version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5644860528fd2351ba40e80df4a6d99de8b5b6b034b0dfd7267162c984ce30b5"
+checksum = "c80de79efcebc9783d4934153f74f837e9c04ea6ac618fba3574c7586a9f5ec8"
 dependencies = [
  "base64",
  "email_address",
@@ -2066,7 +2066,7 @@ checksum = "af150ab688ff2122fcef229be89cb50dd66af9e01a4ff320cc137eecc9bacc38"
 
 [[package]]
 name = "janus_aggregator"
-version = "0.7.0-prerelease-2"
+version = "0.7.0-prerelease-3"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2091,7 +2091,7 @@ dependencies = [
  "janus_aggregator_api",
  "janus_aggregator_core",
  "janus_core",
- "janus_messages 0.7.0-prerelease-2",
+ "janus_messages 0.7.0-prerelease-3",
  "k8s-openapi",
  "kube",
  "mockito",
@@ -2107,12 +2107,11 @@ dependencies = [
  "rand",
  "regex",
  "reqwest",
- "ring 0.17.7",
- "routefinder",
+ "ring 0.17.8",
  "rstest",
  "rustc_version",
  "rustls 0.22.2",
- "rustls-pemfile 2.0.0",
+ "rustls-pemfile 2.1.0",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -2147,7 +2146,7 @@ dependencies = [
 
 [[package]]
 name = "janus_aggregator_api"
-version = "0.7.0-prerelease-2"
+version = "0.7.0-prerelease-3"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2157,11 +2156,11 @@ dependencies = [
  "futures",
  "janus_aggregator_core",
  "janus_core",
- "janus_messages 0.7.0-prerelease-2",
+ "janus_messages 0.7.0-prerelease-3",
  "opentelemetry",
  "querystring",
  "rand",
- "ring 0.17.7",
+ "ring 0.17.8",
  "rstest",
  "serde",
  "serde_json",
@@ -2179,7 +2178,7 @@ dependencies = [
 
 [[package]]
 name = "janus_aggregator_core"
-version = "0.7.0-prerelease-2"
+version = "0.7.0-prerelease-3"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2197,7 +2196,7 @@ dependencies = [
  "http-api-problem",
  "janus_aggregator_core",
  "janus_core",
- "janus_messages 0.7.0-prerelease-2",
+ "janus_messages 0.7.0-prerelease-3",
  "k8s-openapi",
  "kube",
  "opentelemetry",
@@ -2207,7 +2206,7 @@ dependencies = [
  "rand",
  "regex",
  "reqwest",
- "ring 0.17.7",
+ "ring 0.17.8",
  "rstest",
  "rstest_reuse",
  "rustc_version",
@@ -2231,7 +2230,7 @@ dependencies = [
 
 [[package]]
 name = "janus_client"
-version = "0.7.0-prerelease-2"
+version = "0.7.0-prerelease-3"
 dependencies = [
  "assert_matches",
  "backoff",
@@ -2240,7 +2239,7 @@ dependencies = [
  "http",
  "itertools 0.11.0",
  "janus_core",
- "janus_messages 0.7.0-prerelease-2",
+ "janus_messages 0.7.0-prerelease-3",
  "mockito",
  "prio 0.16.0",
  "rand",
@@ -2255,7 +2254,7 @@ dependencies = [
 
 [[package]]
 name = "janus_collector"
-version = "0.7.0-prerelease-2"
+version = "0.7.0-prerelease-3"
 dependencies = [
  "assert_matches",
  "backoff",
@@ -2267,7 +2266,7 @@ dependencies = [
  "hpke-dispatch",
  "janus_collector",
  "janus_core",
- "janus_messages 0.7.0-prerelease-2",
+ "janus_messages 0.7.0-prerelease-3",
  "mockito",
  "prio 0.16.0",
  "rand",
@@ -2283,7 +2282,7 @@ dependencies = [
 
 [[package]]
 name = "janus_core"
-version = "0.7.0-prerelease-2"
+version = "0.7.0-prerelease-3"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2299,7 +2298,7 @@ dependencies = [
  "http",
  "http-api-problem",
  "janus_core",
- "janus_messages 0.7.0-prerelease-2",
+ "janus_messages 0.7.0-prerelease-3",
  "k8s-openapi",
  "kube",
  "mockito",
@@ -2307,7 +2306,7 @@ dependencies = [
  "rand",
  "regex",
  "reqwest",
- "ring 0.17.7",
+ "ring 0.17.8",
  "rstest",
  "serde",
  "serde_json",
@@ -2328,7 +2327,7 @@ dependencies = [
 
 [[package]]
 name = "janus_integration_tests"
-version = "0.7.0-prerelease-2"
+version = "0.7.0-prerelease-3"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2347,7 +2346,7 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_interop_binaries",
- "janus_messages 0.7.0-prerelease-2",
+ "janus_messages 0.7.0-prerelease-3",
  "k8s-openapi",
  "kube",
  "prio 0.16.0",
@@ -2367,7 +2366,7 @@ dependencies = [
 
 [[package]]
 name = "janus_interop_binaries"
-version = "0.7.0-prerelease-2"
+version = "0.7.0-prerelease-3"
 dependencies = [
  "anyhow",
  "backoff",
@@ -2384,13 +2383,13 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_interop_binaries",
- "janus_messages 0.7.0-prerelease-2",
+ "janus_messages 0.7.0-prerelease-3",
  "opentelemetry",
  "prio 0.16.0",
  "rand",
  "regex",
  "reqwest",
- "ring 0.17.7",
+ "ring 0.17.8",
  "serde",
  "serde_json",
  "sqlx",
@@ -2427,7 +2426,7 @@ dependencies = [
 
 [[package]]
 name = "janus_messages"
-version = "0.7.0-prerelease-2"
+version = "0.7.0-prerelease-3"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2445,7 +2444,7 @@ dependencies = [
 
 [[package]]
 name = "janus_tools"
-version = "0.7.0-prerelease-2"
+version = "0.7.0-prerelease-3"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2456,7 +2455,7 @@ dependencies = [
  "fixed",
  "janus_collector",
  "janus_core",
- "janus_messages 0.7.0-prerelease-2",
+ "janus_messages 0.7.0-prerelease-3",
  "prio 0.16.0",
  "rand",
  "reqwest",
@@ -3781,16 +3780,17 @@ dependencies = [
 
 [[package]]
 name = "ring"
-version = "0.17.7"
+version = "0.17.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "688c63d65483050968b2a8937f7995f443e27041a0f7700aa59b0822aedebb74"
+checksum = "c17fa4cb658e3583423e915b9f3acc01cceaee1860e33d59ebae66adc3a2dc0d"
 dependencies = [
  "cc",
+ "cfg-if",
  "getrandom",
  "libc",
  "spin 0.9.8",
  "untrusted 0.9.0",
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3924,7 +3924,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "629648aced5775d558af50b2b4c7b02983a04b312126d45eeead26e7caa498b9"
 dependencies = [
  "log",
- "ring 0.17.7",
+ "ring 0.17.8",
  "rustls-webpki 0.101.7",
  "sct",
 ]
@@ -3936,7 +3936,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e87c9956bd9807afa1f77e0f7594af32566e830e088a5576d27c5b6f30f49d41"
 dependencies = [
  "log",
- "ring 0.17.7",
+ "ring 0.17.8",
  "rustls-pki-types",
  "rustls-webpki 0.102.1",
  "subtle",
@@ -3966,9 +3966,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-pemfile"
-version = "2.0.0"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35e4980fa29e4c4b212ffb3db068a564cbf560e51d3944b7c88bd8bf5bec64f4"
+checksum = "3c333bb734fcdedcea57de1602543590f545f127dc8b533324318fd492c5c70b"
 dependencies = [
  "base64",
  "rustls-pki-types",
@@ -3976,9 +3976,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-pki-types"
-version = "1.0.0"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb0a1f9b9efec70d32e6d6aa3e58ebd88c3754ec98dfe9145c63cf54cc829b83"
+checksum = "048a63e5b3ac996d78d402940b5fa47973d2d080c6c6fffa1d0f19c4445310b7"
 
 [[package]]
 name = "rustls-webpki"
@@ -3996,7 +3996,7 @@ version = "0.101.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b6275d1ee7a1cd780b64aca7726599a1dbc893b1e64144529e55c3c2f745765"
 dependencies = [
- "ring 0.17.7",
+ "ring 0.17.8",
  "untrusted 0.9.0",
 ]
 
@@ -4006,7 +4006,7 @@ version = "0.102.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef4ca26037c909dedb327b48c3327d0ba91d3dd3c4e05dad328f210ffb68e95b"
 dependencies = [
- "ring 0.17.7",
+ "ring 0.17.8",
  "rustls-pki-types",
  "untrusted 0.9.0",
 ]
@@ -4214,9 +4214,9 @@ dependencies = [
 
 [[package]]
 name = "serde_yaml"
-version = "0.9.31"
+version = "0.9.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adf8a49373e98a4c5f0ceb5d05aa7c648d75f63774981ed95b7c7443bbd50c6e"
+checksum = "8fd075d994154d4a774f95b51fb96bdc2832b0ea48425c92546073816cda1f2f"
 dependencies = [
  "indexmap 2.2.1",
  "itoa",
@@ -4377,9 +4377,9 @@ dependencies = [
 
 [[package]]
 name = "snapbox"
-version = "0.4.17"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b831b6e80fbcd2889efa75b185d24005f85981431495f995292b25836519d84"
+checksum = "47d9a121ed3297bc4575fa774033a9f1084e0a0c8de8dff416df4eae834121b3"
 dependencies = [
  "anstream",
  "anstyle",
@@ -4947,7 +4947,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ea13f22eda7127c827983bdaf0d7fff9df21c8817bab02815ac277a21143677"
 dependencies = [
  "futures",
- "ring 0.17.7",
+ "ring 0.17.8",
  "rustls 0.22.2",
  "tokio",
  "tokio-postgres",
@@ -5287,9 +5287,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-api"
-version = "0.2.0-rc.9"
+version = "0.2.0-rc.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "917333eeb7f3dec5a93b933cd0d0e94a56feb44b8d0b821ea95d91481ecba5b0"
+checksum = "61ccf7f11b72ce50009d424b925832b7d87c45eb7a2e5dd364e36340d05ac54c"
 dependencies = [
  "log",
  "mime",
@@ -5314,9 +5314,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-client"
-version = "0.5.4"
+version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f29d743ad54935b37a883cddc1569862cbe68cf8c0a0feba6d36df2cf0547f0a"
+checksum = "033e800afc0e2b7e3f4c1745037df38b9f9f447c510717af0a7c1434c6f81b50"
 dependencies = [
  "crossbeam-queue",
  "dashmap",
@@ -5346,9 +5346,9 @@ dependencies = [
 
 [[package]]
 name = "trillium-http"
-version = "0.3.13"
+version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6997c0854d48d4f117bad350a0e1ac3f64e8cc3b639b3834be5f3fba382f488"
+checksum = "f8afd3a7e9a46df93d81229fcd2011e089ed522c55ef633edee8893a23cb88e9"
 dependencies = [
  "encoding_rs",
  "futures-lite 2.2.0",
@@ -5501,9 +5501,9 @@ checksum = "3528ecfd12c466c6f163363caf2d02a71161dd5e1cc6ae7b34207ea2d42d81ed"
 
 [[package]]
 name = "trycmd"
-version = "0.14.21"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d41014f614932fff67cd3b780e0eb0ecb14e698a831a0e555ef2a5137be968d5"
+checksum = "464edb3603a81a50b4c8f47b11dfade69ef48ffdc0af2f8b194ad87cbda75317"
 dependencies = [
  "glob",
  "humantime",
@@ -6046,7 +6046,7 @@ dependencies = [
  "der 0.7.8",
  "hex",
  "pem",
- "ring 0.17.7",
+ "ring 0.17.8",
  "signature",
  "spki",
  "thiserror",
@@ -6055,7 +6055,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.7.0-prerelease-2"
+version = "0.7.0-prerelease-3"
 dependencies = [
  "anyhow",
  "clap",

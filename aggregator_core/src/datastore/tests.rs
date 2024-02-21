@@ -5,7 +5,7 @@ use crate::{
             AggregationJobState, Batch, BatchAggregation, BatchAggregationState, BatchState,
             CollectionJob, CollectionJobState, GlobalHpkeKeypair, HpkeKeyState, LeaderStoredReport,
             Lease, OutstandingBatch, ReportAggregation, ReportAggregationState, SqlInterval,
-            TaskUploadCounter, TaskUploadIncrementor,
+            TaskUploadCounter,
         },
         schema_versions_template,
         test_util::{ephemeral_datastore_schema_version, generate_aead_key, EphemeralDatastore},
@@ -320,193 +320,6 @@ async fn put_task_invalid_collector_auth_tokens(ephemeral_datastore: EphemeralDa
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
-async fn get_task_metrics(ephemeral_datastore: EphemeralDatastore) {
-    install_test_trace_subscriber();
-
-    const REPORT_COUNT: usize = 5;
-    const REPORT_AGGREGATION_COUNT: usize = 2;
-
-    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
-    let ds = ephemeral_datastore.datastore(clock.clone()).await;
-
-    let task_id = ds
-        .run_unnamed_tx(|tx| {
-            Box::pin(async move {
-                let task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
-                    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
-                    .build()
-                    .leader_view()
-                    .unwrap();
-                let other_task =
-                    TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
-                        .build()
-                        .leader_view()
-                        .unwrap();
-
-                let reports: Vec<_> = iter::repeat_with(|| {
-                    LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP)
-                })
-                .take(REPORT_COUNT)
-                .collect();
-                let expired_reports: Vec<_> = iter::repeat_with(|| {
-                    LeaderStoredReport::new_dummy(
-                        *task.id(),
-                        OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .sub(&Duration::from_seconds(2))
-                            .unwrap(),
-                    )
-                })
-                .take(REPORT_COUNT)
-                .collect();
-                let other_reports: Vec<_> = iter::repeat_with(|| {
-                    LeaderStoredReport::new_dummy(
-                        *other_task.id(),
-                        Time::from_seconds_since_epoch(0),
-                    )
-                })
-                .take(22)
-                .collect();
-
-                let aggregation_job = AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                    *task.id(),
-                    random(),
-                    AggregationParam(0),
-                    (),
-                    Interval::new(
-                        OLDEST_ALLOWED_REPORT_TIMESTAMP
-                            .sub(&Duration::from_seconds(1))
-                            .unwrap(),
-                        Duration::from_seconds(2),
-                    )
-                    .unwrap(),
-                    AggregationJobState::InProgress,
-                    AggregationJobStep::from(0),
-                );
-                let expired_aggregation_job =
-                    AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                        *task.id(),
-                        random(),
-                        AggregationParam(0),
-                        (),
-                        Interval::new(
-                            OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                .sub(&Duration::from_seconds(2))
-                                .unwrap(),
-                            Duration::from_seconds(1),
-                        )
-                        .unwrap(),
-                        AggregationJobState::InProgress,
-                        AggregationJobStep::from(0),
-                    );
-                let other_aggregation_job =
-                    AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                        *other_task.id(),
-                        random(),
-                        AggregationParam(0),
-                        (),
-                        Interval::new(
-                            OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                .sub(&Duration::from_seconds(1))
-                                .unwrap(),
-                            Duration::from_seconds(2),
-                        )
-                        .unwrap(),
-                        AggregationJobState::InProgress,
-                        AggregationJobStep::from(0),
-                    );
-
-                let report_aggregations: Vec<_> = reports
-                    .iter()
-                    .take(REPORT_AGGREGATION_COUNT)
-                    .enumerate()
-                    .map(|(ord, report)| {
-                        report.as_start_leader_report_aggregation(
-                            *aggregation_job.id(),
-                            ord.try_into().unwrap(),
-                        )
-                    })
-                    .collect();
-                let expired_report_aggregations: Vec<_> = expired_reports
-                    .iter()
-                    .take(REPORT_AGGREGATION_COUNT)
-                    .enumerate()
-                    .map(|(ord, report)| {
-                        report.as_start_leader_report_aggregation(
-                            *expired_aggregation_job.id(),
-                            ord.try_into().unwrap(),
-                        )
-                    })
-                    .collect();
-                let other_report_aggregations: Vec<_> = other_reports
-                    .iter()
-                    .take(13)
-                    .enumerate()
-                    .map(|(ord, report)| {
-                        report.as_start_leader_report_aggregation(
-                            *other_aggregation_job.id(),
-                            ord.try_into().unwrap(),
-                        )
-                    })
-                    .collect();
-
-                tx.put_aggregator_task(&task).await?;
-                tx.put_aggregator_task(&other_task).await?;
-                try_join_all(
-                    reports
-                        .iter()
-                        .chain(expired_reports.iter())
-                        .chain(other_reports.iter())
-                        .map(|report| async move {
-                            tx.put_client_report(&dummy_vdaf::Vdaf::new(), report).await
-                        }),
-                )
-                .await?;
-                tx.put_aggregation_job(&aggregation_job).await?;
-                tx.put_aggregation_job(&expired_aggregation_job).await?;
-                tx.put_aggregation_job(&other_aggregation_job).await?;
-                try_join_all(
-                    report_aggregations
-                        .iter()
-                        .chain(expired_report_aggregations.iter())
-                        .chain(other_report_aggregations.iter())
-                        .map(|report_aggregation| async move {
-                            tx.put_report_aggregation(report_aggregation).await
-                        }),
-                )
-                .await?;
-
-                Ok(*task.id())
-            })
-        })
-        .await
-        .unwrap();
-
-    // Advance the clock to "enable" report expiry.
-    clock.advance(&REPORT_EXPIRY_AGE);
-
-    ds.run_unnamed_tx(|tx| {
-        Box::pin(async move {
-            // Verify we get the correct results when we check metrics on our target task.
-            assert_eq!(
-                tx.get_task_metrics(&task_id).await.unwrap(),
-                Some((
-                    REPORT_COUNT.try_into().unwrap(),
-                    REPORT_AGGREGATION_COUNT.try_into().unwrap()
-                ))
-            );
-
-            // Verify that we get None if we ask about a task that doesn't exist.
-            assert_eq!(tx.get_task_metrics(&random()).await.unwrap(), None);
-
-            Ok(())
-        })
-    })
-    .await
-    .unwrap();
-}
-
-#[rstest_reuse::apply(schema_versions_template)]
-#[tokio::test]
 async fn get_task_ids(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
     let ds = ephemeral_datastore.datastore(MockClock::default()).await;
@@ -807,7 +620,11 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
                     .unwrap());
 
                 Ok(tx
-                    .get_unaggregated_client_reports_for_task(&dummy_vdaf::Vdaf::new(), task.id())
+                    .get_unaggregated_client_reports_for_task(
+                        &dummy_vdaf::Vdaf::new(),
+                        task.id(),
+                        5000,
+                    )
                     .await
                     .unwrap())
             })
@@ -836,7 +653,11 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
                     .unwrap());
 
                 Ok(tx
-                    .get_unaggregated_client_reports_for_task(&dummy_vdaf::Vdaf::new(), task.id())
+                    .get_unaggregated_client_reports_for_task(
+                        &dummy_vdaf::Vdaf::new(),
+                        task.id(),
+                        5000,
+                    )
                     .await
                     .unwrap())
             })
@@ -869,7 +690,11 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
                 );
 
                 Ok(tx
-                    .get_unaggregated_client_reports_for_task(&dummy_vdaf::Vdaf::new(), task.id())
+                    .get_unaggregated_client_reports_for_task(
+                        &dummy_vdaf::Vdaf::new(),
+                        task.id(),
+                        5000,
+                    )
                     .await
                     .unwrap())
             })
@@ -7609,24 +7434,28 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
                 let counter = tx.get_task_upload_counter(&task_id).await.unwrap();
                 assert_eq!(counter, None);
 
-                for case in [
-                    (TaskUploadIncrementor::IntervalCollected, 2),
-                    (TaskUploadIncrementor::ReportDecodeFailure, 4),
-                    (TaskUploadIncrementor::ReportDecryptFailure, 6),
-                    (TaskUploadIncrementor::ReportExpired, 8),
-                    (TaskUploadIncrementor::ReportOutdatedKey, 10),
-                    (TaskUploadIncrementor::ReportSuccess, 100),
-                    (TaskUploadIncrementor::ReportTooEarly, 25),
-                    (TaskUploadIncrementor::TaskExpired, 12),
-                ] {
-                    let ord = thread_rng().gen_range(0..32);
-                    try_join_all(
-                        (0..case.1)
-                            .map(|_| tx.increment_task_upload_counter(&task_id, ord, &case.0)),
-                    )
+                let ord = thread_rng().gen_range(0..32);
+                tx.increment_task_upload_counter(
+                    &task_id,
+                    ord,
+                    &TaskUploadCounter::new_with_values(2, 4, 6, 8, 10, 100, 25, 12),
+                )
+                .await
+                .unwrap();
+
+                let ord = thread_rng().gen_range(0..32);
+                tx.increment_task_upload_counter(
+                    &task_id,
+                    ord,
+                    &TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 0, 0, 8),
+                )
+                .await
+                .unwrap();
+
+                let ord = thread_rng().gen_range(0..32);
+                tx.increment_task_upload_counter(&task_id, ord, &TaskUploadCounter::default())
                     .await
                     .unwrap();
-                }
 
                 let counter = tx.get_task_upload_counter(&task_id).await.unwrap();
                 assert_eq!(
@@ -7639,7 +7468,7 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
                         report_outdated_key: 10,
                         report_success: 100,
                         report_too_early: 25,
-                        task_expired: 12,
+                        task_expired: 20,
                     })
                 );
 

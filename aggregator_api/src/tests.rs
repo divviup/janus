@@ -1,10 +1,9 @@
 use crate::{
     aggregator_api_handler,
     models::{
-        DeleteTaskprovPeerAggregatorReq, GetTaskIdsResp, GetTaskMetricsResp,
-        GetTaskUploadMetricsResp, GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PostTaskReq,
-        PostTaskprovPeerAggregatorReq, PutGlobalHpkeConfigReq, TaskResp,
-        TaskprovPeerAggregatorResp,
+        DeleteTaskprovPeerAggregatorReq, GetTaskIdsResp, GetTaskUploadMetricsResp,
+        GlobalHpkeConfigResp, PatchGlobalHpkeConfigReq, PostTaskReq, PostTaskprovPeerAggregatorReq,
+        PutGlobalHpkeConfigReq, TaskResp, TaskprovPeerAggregatorResp,
     },
     Config, CONTENT_TYPE,
 };
@@ -13,10 +12,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use futures::future::try_join_all;
 use janus_aggregator_core::{
     datastore::{
-        models::{
-            AggregationJob, AggregationJobState, HpkeKeyState, LeaderStoredReport,
-            TaskUploadCounter, TaskUploadIncrementor,
-        },
+        models::{HpkeKeyState, TaskUploadCounter},
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
     },
@@ -35,16 +31,13 @@ use janus_core::{
         },
         HpkeKeypair, HpkePrivateKey,
     },
-    test_util::{
-        dummy_vdaf::{self, AggregationParam},
-        install_test_trace_subscriber,
-    },
+    test_util::install_test_trace_subscriber,
     time::MockClock,
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    query_type::TimeInterval, AggregationJobStep, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId,
-    HpkeKdfId, HpkeKemId, HpkePublicKey, Interval, Role, TaskId, Time,
+    Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,
+    TaskId, Time,
 };
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use serde_test::{assert_ser_tokens, assert_tokens, Token};
@@ -90,7 +83,7 @@ async fn get_config() {
             r#"{"protocol":"DAP-07","dap_url":"https://dap.url/","role":"Either","vdafs":"#,
             r#"["Prio3Count","Prio3Sum","Prio3Histogram","Prio3SumVec"],"#,
             r#""query_types":["TimeInterval","FixedSize"],"#,
-            r#""features":["TokenHash"]}"#,
+            r#""features":["TokenHash","UploadMetrics"]}"#,
         )
     );
 }
@@ -762,104 +755,6 @@ async fn delete_task() {
 }
 
 #[tokio::test]
-async fn get_task_metrics() {
-    // Setup: write a task, some reports, and some report aggregations to the datastore.
-    const REPORT_COUNT: usize = 10;
-    const REPORT_AGGREGATION_COUNT: usize = 4;
-
-    let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
-    let task_id = ds
-        .run_unnamed_tx(|tx| {
-            Box::pin(async move {
-                let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
-                    .build()
-                    .leader_view()
-                    .unwrap();
-                let task_id = *task.id();
-                tx.put_aggregator_task(&task).await?;
-
-                let reports: Vec<_> = iter::repeat_with(|| {
-                    LeaderStoredReport::new_dummy(task_id, Time::from_seconds_since_epoch(0))
-                })
-                .take(REPORT_COUNT)
-                .collect();
-                try_join_all(reports.iter().map(|report| async move {
-                    tx.put_client_report(&dummy_vdaf::Vdaf::new(), report).await
-                }))
-                .await?;
-
-                let aggregation_job_id = random();
-                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                    task_id,
-                    aggregation_job_id,
-                    AggregationParam(0),
-                    (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
-                    AggregationJobState::InProgress,
-                    AggregationJobStep::from(0),
-                ))
-                .await?;
-
-                try_join_all(
-                    reports
-                        .iter()
-                        .take(REPORT_AGGREGATION_COUNT)
-                        .enumerate()
-                        .map(|(ord, report)| async move {
-                            tx.put_report_aggregation(&report.as_start_leader_report_aggregation(
-                                aggregation_job_id,
-                                ord.try_into().unwrap(),
-                            ))
-                            .await
-                        }),
-                )
-                .await?;
-
-                Ok(task_id)
-            })
-        })
-        .await
-        .unwrap();
-
-    // Verify: requesting metrics on a task returns the correct result.
-    assert_response!(
-        get(&format!("/tasks/{}/metrics", &task_id))
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Ok,
-        serde_json::to_string(&GetTaskMetricsResp {
-            reports: REPORT_COUNT.try_into().unwrap(),
-            report_aggregations: REPORT_AGGREGATION_COUNT.try_into().unwrap(),
-        })
-        .unwrap(),
-    );
-
-    // Verify: requesting metrics on a nonexistent task returns NotFound.
-    assert_response!(
-        get(&format!("/tasks/{}/metrics", &random::<TaskId>()))
-            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::NotFound,
-        "",
-    );
-
-    // Verify: unauthorized requests are denied appropriately.
-    assert_response!(
-        get(&format!("/tasks/{}/metrics", &task_id))
-            .with_request_header("Accept", CONTENT_TYPE)
-            .run_async(&handler)
-            .await,
-        Status::Unauthorized,
-        "",
-    );
-}
-
-#[tokio::test]
 async fn get_task_upload_metrics() {
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
     let task_id = ds
@@ -870,24 +765,15 @@ async fn get_task_upload_metrics() {
                     .leader_view()
                     .unwrap();
                 let task_id = *task.id();
-                tx.put_aggregator_task(&task).await?;
+                tx.put_aggregator_task(&task).await.unwrap();
 
-                for case in [
-                    (TaskUploadIncrementor::ReportDecryptFailure, 2),
-                    (TaskUploadIncrementor::ReportExpired, 4),
-                    (TaskUploadIncrementor::ReportOutdatedKey, 6),
-                    (TaskUploadIncrementor::ReportSuccess, 100),
-                    (TaskUploadIncrementor::ReportTooEarly, 25),
-                    (TaskUploadIncrementor::TaskExpired, 12),
-                ] {
-                    let ord = thread_rng().gen_range(0..32);
-                    try_join_all(
-                        (0..case.1)
-                            .map(|_| tx.increment_task_upload_counter(&task_id, ord, &case.0)),
-                    )
-                    .await
-                    .unwrap();
-                }
+                tx.increment_task_upload_counter(
+                    &task_id,
+                    1,
+                    &TaskUploadCounter::new_with_values(0, 0, 2, 4, 6, 100, 25, 12),
+                )
+                .await
+                .unwrap();
 
                 Ok(task_id)
             })
@@ -903,9 +789,9 @@ async fn get_task_upload_metrics() {
             .run_async(&handler)
             .await,
         Status::Ok,
-        serde_json::to_string(&GetTaskUploadMetricsResp(TaskUploadCounter::new(
-            0, 0, 2, 4, 6, 100, 25, 12
-        )))
+        serde_json::to_string(&GetTaskUploadMetricsResp(
+            TaskUploadCounter::new_with_values(0, 0, 2, 4, 6, 100, 25, 12)
+        ))
         .unwrap(),
     );
 
@@ -2043,30 +1929,9 @@ fn task_resp_serialization() {
 }
 
 #[test]
-fn get_task_metrics_resp_serialization() {
-    assert_ser_tokens(
-        &GetTaskMetricsResp {
-            reports: 87,
-            report_aggregations: 348,
-        },
-        &[
-            Token::Struct {
-                name: "GetTaskMetricsResp",
-                len: 2,
-            },
-            Token::Str("reports"),
-            Token::U64(87),
-            Token::Str("report_aggregations"),
-            Token::U64(348),
-            Token::StructEnd,
-        ],
-    )
-}
-
-#[test]
 fn get_task_upload_metrics_serialization() {
     assert_ser_tokens(
-        &GetTaskUploadMetricsResp(TaskUploadCounter::new(0, 1, 2, 3, 4, 5, 6, 7)),
+        &GetTaskUploadMetricsResp(TaskUploadCounter::new_with_values(0, 1, 2, 3, 4, 5, 6, 7)),
         &[
             Token::NewtypeStruct {
                 name: "GetTaskUploadMetricsResp",

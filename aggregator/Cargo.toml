@@ -75,10 +75,9 @@ prometheus = { version = "0.13.3", optional = true }
 rand = { workspace = true, features = ["min_const_gen"] }
 regex = "1"
 reqwest = { version = "0.11.24", default-features = false, features = ["rustls-tls", "json"] }
-ring = "0.17.7"
-routefinder = "0.5.4"
+ring = "0.17.8"
 rustls = "0.22.2"
-rustls-pemfile = "2.0.0"
+rustls-pemfile = "2.1.0"
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded = "0.7.1"
@@ -116,7 +115,7 @@ rstest.workspace = true
 tempfile = "3.10.0"
 tokio = { version = "1", features = ["test-util"] } # ensure this remains compatible with the non-dev dependency
 trillium-testing.workspace = true
-trycmd = "0.14.21"
+trycmd = "0.15.0"
 wait-timeout = "0.2.0"
 
 [build-dependencies]

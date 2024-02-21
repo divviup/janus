@@ -339,6 +339,8 @@ pub enum VdafType {
         length: u32,
         /// Size of each proof chunk.
         chunk_length: u32,
+        /// Number of proofs.
+        proofs: u8,
     },
     Prio3Histogram {
         /// Number of buckets.
@@ -395,10 +397,12 @@ impl Encode for VdafType {
                 bits,
                 length,
                 chunk_length,
+                proofs,
             } => {
                 bits.encode(bytes)?;
                 length.encode(bytes)?;
                 chunk_length.encode(bytes)?;
+                proofs.encode(bytes)?;
             }
             Self::Prio3Histogram {
                 length,
@@ -420,7 +424,7 @@ impl Encode for VdafType {
                 Self::Prio3Count => 0,
                 Self::Prio3Sum { .. } => 1,
                 Self::Prio3SumVec { .. } => 9,
-                Self::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. } => 9,
+                Self::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. } => 10,
                 Self::Prio3Histogram { .. } => 8,
                 Self::Poplar1 { .. } => 2,
             },
@@ -446,6 +450,7 @@ impl Decode for VdafType {
                     bits: u8::decode(bytes)?,
                     length: u32::decode(bytes)?,
                     chunk_length: u32::decode(bytes)?,
+                    proofs: u8::decode(bytes)?,
                 }
             }
             Self::PRIO3HISTOGRAM => Self::Prio3Histogram {
@@ -619,12 +624,14 @@ mod tests {
                     bits: 8,
                     length: 12,
                     chunk_length: 14,
+                    proofs: 2,
                 },
                 concat!(
                     "FFFF1003", // vdaf_type_code
                     "08",       // bits
                     "0000000C", // length
-                    "0000000E"  // chunk_length
+                    "0000000E", // chunk_length
+                    "02"        // proofs
                 ),
             ),
             (
@@ -730,6 +737,7 @@ mod tests {
                         bits: 8,
                         length: 12,
                         chunk_length: 14,
+                        proofs: 2,
                     },
                 )
                 .unwrap(),
@@ -745,6 +753,7 @@ mod tests {
                         "08",       // bits
                         "0000000C", // length
                         "0000000E", // chunk_length
+                        "02"        // proofs
                     )
                 ),
             ),
