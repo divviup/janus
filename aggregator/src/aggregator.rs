@@ -3748,9 +3748,10 @@ mod tests {
         assert!(got_report
             .unwrap()
             .eq_report(&vdaf, leader_task.current_hpke_key(), &report));
+
         assert_eq!(
             got_counter,
-            Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 1, 0, 0))
+            Some(TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 1, 0, 0))
         )
     }
 
@@ -3806,7 +3807,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 100, 0, 0))
+            Some(TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 100, 0, 0))
         );
     }
 
@@ -3870,7 +3871,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            Some(TaskUploadCounter::new(0, 0, 0, 0, 1, 0, 0, 0))
+            Some(TaskUploadCounter::new_with_values(0, 0, 0, 0, 1, 0, 0, 0))
         )
     }
 
@@ -3911,7 +3912,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 1, 0, 0))
+            Some(TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 1, 0, 0))
         )
     }
 
@@ -3960,7 +3961,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 0, 1, 0))
+            Some(TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 0, 1, 0))
         )
     }
 
@@ -4038,7 +4039,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            Some(TaskUploadCounter::new(1, 0, 0, 0, 0, 0, 0, 0))
+            Some(TaskUploadCounter::new_with_values(1, 0, 0, 0, 0, 0, 0, 0))
         )
     }
 
@@ -4170,7 +4171,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            Some(TaskUploadCounter::new(0, 0, 0, 0, 0, 0, 0, 1))
+            Some(TaskUploadCounter::new_with_values(0, 0, 0, 0, 0, 0, 0, 1))
         )
     }
 
@@ -4226,7 +4227,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            Some(TaskUploadCounter::new(0, 0, 0, 1, 0, 0, 0, 0))
+            Some(TaskUploadCounter::new_with_values(0, 0, 0, 1, 0, 0, 0, 0))
         )
     }
 
@@ -4282,7 +4283,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            Some(TaskUploadCounter::new(0, 0, 1, 0, 0, 0, 0, 0))
+            Some(TaskUploadCounter::new_with_values(0, 0, 1, 0, 0, 0, 0, 0))
         )
     }
 
@@ -4337,7 +4338,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            Some(TaskUploadCounter::new(0, 1, 0, 0, 0, 0, 0, 0))
+            Some(TaskUploadCounter::new_with_values(0, 1, 0, 0, 0, 0, 0, 0))
         )
     }
 
@@ -4406,7 +4407,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             got_counters,
-            Some(TaskUploadCounter::new(0, 1, 0, 0, 0, 0, 0, 0))
+            Some(TaskUploadCounter::new_with_values(0, 1, 0, 0, 0, 0, 0, 0))
         )
     }
 

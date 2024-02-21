@@ -134,6 +134,16 @@ CREATE TABLE tasks(
 CREATE INDEX task_id_index ON tasks(task_id);
 
 -- Per task report upload counters.
+--
+-- This table is extremely update-heavy and the updates should qualify for the
+-- heap-only tuple optimization. Set the fillfactor so that we leave enough space
+-- per heap page for HOT updates.
+--
+-- Setting the exact fillfactor is a tradeoff between disk space and likelihood
+-- of HOT updates. We don't want to set fillfactor too low and waste disk space.
+-- 50 represents a 2x table size bump, which seems like an acceptible tradeoff.
+--
+-- See https://www.postgresql.org/docs/current/storage-hot.html
 CREATE TABLE task_upload_counters(
     id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     task_id                BIGINT NOT NULL,
@@ -151,7 +161,7 @@ CREATE TABLE task_upload_counters(
 
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
     CONSTRAINT task_upload_counters_unique UNIQUE(task_id, ord)
-);
+) WITH (fillfactor = 50);
 
 -- The HPKE public keys (aka configs) and private keys used by a given task.
 CREATE TABLE task_hpke_keys(
