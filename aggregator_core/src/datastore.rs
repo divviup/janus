@@ -2,10 +2,11 @@
 
 use self::models::{
     AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
-    AggregatorRole, AuthenticationTokenType, Batch, BatchAggregation, CollectionJob,
-    CollectionJobState, CollectionJobStateCode, GlobalHpkeKeypair, HpkeKeyState,
-    LeaderStoredReport, Lease, LeaseToken, OutstandingBatch, ReportAggregation,
-    ReportAggregationState, ReportAggregationStateCode, SqlInterval, TaskUploadCounter,
+    AggregatorRole, AuthenticationTokenType, Batch, BatchAggregation, BatchAggregationState,
+    BatchAggregationStateCode, CollectionJob, CollectionJobState, CollectionJobStateCode,
+    GlobalHpkeKeypair, HpkeKeyState, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
+    ReportAggregation, ReportAggregationState, ReportAggregationStateCode, SqlInterval,
+    TaskUploadCounter,
 };
 use crate::{
     query_type::{AccumulableQueryType, CollectableQueryType},
@@ -1097,18 +1098,18 @@ impl<C: Clock> Transaction<'_, C> {
 
         let encoded_extensions: Vec<u8> = row
             .get::<_, Option<_>>("extensions")
-            .ok_or_else(|| Error::IncompleteReport)?;
+            .ok_or_else(|| Error::Scrubbed)?;
         let extensions: Vec<Extension> =
             decode_u16_items(&(), &mut Cursor::new(&encoded_extensions))?;
 
         let encoded_public_share: Vec<u8> = row
             .get::<_, Option<_>>("public_share")
-            .ok_or_else(|| Error::IncompleteReport)?;
+            .ok_or_else(|| Error::Scrubbed)?;
         let public_share = A::PublicShare::get_decoded_with_param(vdaf, &encoded_public_share)?;
 
         let encoded_leader_input_share: Vec<u8> = row
             .get::<_, Option<_>>("leader_input_share")
-            .ok_or_else(|| Error::IncompleteReport)?;
+            .ok_or_else(|| Error::Scrubbed)?;
         let leader_input_share = A::InputShare::get_decoded_with_param(
             &(vdaf, Role::Leader.index().unwrap()),
             &encoded_leader_input_share,
@@ -1116,7 +1117,7 @@ impl<C: Clock> Transaction<'_, C> {
 
         let encoded_helper_input_share: Vec<u8> = row
             .get::<_, Option<_>>("helper_encrypted_input_share")
-            .ok_or_else(|| Error::IncompleteReport)?;
+            .ok_or_else(|| Error::Scrubbed)?;
         let helper_encrypted_input_share =
             HpkeCiphertext::get_decoded(&encoded_helper_input_share)?;
 
@@ -2483,6 +2484,63 @@ impl<C: Clock> Transaction<'_, C> {
         .transpose()
     }
 
+    /// Returns a collection job in state FINISHED with the given parameters, or `None` if no such
+    /// collection job exists.
+    pub async fn get_finished_collection_job<
+        const SEED_SIZE: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+    >(
+        &self,
+        vdaf: &A,
+        task_id: &TaskId,
+        batch_identifier: &Q::BatchIdentifier,
+        aggregation_param: &A::AggregationParam,
+    ) -> Result<Option<CollectionJob<SEED_SIZE, Q, A>>, Error> {
+        let stmt = self
+        .prepare_cached(
+            "SELECT
+                collection_jobs.collection_job_id,
+                collection_jobs.query,
+                collection_jobs.aggregation_param,
+                collection_jobs.state,
+                collection_jobs.report_count,
+                collection_jobs.helper_aggregate_share,
+                collection_jobs.leader_aggregate_share
+            FROM collection_jobs
+            JOIN tasks ON tasks.id = collection_jobs.task_id
+            WHERE tasks.task_id = $1
+              AND collection_jobs.batch_identifier = $2
+              AND collection_jobs.aggregation_param = $3
+              AND collection_jobs.state = 'FINISHED'
+              AND COALESCE(LOWER(collection_jobs.batch_interval), UPPER((SELECT client_timestamp_interval FROM batches WHERE batches.task_id = collection_jobs.task_id AND batches.batch_identifier = collection_jobs.batch_identifier AND batches.aggregation_param = collection_jobs.aggregation_param))) >= COALESCE($4::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+            LIMIT 1",
+        )
+        .await?;
+        self.query_opt(
+            &stmt,
+            &[
+                /* task_id */ task_id.as_ref(),
+                /* batch_identifier */ &batch_identifier.get_encoded()?,
+                /* aggregation_param */ &aggregation_param.get_encoded()?,
+                /* now */ &self.clock.now().as_naive_date_time()?,
+            ],
+        )
+        .await?
+        .map(|row| {
+            let collection_job_id =
+                row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
+            Self::collection_job_from_row(
+                vdaf,
+                *task_id,
+                batch_identifier.clone(),
+                collection_job_id,
+                &row,
+            )
+        })
+        .transpose()
+    }
+
     /// Returns all collection jobs for the given task which include the given timestamp. Applies
     /// only to time-interval tasks.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
@@ -3180,29 +3238,57 @@ impl<C: Clock> Transaction<'_, C> {
         vdaf: &A,
         task_id: TaskId,
         batch_identifier: Q::BatchIdentifier,
-        aggregation_parameter: A::AggregationParam,
+        aggregation_param: A::AggregationParam,
         ord: u64,
         row: Row,
     ) -> Result<BatchAggregation<SEED_SIZE, Q, A>, Error> {
-        let state = row.get("state");
-        let aggregate_share = row
-            .get::<_, Option<Vec<u8>>>("aggregate_share")
-            .map(|bytes| {
-                A::AggregateShare::get_decoded_with_param(&(vdaf, &aggregation_parameter), &bytes)
-            })
-            .transpose()
-            .map_err(|_| Error::DbState("aggregate_share couldn't be parsed".to_string()))?;
-        let report_count = row.get_bigint_and_convert("report_count")?;
-        let checksum = ReportIdChecksum::get_decoded(row.get("checksum"))?;
+        fn parse_values_from_row<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>(
+            vdaf: &A,
+            aggregation_param: &A::AggregationParam,
+            row: &Row,
+        ) -> Result<(Option<A::AggregateShare>, u64, ReportIdChecksum), Error> {
+            let aggregate_share = row
+                .get::<_, Option<Vec<u8>>>("aggregate_share")
+                .map(|bytes| {
+                    A::AggregateShare::get_decoded_with_param(&(vdaf, &aggregation_param), &bytes)
+                })
+                .transpose()
+                .map_err(|_| Error::DbState("aggregate_share couldn't be parsed".to_string()))?;
+            let report_count = row.get_bigint_and_convert("report_count")?;
+            let checksum = ReportIdChecksum::get_decoded(row.get("checksum"))?;
+
+            Ok((aggregate_share, report_count, checksum))
+        }
+
+        let state: BatchAggregationStateCode = row.get("state");
+        let state = match state {
+            BatchAggregationStateCode::Aggregating => {
+                let (aggregate_share, report_count, checksum) =
+                    parse_values_from_row(vdaf, &aggregation_param, &row)?;
+                BatchAggregationState::Aggregating {
+                    aggregate_share,
+                    report_count,
+                    checksum,
+                }
+            }
+            BatchAggregationStateCode::Collected => {
+                let (aggregate_share, report_count, checksum) =
+                    parse_values_from_row(vdaf, &aggregation_param, &row)?;
+                BatchAggregationState::Collected {
+                    aggregate_share,
+                    report_count,
+                    checksum,
+                }
+            }
+            BatchAggregationStateCode::Scrubbed => BatchAggregationState::Scrubbed,
+        };
+
         Ok(BatchAggregation::new(
             task_id,
             batch_identifier,
-            aggregation_parameter,
+            aggregation_param,
             ord,
             state,
-            aggregate_share,
-            report_count,
-            checksum,
         ))
     }
 
@@ -3220,6 +3306,8 @@ impl<C: Clock> Transaction<'_, C> {
         A::AggregationParam: std::fmt::Debug,
         A::AggregateShare: std::fmt::Debug,
     {
+        let encoded_state_values = batch_aggregation.state().encoded_values_from_state()?;
+
         let stmt = self
             .prepare_cached(
                 "INSERT INTO batch_aggregations (
@@ -3245,15 +3333,10 @@ impl<C: Clock> Transaction<'_, C> {
                     /* aggregation_param */
                     &batch_aggregation.aggregation_parameter().get_encoded()?,
                     /* ord */ &i64::try_from(batch_aggregation.ord())?,
-                    /* state */ &batch_aggregation.state(),
-                    /* aggregate_share */
-                    &batch_aggregation
-                        .aggregate_share()
-                        .map(Encode::get_encoded)
-                        .transpose()?,
-                    /* report_count */
-                    &i64::try_from(batch_aggregation.report_count())?,
-                    /* checksum */ &batch_aggregation.checksum().get_encoded()?,
+                    /* state */ &batch_aggregation.state().state_code(),
+                    /* aggregate_share */ &encoded_state_values.aggregate_share,
+                    /* report_count */ &encoded_state_values.report_count,
+                    /* checksum */ &encoded_state_values.checksum,
                     /* created_at */ &self.clock.now().as_naive_date_time()?,
                     /* updated_at */ &self.clock.now().as_naive_date_time()?,
                     /* updated_by */ &self.name,
@@ -3312,6 +3395,8 @@ impl<C: Clock> Transaction<'_, C> {
         A::AggregationParam: std::fmt::Debug,
         A::AggregateShare: std::fmt::Debug,
     {
+        let encoded_state_values = batch_aggregation.state().encoded_values_from_state()?;
+
         let stmt = self
             .prepare_cached(
                 "UPDATE batch_aggregations
@@ -3338,14 +3423,10 @@ impl<C: Clock> Transaction<'_, C> {
             self.execute(
                 &stmt,
                 &[
-                    /* state */ &batch_aggregation.state(),
-                    /* aggregate_share */
-                    &batch_aggregation
-                        .aggregate_share()
-                        .map(Encode::get_encoded)
-                        .transpose()?,
-                    /* report_count */ &i64::try_from(batch_aggregation.report_count())?,
-                    /* checksum */ &batch_aggregation.checksum().get_encoded()?,
+                    /* state */ &batch_aggregation.state().state_code(),
+                    /* aggregate_share */ &encoded_state_values.aggregate_share,
+                    /* report_count */ &encoded_state_values.report_count,
+                    /* checksum */ &encoded_state_values.checksum,
                     /* updated_at */ &self.clock.now().as_naive_date_time()?,
                     /* updated_by */ &self.name,
                     /* task_id */ &batch_aggregation.task_id().as_ref(),
@@ -5162,12 +5243,13 @@ pub enum Error {
     /// An error occurred while manipulating timestamps or durations.
     #[error("{0}")]
     TimeOverflow(&'static str),
+    /// The requested operation could not be completed
     #[error("batch already collected")]
     AlreadyCollected,
-    /// A requested report was incomplete, because it has been scrubbed or because it was written
-    /// via `put_report_share`.
-    #[error("report data incomplete")]
-    IncompleteReport,
+    /// The requested operation could not be completed because the relevant data has already been
+    /// scrubbed from the system.
+    #[error("already scrubbed")]
+    Scrubbed,
 }
 
 impl From<ring::error::Unspecified> for Error {

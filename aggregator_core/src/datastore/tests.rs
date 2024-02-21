@@ -484,7 +484,7 @@ async fn roundtrip_report(ephemeral_datastore: EphemeralDatastore) {
                     &report_id,
                 )
                 .await,
-                Err(Error::IncompleteReport)
+                Err(Error::Scrubbed)
             );
 
             Ok(())
@@ -1074,7 +1074,7 @@ async fn roundtrip_report_share(ephemeral_datastore: EphemeralDatastore) {
                         &report_id,
                     )
                     .await,
-                    Err(Error::IncompleteReport)
+                    Err(Error::Scrubbed)
                 );
 
                 let row = tx
@@ -2609,6 +2609,29 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
                 .unwrap();
             assert_eq!(second_collection_job, second_collection_job_again);
 
+            // We can't get either of the collection jobs via `get_finished_collection_job`, as
+            // neither is finished.
+            assert!(tx
+                .get_finished_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                    &vdaf,
+                    task.id(),
+                    first_collection_job.batch_identifier(),
+                    first_collection_job.aggregation_parameter()
+                )
+                .await
+                .unwrap()
+                .is_none());
+            assert!(tx
+                .get_finished_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                    &vdaf,
+                    task.id(),
+                    second_collection_job.batch_identifier(),
+                    second_collection_job.aggregation_parameter()
+                )
+                .await
+                .unwrap()
+                .is_none());
+
             let encrypted_helper_aggregate_share = hpke::seal(
                 task.collector_hpke_config().unwrap(),
                 &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
@@ -2644,6 +2667,31 @@ async fn get_collection_job(ephemeral_datastore: EphemeralDatastore) {
                 .unwrap()
                 .unwrap();
             assert_eq!(first_collection_job, updated_first_collection_job);
+
+            // We can now get the first of the collection jobs via `get_finished_collection_job`, as
+            // it is now finished.
+            assert_eq!(
+                tx.get_finished_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                    &vdaf,
+                    task.id(),
+                    first_collection_job.batch_identifier(),
+                    first_collection_job.aggregation_parameter()
+                )
+                .await
+                .unwrap()
+                .unwrap(),
+                first_collection_job,
+            );
+            assert!(tx
+                .get_finished_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                    &vdaf,
+                    task.id(),
+                    second_collection_job.batch_identifier(),
+                    second_collection_job.aggregation_parameter()
+                )
+                .await
+                .unwrap()
+                .is_none());
 
             Ok(())
         })
@@ -3946,7 +3994,12 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
     let aggregate_share = AggregateShare(23);
     let aggregation_param = AggregationParam(12);
 
-    let (first_batch_aggregation, second_batch_aggregation, third_batch_aggregation) = ds
+    let (
+        first_batch_aggregation,
+        second_batch_aggregation,
+        third_batch_aggregation,
+        fourth_batch_aggregation,
+    ) = ds
         .run_tx("test-put-batch-aggregations", |tx| {
             let task = task.clone();
             let other_task = other_task.clone();
@@ -3977,10 +4030,11 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                             .unwrap(),
                         aggregation_param,
                         0,
-                        BatchAggregationState::Aggregating,
-                        Some(aggregate_share),
-                        0,
-                        ReportIdChecksum::default(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: Some(aggregate_share),
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                        },
                     );
 
                 let second_batch_aggregation =
@@ -3990,10 +4044,11 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                             .unwrap(),
                         aggregation_param,
                         1,
-                        BatchAggregationState::Collected,
-                        None,
-                        0,
-                        ReportIdChecksum::default(),
+                        BatchAggregationState::Collected {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                        },
                     );
 
                 let third_batch_aggregation =
@@ -4003,10 +4058,20 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                             .unwrap(),
                         aggregation_param,
                         2,
-                        BatchAggregationState::Aggregating,
-                        Some(aggregate_share),
-                        0,
-                        ReportIdChecksum::default(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: Some(aggregate_share),
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                        },
+                    );
+                let fourth_batch_aggregation =
+                    BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        Interval::new(Time::from_seconds_since_epoch(1400), time_precision)
+                            .unwrap(),
+                        aggregation_param,
+                        3,
+                        BatchAggregationState::Scrubbed,
                     );
 
                 // Start of this aggregation's interval is before the interval queried below.
@@ -4016,11 +4081,12 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                         Interval::new(Time::from_seconds_since_epoch(1000), time_precision)
                             .unwrap(),
                         aggregation_param,
-                        3,
-                        BatchAggregationState::Collected,
-                        None,
-                        0,
-                        ReportIdChecksum::default(),
+                        4,
+                        BatchAggregationState::Collected {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                        },
                     ),
                 )
                 .await?;
@@ -4029,6 +4095,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 tx.put_batch_aggregation(&first_batch_aggregation).await?;
                 tx.put_batch_aggregation(&second_batch_aggregation).await?;
                 tx.put_batch_aggregation(&third_batch_aggregation).await?;
+                tx.put_batch_aggregation(&fourth_batch_aggregation).await?;
 
                 assert_matches!(
                     tx.put_batch_aggregation(&first_batch_aggregation).await,
@@ -4051,11 +4118,12 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                         Interval::new(Time::from_seconds_since_epoch(1000), time_precision)
                             .unwrap(),
                         AggregationParam(13),
-                        4,
-                        BatchAggregationState::Aggregating,
-                        Some(aggregate_share),
-                        0,
-                        ReportIdChecksum::default(),
+                        5,
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: Some(aggregate_share),
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                        },
                     ),
                 )
                 .await?;
@@ -4064,14 +4132,15 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                 tx.put_batch_aggregation(
                     &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *task.id(),
-                        Interval::new(Time::from_seconds_since_epoch(1400), time_precision)
+                        Interval::new(Time::from_seconds_since_epoch(1500), time_precision)
                             .unwrap(),
                         aggregation_param,
-                        5,
-                        BatchAggregationState::Collected,
-                        None,
-                        0,
-                        ReportIdChecksum::default(),
+                        6,
+                        BatchAggregationState::Collected {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                        },
                     ),
                 )
                 .await?;
@@ -4092,11 +4161,12 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                         Interval::new(Time::from_seconds_since_epoch(1200), time_precision)
                             .unwrap(),
                         aggregation_param,
-                        6,
-                        BatchAggregationState::Aggregating,
-                        Some(aggregate_share),
-                        0,
-                        ReportIdChecksum::default(),
+                        7,
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: Some(aggregate_share),
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                        },
                     ),
                 )
                 .await?;
@@ -4112,6 +4182,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     first_batch_aggregation,
                     second_batch_aggregation,
                     third_batch_aggregation,
+                    fourth_batch_aggregation,
                 ))
             })
         })
@@ -4126,6 +4197,7 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
         let first_batch_aggregation = first_batch_aggregation.clone();
         let second_batch_aggregation = second_batch_aggregation.clone();
         let third_batch_aggregation = third_batch_aggregation.clone();
+        let fourth_batch_aggregation = fourth_batch_aggregation.clone();
 
         Box::pin(async move {
             let vdaf = dummy_vdaf::Vdaf::new();
@@ -4141,18 +4213,19 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     &vdaf,
                     &Interval::new(
                         Time::from_seconds_since_epoch(1100),
-                        Duration::from_seconds(3 * time_precision.as_seconds()),
+                        Duration::from_seconds(4 * time_precision.as_seconds()),
                     )
                     .unwrap(),
                     &aggregation_param,
                 )
                 .await?;
 
-            assert_eq!(batch_aggregations.len(), 3, "{batch_aggregations:#?}");
+            assert_eq!(batch_aggregations.len(), 4, "{batch_aggregations:#?}");
             for batch_aggregation in [
                 &first_batch_aggregation,
                 &second_batch_aggregation,
                 &third_batch_aggregation,
+                &fourth_batch_aggregation,
             ] {
                 assert!(
                     batch_aggregations.contains(batch_aggregation),
@@ -4166,10 +4239,11 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     *first_batch_aggregation.batch_interval(),
                     *first_batch_aggregation.aggregation_parameter(),
                     first_batch_aggregation.ord(),
-                    *first_batch_aggregation.state(),
-                    Some(AggregateShare(92)),
-                    1,
-                    ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
+                    BatchAggregationState::Aggregating {
+                        aggregate_share: Some(AggregateShare(92)),
+                        report_count: 1,
+                        checksum: ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
+                    },
                 );
             tx.update_batch_aggregation(&first_batch_aggregation)
                 .await?;
@@ -4185,18 +4259,19 @@ async fn roundtrip_batch_aggregation_time_interval(ephemeral_datastore: Ephemera
                     &vdaf,
                     &Interval::new(
                         Time::from_seconds_since_epoch(1100),
-                        Duration::from_seconds(3 * time_precision.as_seconds()),
+                        Duration::from_seconds(4 * time_precision.as_seconds()),
                     )
                     .unwrap(),
                     &aggregation_param,
                 )
                 .await?;
 
-            assert_eq!(batch_aggregations.len(), 3, "{batch_aggregations:#?}");
+            assert_eq!(batch_aggregations.len(), 4, "{batch_aggregations:#?}");
             for batch_aggregation in [
                 &first_batch_aggregation,
                 &second_batch_aggregation,
                 &third_batch_aggregation,
+                &fourth_batch_aggregation,
             ] {
                 assert!(
                     batch_aggregations.contains(batch_aggregation),
@@ -4302,10 +4377,11 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
                     batch_id,
                     aggregation_param,
                     0,
-                    BatchAggregationState::Aggregating,
-                    Some(aggregate_share),
-                    0,
-                    ReportIdChecksum::default(),
+                    BatchAggregationState::Aggregating {
+                        aggregate_share: Some(aggregate_share),
+                        report_count: 0,
+                        checksum: ReportIdChecksum::default(),
+                    },
                 );
 
                 // Following batch aggregations have the batch ID queried below.
@@ -4334,10 +4410,11 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
                     other_batch_id,
                     aggregation_param,
                     1,
-                    BatchAggregationState::Collected,
-                    None,
-                    0,
-                    ReportIdChecksum::default(),
+                    BatchAggregationState::Collected {
+                        aggregate_share: None,
+                        report_count: 0,
+                        checksum: ReportIdChecksum::default(),
+                    },
                 ))
                 .await?;
 
@@ -4358,10 +4435,11 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
                     batch_id,
                     aggregation_param,
                     2,
-                    BatchAggregationState::Aggregating,
-                    Some(aggregate_share),
-                    0,
-                    ReportIdChecksum::default(),
+                    BatchAggregationState::Aggregating {
+                        aggregate_share: Some(aggregate_share),
+                        report_count: 0,
+                        checksum: ReportIdChecksum::default(),
+                    },
                 ))
                 .await?;
 
@@ -4371,10 +4449,11 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
                     batch_id,
                     aggregation_param,
                     3,
-                    BatchAggregationState::Collected,
-                    None,
-                    0,
-                    ReportIdChecksum::default(),
+                    BatchAggregationState::Collected {
+                        aggregate_share: None,
+                        report_count: 0,
+                        checksum: ReportIdChecksum::default(),
+                    },
                 ))
                 .await?;
                 Ok(batch_aggregation)
@@ -4408,10 +4487,11 @@ async fn roundtrip_batch_aggregation_fixed_size(ephemeral_datastore: EphemeralDa
                 *batch_aggregation.batch_id(),
                 *batch_aggregation.aggregation_parameter(),
                 batch_aggregation.ord(),
-                *batch_aggregation.state(),
-                None,
-                1,
-                ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
+                BatchAggregationState::Aggregating {
+                    aggregate_share: None,
+                    report_count: 1,
+                    checksum: ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
+                },
             );
             tx.update_batch_aggregation(&batch_aggregation).await?;
 
@@ -5002,10 +5082,11 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     batch_id_1,
                     AggregationParam(0),
                     0,
-                    BatchAggregationState::Aggregating,
-                    Some(AggregateShare(0)),
-                    1,
-                    ReportIdChecksum::default(),
+                    BatchAggregationState::Aggregating {
+                        aggregate_share: Some(AggregateShare(0)),
+                        report_count: 1,
+                        checksum: ReportIdChecksum::default(),
+                    },
                 ))
                 .await?;
                 tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
@@ -5013,10 +5094,11 @@ async fn roundtrip_outstanding_batch(ephemeral_datastore: EphemeralDatastore) {
                     batch_id_1,
                     AggregationParam(0),
                     1,
-                    BatchAggregationState::Aggregating,
-                    Some(AggregateShare(0)),
-                    1,
-                    ReportIdChecksum::default(),
+                    BatchAggregationState::Aggregating {
+                        aggregate_share: Some(AggregateShare(0)),
+                        report_count: 1,
+                        checksum: ReportIdChecksum::default(),
+                    },
                 ))
                 .await?;
 
@@ -5938,10 +6020,11 @@ async fn delete_expired_collection_artifacts(ephemeral_datastore: EphemeralDatas
             batch_identifier.clone(),
             AggregationParam(0),
             0,
-            BatchAggregationState::Aggregating,
-            None,
-            0,
-            ReportIdChecksum::default(),
+            BatchAggregationState::Aggregating {
+                aggregate_share: None,
+                report_count: 0,
+                checksum: ReportIdChecksum::default(),
+            },
         );
         tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
 

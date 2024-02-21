@@ -229,10 +229,11 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
                             batch_id,
                             AggregationParam::default(),
                             0,
-                            BatchAggregationState::Aggregating,
-                            Some(dummy_vdaf::AggregateShare(0)),
-                            task.min_batch_size() + 1,
-                            ReportIdChecksum::default(),
+                            BatchAggregationState::Aggregating {
+                                aggregate_share: Some(dummy_vdaf::AggregateShare(0)),
+                                report_count: task.min_batch_size() + 1,
+                                checksum: ReportIdChecksum::default(),
+                            },
                         ),
                     )
                     .await

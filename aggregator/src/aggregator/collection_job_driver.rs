@@ -3,7 +3,7 @@
 use crate::aggregator::{
     aggregate_share::compute_aggregate_share, empty_batch_aggregations,
     http_handlers::AGGREGATE_SHARES_ROUTE, query_type::CollectableQueryType,
-    send_request_to_helper, Error,
+    send_request_to_helper, Error, RequestBody,
 };
 use backoff::backoff::Backoff;
 use bytes::Bytes;
@@ -12,7 +12,7 @@ use futures::future::{try_join_all, BoxFuture};
 use janus_aggregator_core::{
     datastore::{
         self,
-        models::{AcquiredCollectionJob, BatchAggregationState},
+        models::AcquiredCollectionJob,
         models::{CollectionJobState, Lease},
         Datastore,
     },
@@ -36,8 +36,6 @@ use reqwest::Method;
 use std::{sync::Arc, time::Duration};
 use tokio::try_join;
 use tracing::{error, info, warn};
-
-use super::RequestBody;
 
 /// Drives a collection job.
 #[derive(Derivative)]
@@ -137,7 +135,7 @@ where
         A::AggregateShare: 'static + Send + Sync,
         A::OutputShare: PartialEq + Eq + Send + Sync,
     {
-        let (task, collection_job, batch_aggregations) = datastore
+        let (task, collection_job, finished_collection_job, batch_aggregations) = datastore
             .run_tx("step_collection_job_1", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let lease = Arc::clone(&lease);
@@ -146,74 +144,100 @@ where
                 Box::pin(async move {
                     // TODO(#224): Consider fleshing out `AcquiredCollectionJob` to include a `Task`,
                     // `A::AggregationParam`, etc. so that we don't have to do more DB queries here.
-                    let task = tx
-                        .get_aggregator_task(lease.leased().task_id())
-                        .await?
-                        .ok_or_else(|| {
-                            datastore::Error::User(
-                                Error::UnrecognizedTask(*lease.leased().task_id()).into(),
-                            )
-                        })?;
-
-                    let collection_job = tx
-                        .get_collection_job::<SEED_SIZE, Q, A>(
+                    let (task, collection_job) = try_join!(
+                        tx.get_aggregator_task(lease.leased().task_id()),
+                        tx.get_collection_job::<SEED_SIZE, Q, A>(
                             vdaf.as_ref(),
                             lease.leased().task_id(),
-                            lease.leased().collection_job_id(),
-                        )
-                        .await?
-                        .ok_or_else(|| {
-                            datastore::Error::User(
-                                Error::UnrecognizedCollectionJob(
-                                    *task.id(),
-                                    *lease.leased().collection_job_id(),
-                                )
-                                .into(),
-                            )
-                        })?;
+                            lease.leased().collection_job_id()
+                        ),
+                    )?;
 
-                    // Read batch aggregations, and mark them as read-for-collection to avoid
-                    // further aggregation.
-                    let batch_aggregations: Vec<_> =
+                    let task = task.ok_or_else(|| {
+                        datastore::Error::User(
+                            Error::UnrecognizedTask(*lease.leased().task_id()).into(),
+                        )
+                    })?;
+
+                    let collection_job = collection_job.ok_or_else(|| {
+                        datastore::Error::User(
+                            Error::UnrecognizedCollectionJob(
+                                *task.id(),
+                                *lease.leased().collection_job_id(),
+                            )
+                            .into(),
+                        )
+                    })?;
+
+                    // Try to read an existing, already-FINISHED collection job for the same batch &
+                    // aggregation parameter, so that we can reuse an already-computed result. Also
+                    // read batch aggregations, so that we can compute the final aggregate if there
+                    // is no duplicate collection job to borrow from.
+                    let (mut batch_aggregations, finished_collection_job) = try_join!(
                         Q::get_batch_aggregations_for_collection_identifier(
                             tx,
                             &task,
                             vdaf.as_ref(),
                             collection_job.batch_identifier(),
                             collection_job.aggregation_parameter(),
-                        )
-                        .await?
-                        .into_iter()
-                        .map(|ba| ba.with_state(BatchAggregationState::Collected))
-                        .collect();
+                        ),
+                        tx.get_finished_collection_job::<SEED_SIZE, Q, A>(
+                            vdaf.as_ref(),
+                            task.id(),
+                            collection_job.batch_identifier(),
+                            collection_job.aggregation_parameter()
+                        ),
+                    )?;
 
+                    // If there is no preexisting FINISHED collection job, mark batch aggregations
+                    // as read-for-collection to avoid further aggregation. (We don't need to do
+                    // this if there is a FINISHED collection job since that job will have marked
+                    // the batch aggregations.)
+                    //
                     // To ensure that concurrent aggregations don't write into a
                     // currently-nonexistent batch aggregation, we write (empty) batch aggregations
                     // for any that have not already been written to storage. We do this
                     // transactionally to avoid the possibility of overwriting other transactions'
                     // updates to batch aggregations.
-                    let empty_batch_aggregations = empty_batch_aggregations(
-                        &task,
-                        batch_aggregation_shard_count,
-                        collection_job.batch_identifier(),
-                        collection_job.aggregation_parameter(),
-                        &batch_aggregations,
-                    );
+                    if finished_collection_job.is_none() {
+                        batch_aggregations = batch_aggregations
+                            .into_iter()
+                            .map(|ba| ba.collected())
+                            .collect::<Result<Vec<_>, _>>()?;
 
-                    try_join!(
-                        try_join_all(
-                            batch_aggregations
-                                .iter()
-                                .map(|ba| tx.update_batch_aggregation(ba))
-                        ),
-                        try_join_all(
-                            empty_batch_aggregations
-                                .iter()
-                                .map(|ba| tx.put_batch_aggregation(ba))
-                        ),
-                    )?;
+                        let empty_batch_aggregations = empty_batch_aggregations(
+                            &task,
+                            batch_aggregation_shard_count,
+                            collection_job.batch_identifier(),
+                            collection_job.aggregation_parameter(),
+                            &batch_aggregations,
+                        );
 
-                    Ok((task, collection_job, batch_aggregations))
+                        try_join!(
+                            try_join_all(
+                                batch_aggregations
+                                    .iter()
+                                    .map(|ba| tx.update_batch_aggregation(ba))
+                            ),
+                            try_join_all(
+                                empty_batch_aggregations
+                                    .iter()
+                                    .map(|ba| tx.put_batch_aggregation(ba))
+                            ),
+                        )?;
+
+                        batch_aggregations = batch_aggregations
+                            .into_iter()
+                            .chain(empty_batch_aggregations.into_iter())
+                            .collect();
+                    }
+
+                    Ok((
+                        task,
+                        collection_job,
+                        finished_collection_job,
+                        batch_aggregations,
+                    ))
                 })
             })
             .await?;
@@ -224,64 +248,78 @@ where
             return Ok(());
         }
 
-        let (mut leader_aggregate_share, report_count, checksum) =
-            compute_aggregate_share::<SEED_SIZE, Q, A>(&task, &batch_aggregations)
-                .await
-                .map_err(|e| datastore::Error::User(e.into()))?;
-
-        vdaf.add_noise_to_agg_share(
-            &dp_strategy,
-            collection_job.aggregation_parameter(),
-            &mut leader_aggregate_share,
-            report_count.try_into()?,
-        )
-        .map_err(Error::DifferentialPrivacy)?;
-
-        // Send an aggregate share request to the helper.
-        let request = AggregateShareReq::<Q>::new(
-            BatchSelector::new(collection_job.batch_identifier().clone()),
-            collection_job.aggregation_parameter().get_encoded()?,
-            report_count,
-            checksum,
-        );
-
-        let resp_bytes = send_request_to_helper(
-            &self.http_client,
-            self.backoff.clone(),
-            Method::POST,
-            task.aggregate_shares_uri()?.ok_or_else(|| {
-                Error::InvalidConfiguration("task is not leader and has no aggregate share URI")
-            })?,
-            AGGREGATE_SHARES_ROUTE,
-            Some(RequestBody {
-                content_type: AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
-                body: Bytes::from(request.get_encoded()?),
-            }),
-            // The only way a task wouldn't have an aggregator auth token in it is in the taskprov
-            // case, and Janus never acts as the leader with taskprov enabled.
-            task.aggregator_auth_token()
-                .ok_or_else(|| Error::InvalidConfiguration("no aggregator auth token in task"))?,
-            &self.metrics.http_request_duration_histogram,
-        )
-        .await?;
-
-        // Store the helper aggregate share in the datastore so that a later request to a collect
-        // job URI can serve it up.
         let collection_job = Arc::new(
-            collection_job.with_state(CollectionJobState::Finished {
-                report_count,
-                encrypted_helper_aggregate_share: AggregateShare::get_decoded(&resp_bytes)?
-                    .encrypted_aggregate_share()
-                    .clone(),
-                leader_aggregate_share,
-            }),
+            if let Some(finished_collection_job) = finished_collection_job {
+                // If we found a FINISHED collection job for the same batch & aggregation parameter,
+                // just borrow the values it computed.
+                collection_job.with_state(finished_collection_job.state().clone())
+            } else {
+                // If we did not find a duplicate FINISHED collection job, compute our aggregate
+                // share and ask the Helper to do the same.
+                let (mut leader_aggregate_share, report_count, checksum) =
+                    compute_aggregate_share::<SEED_SIZE, Q, A>(&task, &batch_aggregations)
+                        .await
+                        .map_err(|e| datastore::Error::User(e.into()))?;
+
+                vdaf.add_noise_to_agg_share(
+                    &dp_strategy,
+                    collection_job.aggregation_parameter(),
+                    &mut leader_aggregate_share,
+                    report_count.try_into()?,
+                )
+                .map_err(Error::DifferentialPrivacy)?;
+
+                // Send an aggregate share request to the helper.
+                let resp_bytes = send_request_to_helper(
+                    &self.http_client,
+                    self.backoff.clone(),
+                    Method::POST,
+                    task.aggregate_shares_uri()?.ok_or_else(|| {
+                        Error::InvalidConfiguration(
+                            "task is not leader and has no aggregate share URI",
+                        )
+                    })?,
+                    AGGREGATE_SHARES_ROUTE,
+                    Some(RequestBody {
+                        content_type: AggregateShareReq::<Q>::MEDIA_TYPE,
+                        body: Bytes::from(
+                            AggregateShareReq::<Q>::new(
+                                BatchSelector::new(collection_job.batch_identifier().clone()),
+                                collection_job.aggregation_parameter().get_encoded()?,
+                                report_count,
+                                checksum,
+                            )
+                            .get_encoded()?,
+                        ),
+                    }),
+                    // The only way a task wouldn't have an aggregator auth token in it is in the
+                    // taskprov case, and Janus never acts as the leader with taskprov enabled.
+                    task.aggregator_auth_token().ok_or_else(|| {
+                        Error::InvalidConfiguration("no aggregator auth token in task")
+                    })?,
+                    &self.metrics.http_request_duration_histogram,
+                )
+                .await?;
+
+                // Store the helper aggregate share in the datastore so that a later request to a
+                // collect job URI can serve it up.
+                collection_job.with_state(CollectionJobState::Finished {
+                    report_count,
+                    encrypted_helper_aggregate_share: AggregateShare::get_decoded(&resp_bytes)?
+                        .encrypted_aggregate_share()
+                        .clone(),
+                    leader_aggregate_share,
+                })
+            },
         );
 
+        let batch_aggregations = Arc::new(batch_aggregations);
         datastore
             .run_tx("step_collection_job_2", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 let lease = Arc::clone(&lease);
                 let collection_job = Arc::clone(&collection_job);
+                let batch_aggregations = Arc::clone(&batch_aggregations);
                 let metrics = self.metrics.clone();
 
                 Box::pin(async move {
@@ -305,6 +343,9 @@ where
                         CollectionJobState::Collectable => {
                             try_join!(
                                 tx.update_collection_job::<SEED_SIZE, Q, A>(&collection_job),
+                                try_join_all(batch_aggregations.iter().map(|ba| async move {
+                                    tx.update_batch_aggregation(&ba.clone().scrubbed()).await
+                                })),
                                 tx.release_collection_job(&lease),
                             )?;
                             metrics.jobs_finished_counter.add( 1, &[]);
@@ -749,10 +790,11 @@ mod tests {
                             Interval::new(clock.now(), time_precision).unwrap(),
                             aggregation_param,
                             0,
-                            BatchAggregationState::Aggregating,
-                            Some(dummy_vdaf::AggregateShare(0)),
-                            5,
-                            ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
+                            BatchAggregationState::Aggregating {
+                                aggregate_share: Some(dummy_vdaf::AggregateShare(0)),
+                                report_count: 5,
+                                checksum: ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
+                            },
                         ),
                     )
                     .await?;
@@ -766,10 +808,11 @@ mod tests {
                             .unwrap(),
                             aggregation_param,
                             0,
-                            BatchAggregationState::Aggregating,
-                            Some(dummy_vdaf::AggregateShare(0)),
-                            5,
-                            ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
+                            BatchAggregationState::Aggregating {
+                                aggregate_share: Some(dummy_vdaf::AggregateShare(0)),
+                                report_count: 5,
+                                checksum: ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
+                            },
                         ),
                     )
                     .await?;
@@ -821,8 +864,9 @@ mod tests {
             .run_unnamed_tx(|tx| {
                 let task = leader_task.clone();
                 let clock = clock.clone();
+
                 Box::pin(async move {
-                    tx.put_aggregator_task(&task).await?;
+                    tx.put_aggregator_task(&task).await.unwrap();
 
                     for offset in [0, 500, 1000, 1500] {
                         tx.put_batch(&Batch::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
@@ -852,7 +896,8 @@ mod tests {
                             CollectionJobState::Collectable,
                         ),
                     )
-                    .await?;
+                    .await
+                    .unwrap();
 
                     let aggregation_job_id = random();
                     tx.put_aggregation_job(
@@ -866,12 +911,14 @@ mod tests {
                             AggregationJobStep::from(1),
                         ),
                     )
-                    .await?;
+                    .await
+                    .unwrap();
 
                     let report = LeaderStoredReport::new_dummy(*task.id(), report_timestamp);
 
                     tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report)
-                        .await?;
+                        .await
+                        .unwrap();
 
                     tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
@@ -882,11 +929,13 @@ mod tests {
                         None,
                         ReportAggregationState::Finished,
                     ))
-                    .await?;
+                    .await
+                    .unwrap();
 
                     let lease = Arc::new(
                         tx.acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 1)
-                            .await?
+                            .await
+                            .unwrap()
                             .remove(0),
                     );
 
@@ -907,7 +956,7 @@ mod tests {
 
         // No batch aggregations inserted yet.
         let error = collection_job_driver
-            .step_collection_job(ds.clone(), Arc::clone(&lease))
+            .step_collection_job(Arc::clone(&ds), Arc::clone(&lease))
             .await
             .unwrap_err();
         assert_matches!(error, Error::InvalidBatchSize(error_task_id, 0) => {
@@ -916,7 +965,9 @@ mod tests {
 
         // Put some batch aggregations in the DB.
         ds.run_unnamed_tx(|tx| {
-            let (clock, task) = (clock.clone(), task.clone());
+            let task = task.clone();
+            let clock = clock.clone();
+
             Box::pin(async move {
                 tx.update_batch_aggregation(
                     &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
@@ -924,10 +975,11 @@ mod tests {
                         Interval::new(clock.now(), time_precision).unwrap(),
                         aggregation_param,
                         0,
-                        BatchAggregationState::Aggregating,
-                        Some(dummy_vdaf::AggregateShare(0)),
-                        5,
-                        ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: Some(dummy_vdaf::AggregateShare(0)),
+                            report_count: 5,
+                            checksum: ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
+                        },
                     ),
                 )
                 .await
@@ -943,10 +995,11 @@ mod tests {
                         .unwrap(),
                         aggregation_param,
                         0,
-                        BatchAggregationState::Aggregating,
-                        Some(dummy_vdaf::AggregateShare(0)),
-                        5,
-                        ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: Some(dummy_vdaf::AggregateShare(0)),
+                            report_count: 5,
+                            checksum: ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
+                        },
                     ),
                 )
                 .await
@@ -982,7 +1035,7 @@ mod tests {
             .await;
 
         let error = collection_job_driver
-            .step_collection_job(ds.clone(), Arc::clone(&lease))
+            .step_collection_job(Arc::clone(&ds), Arc::clone(&lease))
             .await
             .unwrap_err();
         assert_matches!(
@@ -1039,13 +1092,14 @@ mod tests {
             .await;
 
         collection_job_driver
-            .step_collection_job(ds.clone(), Arc::clone(&lease))
+            .step_collection_job(Arc::clone(&ds), Arc::clone(&lease))
             .await
             .unwrap();
 
         mocked_aggregate_share.assert_async().await;
 
-        // Should now have recorded helper encrypted aggregate share, too.
+        // Should now have recorded helper encrypted aggregate share, too; and batch aggregations
+        // should be scrubbed.
         ds.run_unnamed_tx(|tx| {
             let task_id = *task.id();
             let helper_aggregate_share = helper_response.encrypted_aggregate_share().clone();
@@ -1061,9 +1115,17 @@ mod tests {
                     .unwrap()
                     .unwrap();
 
-                assert_matches!(collection_job.state(), CollectionJobState::Finished{ encrypted_helper_aggregate_share, .. } => {
+                assert_matches!(collection_job.state(), CollectionJobState::Finished{ report_count, encrypted_helper_aggregate_share, leader_aggregate_share } => {
+                    assert_eq!(report_count, &10);
                     assert_eq!(encrypted_helper_aggregate_share, &helper_aggregate_share);
+                    assert_eq!(leader_aggregate_share, &dummy_vdaf::AggregateShare(0));
                 });
+
+                let batch_aggregations = tx.get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(&dummy_vdaf::Vdaf::new(), &task_id).await.unwrap();
+                assert_eq!(batch_aggregations.len(), 4);
+                for batch_aggregation in &batch_aggregations {
+                    assert_matches!(batch_aggregation.state(), BatchAggregationState::Scrubbed);
+                }
 
                 Ok(())
             })
@@ -1073,9 +1135,78 @@ mod tests {
 
         // Drive collection job again. It should succeed without contacting the helper.
         collection_job_driver
-            .step_collection_job(ds.clone(), lease)
+            .step_collection_job(Arc::clone(&ds), lease)
             .await
             .unwrap();
+
+        // Put another collection job for the same interval & aggregation parameter. Validate that
+        // we can still drive it to completion, and that we get the same result, without contacting
+        // the Helper.
+        let (collection_job_id, lease) = ds
+            .run_unnamed_tx(|tx| {
+                let task_id = *leader_task.id();
+
+                Box::pin(async move {
+                    let collection_job_id = random();
+                    tx.put_collection_job(
+                        &CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            task_id,
+                            collection_job_id,
+                            Query::new_time_interval(batch_interval),
+                            aggregation_param,
+                            batch_interval,
+                            CollectionJobState::Collectable,
+                        ),
+                    )
+                    .await
+                    .unwrap();
+
+                    let lease = Arc::new(
+                        tx.acquire_incomplete_collection_jobs(&StdDuration::from_secs(100), 1)
+                            .await
+                            .unwrap()
+                            .remove(0),
+                    );
+
+                    assert_eq!(&task_id, lease.leased().task_id());
+                    assert_eq!(&collection_job_id, lease.leased().collection_job_id());
+                    Ok((collection_job_id, lease))
+                })
+            })
+            .await
+            .unwrap();
+
+        collection_job_driver
+            .step_collection_job(Arc::clone(&ds), lease)
+            .await
+            .unwrap();
+
+        ds.run_unnamed_tx(|tx| {
+            let task_id = *task.id();
+            let helper_aggregate_share = helper_response.encrypted_aggregate_share().clone();
+
+            Box::pin(async move {
+                let collection_job = tx
+                    .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &dummy_vdaf::Vdaf::new(),
+                        &task_id,
+                        &collection_job_id,
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap();
+
+                assert_matches!(collection_job.state(), CollectionJobState::Finished{ report_count, encrypted_helper_aggregate_share, leader_aggregate_share } => {
+                    assert_eq!(report_count, &10);
+                    assert_eq!(encrypted_helper_aggregate_share, &helper_aggregate_share);
+                    assert_eq!(leader_aggregate_share, &dummy_vdaf::AggregateShare(0));
+                });
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

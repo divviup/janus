@@ -885,7 +885,7 @@ pub enum ReportAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     ReportAggregationState<SEED_SIZE, A>
 {
-    pub fn state_code(&self) -> ReportAggregationStateCode {
+    pub(super) fn state_code(&self) -> ReportAggregationStateCode {
         match self {
             ReportAggregationState::StartLeader { .. } => ReportAggregationStateCode::Start,
             ReportAggregationState::WaitingLeader { .. }
@@ -963,13 +963,12 @@ pub(super) struct EncodedReportAggregationStateValues {
     pub(super) prepare_error: Option<i16>,
 }
 
-// The private ReportAggregationStateCode exists alongside the public ReportAggregationState
-// because there is no apparent way to denote a Postgres enum literal without deriving
-// FromSql/ToSql on a Rust enum type, but it is not possible to derive FromSql/ToSql on a
-// non-C-style enum.
-#[derive(Debug, FromSql, ToSql)]
+// ReportAggregationStateCode exists alongside the public ReportAggregationState because there is no
+// apparent way to denote a Postgres enum literal without deriving FromSql/ToSql on a Rust enum
+// type, but it is not possible to derive FromSql/ToSql on a non-C-style enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromSql, ToSql)]
 #[postgres(name = "report_aggregation_state")]
-pub enum ReportAggregationStateCode {
+pub(super) enum ReportAggregationStateCode {
     #[postgres(name = "START")]
     Start,
     #[postgres(name = "WAITING")]
@@ -1057,10 +1056,11 @@ where
 }
 
 /// BatchAggregation corresponds to a row in the `batch_aggregations` table and represents the
-/// possibly-ongoing aggregation of the set of input shares that fall within the batch
-/// identified by `batch_identifier`. This is the finest-grained possible aggregate share we can
-/// emit for this task. The aggregate share constructed to service a collect or aggregate share
-/// request consists of one or more `BatchAggregation`s merged together.
+/// possibly-ongoing aggregation of the set of input shares that fall within the batch identified by
+/// `batch_identifier` with the aggregation parameter `aggregation_parameter`. This is the
+/// finest-grained possible aggregate share we can emit for this task. The aggregate share
+/// constructed to service a collect or aggregate share request consists of one or more
+/// `BatchAggregation`s merged together.
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
 pub struct BatchAggregation<
@@ -1079,16 +1079,7 @@ pub struct BatchAggregation<
     /// this (task_id, batch_identifier, aggregation_parameter).
     ord: u64,
     /// The current state of the batch aggregation.
-    state: BatchAggregationState,
-    /// The aggregate over all the input shares that have been prepared so far by this
-    /// aggregator. Will only be None if there are no reports.
-    #[derivative(Debug = "ignore")]
-    aggregate_share: Option<A::AggregateShare>,
-    /// The number of reports currently included in this aggregate sahre.
-    report_count: u64,
-    /// Checksum over the aggregated report shares, as described in §4.4.4.3.
-    #[derivative(Debug = "ignore")]
-    checksum: ReportIdChecksum,
+    state: BatchAggregationState<SEED_SIZE, A>,
 }
 
 impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
@@ -1101,10 +1092,7 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         batch_identifier: Q::BatchIdentifier,
         aggregation_parameter: A::AggregationParam,
         ord: u64,
-        state: BatchAggregationState,
-        aggregate_share: Option<A::AggregateShare>,
-        report_count: u64,
-        checksum: ReportIdChecksum,
+        state: BatchAggregationState<SEED_SIZE, A>,
     ) -> Self {
         Self {
             task_id,
@@ -1112,9 +1100,6 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
             aggregation_parameter,
             ord,
             state,
-            aggregate_share,
-            report_count,
-            checksum,
         }
     }
 
@@ -1137,65 +1122,97 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         &self.aggregation_parameter
     }
 
-    /// Returns the index of this batch aggregations among all batch aggregations for this
-    /// (task_id, batch_identifier, aggregation_parameter).
+    /// Returns the index of this batch aggregations among all batch aggregations for this (task_id,
+    /// batch_identifier, aggregation_parameter).
     pub fn ord(&self) -> u64 {
         self.ord
     }
 
     /// Returns the current state associated with this batch aggregation.
-    pub fn state(&self) -> &BatchAggregationState {
+    pub fn state(&self) -> &BatchAggregationState<SEED_SIZE, A> {
         &self.state
     }
 
-    // Returns a [`BatchAggregation`] identical to this one, with the given batch aggregation
-    // state.
-    pub fn with_state(self, state: BatchAggregationState) -> Self {
+    // Returns a [`BatchAggregation`] identical to this one, with the given batch aggregation state.
+    pub fn with_state(self, state: BatchAggregationState<SEED_SIZE, A>) -> Self {
         Self { state, ..self }
     }
 
-    /// Returns the aggregate share associated with this batch aggregation.
-    pub fn aggregate_share(&self) -> Option<&A::AggregateShare> {
-        self.aggregate_share.as_ref()
+    /// Returns this batch aggregation, marked as collected. The batch aggregation state is kept.
+    /// Returns an error only if called on an already-scrubbed batch aggregation.
+    pub fn collected(self) -> Result<Self, Error> {
+        match self.state {
+            BatchAggregationState::Aggregating {
+                aggregate_share,
+                report_count,
+                checksum,
+            } => Ok(Self {
+                state: BatchAggregationState::Collected {
+                    aggregate_share,
+                    report_count,
+                    checksum,
+                },
+                ..self
+            }),
+            BatchAggregationState::Collected { .. } => Ok(self),
+            BatchAggregationState::Scrubbed => Err(Error::Scrubbed),
+        }
     }
 
-    /// Returns the report count associated with this batch aggregation.
-    pub fn report_count(&self) -> u64 {
-        self.report_count
-    }
-
-    /// Returns the checksum associated with this batch aggregation.
-    pub fn checksum(&self) -> &ReportIdChecksum {
-        &self.checksum
+    /// Returns this batch aggregation, scrubbed of aggregation state.
+    pub fn scrubbed(self) -> Self {
+        Self {
+            state: BatchAggregationState::Scrubbed,
+            ..self
+        }
     }
 
     /// Returns a new [`BatchAggregation`] corresponding to the current batch aggregation merged
-    /// with the given batch aggregation. Only uncollected batch aggregations may be merged.
+    /// with the given batch aggregation. Only uncollected, unscrubbed batch aggregations may be
+    /// merged.
     pub fn merged_with(self, other: &Self) -> Result<Self, Error> {
-        if self.state() == &BatchAggregationState::Collected
-            || other.state() == &BatchAggregationState::Collected
-        {
-            return Err(Error::AlreadyCollected);
+        match (self.state, other.state()) {
+            (
+                BatchAggregationState::Aggregating {
+                    aggregate_share: lhs_aggregate_share,
+                    report_count: lhs_report_count,
+                    checksum: lhs_checksum,
+                },
+                BatchAggregationState::Aggregating {
+                    aggregate_share: rhs_aggregate_share,
+                    report_count: rhs_report_count,
+                    checksum: rhs_checksum,
+                },
+            ) => {
+                let merged_aggregate_share = match (lhs_aggregate_share, rhs_aggregate_share) {
+                    (Some(mut my_agg), Some(other_agg)) => Some({
+                        my_agg
+                            .merge(other_agg)
+                            .map_err(|err| Error::User(err.into()))?;
+                        my_agg
+                    }),
+                    (Some(my_agg), None) => Some(my_agg),
+                    (None, Some(other_agg)) => Some(other_agg.clone()),
+                    (None, None) => None,
+                };
+
+                Ok(Self {
+                    state: BatchAggregationState::Aggregating {
+                        aggregate_share: merged_aggregate_share,
+                        report_count: lhs_report_count + rhs_report_count,
+                        checksum: lhs_checksum.combined_with(rhs_checksum),
+                    },
+                    ..self
+                })
+            }
+
+            (BatchAggregationState::Scrubbed, _) | (_, BatchAggregationState::Scrubbed) => {
+                Err(Error::Scrubbed)
+            }
+
+            (BatchAggregationState::Collected { .. }, _)
+            | (_, BatchAggregationState::Collected { .. }) => Err(Error::AlreadyCollected),
         }
-
-        let merged_aggregate_share = match (self.aggregate_share, other.aggregate_share()) {
-            (Some(mut my_agg), Some(other_agg)) => Some({
-                my_agg
-                    .merge(other_agg)
-                    .map_err(|err| Error::User(err.into()))?;
-                my_agg
-            }),
-            (Some(my_agg), None) => Some(my_agg),
-            (None, Some(other_agg)) => Some(other_agg.clone()),
-            (None, None) => None,
-        };
-
-        Ok(Self {
-            aggregate_share: merged_aggregate_share,
-            report_count: self.report_count + other.report_count(),
-            checksum: self.checksum.combined_with(other.checksum()),
-            ..self
-        })
     }
 }
 
@@ -1217,6 +1234,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     }
 }
 
+#[cfg(feature = "test-util")]
 impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
     for BatchAggregation<SEED_SIZE, Q, A>
 where
@@ -1229,12 +1247,10 @@ where
             && self.aggregation_parameter == other.aggregation_parameter
             && self.ord == other.ord
             && self.state == other.state
-            && self.aggregate_share == other.aggregate_share
-            && self.report_count == other.report_count
-            && self.checksum == other.checksum
     }
 }
 
+#[cfg(feature = "test-util")]
 impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
     for BatchAggregation<SEED_SIZE, Q, A>
 where
@@ -1244,15 +1260,148 @@ where
 }
 
 /// Represents the state of a batch aggregation.
+#[derive(Clone, Derivative)]
+#[derivative(Debug)]
+pub enum BatchAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
+    Aggregating {
+        /// The aggregate over all the input shares that have been prepared so far by this
+        /// aggregator. Will only be None if there are no reports.
+        #[derivative(Debug = "ignore")]
+        aggregate_share: Option<A::AggregateShare>,
+        /// The number of reports currently included in this aggregate share.
+        report_count: u64,
+        /// Checksum over the aggregated report shares.
+        #[derivative(Debug = "ignore")]
+        checksum: ReportIdChecksum,
+    },
+
+    Collected {
+        /// The aggregate over all the input shares that have been prepared so far by this
+        /// aggregator. Will only be None if there are no reports.
+        #[derivative(Debug = "ignore")]
+        aggregate_share: Option<A::AggregateShare>,
+        /// The number of reports currently included in this aggregate share.
+        report_count: u64,
+        /// Checksum over the aggregated report shares.
+        #[derivative(Debug = "ignore")]
+        checksum: ReportIdChecksum,
+    },
+
+    Scrubbed,
+}
+
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
+    BatchAggregationState<SEED_SIZE, A>
+{
+    pub(super) fn state_code(&self) -> BatchAggregationStateCode {
+        match self {
+            BatchAggregationState::Aggregating { .. } => BatchAggregationStateCode::Aggregating,
+            BatchAggregationState::Collected { .. } => BatchAggregationStateCode::Collected,
+            BatchAggregationState::Scrubbed => BatchAggregationStateCode::Scrubbed,
+        }
+    }
+
+    pub(super) fn encoded_values_from_state(
+        &self,
+    ) -> Result<EncodedBatchAggregationStateValues, Error> {
+        Ok(match self {
+            BatchAggregationState::Aggregating {
+                aggregate_share,
+                report_count,
+                checksum,
+            }
+            | BatchAggregationState::Collected {
+                aggregate_share,
+                report_count,
+                checksum,
+            } => EncodedBatchAggregationStateValues {
+                aggregate_share: aggregate_share
+                    .as_ref()
+                    .map(Encode::get_encoded)
+                    .transpose()?,
+                report_count: Some(i64::try_from(*report_count)?),
+                checksum: Some(checksum.get_encoded()?),
+            },
+            BatchAggregationState::Scrubbed => EncodedBatchAggregationStateValues::default(),
+        })
+    }
+}
+
+#[derive(Default)]
+pub(super) struct EncodedBatchAggregationStateValues {
+    // State for Aggregating & Collected states.
+    pub(super) aggregate_share: Option<Vec<u8>>,
+    pub(super) report_count: Option<i64>,
+    pub(super) checksum: Option<Vec<u8>>,
+}
+
+#[cfg(feature = "test-util")]
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
+    for BatchAggregationState<SEED_SIZE, A>
+where
+    A::AggregateShare: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Aggregating {
+                    aggregate_share: lhs_aggregate_share,
+                    report_count: lhs_report_count,
+                    checksum: lhs_checksum,
+                },
+                Self::Aggregating {
+                    aggregate_share: rhs_aggregate_share,
+                    report_count: rhs_report_count,
+                    checksum: rhs_checksum,
+                },
+            ) => {
+                lhs_aggregate_share == rhs_aggregate_share
+                    && lhs_report_count == rhs_report_count
+                    && lhs_checksum == rhs_checksum
+            }
+            (
+                Self::Collected {
+                    aggregate_share: lhs_aggregate_share,
+                    report_count: lhs_report_count,
+                    checksum: lhs_checksum,
+                },
+                Self::Collected {
+                    aggregate_share: rhs_aggregate_share,
+                    report_count: rhs_report_count,
+                    checksum: rhs_checksum,
+                },
+            ) => {
+                lhs_aggregate_share == rhs_aggregate_share
+                    && lhs_report_count == rhs_report_count
+                    && lhs_checksum == rhs_checksum
+            }
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
+    }
+}
+
+#[cfg(feature = "test-util")]
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
+    for BatchAggregationState<SEED_SIZE, A>
+where
+    A::AggregateShare: Eq,
+{
+}
+
+// ReportAggregationStateCode exists alongside the public ReportAggregationState because there is no
+// apparent way to denote a Postgres enum literal without deriving FromSql/ToSql on a Rust enum
+// type, but it is not possible to derive FromSql/ToSql on a non-C-style enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromSql, ToSql)]
 #[postgres(name = "batch_aggregation_state")]
-pub enum BatchAggregationState {
+pub(super) enum BatchAggregationStateCode {
     /// This batch aggregation has not been collected & permits further aggregation.
     #[postgres(name = "AGGREGATING")]
     Aggregating,
     /// This batch aggregation has been collected & no longer permits aggregation.
     #[postgres(name = "COLLECTED")]
     Collected,
+    #[postgres(name = "SCRUBBED")]
+    Scrubbed,
 }
 
 /// CollectionJob represents a row in the `collection_jobs` table, used by leaders to represent
