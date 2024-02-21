@@ -2,7 +2,10 @@
 
 use futures::future::try_join_all;
 use janus_aggregator_core::datastore::{
-    models::{AggregationJob, AggregationJobState, LeaderStoredReport, OutstandingBatch},
+    models::{
+        AggregationJob, AggregationJobState, LeaderStoredReport, OutstandingBatch,
+        ReportAggregationMetadata, ReportAggregationMetadataState,
+    },
     Error, Transaction,
 };
 use janus_core::time::{Clock, DurationExt, TimeExt};
@@ -20,7 +23,7 @@ use std::{
 use tokio::try_join;
 use tracing::debug;
 
-use super::aggregation_job_writer::AggregationJobWriter;
+use super::aggregation_job_writer::NewAggregationJobWriter;
 
 /// This data structure loads existing outstanding batches, incrementally assigns new reports to
 /// outstanding batches and aggregation jobs, and provides unused reports at the end. If time
@@ -31,7 +34,7 @@ where
     A: Aggregator<SEED_SIZE, 16>,
 {
     properties: Properties,
-    aggregation_job_writer: &'a mut AggregationJobWriter<SEED_SIZE, FixedSize, A>,
+    aggregation_job_writer: &'a mut NewAggregationJobWriter<SEED_SIZE, FixedSize, A>,
     buckets: HashMap<Option<Time>, Bucket<SEED_SIZE, A>>,
     new_batches: Vec<(BatchId, Option<Time>)>,
     report_ids_to_scrub: HashSet<ReportId>,
@@ -61,7 +64,7 @@ where
         task_min_batch_size: usize,
         task_max_batch_size: Option<usize>,
         task_batch_time_window_size: Option<Duration>,
-        aggregation_job_writer: &'a mut AggregationJobWriter<SEED_SIZE, FixedSize, A>,
+        aggregation_job_writer: &'a mut NewAggregationJobWriter<SEED_SIZE, FixedSize, A>,
     ) -> Self {
         Self {
             properties: Properties {
@@ -143,7 +146,7 @@ where
     /// size range.
     fn process_batches(
         properties: &Properties,
-        aggregation_job_writer: &mut AggregationJobWriter<SEED_SIZE, FixedSize, A>,
+        aggregation_job_writer: &mut NewAggregationJobWriter<SEED_SIZE, FixedSize, A>,
         report_ids_to_scrub: &mut HashSet<ReportId>,
         new_batches: &mut Vec<(BatchId, Option<Time>)>,
         time_bucket_start: &Option<Time>,
@@ -282,7 +285,7 @@ where
         batch_id: BatchId,
         aggregation_job_size: usize,
         unaggregated_reports: &mut VecDeque<LeaderStoredReport<SEED_SIZE, A>>,
-        aggregation_job_writer: &mut AggregationJobWriter<SEED_SIZE, FixedSize, A>,
+        aggregation_job_writer: &mut NewAggregationJobWriter<SEED_SIZE, FixedSize, A>,
         report_ids_to_scrub: &mut HashSet<ReportId>,
     ) -> Result<(), Error> {
         let aggregation_job_id = random();
@@ -307,7 +310,14 @@ where
                     max_client_timestamp.map_or(client_timestamp, |ts| max(ts, client_timestamp)),
                 );
 
-                report.as_start_leader_report_aggregation(aggregation_job_id, ord)
+                ReportAggregationMetadata::new(
+                    task_id,
+                    aggregation_job_id,
+                    *report.metadata().id(),
+                    client_timestamp,
+                    ord,
+                    ReportAggregationMetadataState::Start,
+                )
             })
             .collect();
         report_ids_to_scrub.extend(report_aggregations.iter().map(|ra| *ra.report_id()));
@@ -364,8 +374,10 @@ where
             );
         }
 
+        self.aggregation_job_writer.write(tx, vdaf).await?;
+        // Report scrubbing must wait until after report aggregations have been created,
+        // because they have a write-after-read antidependency on the report shares.
         try_join!(
-            self.aggregation_job_writer.write(tx, vdaf),
             try_join_all(
                 self.report_ids_to_scrub
                     .iter()

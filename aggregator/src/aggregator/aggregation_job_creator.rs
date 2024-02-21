@@ -1,4 +1,4 @@
-use crate::aggregator::aggregation_job_writer::AggregationJobWriter;
+use crate::aggregator::aggregation_job_writer::NewAggregationJobWriter;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{
     types::extra::{U15, U31},
@@ -7,8 +7,14 @@ use fixed::{
 use futures::future::try_join_all;
 use itertools::Itertools as _;
 use janus_aggregator_core::{
-    datastore::models::{AggregationJob, AggregationJobState},
-    datastore::{self, Datastore},
+    datastore::{
+        self,
+        models::{
+            AggregationJob, AggregationJobState, ReportAggregationMetadata,
+            ReportAggregationMetadataState,
+        },
+        Datastore,
+    },
     task::{self, AggregatorTask},
 };
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -567,7 +573,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     // We attempt to generate reports from touching a minimal number of batches by
                     // generating as many aggregation jobs in the allowed size range for each batch
                     // before considering using reports from the next batch.
-                    let mut aggregation_job_writer = AggregationJobWriter::new(Arc::clone(&task));
+                    let mut aggregation_job_writer =
+                        NewAggregationJobWriter::new(Arc::clone(&task));
                     let mut report_ids_to_scrub = HashSet::new();
                     let mut outstanding_reports = Vec::new();
                     {
@@ -653,9 +660,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 .iter()
                                 .enumerate()
                                 .map(|(ord, report)| {
-                                    Ok(report.as_start_leader_report_aggregation(
+                                    Ok(ReportAggregationMetadata::new(
+                                        *task.id(),
                                         aggregation_job_id,
+                                        *report.metadata().id(),
+                                        *report.metadata().time(),
                                         ord.try_into()?,
+                                        ReportAggregationMetadataState::Start,
                                     ))
                                 })
                                 .collect::<Result<_, datastore::Error>>()?;
@@ -667,9 +678,11 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         }
                     }
 
-                    // Write the aggregation jobs & report aggregations we created.
+                    // Write the aggregation jobs and report aggregations we created.
+                    aggregation_job_writer.write(tx, vdaf).await?;
+                    // Report scrubbing must wait until after report aggregations have been created,
+                    // because they have a write-after-read antidependency on the report shares.
                     try_join!(
-                        aggregation_job_writer.write(tx, vdaf),
                         try_join_all(
                             report_ids_to_scrub
                                 .iter()
@@ -730,7 +743,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         .await?;
 
                     let mut aggregation_job_writer =
-                        AggregationJobWriter::<SEED_SIZE, FixedSize, A>::new(Arc::clone(&task));
+                        NewAggregationJobWriter::<SEED_SIZE, FixedSize, A>::new(Arc::clone(&task));
                     let mut batch_creator = BatchCreator::new(
                         this.min_aggregation_job_size,
                         this.max_aggregation_job_size,
