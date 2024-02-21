@@ -631,13 +631,13 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
         })
         .await
         .unwrap();
-    got_reports.sort_by_key(|report| *report.metadata().id());
+    got_reports.sort_by_key(|report_metadata| *report_metadata.id());
 
     let mut want_reports = Vec::from([
-        first_unaggregated_report.clone(),
-        second_unaggregated_report.clone(),
+        first_unaggregated_report.metadata().clone(),
+        second_unaggregated_report.metadata().clone(),
     ]);
-    want_reports.sort_by_key(|report| *report.metadata().id());
+    want_reports.sort_by_key(|report_metadata| *report_metadata.id());
 
     assert_eq!(got_reports, want_reports);
 
@@ -702,7 +702,10 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
         .await
         .unwrap();
 
-    assert_eq!(got_reports, Vec::from([first_unaggregated_report.clone()]),);
+    assert_eq!(
+        got_reports,
+        Vec::from([first_unaggregated_report.metadata().clone()])
+    );
 
     ds.run_unnamed_tx(|tx| {
         let (first_unaggregated_report, second_unaggregated_report) = (

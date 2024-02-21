@@ -3,14 +3,15 @@
 use futures::future::try_join_all;
 use janus_aggregator_core::datastore::{
     models::{
-        AggregationJob, AggregationJobState, LeaderStoredReport, OutstandingBatch,
-        ReportAggregationMetadata, ReportAggregationMetadataState,
+        AggregationJob, AggregationJobState, OutstandingBatch, ReportAggregationMetadata,
+        ReportAggregationMetadataState,
     },
     Error, Transaction,
 };
 use janus_core::time::{Clock, DurationExt, TimeExt};
 use janus_messages::{
-    query_type::FixedSize, AggregationJobStep, BatchId, Duration, Interval, ReportId, TaskId, Time,
+    query_type::FixedSize, AggregationJobStep, BatchId, Duration, Interval, ReportId,
+    ReportMetadata, TaskId, Time,
 };
 use prio::{codec::Encode, vdaf::Aggregator};
 use rand::random;
@@ -35,7 +36,7 @@ where
 {
     properties: Properties,
     aggregation_job_writer: &'a mut NewAggregationJobWriter<SEED_SIZE, FixedSize, A>,
-    buckets: HashMap<Option<Time>, Bucket<SEED_SIZE, A>>,
+    buckets: HashMap<Option<Time>, Bucket>,
     new_batches: Vec<(BatchId, Option<Time>)>,
     report_ids_to_scrub: HashSet<ReportId>,
 }
@@ -90,7 +91,7 @@ where
     pub async fn add_report<C>(
         &mut self,
         tx: &Transaction<'_, C>,
-        report: LeaderStoredReport<SEED_SIZE, A>,
+        report_metadata: ReportMetadata,
     ) -> Result<(), Error>
     where
         C: Clock,
@@ -99,8 +100,7 @@ where
             .properties
             .task_batch_time_window_size
             .map(|batch_time_window_size| {
-                report
-                    .metadata()
+                report_metadata
                     .time()
                     .to_batch_interval_start(&batch_time_window_size)
             })
@@ -120,7 +120,7 @@ where
         };
 
         // Add to the list of unaggregated reports for this combination of task and time bucket.
-        bucket.unaggregated_reports.push_back(report);
+        bucket.unaggregated_reports.push_back(report_metadata);
 
         Self::process_batches(
             &self.properties,
@@ -150,7 +150,7 @@ where
         report_ids_to_scrub: &mut HashSet<ReportId>,
         new_batches: &mut Vec<(BatchId, Option<Time>)>,
         time_bucket_start: &Option<Time>,
-        bucket: &mut Bucket<SEED_SIZE, A>,
+        bucket: &mut Bucket,
         greedy: bool,
     ) -> Result<(), Error> {
         loop {
@@ -284,7 +284,7 @@ where
         task_id: TaskId,
         batch_id: BatchId,
         aggregation_job_size: usize,
-        unaggregated_reports: &mut VecDeque<LeaderStoredReport<SEED_SIZE, A>>,
+        unaggregated_reports: &mut VecDeque<ReportMetadata>,
         aggregation_job_writer: &mut NewAggregationJobWriter<SEED_SIZE, FixedSize, A>,
         report_ids_to_scrub: &mut HashSet<ReportId>,
     ) -> Result<(), Error> {
@@ -301,8 +301,8 @@ where
 
         let report_aggregations: Vec<_> = (0u64..)
             .zip(unaggregated_reports.drain(..aggregation_job_size))
-            .map(|(ord, report)| {
-                let client_timestamp = *report.metadata().time();
+            .map(|(ord, report_metadata)| {
+                let client_timestamp = *report_metadata.time();
                 min_client_timestamp = Some(
                     min_client_timestamp.map_or(client_timestamp, |ts| min(ts, client_timestamp)),
                 );
@@ -313,7 +313,7 @@ where
                 ReportAggregationMetadata::new(
                     task_id,
                     aggregation_job_id,
-                    *report.metadata().id(),
+                    *report_metadata.id(),
                     client_timestamp,
                     ord,
                     ReportAggregationMetadataState::Start,
@@ -370,7 +370,7 @@ where
                 bucket
                     .unaggregated_reports
                     .into_iter()
-                    .map(|report| *report.metadata().id()),
+                    .map(|report_metadata| *report_metadata.id()),
             );
         }
 
@@ -404,18 +404,12 @@ where
 }
 
 /// Tracks reports and batches for one partition of a task.
-struct Bucket<const SEED_SIZE: usize, A>
-where
-    A: Aggregator<SEED_SIZE, 16>,
-{
+struct Bucket {
     outstanding_batches: BinaryHeap<UpdatedOutstandingBatch>,
-    unaggregated_reports: VecDeque<LeaderStoredReport<SEED_SIZE, A>>,
+    unaggregated_reports: VecDeque<ReportMetadata>,
 }
 
-impl<const SEED_SIZE: usize, A> Bucket<SEED_SIZE, A>
-where
-    A: Aggregator<SEED_SIZE, 16>,
-{
+impl Bucket {
     fn new(outstanding_batches: Vec<OutstandingBatch>) -> Self {
         Self {
             outstanding_batches: outstanding_batches

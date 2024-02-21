@@ -1149,7 +1149,7 @@ impl<C: Clock> Transaction<'_, C> {
         vdaf: &A,
         task_id: &TaskId,
         limit: usize,
-    ) -> Result<Vec<LeaderStoredReport<SEED_SIZE, A>>, Error>
+    ) -> Result<Vec<ReportMetadata>, Error>
     where
         A::InputShare: PartialEq,
         A::PublicShare: PartialEq,
@@ -1169,8 +1169,7 @@ impl<C: Clock> Transaction<'_, C> {
                 UPDATE client_reports SET
                     aggregation_started = TRUE, updated_at = $3, updated_by = $4
                 WHERE id IN (SELECT id FROM unaggregated_reports)
-                RETURNING report_id, client_timestamp, extensions, public_share, leader_input_share,
-                          helper_encrypted_input_share",
+                RETURNING report_id, client_timestamp",
             )
             .await?;
         let rows = self
@@ -1188,12 +1187,10 @@ impl<C: Clock> Transaction<'_, C> {
 
         rows.into_iter()
             .map(|row| {
-                Self::client_report_from_row(
-                    vdaf,
-                    *task_id,
+                Ok(ReportMetadata::new(
                     row.get_bytea_and_convert::<ReportId>("report_id")?,
-                    row,
-                )
+                    Time::from_naive_date_time(&row.get("client_timestamp")),
+                ))
             })
             .collect::<Result<Vec<_>, Error>>()
     }

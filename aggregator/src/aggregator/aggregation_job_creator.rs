@@ -567,7 +567,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             aggregation_job_creation_report_window,
                         )
                         .await?;
-                    reports.sort_by_key(|report| *report.metadata().time());
+                    reports.sort_by_key(|report_metadata| *report_metadata.time());
 
                     // Generate aggregation jobs & report aggregations based on the reports we read.
                     // We attempt to generate reports from touching a minimal number of batches by
@@ -581,11 +581,10 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         // We have to place `reports_by_batch` in this block, as some of its
                         // internal types are not Send/Sync & thus cannot be held across an await
                         // point.
-                        let reports_by_batch = reports.into_iter().group_by(|report| {
+                        let reports_by_batch = reports.into_iter().group_by(|report_metadata| {
                             // Unwrap safety: task.time_precision() is nonzero, so
                             // `to_batch_interval_start` will never return an error.
-                            report
-                                .metadata()
+                            report_metadata
                                 .time()
                                 .to_batch_interval_start(task.time_precision())
                                 .unwrap()
@@ -631,12 +630,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
                             let min_client_timestamp = agg_job_reports
                                 .iter()
-                                .map(|report| report.metadata().time())
+                                .map(|report_metadata| report_metadata.time())
                                 .min()
                                 .unwrap(); // unwrap safety: agg_job_reports is non-empty
                             let max_client_timestamp = agg_job_reports
                                 .iter()
-                                .map(|report| report.metadata().time())
+                                .map(|report_metadata| report_metadata.time())
                                 .max()
                                 .unwrap(); // unwrap safety: agg_job_reports is non-empty
                             let client_timestamp_interval = Interval::new(
@@ -659,19 +658,21 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             let report_aggregations = agg_job_reports
                                 .iter()
                                 .enumerate()
-                                .map(|(ord, report)| {
+                                .map(|(ord, report_metadata)| {
                                     Ok(ReportAggregationMetadata::new(
                                         *task.id(),
                                         aggregation_job_id,
-                                        *report.metadata().id(),
-                                        *report.metadata().time(),
+                                        *report_metadata.id(),
+                                        *report_metadata.time(),
                                         ord.try_into()?,
                                         ReportAggregationMetadataState::Start,
                                     ))
                                 })
                                 .collect::<Result<_, datastore::Error>>()?;
                             report_ids_to_scrub.extend(
-                                agg_job_reports.iter().map(|report| *report.metadata().id()),
+                                agg_job_reports
+                                    .iter()
+                                    .map(|report_metadata| *report_metadata.id()),
                             );
 
                             aggregation_job_writer.put(aggregation_job, report_aggregations)?;
@@ -688,8 +689,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 .iter()
                                 .map(|report_id| tx.scrub_client_report(task.id(), report_id))
                         ),
-                        try_join_all(outstanding_reports.iter().map(|report| {
-                            tx.mark_report_unaggregated(task.id(), report.metadata().id())
+                        try_join_all(outstanding_reports.iter().map(|report_metadata| {
+                            tx.mark_report_unaggregated(task.id(), report_metadata.id())
                         })),
                     )?;
 
@@ -1891,7 +1892,7 @@ mod tests {
                         .await
                         .unwrap()
                         .into_iter()
-                        .map(|report| *report.metadata().id())
+                        .map(|report_metadata| *report_metadata.id())
                         .collect::<Vec<_>>();
 
                     try_join_all(
