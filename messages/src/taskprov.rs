@@ -282,8 +282,8 @@ impl VdafConfig {
         })
     }
 
-    pub fn dp_config(&self) -> DpConfig {
-        self.dp_config
+    pub fn dp_config(&self) -> &DpConfig {
+        &self.dp_config
     }
 
     pub fn vdaf_type(&self) -> &VdafType {
@@ -475,7 +475,7 @@ impl Decode for VdafType {
 /// See [draft-irtf-cfrg-vdaf/#94][1] for discussion.
 ///
 /// [1]: https://github.com/cfrg/draft-irtf-cfrg-vdaf/issues/94
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DpConfig {
     dp_mechanism: DpMechanism,
 }
@@ -508,12 +508,13 @@ impl Decode for DpConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 #[non_exhaustive]
 pub enum DpMechanism {
     Reserved,
     None,
+    Unrecognized { codepoint: u8, payload: Vec<u8> },
 }
 
 impl DpMechanism {
@@ -526,12 +527,22 @@ impl Encode for DpMechanism {
         match self {
             Self::Reserved => Self::RESERVED.encode(bytes)?,
             Self::None => Self::NONE.encode(bytes)?,
+            Self::Unrecognized { codepoint, payload } => {
+                codepoint.encode(bytes)?;
+                bytes.extend_from_slice(payload);
+            }
         };
         Ok(())
     }
 
     fn encoded_len(&self) -> Option<usize> {
-        Some(1)
+        match self {
+            DpMechanism::Reserved | DpMechanism::None => Some(1),
+            DpMechanism::Unrecognized {
+                codepoint: _,
+                payload,
+            } => Some(1 + payload.len()),
+        }
     }
 }
 
@@ -541,10 +552,16 @@ impl Decode for DpMechanism {
         let dp_mechanism = match dp_mechanism_code {
             Self::RESERVED => Self::Reserved,
             Self::NONE => Self::None,
-            val => {
-                return Err(CodecError::Other(
-                    anyhow!("unexpected DpMechanism value {}", val).into(),
-                ))
+            codepoint => {
+                let position = usize::try_from(bytes.position())
+                    .map_err(|_| CodecError::Other(anyhow!("cursor position overflow").into()))?;
+                let inner = bytes.get_ref();
+                let payload = inner[position..].to_vec();
+                bytes
+                    .set_position(u64::try_from(inner.len()).map_err(|_| {
+                        CodecError::Other(anyhow!("cursor length overflow").into())
+                    })?);
+                Self::Unrecognized { codepoint, payload }
             }
         };
 
@@ -571,6 +588,16 @@ mod tests {
                 DpConfig::new(DpMechanism::None),
                 concat!(
                     "01",   // dp_mechanism
+                ),
+            ),
+            (
+                DpConfig::new(DpMechanism::Unrecognized {
+                    codepoint: 0xff,
+                    payload: Vec::from([0xde, 0xad, 0xbe, 0xef]),
+                }),
+                concat!(
+                    "FF",       // dp_mechanism
+                    "DEADBEEF"  // uninterpreted DpConfig contents
                 ),
             ),
         ])
@@ -684,6 +711,28 @@ mod tests {
                         // vdaf_type
                         "00000000", // vdaf_type_code
                     ),
+                ),
+            ),
+            (
+                VdafConfig::new(
+                    DpConfig::new(DpMechanism::Unrecognized {
+                        codepoint: 0xFF,
+                        payload: Vec::from([0xDE, 0xAD, 0xBE, 0xEF]),
+                    }),
+                    VdafType::Prio3Count,
+                )
+                .unwrap(),
+                concat!(
+                    // dp_config
+                    concat!(
+                        "0005",     // dp_config length
+                        "FF",       // dp_mechanism
+                        "DEADBEEF"  // rest of unrecognized DpConfig
+                    ),
+                    // vdaf_type
+                    concat!(
+                        "00000000" // vdaf_type_code
+                    )
                 ),
             ),
             (

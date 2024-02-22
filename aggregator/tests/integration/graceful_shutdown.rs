@@ -253,7 +253,7 @@ async fn aggregator_shutdown() {
             metrics_config: MetricsConfiguration::default(),
             health_check_listen_address: "127.0.0.1:9001".parse().unwrap(),
         },
-        taskprov_config: TaskprovConfig { enabled: false },
+        taskprov_config: TaskprovConfig::default(),
         garbage_collection: None,
         listen_address: aggregator_listen_address,
         aggregator_api: Some(AggregatorApi {
@@ -324,7 +324,7 @@ async fn aggregation_job_driver_shutdown() {
             retry_max_interval_millis: 30_000,
             retry_max_elapsed_time_millis: 300_000,
         },
-        taskprov_config: TaskprovConfig { enabled: false },
+        taskprov_config: TaskprovConfig::default(),
         batch_aggregation_shard_count: 32,
     };
 

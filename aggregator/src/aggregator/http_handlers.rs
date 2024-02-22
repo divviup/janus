@@ -1074,7 +1074,10 @@ mod tests {
             .unwrap();
 
         let cfg = Config {
-            taskprov_config: TaskprovConfig { enabled: true },
+            taskprov_config: TaskprovConfig {
+                enabled: true,
+                ignore_unknown_differential_privacy_mechanism: false,
+            },
             ..Default::default()
         };
 
