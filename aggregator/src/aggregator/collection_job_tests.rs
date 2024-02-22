@@ -132,7 +132,7 @@ pub(crate) async fn setup_collection_job_test_case(
 ) -> CollectionJobTestCase {
     install_test_trace_subscriber();
 
-    let task = TaskBuilder::new(query_type, VdafInstance::Fake).build();
+    let task = TaskBuilder::new(query_type, VdafInstance::Fake { rounds: 1 }).build();
     let role_task = task.view_for_role(role).unwrap();
     let clock = MockClock::default();
     let ephemeral_datastore = ephemeral_datastore().await;

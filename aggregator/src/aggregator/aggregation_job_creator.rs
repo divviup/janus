@@ -19,6 +19,7 @@ use janus_aggregator_core::{
         Datastore,
     },
     task::{self, AggregatorTask},
+    VdafHasAggregationParameter,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
@@ -31,7 +32,8 @@ use janus_core::{
     },
 };
 use janus_messages::{
-    query_type::TimeInterval, AggregationJobStep, Duration as DurationMsg, Interval, Role, TaskId,
+    query_type::TimeInterval, AggregationJobStep, Duration as DurationMsg, Interval,
+    ReportMetadata, Role, TaskId,
 };
 use opentelemetry::{
     metrics::{Histogram, Meter, Unit},
@@ -387,6 +389,15 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 }
             },
 
+            #[cfg(feature = "test-util")]
+            (task::QueryType::TimeInterval, VdafInstance::Fake { rounds }) => {
+                let vdaf = Arc::new(prio::vdaf::dummy::Vdaf::new(*rounds));
+                self.create_aggregation_jobs_for_time_interval_task_with_param::<
+                    0,
+                    prio::vdaf::dummy::Vdaf,
+                >(task, vdaf).await
+            }
+
             (
                 task::QueryType::FixedSize {
                     max_batch_size,
@@ -526,6 +537,18 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             >(task, vdaf, max_batch_size, batch_time_window_size).await
                     }
                 }
+            }
+
+            #[cfg(feature = "test-util")]
+            (
+                task::QueryType::FixedSize {
+                    max_batch_size: _max_batch_size,
+                    batch_time_window_size: _batch_time_window_size,
+                },
+                VdafInstance::Fake { rounds },
+            ) => {
+                let _vdaf = prio::vdaf::dummy::Vdaf::new(*rounds);
+                todo!("wire up call to self.create_aggregation_jobs_for_fixed_size_task_with_param")
             }
 
             _ => {
@@ -709,6 +732,132 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .await?)
     }
 
+    /// Look for combinations of client reports and collection job aggregation parameters that do not
+    /// yet have a report aggregation, and batch them into new aggregation jobs. This should only
+    /// be used with VDAFs that have non-unit type aggregation parameters.
+    // This is only used in tests thus far.
+    async fn create_aggregation_jobs_for_time_interval_task_with_param<const SEED_SIZE: usize, A>(
+        self: Arc<Self>,
+        task: Arc<AggregatorTask>,
+        vdaf: Arc<A>,
+    ) -> anyhow::Result<bool>
+    where
+        A: vdaf::Aggregator<SEED_SIZE, 16> + VdafHasAggregationParameter + Send + Sync + 'static,
+        A::AggregateShare: Send + Sync,
+        A::PrepareMessage: Send + Sync,
+        A::PrepareShare: Send + Sync,
+        A::PrepareState: Send + Sync + Encode,
+        A::OutputShare: Send + Sync,
+        A::AggregationParam: Send + Sync + Eq + std::hash::Hash,
+    {
+        let max_aggregation_job_size = self.max_aggregation_job_size;
+
+        Ok(self
+            .datastore
+            .run_tx("aggregation_job_creator_time_with_param", |tx| {
+                let (
+                    this,
+                    task,
+                    vdaf,
+                    aggregation_job_creation_report_window,
+                    batch_aggregation_shard_count,
+                ) = (
+                    Arc::clone(&self),
+                    Arc::clone(&task),
+                    Arc::clone(&vdaf),
+                    self.aggregation_job_creation_report_window,
+                    self.batch_aggregation_shard_count,
+                );
+                Box::pin(async move {
+                    // Find some client reports that are covered by a collect request, but haven't
+                    // been aggregated yet, and group them by their batch.
+                    let result_map = tx
+                        .get_unaggregated_client_report_ids_by_collect_for_task::<SEED_SIZE, A>(
+                            task.id(),
+                            aggregation_job_creation_report_window,
+                        )
+                        .await?
+                        .into_iter()
+                        .into_group_map();
+
+                    let mut writers_are_empty = false;
+                    // Generate aggregation jobs and report aggregations.
+                    for (aggregation_param, report_ids_and_times) in result_map {
+                        let mut aggregation_job_writer =
+                            AggregationJobWriter::<SEED_SIZE, _, _, InitialWrite, _>::new(
+                                Arc::clone(&task),
+                                batch_aggregation_shard_count,
+                                None,
+                            );
+                        for agg_job_reports in report_ids_and_times.chunks(max_aggregation_job_size)
+                        {
+                            if agg_job_reports.len() < this.min_aggregation_job_size {
+                                continue;
+                            }
+
+                            let aggregation_job_id = random();
+                            debug!(
+                                task_id = %task.id(),
+                                %aggregation_job_id,
+                                report_count = %agg_job_reports.len(),
+                                "Creating aggregation job"
+                            );
+
+                            // unwrap safety: agg_job_reports is non-empty
+                            let min_client_timestamp = agg_job_reports
+                                .iter()
+                                .map(ReportMetadata::time)
+                                .min()
+                                .unwrap();
+                            // unwrap safety: agg_job_reports is non-empty
+                            let max_client_timestamp = agg_job_reports
+                                .iter()
+                                .map(ReportMetadata::time)
+                                .max()
+                                .unwrap();
+                            let client_timestamp_interval = Interval::new(
+                                *min_client_timestamp,
+                                max_client_timestamp
+                                    .difference(min_client_timestamp)?
+                                    .add(&DurationMsg::from_seconds(1))?,
+                            )?;
+
+                            let aggregation_job = AggregationJob::<SEED_SIZE, TimeInterval, A>::new(
+                                *task.id(),
+                                aggregation_job_id,
+                                aggregation_param.clone(),
+                                (),
+                                client_timestamp_interval,
+                                AggregationJobState::InProgress,
+                                AggregationJobStep::from(0),
+                            );
+                            let report_aggregations: Vec<_> = agg_job_reports
+                                .iter()
+                                .enumerate()
+                                .map(|(ord, report_metadata)| {
+                                    Ok(ReportAggregationMetadata::new(
+                                        *task.id(),
+                                        aggregation_job_id,
+                                        *report_metadata.id(),
+                                        *report_metadata.time(),
+                                        ord.try_into()?,
+                                        ReportAggregationMetadataState::Start,
+                                    ))
+                                })
+                                .collect::<Result<_, datastore::Error>>()?;
+                            aggregation_job_writer.put(aggregation_job, report_aggregations)?;
+                        }
+
+                        // Write the aggregation jobs and report aggregations we created
+                        aggregation_job_writer.write(tx, Arc::clone(&vdaf)).await?;
+                        writers_are_empty = writers_are_empty && aggregation_job_writer.is_empty();
+                    }
+                    Ok(!writers_are_empty)
+                })
+            })
+            .await?)
+    }
+
     async fn create_aggregation_jobs_for_fixed_size_task_no_param<
         const SEED_SIZE: usize,
         A: vdaf::Aggregator<SEED_SIZE, 16, AggregationParam = ()>,
@@ -790,8 +939,8 @@ mod tests {
         datastore::{
             models::{
                 merge_batch_aggregations_by_batch, AggregationJob, AggregationJobState,
-                BatchAggregation, BatchAggregationState, LeaderStoredReport, ReportAggregation,
-                ReportAggregationState,
+                BatchAggregation, BatchAggregationState, CollectionJob, CollectionJobState,
+                LeaderStoredReport, ReportAggregation, ReportAggregationState,
             },
             test_util::ephemeral_datastore,
             Transaction,
@@ -809,8 +958,8 @@ mod tests {
     use janus_messages::{
         codec::ParameterizedDecode,
         query_type::{FixedSize, TimeInterval},
-        AggregationJobStep, Interval, PrepareError, ReportId, ReportIdChecksum, ReportMetadata,
-        Role, TaskId, Time,
+        AggregationJobStep, Interval, PrepareError, Query, ReportId, ReportIdChecksum,
+        ReportMetadata, Role, TaskId, Time,
     };
     use prio::vdaf::{
         self, dummy,
@@ -818,8 +967,11 @@ mod tests {
     };
     use rand::random;
     use std::{
+        any::Any,
         collections::{HashMap, HashSet},
+        hash::Hash,
         iter,
+        ops::Deref,
         sync::Arc,
         time::Duration,
     };
@@ -931,7 +1083,7 @@ mod tests {
                 .iter()
                 .map(|report| {
                     (
-                        *report.metadata().id(),
+                        (*report.metadata().id(), ()),
                         report
                             .as_start_leader_report_aggregation(random(), 0)
                             .state()
@@ -1111,7 +1263,7 @@ mod tests {
                 .iter()
                 .map(|report| {
                     (
-                        *report.metadata().id(),
+                        (*report.metadata().id(), ()),
                         report
                             .as_start_leader_report_aggregation(random(), 0)
                             .state()
@@ -1299,7 +1451,7 @@ mod tests {
                 .iter()
                 .map(|report| {
                     (
-                        *report.metadata().id(),
+                        (*report.metadata().id(), ()),
                         report
                             .as_start_leader_report_aggregation(random(), 0)
                             .state()
@@ -1359,7 +1511,7 @@ mod tests {
                 .iter()
                 .map(|report| {
                     (
-                        *report.metadata().id(),
+                        (*report.metadata().id(), ()),
                         report
                             .as_start_leader_report_aggregation(random(), 0)
                             .state()
@@ -1529,7 +1681,7 @@ mod tests {
                 .iter()
                 .map(|report| {
                     (
-                        *report.metadata().id(),
+                        (*report.metadata().id(), ()),
                         ReportAggregationState::Failed {
                             prepare_error: PrepareError::BatchCollected,
                         },
@@ -1697,7 +1849,7 @@ mod tests {
                 .iter()
                 .map(|report| {
                     (
-                        *report.metadata().id(),
+                        (*report.metadata().id(), ()),
                         report
                             .as_start_leader_report_aggregation(random(), 0)
                             .state()
@@ -1913,7 +2065,7 @@ mod tests {
                 .iter()
                 .map(|report| {
                     (
-                        *report.metadata().id(),
+                        (*report.metadata().id(), ()),
                         report
                             .as_start_leader_report_aggregation(random(), 0)
                             .state()
@@ -2082,7 +2234,7 @@ mod tests {
                 .iter()
                 .map(|report| {
                     (
-                        *report.metadata().id(),
+                        (*report.metadata().id(), ()),
                         report
                             .as_start_leader_report_aggregation(random(), 0)
                             .state()
@@ -2178,7 +2330,7 @@ mod tests {
                 .chain([last_report.as_ref()])
                 .map(|report| {
                     (
-                        *report.metadata().id(),
+                        (*report.metadata().id(), ()),
                         report
                             .as_start_leader_report_aggregation(random(), 0)
                             .state()
@@ -2346,7 +2498,7 @@ mod tests {
                 .iter()
                 .map(|report| {
                     (
-                        *report.metadata().id(),
+                        (*report.metadata().id(), ()),
                         report
                             .as_start_leader_report_aggregation(random(), 0)
                             .state()
@@ -2448,7 +2600,7 @@ mod tests {
                 .chain(new_reports.as_ref())
                 .map(|report| {
                     (
-                        *report.metadata().id(),
+                        (*report.metadata().id(), ()),
                         report
                             .as_start_leader_report_aggregation(random(), 0)
                             .state()
@@ -2645,7 +2797,7 @@ mod tests {
                 .iter()
                 .map(|report| {
                     (
-                        *report.metadata().id(),
+                        (*report.metadata().id(), ()),
                         report
                             .as_start_leader_report_aggregation(random(), 0)
                             .state()
@@ -2926,7 +3078,7 @@ mod tests {
                 .iter()
                 .map(|report| {
                     (
-                        *report.metadata().id(),
+                        (*report.metadata().id(), ()),
                         report
                             .as_start_leader_report_aggregation(random(), 0)
                             .state()
@@ -3019,11 +3171,308 @@ mod tests {
     /// aggregation parameter) are merged together, with the resulting batch aggregation having
     /// shard 0; batch aggregations for different batches are returned sorted by task ID, batch
     /// identifier, and aggregation parameter.
+    #[tokio::test]
+    async fn create_aggregation_jobs_for_time_interval_task_with_param() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone()).await;
+
+        const MAX_AGGREGATION_JOB_SIZE: usize = 10;
+
+        // Note that the minimum aggregation job size setting has no effect here, because we always
+        // wait for a collection job before scheduling any aggregation jobs, and DAP requires that no
+        // more reports are accepted for a time interval after that interval already has a collect
+        // job.
+
+        let vdaf = Arc::new(dummy::Vdaf::new(1));
+        let task = Arc::new(
+            TaskBuilder::new(
+                TaskQueryType::TimeInterval,
+                VdafInstance::Fake { rounds: 1 },
+            )
+            .build()
+            .leader_view()
+            .unwrap(),
+        );
+
+        let first_aggregation_param = dummy::AggregationParam(11);
+        let second_aggregation_param = dummy::AggregationParam(7);
+        let mut expected_report_aggregations = HashMap::new();
+
+        // Create MAX_AGGREGATION_JOB_SIZE reports in one batch. This should result in one
+        // aggregation job per overlapping collection job for these reports. (and there is one such
+        // collection job)
+        let report_time = clock.now().sub(task.time_precision()).unwrap();
+        let batch_1_reports: Vec<LeaderStoredReport<0, dummy::Vdaf>> =
+            iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
+                .take(MAX_AGGREGATION_JOB_SIZE)
+                .collect();
+
+        // Batch 1 reports should get aggregated under only the first aggregation parameter
+        for report in &batch_1_reports {
+            expected_report_aggregations.insert(
+                (*report.metadata().id(), first_aggregation_param),
+                report
+                    .as_start_leader_report_aggregation(random(), 0)
+                    .state()
+                    .clone(),
+            );
+        }
+
+        // Create more than MAX_AGGREGATION_JOB_SIZE reports in another batch. This should result in
+        // two aggregation jobs per overlapping collection job. (and there are two such collection jobs)
+        let report_time = report_time.sub(task.time_precision()).unwrap();
+        let batch_2_reports: Vec<LeaderStoredReport<0, dummy::Vdaf>> =
+            iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
+                .take(MAX_AGGREGATION_JOB_SIZE + 1)
+                .collect();
+
+        // Batch 2 reports should get aggregated under both aggregation parameters
+        for report in &batch_2_reports {
+            expected_report_aggregations.insert(
+                (*report.metadata().id(), first_aggregation_param),
+                report
+                    .as_start_leader_report_aggregation(random(), 0)
+                    .state()
+                    .clone(),
+            );
+            expected_report_aggregations.insert(
+                (*report.metadata().id(), second_aggregation_param),
+                report
+                    .as_start_leader_report_aggregation(random(), 0)
+                    .state()
+                    .clone(),
+            );
+        }
+
+        ds.run_unnamed_tx(|tx| {
+            let (vdaf, task, batch_1_reports, batch_2_reports) = (
+                Arc::clone(&vdaf),
+                Arc::clone(&task),
+                batch_1_reports.clone(),
+                batch_2_reports.clone(),
+            );
+            Box::pin(async move {
+                tx.put_aggregator_task(&task).await?;
+                for report in batch_1_reports {
+                    tx.put_client_report(vdaf.deref(), &report).await?;
+                }
+                for report in batch_2_reports {
+                    tx.put_client_report(vdaf.deref(), &report).await?;
+                }
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        let job_creator = Arc::new(AggregationJobCreator::new(
+            ds,
+            noop_meter(),
+            BATCH_AGGREGATION_SHARD_COUNT,
+            Duration::from_secs(3600),
+            Duration::from_secs(1),
+            1,
+            MAX_AGGREGATION_JOB_SIZE,
+            5000,
+        ));
+        Arc::clone(&job_creator)
+            .create_aggregation_jobs_for_time_interval_task_with_param::<0, dummy::Vdaf>(
+                Arc::clone(&task),
+                Arc::clone(&vdaf),
+            )
+            .await
+            .unwrap();
+
+        // Verify, there should be no aggregation jobs yet, because there are no collection jobs to
+        // provide aggregation parameters.
+        let (agg_jobs, _) = job_creator
+            .datastore
+            .run_unnamed_tx(|tx| {
+                let (task, vdaf) = (Arc::clone(&task), Arc::clone(&vdaf));
+                Box::pin(async move {
+                    Ok(
+                        read_and_verify_aggregate_info_for_task::<0, TimeInterval, dummy::Vdaf, _>(
+                            tx,
+                            &vdaf,
+                            task.id(),
+                            &HashMap::new(),
+                        )
+                        .await,
+                    )
+                })
+            })
+            .await
+            .unwrap();
+        assert!(agg_jobs.is_empty());
+
+        job_creator
+            .datastore
+            .run_unnamed_tx(|tx| {
+                let task = Arc::clone(&task);
+                Box::pin(async move {
+                    // This will encompass the members of batch_2_reports.
+                    tx.put_collection_job::<0, TimeInterval, dummy::Vdaf>(&CollectionJob::new(
+                        *task.id(),
+                        random(),
+                        Query::new_time_interval(
+                            Interval::new(report_time, *task.time_precision()).unwrap(),
+                        ),
+                        second_aggregation_param,
+                        Interval::new(report_time, *task.time_precision()).unwrap(),
+                        CollectionJobState::Start,
+                    ))
+                    .await?;
+                    // This will encompass the members of both batch_1_reports and batch_2_reports.
+                    tx.put_collection_job::<0, TimeInterval, dummy::Vdaf>(&CollectionJob::new(
+                        *task.id(),
+                        random(),
+                        Query::new_time_interval(
+                            Interval::new(
+                                report_time,
+                                janus_messages::Duration::from_seconds(
+                                    task.time_precision().as_seconds() * 2,
+                                ),
+                            )
+                            .unwrap(),
+                        ),
+                        first_aggregation_param,
+                        Interval::new(
+                            report_time,
+                            janus_messages::Duration::from_seconds(
+                                task.time_precision().as_seconds() * 2,
+                            ),
+                        )
+                        .unwrap(),
+                        CollectionJobState::Start,
+                    ))
+                    .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        // Run again, this time it should create some aggregation jobs.
+        Arc::clone(&job_creator)
+            .create_aggregation_jobs_for_time_interval_task_with_param::<0, dummy::Vdaf>(
+                Arc::clone(&task),
+                Arc::clone(&vdaf),
+            )
+            .await
+            .unwrap();
+
+        // Verify.
+        let (mut agg_jobs, _) = job_creator
+            .datastore
+            .run_unnamed_tx(|tx| {
+                let (task, vdaf, expected_report_aggregations) = (
+                    Arc::clone(&task),
+                    Arc::clone(&vdaf),
+                    expected_report_aggregations.clone(),
+                );
+                Box::pin(async move {
+                    Ok(
+                        read_and_verify_aggregate_info_for_task::<0, TimeInterval, dummy::Vdaf, _>(
+                            tx,
+                            &vdaf,
+                            task.id(),
+                            &expected_report_aggregations,
+                        )
+                        .await,
+                    )
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(agg_jobs.len(), 5);
+
+        let mut seen_pairs = Vec::new();
+        let mut aggregation_jobs_per_aggregation_param = HashMap::new();
+
+        for (aggregation_job, report_aggregations) in agg_jobs.iter() {
+            assert!(report_aggregations.len() <= MAX_AGGREGATION_JOB_SIZE);
+
+            *aggregation_jobs_per_aggregation_param
+                .entry(*aggregation_job.aggregation_parameter())
+                .or_default() += 1;
+
+            for report_aggregation in report_aggregations {
+                seen_pairs.push((
+                    *report_aggregation.report_metadata().id(),
+                    *aggregation_job.aggregation_parameter(),
+                ));
+            }
+        }
+        assert_eq!(
+            aggregation_jobs_per_aggregation_param,
+            HashMap::from([(second_aggregation_param, 2), (first_aggregation_param, 3)])
+        );
+        let mut expected_pairs = Vec::with_capacity(MAX_AGGREGATION_JOB_SIZE * 3 + 2);
+        for report in batch_1_reports.iter() {
+            expected_pairs.push((*report.metadata().id(), first_aggregation_param));
+        }
+        for report in batch_2_reports.iter() {
+            expected_pairs.push((*report.metadata().id(), second_aggregation_param));
+            expected_pairs.push((*report.metadata().id(), first_aggregation_param));
+        }
+        seen_pairs.sort();
+        expected_pairs.sort();
+        assert_eq!(seen_pairs, expected_pairs);
+
+        // Run once more, and confirm that no further aggregation jobs are created.
+        // Run again, this time it should create some aggregation jobs.
+        Arc::clone(&job_creator)
+            .create_aggregation_jobs_for_time_interval_task_with_param::<0, dummy::Vdaf>(
+                Arc::clone(&task),
+                Arc::clone(&vdaf),
+            )
+            .await
+            .unwrap();
+
+        // We should see the same aggregation jobs as before, because the newly created aggregation
+        // jobs should have satisfied all the collection jobs.
+        let (mut quiescent_check_agg_jobs, _) = job_creator
+            .datastore
+            .run_unnamed_tx(|tx| {
+                let (task, vdaf) = (Arc::clone(&task), Arc::clone(&vdaf));
+                Box::pin(async move {
+                    Ok(
+                        read_and_verify_aggregate_info_for_task::<0, TimeInterval, dummy::Vdaf, _>(
+                            tx,
+                            &vdaf,
+                            task.id(),
+                            &HashMap::new(),
+                        )
+                        .await,
+                    )
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(agg_jobs.len(), quiescent_check_agg_jobs.len());
+        agg_jobs.sort_by_key(|(agg_job, _)| *agg_job.id());
+        quiescent_check_agg_jobs.sort_by_key(|(agg_job, _)| *agg_job.id());
+        assert_eq!(agg_jobs, quiescent_check_agg_jobs);
+    }
+
+    /// Test helper function that reads all aggregation jobs & batch aggregations for a given task
+    /// ID, returning the aggregation jobs, the report IDs included in the aggregation job, and the
+    /// batch aggregations. Report IDs are returned in the order they are included in the
+    /// aggregation job, and report aggregations are verified to be in the correct state based on
+    /// `want_ra_states`. Batch aggregations for the same batch (by task ID, batch identifier, and
+    /// aggregation parameter) are merged together, with the resulting batch aggregation having
+    /// shard 0; batch aggregations for different batches are returned sorted by task ID, batch
+    /// identifier, and aggregation parameter.
     async fn read_and_verify_aggregate_info_for_task<const SEED_SIZE: usize, Q, A, C>(
         tx: &Transaction<'_, C>,
         vdaf: &A,
         task_id: &TaskId,
-        want_ra_states: &HashMap<ReportId, ReportAggregationState<SEED_SIZE, A>>,
+        want_ra_states: &HashMap<
+            (ReportId, A::AggregationParam),
+            ReportAggregationState<SEED_SIZE, A>,
+        >,
     ) -> (
         Vec<(
             AggregationJob<SEED_SIZE, Q, A>,
@@ -3041,6 +3490,7 @@ mod tests {
         A::PrepareShare: PartialEq,
         for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
         A::PublicShare: PartialEq,
+        A::AggregationParam: Hash + Eq + PartialEq + Any + std::clone::Clone + std::fmt::Debug,
     {
         let (agg_jobs_and_report_ids, batch_aggregations) = try_join!(
             try_join_all(
@@ -3061,11 +3511,16 @@ mod tests {
                             .unwrap();
 
                         for ra in &report_aggs {
-                            let want_ra_state =
-                                want_ra_states.get(ra.report_id()).unwrap_or_else(|| {
+                            // AggregationJob<_, _, A>::aggregation_parameter returns
+                            // &A::AggregationParam, but we nonetheless need this cast or the
+                            // compiler won't let us call clone
+                            let agg_param = (agg_job.aggregation_parameter() as &A::AggregationParam).clone();
+                            let want_ra_state = want_ra_states
+                                .get(&(*ra.report_id(), agg_param))
+                                .unwrap_or_else(|| {
                                     panic!(
-                                        "found report aggregation for unknown report {}",
-                                        ra.report_id()
+                                        "found report aggregation for unknown report {} aggregation param {:?}",
+                                        ra.report_id(), agg_job.aggregation_parameter(),
                                     )
                                 });
                             assert_eq!(want_ra_state, ra.state());
@@ -3079,23 +3534,36 @@ mod tests {
         .unwrap();
 
         // Verify that all reports we saw a report aggregation for are scrubbed.
-        let all_seen_report_ids: HashSet<_> = agg_jobs_and_report_ids
+        let all_seen_report_ids: HashSet<(A::AggregationParam, _)> = agg_jobs_and_report_ids
             .iter()
-            .flat_map(|(_, report_aggs)| report_aggs.iter().map(|ra| ra.report_id()))
+            .flat_map(|(agg_job, report_aggs)| {
+                report_aggs.iter().map(|ra| {
+                    (
+                        (agg_job.aggregation_parameter() as &A::AggregationParam).clone(),
+                        ra.report_id(),
+                    )
+                })
+            })
             .collect();
-        for report_id in &all_seen_report_ids {
-            tx.verify_client_report_scrubbed(task_id, report_id).await;
+        for (agg_param, report_id) in &all_seen_report_ids {
+            if agg_param.type_id() == ().type_id() {
+                tx.verify_client_report_scrubbed(task_id, report_id).await;
+            }
         }
 
-        // Verify that all reports we did not see a report aggregation for are not scrubbed. (We do
-        // so by reading the report, since reading a report will fail if the report is scrubbed.)
-        for report_id in want_ra_states.keys() {
-            if all_seen_report_ids.contains(report_id) {
-                continue;
+        // Verify that if the aggregation parameter is (), all reports we saw a report aggregation
+        // for are scrubbed. Reports aggregated with a non-unit aggregation parameter should not get
+        // scrubbed. We check that a report is scrubbed by reading the report, since reading a
+        // report will fail if the report is scrubbed.
+        for (report_id, agg_param) in want_ra_states.keys() {
+            if agg_param.type_id() == ().type_id() {
+                if all_seen_report_ids.contains(&(agg_param.clone(), report_id)) {
+                    continue;
+                }
+                tx.get_client_report(vdaf, task_id, report_id)
+                    .await
+                    .unwrap();
             }
-            tx.get_client_report(vdaf, task_id, report_id)
-                .await
-                .unwrap();
         }
 
         (

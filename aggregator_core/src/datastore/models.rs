@@ -362,7 +362,6 @@ pub struct AggregationJob<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggrega
     /// The ID of this aggregation job.
     aggregation_job_id: AggregationJobId,
     /// The aggregation parameter this job is run with.
-    #[derivative(Debug = "ignore")]
     aggregation_parameter: A::AggregationParam,
     /// The partial identifier for the batch this aggregation job contributes to (fixed size
     /// tasks only; for time interval tasks, aggregation jobs may span multiple batches).

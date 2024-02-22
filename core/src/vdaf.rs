@@ -93,10 +93,10 @@ pub enum VdafInstance {
     /// The `poplar1` VDAF. Support for this VDAF is experimental.
     Poplar1 { bits: usize },
 
-    /// A fake, no-op VDAF.
+    /// A fake, no-op VDAF, which uses an aggregation parameter and a variable number of rounds.
     #[cfg(feature = "test-util")]
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
-    Fake,
+    Fake { rounds: u32 },
     /// A fake, no-op VDAF that always fails during initialization of input preparation.
     #[cfg(feature = "test-util")]
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
@@ -112,7 +112,7 @@ impl VdafInstance {
     pub fn verify_key_length(&self) -> usize {
         match self {
             #[cfg(feature = "test-util")]
-            VdafInstance::Fake
+            VdafInstance::Fake { .. }
             | VdafInstance::FakeFailsPrepInit
             | VdafInstance::FakeFailsPrepStep => 0,
 
@@ -342,8 +342,8 @@ macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
 macro_rules! vdaf_dispatch_impl_test_util {
     (impl match test_util $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LEN:ident, $dp_strategy:ident, $DpStrategy:ident) => $body:tt) => {
         match $vdaf_instance {
-            ::janus_core::vdaf::VdafInstance::Fake => {
-                let $vdaf = ::prio::vdaf::dummy::Vdaf::new(1);
+            ::janus_core::vdaf::VdafInstance::Fake { rounds } => {
+                let $vdaf = ::prio::vdaf::dummy::Vdaf::new(*rounds);
                 type $Vdaf = ::prio::vdaf::dummy::Vdaf;
                 const $VERIFY_KEY_LEN: usize = 0;
                 type $DpStrategy = janus_core::dp::NoDifferentialPrivacy;
@@ -408,7 +408,7 @@ macro_rules! vdaf_dispatch_impl {
                 ::janus_core::vdaf_dispatch_impl_fpvec_bounded_l2!(impl match fpvec_bounded_l2 $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
             }
 
-            ::janus_core::vdaf::VdafInstance::Fake
+            ::janus_core::vdaf::VdafInstance::Fake { .. }
             | ::janus_core::vdaf::VdafInstance::FakeFailsPrepInit
             | ::janus_core::vdaf::VdafInstance::FakeFailsPrepStep => {
                 ::janus_core::vdaf_dispatch_impl_test_util!(impl match test_util $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
@@ -458,7 +458,7 @@ macro_rules! vdaf_dispatch_impl {
                 ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
             }
 
-            ::janus_core::vdaf::VdafInstance::Fake
+            ::janus_core::vdaf::VdafInstance::Fake { .. }
             | ::janus_core::vdaf::VdafInstance::FakeFailsPrepInit
             | ::janus_core::vdaf::VdafInstance::FakeFailsPrepStep => {
                 ::janus_core::vdaf_dispatch_impl_test_util!(impl match test_util $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LEN, $dp_strategy, $DpStrategy) => $body)
@@ -637,11 +637,17 @@ mod tests {
             ],
         );
         assert_tokens(
-            &VdafInstance::Fake,
-            &[Token::UnitVariant {
-                name: "VdafInstance",
-                variant: "Fake",
-            }],
+            &VdafInstance::Fake { rounds: 17 },
+            &[
+                Token::StructVariant {
+                    name: "VdafInstance",
+                    variant: "Fake",
+                    len: 1,
+                },
+                Token::Str("rounds"),
+                Token::U32(17),
+                Token::StructVariantEnd,
+            ],
         );
         assert_tokens(
             &VdafInstance::FakeFailsPrepInit,

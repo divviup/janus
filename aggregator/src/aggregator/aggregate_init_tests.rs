@@ -176,7 +176,7 @@ pub(super) struct AggregationJobInitTestCase<
 pub(super) async fn setup_aggregate_init_test() -> AggregationJobInitTestCase<0, dummy::Vdaf> {
     setup_aggregate_init_test_for_vdaf(
         dummy::Vdaf::new(1),
-        VdafInstance::Fake,
+        VdafInstance::Fake { rounds: 1 },
         dummy::AggregationParam(0),
         0,
     )
@@ -324,7 +324,7 @@ pub(crate) async fn put_aggregation_job(
 async fn aggregation_job_init_authorization_dap_auth_token() {
     let test_case = setup_aggregate_init_test_without_sending_request(
         dummy::Vdaf::new(1),
-        VdafInstance::Fake,
+        VdafInstance::Fake { rounds: 1 },
         dummy::AggregationParam(0),
         0,
         AuthenticationToken::DapAuth(random()),
@@ -360,7 +360,7 @@ async fn aggregation_job_init_authorization_dap_auth_token() {
 async fn aggregation_job_init_malformed_authorization_header(#[case] header_value: &'static str) {
     let test_case = setup_aggregate_init_test_without_sending_request(
         dummy::Vdaf::new(1),
-        VdafInstance::Fake,
+        VdafInstance::Fake { rounds: 1 },
         dummy::AggregationParam(0),
         0,
         AuthenticationToken::Bearer(random()),
@@ -395,7 +395,7 @@ async fn aggregation_job_init_malformed_authorization_header(#[case] header_valu
 async fn aggregation_job_init_unexpected_taskprov_extension() {
     let test_case = setup_aggregate_init_test_without_sending_request(
         dummy::Vdaf::new(1),
-        VdafInstance::Fake,
+        VdafInstance::Fake { rounds: 1 },
         dummy::AggregationParam(0),
         0,
         random(),
@@ -541,7 +541,7 @@ async fn aggregation_job_mutation_report_aggregations() {
 async fn aggregation_job_intolerable_clock_skew() {
     let mut test_case = setup_aggregate_init_test_without_sending_request(
         dummy::Vdaf::new(1),
-        VdafInstance::Fake,
+        VdafInstance::Fake { rounds: 1 },
         dummy::AggregationParam(0),
         0,
         AuthenticationToken::Bearer(random()),

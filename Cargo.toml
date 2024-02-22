@@ -47,7 +47,8 @@ k8s-openapi = { version = "0.20.0", features = ["v1_26"] }  # keep this version 
 kube = { version = "0.87.2", default-features = false, features = ["client", "rustls-tls"] }
 opentelemetry = { version = "0.22", features = ["metrics"] }
 opentelemetry_sdk = { version = "0.22", features = ["metrics"] }
-prio = { version = "0.16.1", features = ["multithreaded", "experimental"] }
+# TODO(timg): go back to released prio
+prio = { git = "https://github.com/divviup/libprio-rs", features = ["multithreaded", "experimental"], rev = "8774573dee1932c19c28ab83173b358b42a52b78" }
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0.114"
 serde_test = "1.0.175"

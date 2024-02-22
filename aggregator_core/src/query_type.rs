@@ -397,7 +397,7 @@ mod tests {
     #[test]
     fn validate_collect_identifier() {
         let time_precision_secs = 3600;
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
             .with_time_precision(Duration::from_seconds(time_precision_secs))
             .build()
             .leader_view()

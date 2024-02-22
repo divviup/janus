@@ -97,7 +97,7 @@ async fn get_task_ids() {
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
                 let tasks: Vec<_> = iter::repeat_with(|| {
-                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
+                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
                         .build()
                         .leader_view()
                         .unwrap()
@@ -624,7 +624,7 @@ async fn get_task(#[case] role: Role) {
     // Setup: write a task to the datastore.
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
+    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
         .build()
         .view_for_role(role)
         .unwrap();
@@ -688,10 +688,11 @@ async fn delete_task() {
     let task_id = ds
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
-                let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
-                    .build()
-                    .leader_view()
-                    .unwrap();
+                let task =
+                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
+                        .build()
+                        .leader_view()
+                        .unwrap();
 
                 tx.put_aggregator_task(&task).await?;
 
@@ -760,10 +761,11 @@ async fn get_task_upload_metrics() {
     let task_id = ds
         .run_unnamed_tx(|tx| {
             Box::pin(async move {
-                let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
-                    .build()
-                    .leader_view()
-                    .unwrap();
+                let task =
+                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
+                        .build()
+                        .leader_view()
+                        .unwrap();
                 let task_id = *task.id();
                 tx.put_aggregator_task(&task).await.unwrap();
 

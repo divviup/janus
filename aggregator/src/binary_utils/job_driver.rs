@@ -392,7 +392,7 @@ mod tests {
                                 .iter()
                                 .map(|job| {
                                     Lease::new_dummy(
-                                        (job.task_id, VdafInstance::Fake, job.job_id),
+                                        (job.task_id, VdafInstance::Fake { rounds: 1 }, job.job_id),
                                         job.lease_expiry,
                                     )
                                 })
@@ -413,7 +413,7 @@ mod tests {
                             let mut test_state = test_state.lock().await;
                             let job_acquire_counter = test_state.job_acquire_counter;
 
-                            assert_eq!(lease.leased().1, VdafInstance::Fake);
+                            assert_eq!(lease.leased().1, VdafInstance::Fake { rounds: 1 });
 
                             test_state.stepped_jobs.push(SteppedJob {
                                 observed_jobs_acquire_counter: job_acquire_counter,

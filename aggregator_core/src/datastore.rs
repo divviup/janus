@@ -12,7 +12,7 @@ use crate::{
     query_type::{AccumulableQueryType, CollectableQueryType},
     task::{self, AggregatorTask, AggregatorTaskParameters},
     taskprov::PeerAggregator,
-    SecretBytes,
+    SecretBytes, VdafHasAggregationParameter,
 };
 use chrono::NaiveDateTime;
 use futures::future::try_join_all;
@@ -1170,8 +1170,8 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// `get_unaggregated_client_reports_for_task` returns some unaggregated client reports for the
     /// task identified by the given task ID. Returned reports are marked as aggregation-started:
-    /// the caller must either create an aggregation job with, or call `mark_reports_unaggregated`
-    /// on each returned report as part of the same transaction.
+    /// the caller must either create an aggregation job with, or call `mark_report_unaggregated` on
+    /// each returned report as part of the same transaction.
     ///
     /// This should only be used with VDAFs that have an aggregation parameter of the unit type. It
     /// relies on this assumption to find relevant reports without consulting collection jobs. For
@@ -1237,6 +1237,87 @@ impl<C: Clock> Transaction<'_, C> {
                     row.get_bytea_and_convert::<ReportId>("report_id")?,
                     Time::from_naive_date_time(&row.get("client_timestamp")),
                 ))
+            })
+            .collect::<Result<Vec<_>, Error>>()
+    }
+
+    /// `get_unaggregated_client_report_ids_by_collect_for_task` returns pairs of report IDs and
+    /// aggregation parameters, corresponding to client reports that have not yet been aggregated,
+    /// or not aggregated with a certain aggregation parameter, and for which there are collect
+    /// jobs, for a given task. Returned client reports are marked as aggregation-started, but this
+    /// will not stop additional aggregation jobs from being created later with different
+    /// aggregation parameters.
+    ///
+    /// This should only be used with VDAFs with a non-unit type aggregation parameter. If a VDAF
+    /// has the unit type as its aggregation parameter, then
+    /// `get_unaggregated_client_report_ids_for_task` should be used instead. In such cases, it is
+    /// not necessary to wait for a collection job to arrive before preparing reports.
+    ///
+    /// This function deliberately ignores the `client_reports.aggregation_started` column, which
+    /// only has meaning for VDAFs without aggregation parameters.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn get_unaggregated_client_report_ids_by_collect_for_task<const SEED_SIZE: usize, A>(
+        &self,
+        task_id: &TaskId,
+        limit: usize,
+    ) -> Result<Vec<(A::AggregationParam, ReportMetadata)>, Error>
+    where
+        A: vdaf::Aggregator<SEED_SIZE, 16> + VdafHasAggregationParameter,
+    {
+        // TODO(#224): lock retrieved client_reports rows
+        // TODO(#225): use get_task_primary_key_and_expiry_threshold as in
+        // get_unaggregated_client_reports_for_task
+        let stmt = self
+            .prepare_cached(
+                "WITH unaggregated_client_report_ids AS (
+                    SELECT DISTINCT report_id, client_timestamp, collection_jobs.aggregation_param
+                    FROM collection_jobs
+                    INNER JOIN client_reports
+                    ON collection_jobs.task_id = client_reports.task_id
+                    AND client_reports.client_timestamp <@ collection_jobs.batch_interval
+                    LEFT JOIN (
+                        SELECT report_aggregations.id, report_aggregations.client_report_id,
+                            aggregation_jobs.aggregation_param
+                        FROM report_aggregations
+                        INNER JOIN aggregation_jobs
+                        ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                        WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                    ) AS report_aggs
+                    ON report_aggs.client_report_id = client_reports.report_id  -- this join is very inefficient, fix before deploying in non-test scenario
+                    AND report_aggs.aggregation_param = collection_jobs.aggregation_param
+                    WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                    AND collection_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                    AND collection_jobs.state = 'START'
+                    AND report_aggs.id IS NULL
+                    LIMIT $2::BIGINT
+                ),
+                updated_client_reports AS (
+                    UPDATE client_reports SET aggregation_started = TRUE
+                    FROM unaggregated_client_report_ids
+                    WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                      AND client_reports.report_id = unaggregated_client_report_ids.report_id
+                      AND client_reports.client_timestamp =
+                        unaggregated_client_report_ids.client_timestamp
+                )
+                SELECT report_id, client_timestamp, aggregation_param
+                FROM unaggregated_client_report_ids",
+            )
+            .await?;
+        let rows = self
+            .query(
+                &stmt,
+                &[&task_id.as_ref(), /* limit */ &i64::try_from(limit)?],
+            )
+            .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                let report_metadata = ReportMetadata::new(
+                    row.get_bytea_and_convert::<ReportId>("report_id")?,
+                    Time::from_naive_date_time(&row.get("client_timestamp")),
+                );
+                let agg_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
+                Ok((agg_param, report_metadata))
             })
             .collect::<Result<Vec<_>, Error>>()
     }
@@ -1634,14 +1715,14 @@ impl<C: Clock> Transaction<'_, C> {
     #[cfg(feature = "test-util")]
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn get_aggregation_jobs_for_task<
-        const SEED_SIZE: usize,
-        Q: QueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
-    >(
+    pub async fn get_aggregation_jobs_for_task<const SEED_SIZE: usize, Q, A>(
         &self,
         task_id: &TaskId,
-    ) -> Result<Vec<AggregationJob<SEED_SIZE, Q, A>>, Error> {
+    ) -> Result<Vec<AggregationJob<SEED_SIZE, Q, A>>, Error>
+    where
+        Q: QueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+    {
         let stmt = self
             .prepare_cached(
                 "SELECT
