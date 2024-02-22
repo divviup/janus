@@ -39,9 +39,9 @@ dependencies = [
 
 [[package]]
 name = "aes"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac1f845298e95f983ff1944b728ae08b8cebab80d684f0a832ed0fc74dfa27e2"
+checksum = "b169f7a6d4742236a0a00c541b845991d0ac43e546831af1249753ab4c3aa3a0"
 dependencies = [
  "cfg-if",
  "cipher",
@@ -2102,7 +2102,7 @@ dependencies = [
  "opentelemetry_sdk",
  "postgres-protocol",
  "postgres-types",
- "prio 0.16.0",
+ "prio 0.16.1",
  "prometheus",
  "rand",
  "regex",
@@ -2202,7 +2202,7 @@ dependencies = [
  "opentelemetry",
  "postgres-protocol",
  "postgres-types",
- "prio 0.16.0",
+ "prio 0.16.1",
  "rand",
  "regex",
  "reqwest",
@@ -2241,7 +2241,7 @@ dependencies = [
  "janus_core",
  "janus_messages 0.7.0-prerelease-4",
  "mockito",
- "prio 0.16.0",
+ "prio 0.16.1",
  "rand",
  "reqwest",
  "thiserror",
@@ -2268,7 +2268,7 @@ dependencies = [
  "janus_core",
  "janus_messages 0.7.0-prerelease-4",
  "mockito",
- "prio 0.16.0",
+ "prio 0.16.1",
  "rand",
  "reqwest",
  "retry-after",
@@ -2302,7 +2302,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "mockito",
- "prio 0.16.0",
+ "prio 0.16.1",
  "rand",
  "regex",
  "reqwest",
@@ -2349,7 +2349,7 @@ dependencies = [
  "janus_messages 0.7.0-prerelease-4",
  "k8s-openapi",
  "kube",
- "prio 0.16.0",
+ "prio 0.16.1",
  "rand",
  "reqwest",
  "rstest",
@@ -2385,7 +2385,7 @@ dependencies = [
  "janus_interop_binaries",
  "janus_messages 0.7.0-prerelease-4",
  "opentelemetry",
- "prio 0.16.0",
+ "prio 0.16.1",
  "rand",
  "regex",
  "reqwest",
@@ -2434,7 +2434,7 @@ dependencies = [
  "derivative",
  "hex",
  "num_enum",
- "prio 0.16.0",
+ "prio 0.16.1",
  "rand",
  "serde",
  "serde_test",
@@ -2456,7 +2456,7 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_messages 0.7.0-prerelease-4",
- "prio 0.16.0",
+ "prio 0.16.1",
  "rand",
  "reqwest",
  "serde_json",
@@ -3419,8 +3419,9 @@ dependencies = [
 
 [[package]]
 name = "prio"
-version = "0.16.0"
-source = "git+https://github.com/divviup/libprio-rs?branch=timg/dummy-vdaf-bugs#22ca5667f9f6d56806f468809c5ef8cb38a9a106"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a5247468645c68d3f5eaa958ca8b7ce5539bb604a1dcb9baa6a3cb7831f8fa8"
 dependencies = [
  "aes",
  "bitvec",
