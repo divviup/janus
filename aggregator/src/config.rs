@@ -117,6 +117,16 @@ pub struct TaskprovConfig {
     ///
     /// [spec]: https://datatracker.ietf.org/doc/draft-wang-ppm-dap-taskprov/
     pub enabled: bool,
+
+    /// If true, will silently ignore unknown differential privacy mechanisms, and continue without
+    /// differential privacy noise.
+    ///
+    /// This should only be used for testing purposes. This option will be removed once full
+    /// differential privacy support is implemented.
+    ///
+    /// Defaults to false, i.e. opt out of tasks with unrecognized differential privacy mechanisms.
+    #[serde(default)]
+    pub ignore_unknown_differential_privacy_mechanism: bool,
 }
 
 /// Non-secret configuration options for Janus Job Driver jobs.

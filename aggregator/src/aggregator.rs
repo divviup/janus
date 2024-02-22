@@ -56,7 +56,7 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
-    taskprov::TaskConfig,
+    taskprov::{DpMechanism, TaskConfig},
     AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
     AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, AggregationJobStep,
     BatchSelector, Collection, CollectionJobId, CollectionReq, Duration, ExtensionType, HpkeConfig,
@@ -721,6 +721,21 @@ impl<C: Clock> Aggregator<C> {
 
         // TODO(#1647): Check whether task config parameters are acceptable for privacy and
         // availability of the system.
+
+        if let DpMechanism::Unrecognized { .. } =
+            task_config.vdaf_config().dp_config().dp_mechanism()
+        {
+            if !self
+                .cfg
+                .taskprov_config
+                .ignore_unknown_differential_privacy_mechanism
+            {
+                return Err(Error::InvalidTask(
+                    *task_id,
+                    OptOutReason::InvalidParameter("unrecognized DP mechanism".into()),
+                ));
+            }
+        }
 
         let vdaf_instance =
             task_config

@@ -122,7 +122,10 @@ impl TaskprovTestCase {
             TestRuntime::default(),
             &noop_meter(),
             Config {
-                taskprov_config: TaskprovConfig { enabled: true },
+                taskprov_config: TaskprovConfig {
+                    enabled: true,
+                    ignore_unknown_differential_privacy_mechanism: false,
+                },
                 ..Default::default()
             },
         )
