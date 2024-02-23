@@ -1177,7 +1177,7 @@ mod tests {
 
             Box::pin(async move {
                 let collection_job = tx
-                    .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                    .get_collection_job::<0, TimeInterval, dummy::Vdaf>(
                         &dummy::Vdaf::new(1),
                         &task_id,
                         &collection_job_id,
@@ -1189,7 +1189,7 @@ mod tests {
                 assert_matches!(collection_job.state(), CollectionJobState::Finished{ report_count, encrypted_helper_aggregate_share, leader_aggregate_share } => {
                     assert_eq!(report_count, &10);
                     assert_eq!(encrypted_helper_aggregate_share, &helper_aggregate_share);
-                    assert_eq!(leader_aggregate_share, &dummy_vdaf::AggregateShare(0));
+                    assert_eq!(leader_aggregate_share, &dummy::AggregateShare(0));
                 });
 
                 Ok(())

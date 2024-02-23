@@ -5657,11 +5657,11 @@ mod tests {
                                     let task_id = *task.id();
 
                                     async move {
-                                    tx.get_batch_aggregations_for_batch::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                                        &dummy_vdaf::Vdaf::new(),
+                                    tx.get_batch_aggregations_for_batch::<0, TimeInterval, dummy::Vdaf>(
+                                        &dummy::Vdaf::new(1),
                                         &task_id,
                                         &batch_identifier,
-                                        &dummy_vdaf::AggregationParam(0),
+                                        &dummy::AggregationParam(0),
                                     ).await
                                 }}),
                             )
