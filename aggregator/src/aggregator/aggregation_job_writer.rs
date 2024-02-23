@@ -70,14 +70,11 @@ where
     /// operation (aggregation into a collected batch is not allowed). These report aggregations
     /// will be written with a `Failed(BatchCollected)` state, and the associated report IDs will be
     /// returned.
-    pub async fn write<'a, C: Clock>(
+    pub async fn write<C: Clock>(
         &self,
         tx: &Transaction<'_, C>,
         vdaf: Arc<A>,
-    ) -> Result<(), Error>
-    where
-        A: 'a,
-    {
+    ) -> Result<(), Error> {
         self.updates
             .write(tx, vdaf, NewAggregationJobBatchUpdate)
             .await?;
