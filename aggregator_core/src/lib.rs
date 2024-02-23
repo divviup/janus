@@ -16,9 +16,6 @@ use trillium_router::RouterConnExt;
 #[cfg(test)]
 use rstest_reuse;
 
-#[cfg(feature = "test-util")]
-use janus_core::test_util::dummy_vdaf;
-
 pub mod datastore;
 pub mod query_type;
 pub mod task;
@@ -51,7 +48,7 @@ impl<P, const SEED_SIZE: usize> VdafHasAggregationParameter
 }
 
 #[cfg(feature = "test-util")]
-impl VdafHasAggregationParameter for dummy_vdaf::Vdaf {}
+impl VdafHasAggregationParameter for prio::vdaf::dummy::Vdaf {}
 
 pub fn instrumented<H: Handler>(handler: H) -> impl Handler {
     InstrumentedHandler(handler)

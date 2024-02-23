@@ -26,6 +26,7 @@ test-util = [
     "dep:tracing-log",
     "dep:tracing-subscriber",
     "kube/ws",
+    "prio/test-util",
     "tokio/macros",
     "tokio/sync",
 ]

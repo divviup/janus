@@ -39,9 +39,9 @@ dependencies = [
 
 [[package]]
 name = "aes"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac1f845298e95f983ff1944b728ae08b8cebab80d684f0a832ed0fc74dfa27e2"
+checksum = "b169f7a6d4742236a0a00c541b845991d0ac43e546831af1249753ab4c3aa3a0"
 dependencies = [
  "cfg-if",
  "cipher",
@@ -1328,9 +1328,9 @@ dependencies = [
 
 [[package]]
 name = "fiat-crypto"
-version = "0.2.5"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27573eac26f4dd11e2b1916c3fe1baa56407c83c71a773a8ba17ec0bca03b6b7"
+checksum = "1676f435fc1dadde4d03e43f5d62b259e1ce5f40bd4ffb21db2b42ebe59c1382"
 
 [[package]]
 name = "filetime"
@@ -2102,7 +2102,7 @@ dependencies = [
  "opentelemetry_sdk",
  "postgres-protocol",
  "postgres-types",
- "prio 0.16.0",
+ "prio 0.16.1",
  "prometheus",
  "rand",
  "regex",
@@ -2202,7 +2202,7 @@ dependencies = [
  "opentelemetry",
  "postgres-protocol",
  "postgres-types",
- "prio 0.16.0",
+ "prio 0.16.1",
  "rand",
  "regex",
  "reqwest",
@@ -2241,7 +2241,7 @@ dependencies = [
  "janus_core",
  "janus_messages 0.7.0-prerelease-4",
  "mockito",
- "prio 0.16.0",
+ "prio 0.16.1",
  "rand",
  "reqwest",
  "thiserror",
@@ -2268,7 +2268,7 @@ dependencies = [
  "janus_core",
  "janus_messages 0.7.0-prerelease-4",
  "mockito",
- "prio 0.16.0",
+ "prio 0.16.1",
  "rand",
  "reqwest",
  "retry-after",
@@ -2302,7 +2302,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "mockito",
- "prio 0.16.0",
+ "prio 0.16.1",
  "rand",
  "regex",
  "reqwest",
@@ -2349,7 +2349,7 @@ dependencies = [
  "janus_messages 0.7.0-prerelease-4",
  "k8s-openapi",
  "kube",
- "prio 0.16.0",
+ "prio 0.16.1",
  "rand",
  "reqwest",
  "rstest",
@@ -2385,7 +2385,7 @@ dependencies = [
  "janus_interop_binaries",
  "janus_messages 0.7.0-prerelease-4",
  "opentelemetry",
- "prio 0.16.0",
+ "prio 0.16.1",
  "rand",
  "regex",
  "reqwest",
@@ -2434,7 +2434,7 @@ dependencies = [
  "derivative",
  "hex",
  "num_enum",
- "prio 0.16.0",
+ "prio 0.16.1",
  "rand",
  "serde",
  "serde_test",
@@ -2456,7 +2456,7 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_messages 0.7.0-prerelease-4",
- "prio 0.16.0",
+ "prio 0.16.1",
  "rand",
  "reqwest",
  "serde_json",
@@ -2837,19 +2837,18 @@ checksum = "51d515d32fb182ee37cda2ccdcb92950d6a3c2893aa280e540671c2cd0f3b1d9"
 
 [[package]]
 name = "num-integer"
-version = "0.1.45"
+version = "0.1.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "225d3389fb3509a24c93f5c29eb6bde2586b98d9f016636dff58d7c6f7569cd9"
+checksum = "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"
 dependencies = [
- "autocfg",
  "num-traits",
 ]
 
 [[package]]
 name = "num-iter"
-version = "0.1.43"
+version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d03e6c028c5dc5cac6e2dec0efda81fc887605bb3d884578bb6d6bf7514e252"
+checksum = "d869c01cc0c455284163fd0092f1f93835385ccab5a98a0dcc497b2f8bf055a9"
 dependencies = [
  "autocfg",
  "num-integer",
@@ -2871,9 +2870,9 @@ dependencies = [
 
 [[package]]
 name = "num-traits"
-version = "0.2.17"
+version = "0.2.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39e3200413f237f41ab11ad6d161bc7239c84dcb631773ccd7de3dfe4b5c267c"
+checksum = "da0df0e5185db44f69b44f26786fe401b6c293d1907744beaa7fa62b2e5a517a"
 dependencies = [
  "autocfg",
  "libm",
@@ -3420,9 +3419,9 @@ dependencies = [
 
 [[package]]
 name = "prio"
-version = "0.16.0"
+version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a16151e3c98087659ef5dc706040a415afa88294989e895c8987d9d0cdea83c"
+checksum = "0a5247468645c68d3f5eaa958ca8b7ce5539bb604a1dcb9baa6a3cb7831f8fa8"
 dependencies = [
  "aes",
  "bitvec",
@@ -3431,6 +3430,7 @@ dependencies = [
  "fiat-crypto",
  "fixed",
  "getrandom",
+ "hex",
  "hmac",
  "num-bigint",
  "num-integer",
@@ -3441,6 +3441,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "serde",
+ "serde_json",
  "sha2",
  "sha3",
  "subtle",
@@ -3625,9 +3626,9 @@ dependencies = [
 
 [[package]]
 name = "rayon"
-version = "1.8.0"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c27db03db7734835b3f53954b534c91069375ce6ccaa2e065441e07d9b6cdb1"
+checksum = "fa7237101a77a10773db45d62004a272517633fbcc3df19d96455ede1122e051"
 dependencies = [
  "either",
  "rayon-core",
@@ -3635,9 +3636,9 @@ dependencies = [
 
 [[package]]
 name = "rayon-core"
-version = "1.12.0"
+version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ce3fb6ad83f861aac485e76e1985cd109d9a3713802152be56c3b1f0e0658ed"
+checksum = "1465873a3dfdaa8ae7cb14b4383657caab0b3e8a0aa9ae8e04b044854c8dfce2"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",

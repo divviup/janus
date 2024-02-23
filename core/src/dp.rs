@@ -1,5 +1,3 @@
-#[cfg(feature = "test-util")]
-use crate::test_util::dummy_vdaf::Vdaf;
 use derivative::Derivative;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::traits::Fixed;
@@ -8,6 +6,8 @@ use prio::flp::{
     gadgets::{ParallelSumGadget, PolyEval},
     types::fixedpoint_l2::{compatible_float::CompatibleFloat, FixedPointBoundedL2VecSum},
 };
+#[cfg(feature = "test-util")]
+use prio::vdaf::dummy::Vdaf;
 use prio::{
     dp::{
         DifferentialPrivacyBudget, DifferentialPrivacyDistribution, DifferentialPrivacyStrategy,

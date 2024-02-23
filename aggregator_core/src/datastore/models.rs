@@ -299,7 +299,7 @@ where
 }
 
 #[cfg(feature = "test-util")]
-impl LeaderStoredReport<0, janus_core::test_util::dummy_vdaf::Vdaf> {
+impl LeaderStoredReport<0, prio::vdaf::dummy::Vdaf> {
     pub fn new_dummy(task_id: TaskId, when: Time) -> Self {
         use janus_messages::HpkeConfigId;
         use rand::random;
@@ -309,7 +309,7 @@ impl LeaderStoredReport<0, janus_core::test_util::dummy_vdaf::Vdaf> {
             ReportMetadata::new(random(), when),
             (),
             Vec::new(),
-            janus_core::test_util::dummy_vdaf::InputShare::default(),
+            prio::vdaf::dummy::InputShare::default(),
             HpkeCiphertext::new(
                 HpkeConfigId::from(13),
                 Vec::from("encapsulated_context_0"),

@@ -808,11 +808,7 @@ mod tests {
             HpkeApplicationInfo, HpkeKeypair, Label,
         },
         report_id::ReportIdChecksumExt,
-        test_util::{
-            dummy_vdaf::{self, AggregationParam, OutputShare},
-            install_test_trace_subscriber, run_vdaf,
-            runtime::TestRuntime,
-        },
+        test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntime},
         time::{Clock, DurationExt, MockClock, TimeExt},
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
     };
@@ -831,6 +827,7 @@ mod tests {
         idpf::IdpfInput,
         topology::ping_pong::PingPongMessage,
         vdaf::{
+            dummy,
             poplar1::{Poplar1, Poplar1AggregationParam},
             xof::XofTurboShake128,
             Aggregator,
@@ -1761,7 +1758,7 @@ mod tests {
     }
 
     #[tokio::test]
-    // Silence the unit_arg lint so that we can work with dummy_vdaf::Vdaf::{InputShare,
+    // Silence the unit_arg lint so that we can work with dummy::Vdaf::{InputShare,
     // Measurement} values (whose type is ()).
     #[allow(clippy::unit_arg, clippy::let_unit_value)]
     async fn aggregate_init() {
@@ -1771,15 +1768,15 @@ mod tests {
 
         let helper_task = task.helper_view().unwrap();
 
-        let vdaf = dummy_vdaf::Vdaf::new();
+        let vdaf = dummy::Vdaf::new(1);
         let verify_key: VerifyKey<0> = task.vdaf_verify_key().unwrap();
         let hpke_key = helper_task.current_hpke_key();
-        let measurement = ();
+        let measurement = 0;
         let prep_init_generator = PrepareInitGenerator::new(
             clock.clone(),
             helper_task.clone(),
             vdaf.clone(),
-            dummy_vdaf::AggregationParam(0),
+            dummy::AggregationParam(0),
         );
 
         // prepare_init_0 is a "happy path" report.
@@ -1838,7 +1835,7 @@ mod tests {
             break hpke_config;
         };
 
-        let report_share_3 = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+        let report_share_3 = generate_helper_report_share::<dummy::Vdaf>(
             *task.id(),
             prepare_init_3.report_share().metadata().clone(),
             &wrong_hpke_config,
@@ -1867,11 +1864,11 @@ mod tests {
         let transcript_5 = run_vdaf(
             &vdaf,
             verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(0),
+            &dummy::AggregationParam(0),
             report_metadata_5.id(),
             &measurement,
         );
-        let report_share_5 = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+        let report_share_5 = generate_helper_report_share::<dummy::Vdaf>(
             *task.id(),
             report_metadata_5,
             hpke_key.config(),
@@ -1897,7 +1894,7 @@ mod tests {
         let transcript_6 = run_vdaf(
             &vdaf,
             verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(0),
+            &dummy::AggregationParam(0),
             report_metadata_6.id(),
             &measurement,
         );
@@ -1927,11 +1924,11 @@ mod tests {
         let transcript_7 = run_vdaf(
             &vdaf,
             verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(0),
+            &dummy::AggregationParam(0),
             report_metadata_7.id(),
             &measurement,
         );
-        let report_share_7 = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+        let report_share_7 = generate_helper_report_share::<dummy::Vdaf>(
             *task.id(),
             report_metadata_7,
             hpke_key.config(),
@@ -1974,19 +1971,19 @@ mod tests {
                     let conflicting_aggregation_job = AggregationJob::new(
                         *task.id(),
                         random(),
-                        dummy_vdaf::AggregationParam(0),
+                        dummy::AggregationParam(0),
                         (),
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     );
-                    tx.put_aggregation_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                    tx.put_aggregation_job::<0, TimeInterval, dummy::Vdaf>(
                         &conflicting_aggregation_job,
                     )
                     .await
                     .unwrap();
-                    tx.put_report_aggregation::<0, dummy_vdaf::Vdaf>(&ReportAggregation::new(
+                    tx.put_report_aggregation::<0, dummy::Vdaf>(&ReportAggregation::new(
                         *task.id(),
                         *conflicting_aggregation_job.id(),
                         *report_share_4.metadata().id(),
@@ -2005,19 +2002,19 @@ mod tests {
                     let non_conflicting_aggregation_job = AggregationJob::new(
                         *task.id(),
                         random(),
-                        dummy_vdaf::AggregationParam(1),
+                        dummy::AggregationParam(1),
                         (),
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     );
-                    tx.put_aggregation_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                    tx.put_aggregation_job::<0, TimeInterval, dummy::Vdaf>(
                         &non_conflicting_aggregation_job,
                     )
                     .await
                     .unwrap();
-                    tx.put_report_aggregation::<0, dummy_vdaf::Vdaf>(&ReportAggregation::new(
+                    tx.put_report_aggregation::<0, dummy::Vdaf>(&ReportAggregation::new(
                         *task.id(),
                         *non_conflicting_aggregation_job.id(),
                         *report_share_8.metadata().id(),
@@ -2031,7 +2028,7 @@ mod tests {
 
                     // Put in an aggregate share job for the interval that report_share_5 falls into
                     // which should cause it to later fail to prepare.
-                    tx.put_aggregate_share_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                    tx.put_aggregate_share_job::<0, TimeInterval, dummy::Vdaf>(
                         &AggregateShareJob::new(
                             *task.id(),
                             Interval::new(
@@ -2039,8 +2036,8 @@ mod tests {
                                 *task.time_precision(),
                             )
                             .unwrap(),
-                            dummy_vdaf::AggregationParam(0),
-                            dummy_vdaf::AggregateShare(0),
+                            dummy::AggregationParam(0),
+                            dummy::AggregateShare(0),
                             1,
                             ReportIdChecksum::for_report_id(report_share_5.metadata().id()),
                         ),
@@ -2053,7 +2050,7 @@ mod tests {
             .await
             .unwrap();
 
-        let aggregation_param = dummy_vdaf::AggregationParam(0);
+        let aggregation_param = dummy::AggregationParam(0);
         let request = AggregationJobInitializeReq::new(
             aggregation_param.get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
@@ -2180,7 +2177,7 @@ mod tests {
                     let vdaf = vdaf.clone();
                     Box::pin(async move {
                         Ok((
-                            tx.get_aggregation_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            tx.get_aggregation_jobs_for_task::<0, TimeInterval, dummy::Vdaf>(
                                 task.id(),
                             )
                             .await?,
@@ -2243,17 +2240,17 @@ mod tests {
         let helper_task = task.helper_view().unwrap();
         datastore.put_aggregator_task(&helper_task).await.unwrap();
 
-        let vdaf = dummy_vdaf::Vdaf::new();
+        let vdaf = dummy::Vdaf::new(1);
         let prep_init_generator = PrepareInitGenerator::new(
             clock.clone(),
             helper_task.clone(),
             vdaf.clone(),
-            dummy_vdaf::AggregationParam(0),
+            dummy::AggregationParam(0),
         );
 
-        let (prepare_init, _) = prep_init_generator.next(&());
+        let (prepare_init, _) = prep_init_generator.next(&0);
 
-        let aggregation_param = dummy_vdaf::AggregationParam(0);
+        let aggregation_param = dummy::AggregationParam(0);
         let batch_id = random();
         let request = AggregationJobInitializeReq::new(
             aggregation_param.get_encoded().unwrap(),
@@ -2269,10 +2266,10 @@ mod tests {
                 let timestamp = *prepare_init.report_share().metadata().time();
                 Box::pin(async move {
                     let interval = Interval::new(timestamp, Duration::from_seconds(1)).unwrap();
-                    let batch = Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                    let batch = Batch::<0, FixedSize, dummy::Vdaf>::new(
                         *task.id(),
                         batch_id,
-                        AggregationParam(0),
+                        dummy::AggregationParam(0),
                         BatchState::Open,
                         0,
                         interval,
@@ -2282,18 +2279,17 @@ mod tests {
                     // Insert for all possible shards, since we non-deterministically assign shards
                     // to batches on insertion.
                     for shard in 0..BATCH_AGGREGATION_SHARD_COUNT {
-                        let batch_aggregation =
-                            BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
-                                *task.id(),
-                                batch_id,
-                                AggregationParam(0),
-                                shard,
-                                BatchAggregationState::Collected {
-                                    aggregate_share: Some(OutputShare().into()),
-                                    report_count: 1,
-                                    checksum: ReportIdChecksum::for_report_id(&random()),
-                                },
-                            );
+                        let batch_aggregation = BatchAggregation::<0, FixedSize, dummy::Vdaf>::new(
+                            *task.id(),
+                            batch_id,
+                            dummy::AggregationParam(0),
+                            shard,
+                            BatchAggregationState::Collected {
+                                aggregate_share: Some(dummy::OutputShare(0).into()),
+                                report_count: 1,
+                                checksum: ReportIdChecksum::for_report_id(&random()),
+                            },
+                        );
                         tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
                     }
 
@@ -2341,8 +2337,8 @@ mod tests {
 
         let helper_task = task.helper_view().unwrap();
         datastore.put_aggregator_task(&helper_task).await.unwrap();
-        let vdaf = dummy_vdaf::Vdaf::new();
-        let aggregation_param = dummy_vdaf::AggregationParam(0);
+        let vdaf = dummy::Vdaf::new(1);
+        let aggregation_param = dummy::AggregationParam(0);
         let prep_init_generator = PrepareInitGenerator::new(
             clock.clone(),
             helper_task.clone(),
@@ -2394,12 +2390,12 @@ mod tests {
 
         // This report was encrypted with a global HPKE config that has the same config
         // ID as the task's HPKE config.
-        let (prepare_init_same_id, transcript_same_id) = prep_init_generator.next(&());
+        let (prepare_init_same_id, transcript_same_id) = prep_init_generator.next(&0);
 
         // This report was encrypted with a global HPKE config that has the same config
         // ID as the task's HPKE config, but will fail to decrypt.
         let (prepare_init_same_id_corrupted, transcript_same_id_corrupted) =
-            prep_init_generator.next(&());
+            prep_init_generator.next(&0);
 
         let encrypted_input_share = prepare_init_same_id_corrupted
             .report_share()
@@ -2439,11 +2435,11 @@ mod tests {
         let transcript_different_id = run_vdaf(
             &vdaf,
             verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(0),
+            &dummy::AggregationParam(0),
             report_metadata_different_id.id(),
-            &(),
+            &0,
         );
-        let report_share_different_id = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+        let report_share_different_id = generate_helper_report_share::<dummy::Vdaf>(
             *task.id(),
             report_metadata_different_id,
             global_hpke_keypair_different_id.config(),
@@ -2471,11 +2467,11 @@ mod tests {
         let transcript_different_id_corrupted = run_vdaf(
             &vdaf,
             verify_key.as_bytes(),
-            &dummy_vdaf::AggregationParam(0),
+            &dummy::AggregationParam(0),
             report_metadata_different_id_corrupted.id(),
-            &(),
+            &0,
         );
-        let report_share_different_id_corrupted = generate_helper_report_share::<dummy_vdaf::Vdaf>(
+        let report_share_different_id_corrupted = generate_helper_report_share::<dummy::Vdaf>(
             *task.id(),
             report_metadata_different_id_corrupted.clone(),
             global_hpke_keypair_different_id.config(),
@@ -2509,7 +2505,7 @@ mod tests {
 
         let aggregation_job_id: AggregationJobId = random();
         let request = AggregationJobInitializeReq::new(
-            dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
+            dummy::AggregationParam(0).get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([
                 prepare_init_same_id.clone(),
@@ -2580,7 +2576,7 @@ mod tests {
     async fn aggregate_init_change_report_timestamp() {
         let test_case = setup_aggregate_init_test().await;
 
-        let other_aggregation_parameter = dummy_vdaf::AggregationParam(1);
+        let other_aggregation_parameter = dummy::AggregationParam(1);
         assert_ne!(test_case.aggregation_param, other_aggregation_parameter);
 
         // This report has the same ID as the previous one, but a different timestamp.
@@ -2597,7 +2593,7 @@ mod tests {
         );
         let (mutated_timestamp_prepare_init, _) = test_case
             .prepare_init_generator
-            .next_with_metadata(mutated_timestamp_report_metadata, &());
+            .next_with_metadata(mutated_timestamp_report_metadata, &0);
 
         // Send another aggregate job re-using the same report ID but with a different timestamp. It
         // should be flagged as a replay.
@@ -2666,15 +2662,15 @@ mod tests {
         let prep_init_generator = PrepareInitGenerator::new(
             clock.clone(),
             helper_task.clone(),
-            dummy_vdaf::Vdaf::new(),
-            dummy_vdaf::AggregationParam(0),
+            dummy::Vdaf::new(1),
+            dummy::AggregationParam(0),
         );
 
         datastore.put_aggregator_task(&helper_task).await.unwrap();
 
-        let (prepare_init, _) = prep_init_generator.next(&());
+        let (prepare_init, _) = prep_init_generator.next(&0);
         let request = AggregationJobInitializeReq::new(
-            dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
+            dummy::AggregationParam(0).get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([prepare_init.clone()]),
         );
@@ -2714,15 +2710,15 @@ mod tests {
         let prep_init_generator = PrepareInitGenerator::new(
             clock.clone(),
             helper_task.clone(),
-            dummy_vdaf::Vdaf::new(),
-            dummy_vdaf::AggregationParam(0),
+            dummy::Vdaf::new(1),
+            dummy::AggregationParam(0),
         );
 
         datastore.put_aggregator_task(&helper_task).await.unwrap();
 
-        let (prepare_init, _) = prep_init_generator.next(&());
+        let (prepare_init, _) = prep_init_generator.next(&0);
         let request = AggregationJobInitializeReq::new(
-            dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
+            dummy::AggregationParam(0).get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([prepare_init.clone()]),
         );
@@ -2761,16 +2757,16 @@ mod tests {
         let prep_init_generator = PrepareInitGenerator::new(
             clock.clone(),
             helper_task.clone(),
-            dummy_vdaf::Vdaf::new(),
-            dummy_vdaf::AggregationParam(0),
+            dummy::Vdaf::new(1),
+            dummy::AggregationParam(0),
         );
 
         datastore.put_aggregator_task(&helper_task).await.unwrap();
 
-        let (prepare_init, _) = prep_init_generator.next(&());
+        let (prepare_init, _) = prep_init_generator.next(&0);
 
         let request = AggregationJobInitializeReq::new(
-            dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
+            dummy::AggregationParam(0).get_encoded().unwrap(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([prepare_init.clone(), prepare_init]),
         );
@@ -4388,23 +4384,18 @@ mod tests {
                         ),
                     )
                     .await?;
-                    tx.put_aggregation_job(
-                        &AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                            *task.id(),
-                            aggregation_job_id,
-                            dummy_vdaf::AggregationParam(0),
-                            (),
-                            Interval::new(
-                                Time::from_seconds_since_epoch(0),
-                                Duration::from_seconds(1),
-                            )
+                    tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
+                        *task.id(),
+                        aggregation_job_id,
+                        dummy::AggregationParam(0),
+                        (),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
-                            AggregationJobState::InProgress,
-                            AggregationJobStep::from(0),
-                        ),
-                    )
+                        AggregationJobState::InProgress,
+                        AggregationJobStep::from(0),
+                    ))
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                    tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
                         *report_metadata.id(),
@@ -4458,9 +4449,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            dummy_vdaf::AggregationParam::default()
-                .get_encoded()
-                .unwrap(),
+            dummy::AggregationParam::default().get_encoded().unwrap(),
         );
 
         let mut test_conn = test_case
@@ -4493,9 +4482,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            dummy_vdaf::AggregationParam::default()
-                .get_encoded()
-                .unwrap(),
+            dummy::AggregationParam::default().get_encoded().unwrap(),
         );
 
         let mut test_conn = test_case
@@ -4527,7 +4514,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            // dummy_vdaf::AggregationParam is a tuple struct wrapping a u8, so this is not a valid
+            // dummy::AggregationParam is a tuple struct wrapping a u8, so this is not a valid
             // encoding of an aggregation parameter.
             Vec::from([0u8, 0u8]),
         );
@@ -4568,9 +4555,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            dummy_vdaf::AggregationParam::default()
-                .get_encoded()
-                .unwrap(),
+            dummy::AggregationParam::default().get_encoded().unwrap(),
         );
 
         let (header, value) = task.collector_auth_token().request_authentication();
@@ -4609,9 +4594,7 @@ mod tests {
         let collection_job_id: CollectionJobId = random();
         let req = CollectionReq::new(
             Query::new_time_interval(batch_interval),
-            dummy_vdaf::AggregationParam::default()
-                .get_encoded()
-                .unwrap(),
+            dummy::AggregationParam::default().get_encoded().unwrap(),
         );
 
         // Incorrect authentication token.
@@ -4683,9 +4666,7 @@ mod tests {
         let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
             Query::new_time_interval(batch_interval),
-            dummy_vdaf::AggregationParam::default()
-                .get_encoded()
-                .unwrap(),
+            dummy::AggregationParam::default().get_encoded().unwrap(),
         );
 
         let test_conn = test_case
@@ -4760,9 +4741,9 @@ mod tests {
         )
         .unwrap();
 
-        let aggregation_param = dummy_vdaf::AggregationParam::default();
-        let leader_aggregate_share = dummy_vdaf::AggregateShare(0);
-        let helper_aggregate_share = dummy_vdaf::AggregateShare(1);
+        let aggregation_param = dummy::AggregationParam::default();
+        let leader_aggregate_share = dummy::AggregateShare(0);
+        let helper_aggregate_share = dummy::AggregateShare(1);
 
         let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
@@ -4776,7 +4757,7 @@ mod tests {
                 let task_id = *test_case.task.id();
 
                 Box::pin(async move {
-                    tx.put_batch(&Batch::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                    tx.put_batch(&Batch::<0, TimeInterval, dummy::Vdaf>::new(
                         task_id,
                         batch_interval,
                         aggregation_param,
@@ -4795,7 +4776,7 @@ mod tests {
             .put_collection_job(&collection_job_id, &request)
             .await;
 
-        let want_collection_job = CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+        let want_collection_job = CollectionJob::<0, TimeInterval, dummy::Vdaf>::new(
             *test_case.task.id(),
             collection_job_id,
             Query::new_time_interval(batch_interval),
@@ -4803,7 +4784,7 @@ mod tests {
             batch_interval,
             CollectionJobState::Start,
         );
-        let want_batches = Vec::from([Batch::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+        let want_batches = Vec::from([Batch::<0, TimeInterval, dummy::Vdaf>::new(
             *test_case.task.id(),
             batch_interval,
             aggregation_param,
@@ -4819,7 +4800,7 @@ mod tests {
 
                 Box::pin(async move {
                     let got_collection_job = tx
-                        .get_collection_job(&dummy_vdaf::Vdaf::new(), &task_id, &collection_job_id)
+                        .get_collection_job(&dummy::Vdaf::new(1), &task_id, &collection_job_id)
                         .await?
                         .unwrap();
                     let got_batches = tx.get_batches_for_task(&task_id).await?;
@@ -4864,8 +4845,8 @@ mod tests {
                     .unwrap();
 
                     let collection_job = tx
-                        .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                            &dummy_vdaf::Vdaf::new(),
+                        .get_collection_job::<0, TimeInterval, dummy::Vdaf>(
+                            &dummy::Vdaf::new(1),
                             task.id(),
                             &collection_job_id,
                         )
@@ -4878,7 +4859,7 @@ mod tests {
                             leader_aggregate_share,
                         });
 
-                    tx.update_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&collection_job)
+                    tx.update_collection_job::<0, TimeInterval, dummy::Vdaf>(&collection_job)
                         .await
                         .unwrap();
                     Ok(())
@@ -4914,8 +4895,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             leader_aggregate_share,
-            dummy_vdaf::AggregateShare::get_decoded(decrypted_leader_aggregate_share.as_ref())
-                .unwrap()
+            dummy::AggregateShare::get_decoded(decrypted_leader_aggregate_share.as_ref()).unwrap()
         );
 
         let decrypted_helper_aggregate_share = hpke::open(
@@ -4933,8 +4913,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             helper_aggregate_share,
-            dummy_vdaf::AggregateShare::get_decoded(decrypted_helper_aggregate_share.as_ref())
-                .unwrap()
+            dummy::AggregateShare::get_decoded(decrypted_helper_aggregate_share.as_ref()).unwrap()
         );
     }
 
@@ -4973,17 +4952,17 @@ mod tests {
                 let task = test_case.task.clone();
                 Box::pin(async move {
                     tx.put_batch_aggregation(
-                        &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                        &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             Interval::new(
                                 Time::from_seconds_since_epoch(0),
                                 *task.time_precision(),
                             )
                             .unwrap(),
-                            dummy_vdaf::AggregationParam(0),
+                            dummy::AggregationParam(0),
                             0,
                             BatchAggregationState::Aggregating {
-                                aggregate_share: Some(dummy_vdaf::AggregateShare(0)),
+                                aggregate_share: Some(dummy::AggregateShare(0)),
                                 report_count: 10,
                                 checksum: ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                             },
@@ -4998,7 +4977,7 @@ mod tests {
         // Sending this request will consume a query for [0, time_precision).
         let request = CollectionReq::new(
             Query::new_time_interval(interval),
-            dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
+            dummy::AggregationParam(0).get_encoded().unwrap(),
         );
 
         let test_conn = test_case.put_collection_job(&random(), &request).await;
@@ -5008,7 +4987,7 @@ mod tests {
         // This request will not be allowed due to the query count already being consumed.
         let invalid_request = CollectionReq::new(
             Query::new_time_interval(interval),
-            dummy_vdaf::AggregationParam(1).get_encoded().unwrap(),
+            dummy::AggregationParam(1).get_encoded().unwrap(),
         );
 
         let mut test_conn = test_case
@@ -5041,13 +5020,13 @@ mod tests {
                 let task = test_case.task.clone();
                 Box::pin(async move {
                     tx.put_batch_aggregation(
-                        &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                        &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             interval,
-                            dummy_vdaf::AggregationParam(0),
+                            dummy::AggregationParam(0),
                             0,
                             BatchAggregationState::Aggregating {
-                                aggregate_share: Some(dummy_vdaf::AggregateShare(0)),
+                                aggregate_share: Some(dummy::AggregateShare(0)),
                                 report_count: 10,
                                 checksum: ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                             },
@@ -5070,7 +5049,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
+            dummy::AggregationParam(0).get_encoded().unwrap(),
         );
 
         let test_conn = test_case.put_collection_job(&random(), &request).await;
@@ -5080,7 +5059,7 @@ mod tests {
         // This request will not be allowed due to overlapping with the previous request.
         let invalid_request = CollectionReq::new(
             Query::new_time_interval(interval),
-            dummy_vdaf::AggregationParam(1).get_encoded().unwrap(),
+            dummy::AggregationParam(1).get_encoded().unwrap(),
         );
 
         let mut test_conn = test_case
@@ -5130,9 +5109,7 @@ mod tests {
         // Create a collection job
         let request = CollectionReq::new(
             Query::new_time_interval(batch_interval),
-            dummy_vdaf::AggregationParam::default()
-                .get_encoded()
-                .unwrap(),
+            dummy::AggregationParam::default().get_encoded().unwrap(),
         );
 
         let test_conn = test_case
@@ -5295,7 +5272,7 @@ mod tests {
             BatchSelector::new_time_interval(
                 Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap(),
             ),
-            dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
+            dummy::AggregationParam(0).get_encoded().unwrap(),
             0,
             ReportIdChecksum::default(),
         );
@@ -5347,11 +5324,10 @@ mod tests {
             .run_unnamed_tx(|tx| {
                 let task = helper_task.clone();
                 Box::pin(async move {
-                    for aggregation_param in [
-                        dummy_vdaf::AggregationParam(0),
-                        dummy_vdaf::AggregationParam(1),
-                    ] {
-                        tx.put_batch(&Batch::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                    for aggregation_param in
+                        [dummy::AggregationParam(0), dummy::AggregationParam(1)]
+                    {
+                        tx.put_batch(&Batch::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             interval_1,
                             aggregation_param,
@@ -5361,25 +5337,23 @@ mod tests {
                         ))
                         .await
                         .unwrap();
-                        tx.put_batch_aggregation(&BatchAggregation::<
-                            0,
-                            TimeInterval,
-                            dummy_vdaf::Vdaf,
-                        >::new(
-                            *task.id(),
-                            interval_1,
-                            aggregation_param,
-                            0,
-                            BatchAggregationState::Aggregating {
-                                aggregate_share: Some(dummy_vdaf::AggregateShare(64)),
-                                report_count: interval_1_report_count,
-                                checksum: interval_1_checksum,
-                            },
-                        ))
+                        tx.put_batch_aggregation(
+                            &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                                *task.id(),
+                                interval_1,
+                                aggregation_param,
+                                0,
+                                BatchAggregationState::Aggregating {
+                                    aggregate_share: Some(dummy::AggregateShare(64)),
+                                    report_count: interval_1_report_count,
+                                    checksum: interval_1_checksum,
+                                },
+                            ),
+                        )
                         .await
                         .unwrap();
 
-                        tx.put_batch(&Batch::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                        tx.put_batch(&Batch::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             interval_2,
                             aggregation_param,
@@ -5389,25 +5363,23 @@ mod tests {
                         ))
                         .await
                         .unwrap();
-                        tx.put_batch_aggregation(&BatchAggregation::<
-                            0,
-                            TimeInterval,
-                            dummy_vdaf::Vdaf,
-                        >::new(
-                            *task.id(),
-                            interval_2,
-                            aggregation_param,
-                            0,
-                            BatchAggregationState::Aggregating {
-                                aggregate_share: Some(dummy_vdaf::AggregateShare(128)),
-                                report_count: interval_2_report_count,
-                                checksum: interval_2_checksum,
-                            },
-                        ))
+                        tx.put_batch_aggregation(
+                            &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                                *task.id(),
+                                interval_2,
+                                aggregation_param,
+                                0,
+                                BatchAggregationState::Aggregating {
+                                    aggregate_share: Some(dummy::AggregateShare(128)),
+                                    report_count: interval_2_report_count,
+                                    checksum: interval_2_checksum,
+                                },
+                            ),
+                        )
                         .await
                         .unwrap();
 
-                        tx.put_batch(&Batch::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                        tx.put_batch(&Batch::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             interval_3,
                             aggregation_param,
@@ -5417,25 +5389,23 @@ mod tests {
                         ))
                         .await
                         .unwrap();
-                        tx.put_batch_aggregation(&BatchAggregation::<
-                            0,
-                            TimeInterval,
-                            dummy_vdaf::Vdaf,
-                        >::new(
-                            *task.id(),
-                            interval_3,
-                            aggregation_param,
-                            0,
-                            BatchAggregationState::Aggregating {
-                                aggregate_share: Some(dummy_vdaf::AggregateShare(256)),
-                                report_count: interval_3_report_count,
-                                checksum: interval_3_checksum,
-                            },
-                        ))
+                        tx.put_batch_aggregation(
+                            &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                                *task.id(),
+                                interval_3,
+                                aggregation_param,
+                                0,
+                                BatchAggregationState::Aggregating {
+                                    aggregate_share: Some(dummy::AggregateShare(256)),
+                                    report_count: interval_3_report_count,
+                                    checksum: interval_3_checksum,
+                                },
+                            ),
+                        )
                         .await
                         .unwrap();
 
-                        tx.put_batch(&Batch::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                        tx.put_batch(&Batch::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             interval_4,
                             aggregation_param,
@@ -5445,21 +5415,19 @@ mod tests {
                         ))
                         .await
                         .unwrap();
-                        tx.put_batch_aggregation(&BatchAggregation::<
-                            0,
-                            TimeInterval,
-                            dummy_vdaf::Vdaf,
-                        >::new(
-                            *task.id(),
-                            interval_4,
-                            aggregation_param,
-                            0,
-                            BatchAggregationState::Aggregating {
-                                aggregate_share: Some(dummy_vdaf::AggregateShare(512)),
-                                report_count: interval_4_report_count,
-                                checksum: interval_4_checksum,
-                            },
-                        ))
+                        tx.put_batch_aggregation(
+                            &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
+                                *task.id(),
+                                interval_4,
+                                aggregation_param,
+                                0,
+                                BatchAggregationState::Aggregating {
+                                    aggregate_share: Some(dummy::AggregateShare(512)),
+                                    report_count: interval_4_report_count,
+                                    checksum: interval_4_checksum,
+                                },
+                            ),
+                        )
                         .await
                         .unwrap();
                     }
@@ -5479,7 +5447,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
+            dummy::AggregationParam(0).get_encoded().unwrap(),
             5,
             ReportIdChecksum::default(),
         );
@@ -5523,7 +5491,7 @@ mod tests {
                         )
                         .unwrap(),
                     ),
-                    dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
+                    dummy::AggregationParam(0).get_encoded().unwrap(),
                     10,
                     ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                 ),
@@ -5540,7 +5508,7 @@ mod tests {
                         )
                         .unwrap(),
                     ),
-                    dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
+                    dummy::AggregationParam(0).get_encoded().unwrap(),
                     20,
                     ReportIdChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
                 ),
@@ -5600,11 +5568,11 @@ mod tests {
                         )
                         .unwrap(),
                     ),
-                    dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
+                    dummy::AggregationParam(0).get_encoded().unwrap(),
                     10,
                     ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
                 ),
-                dummy_vdaf::AggregateShare(64 + 128),
+                dummy::AggregateShare(64 + 128),
             ),
             (
                 "third and fourth batches",
@@ -5616,12 +5584,12 @@ mod tests {
                         )
                         .unwrap(),
                     ),
-                    dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
+                    dummy::AggregationParam(0).get_encoded().unwrap(),
                     10,
                     ReportIdChecksum::get_decoded(&[8 ^ 4; 32]).unwrap(),
                 ),
                 // Should get sum over the third and fourth batches
-                dummy_vdaf::AggregateShare(256 + 512),
+                dummy::AggregateShare(256 + 512),
             ),
         ] {
             // Request the aggregate share multiple times. If the request parameters don't change,
@@ -5660,7 +5628,7 @@ mod tests {
                     aggregate_share_resp.encrypted_aggregate_share(),
                     &AggregateShareAad::new(
                         *task.id(),
-                        dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
+                        dummy::AggregationParam(0).get_encoded().unwrap(),
                         request.batch_selector().clone(),
                     )
                     .get_encoded()
@@ -5670,7 +5638,7 @@ mod tests {
 
                 // Should get the sum over the first and second aggregate shares
                 let decoded_aggregate_share =
-                    dummy_vdaf::AggregateShare::get_decoded(aggregate_share.as_ref()).unwrap();
+                    dummy::AggregateShare::get_decoded(aggregate_share.as_ref()).unwrap();
                 assert_eq!(
                     decoded_aggregate_share, expected_result,
                     "test case: {label:?}, iteration: {iteration}"
@@ -5692,11 +5660,11 @@ mod tests {
                                     let task_id = *task.id();
 
                                     async move {
-                                    tx.get_batch_aggregations_for_batch::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                                        &dummy_vdaf::Vdaf::new(),
+                                    tx.get_batch_aggregations_for_batch::<0, TimeInterval, dummy::Vdaf>(
+                                        &dummy::Vdaf::new(1),
                                         &task_id,
                                         &batch_identifier,
-                                        &dummy_vdaf::AggregationParam(0),
+                                        &dummy::AggregationParam(0),
                                     ).await
                                 }}),
                             )
@@ -5729,7 +5697,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            dummy_vdaf::AggregationParam(0).get_encoded().unwrap(),
+            dummy::AggregationParam(0).get_encoded().unwrap(),
             20,
             ReportIdChecksum::get_decoded(&[8 ^ 4 ^ 3 ^ 2; 32]).unwrap(),
         );
@@ -5765,7 +5733,7 @@ mod tests {
                     )
                     .unwrap(),
                 ),
-                dummy_vdaf::AggregationParam(1).get_encoded().unwrap(),
+                dummy::AggregationParam(1).get_encoded().unwrap(),
                 10,
                 ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
             ),
@@ -5777,7 +5745,7 @@ mod tests {
                     )
                     .unwrap(),
                 ),
-                dummy_vdaf::AggregationParam(1).get_encoded().unwrap(),
+                dummy::AggregationParam(1).get_encoded().unwrap(),
                 10,
                 ReportIdChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
             ),

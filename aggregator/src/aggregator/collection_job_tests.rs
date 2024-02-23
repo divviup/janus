@@ -25,11 +25,7 @@ use janus_aggregator_core::{
 use janus_core::{
     auth_tokens::AuthenticationToken,
     hpke::{self, HpkeApplicationInfo, Label},
-    test_util::{
-        dummy_vdaf::{self, AggregationParam},
-        install_test_trace_subscriber,
-        runtime::TestRuntime,
-    },
+    test_util::{install_test_trace_subscriber, runtime::TestRuntime},
     time::{Clock, IntervalExt, MockClock},
     vdaf::VdafInstance,
 };
@@ -38,7 +34,10 @@ use janus_messages::{
     AggregateShareAad, AggregationJobStep, BatchId, BatchSelector, Collection, CollectionJobId,
     CollectionReq, Duration, FixedSizeQuery, Interval, Query, ReportIdChecksum, Role, Time,
 };
-use prio::codec::{Decode, Encode};
+use prio::{
+    codec::{Decode, Encode},
+    vdaf::dummy,
+};
 use rand::random;
 use serde_json::json;
 use std::{collections::HashSet, sync::Arc};
@@ -192,10 +191,10 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
             Box::pin(async move {
                 for batch_id in [batch_id_1, batch_id_2] {
                     let aggregation_job_id = random();
-                    tx.put_aggregation_job::<0, FixedSize, dummy_vdaf::Vdaf>(&AggregationJob::new(
+                    tx.put_aggregation_job::<0, FixedSize, dummy::Vdaf>(&AggregationJob::new(
                         *task.id(),
                         aggregation_job_id,
-                        AggregationParam::default(),
+                        dummy::AggregationParam::default(),
                         batch_id,
                         interval,
                         AggregationJobState::Finished,
@@ -206,11 +205,11 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
 
                     for ord in 0..task.min_batch_size() + 1 {
                         let report = LeaderStoredReport::new_dummy(*task.id(), time);
-                        tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report)
+                        tx.put_client_report(&dummy::Vdaf::new(1), &report)
                             .await
                             .unwrap();
 
-                        tx.put_report_aggregation::<0, dummy_vdaf::Vdaf>(&ReportAggregation::new(
+                        tx.put_report_aggregation::<0, dummy::Vdaf>(&ReportAggregation::new(
                             *task.id(),
                             aggregation_job_id,
                             *report.metadata().id(),
@@ -223,26 +222,24 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
                         .unwrap();
                     }
 
-                    tx.put_batch_aggregation::<0, FixedSize, dummy_vdaf::Vdaf>(
-                        &BatchAggregation::new(
-                            *task.id(),
-                            batch_id,
-                            AggregationParam::default(),
-                            0,
-                            BatchAggregationState::Aggregating {
-                                aggregate_share: Some(dummy_vdaf::AggregateShare(0)),
-                                report_count: task.min_batch_size() + 1,
-                                checksum: ReportIdChecksum::default(),
-                            },
-                        ),
-                    )
+                    tx.put_batch_aggregation::<0, FixedSize, dummy::Vdaf>(&BatchAggregation::new(
+                        *task.id(),
+                        batch_id,
+                        dummy::AggregationParam::default(),
+                        0,
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: Some(dummy::AggregateShare(0)),
+                            report_count: task.min_batch_size() + 1,
+                            checksum: ReportIdChecksum::default(),
+                        },
+                    ))
                     .await
                     .unwrap();
 
-                    tx.put_batch::<0, FixedSize, dummy_vdaf::Vdaf>(&Batch::new(
+                    tx.put_batch::<0, FixedSize, dummy::Vdaf>(&Batch::new(
                         *task.id(),
                         batch_id,
-                        AggregationParam::default(),
+                        dummy::AggregationParam::default(),
                         BatchState::Closed,
                         0,
                         interval,
@@ -274,10 +271,10 @@ async fn collection_job_success_fixed_size() {
 
     let mut saw_batch_id_1 = false;
     let mut saw_batch_id_2 = false;
-    let vdaf = dummy_vdaf::Vdaf::new();
-    let leader_aggregate_share = dummy_vdaf::AggregateShare(0);
-    let helper_aggregate_share = dummy_vdaf::AggregateShare(1);
-    let aggregation_param = dummy_vdaf::AggregationParam::default();
+    let vdaf = dummy::Vdaf::new(1);
+    let leader_aggregate_share = dummy::AggregateShare(0);
+    let helper_aggregate_share = dummy::AggregateShare(1);
+    let aggregation_param = dummy::AggregationParam::default();
     let request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
         aggregation_param.get_encoded().unwrap(),
@@ -303,7 +300,7 @@ async fn collection_job_success_fixed_size() {
                 let helper_aggregate_share_bytes = helper_aggregate_share.get_encoded().unwrap();
                 Box::pin(async move {
                     let collection_job = tx
-                        .get_collection_job::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        .get_collection_job::<0, FixedSize, dummy::Vdaf>(
                             &vdaf,
                             task.id(),
                             &collection_job_id,
@@ -331,7 +328,7 @@ async fn collection_job_success_fixed_size() {
                     )
                     .unwrap();
 
-                    tx.update_collection_job::<0, FixedSize, dummy_vdaf::Vdaf>(
+                    tx.update_collection_job::<0, FixedSize, dummy::Vdaf>(
                         &collection_job.with_state(CollectionJobState::Finished {
                             report_count: task.min_batch_size() + 1,
                             encrypted_helper_aggregate_share,
@@ -384,8 +381,7 @@ async fn collection_job_success_fixed_size() {
         .unwrap();
         assert_eq!(
             leader_aggregate_share,
-            dummy_vdaf::AggregateShare::get_decoded(decrypted_leader_aggregate_share.as_ref())
-                .unwrap()
+            dummy::AggregateShare::get_decoded(decrypted_leader_aggregate_share.as_ref()).unwrap()
         );
 
         let decrypted_helper_aggregate_share = hpke::open(
@@ -403,8 +399,7 @@ async fn collection_job_success_fixed_size() {
         .unwrap();
         assert_eq!(
             helper_aggregate_share,
-            dummy_vdaf::AggregateShare::get_decoded(decrypted_helper_aggregate_share.as_ref())
-                .unwrap()
+            dummy::AggregateShare::get_decoded(decrypted_helper_aggregate_share.as_ref()).unwrap()
         );
     }
 
@@ -442,7 +437,7 @@ async fn collection_job_put_idempotence_time_interval() {
             )
             .unwrap(),
         ),
-        AggregationParam::default().get_encoded().unwrap(),
+        dummy::AggregationParam::default().get_encoded().unwrap(),
     );
 
     for _ in 0..2 {
@@ -457,12 +452,10 @@ async fn collection_job_put_idempotence_time_interval() {
         .datastore
         .run_unnamed_tx(|tx| {
             let task_id = *test_case.task.id();
-            let vdaf = dummy_vdaf::Vdaf::new();
+            let vdaf = dummy::Vdaf::new(1);
             Box::pin(async move {
                 let collection_jobs = tx
-                    .get_collection_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        &vdaf, &task_id,
-                    )
+                    .get_collection_jobs_for_task::<0, TimeInterval, dummy::Vdaf>(&vdaf, &task_id)
                     .await
                     .unwrap();
                 assert_eq!(collection_jobs.len(), 1);
@@ -493,7 +486,7 @@ async fn collection_job_put_idempotence_time_interval_varied_collection_id() {
             )
             .unwrap(),
         ),
-        AggregationParam::default().get_encoded().unwrap(),
+        dummy::AggregationParam::default().get_encoded().unwrap(),
     );
 
     for collection_job_id in &collection_job_ids {
@@ -511,8 +504,8 @@ async fn collection_job_put_idempotence_time_interval_varied_collection_id() {
 
             Box::pin(async move {
                 let collection_jobs = tx
-                    .get_collection_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        &dummy_vdaf::Vdaf::new(),
+                    .get_collection_jobs_for_task::<0, TimeInterval, dummy::Vdaf>(
+                        &dummy::Vdaf::new(1),
                         &task_id,
                     )
                     .await
@@ -547,7 +540,7 @@ async fn collection_job_put_idempotence_fixed_size_varied_collection_id() {
     let collection_job_ids = HashSet::from(random::<[CollectionJobId; 2]>());
     let request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
-        AggregationParam::default().get_encoded().unwrap(),
+        dummy::AggregationParam::default().get_encoded().unwrap(),
     );
 
     for collection_job_id in &collection_job_ids {
@@ -565,8 +558,8 @@ async fn collection_job_put_idempotence_fixed_size_varied_collection_id() {
 
             Box::pin(async move {
                 let collection_jobs = tx
-                    .get_collection_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
-                        &dummy_vdaf::Vdaf::new(),
+                    .get_collection_jobs_for_task::<0, FixedSize, dummy::Vdaf>(
+                        &dummy::Vdaf::new(1),
                         &task_id,
                     )
                     .await
@@ -601,7 +594,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
             )
             .unwrap(),
         ),
-        AggregationParam::default().get_encoded().unwrap(),
+        dummy::AggregationParam::default().get_encoded().unwrap(),
     );
 
     let response = test_case
@@ -617,7 +610,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_time_interval() {
             )
             .unwrap(),
         ),
-        AggregationParam::default().get_encoded().unwrap(),
+        dummy::AggregationParam::default().get_encoded().unwrap(),
     );
 
     let response = test_case
@@ -639,7 +632,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param()
             )
             .unwrap(),
         ),
-        AggregationParam(0).get_encoded().unwrap(),
+        dummy::AggregationParam(0).get_encoded().unwrap(),
     );
 
     let response = test_case
@@ -655,7 +648,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param()
             )
             .unwrap(),
         ),
-        AggregationParam(1).get_encoded().unwrap(),
+        dummy::AggregationParam(1).get_encoded().unwrap(),
     );
 
     let response = test_case
@@ -672,7 +665,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch() {
     let collection_job_id = random();
     let request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
-        AggregationParam(0).get_encoded().unwrap(),
+        dummy::AggregationParam(0).get_encoded().unwrap(),
     );
     let mut seen_batch_id = None;
 
@@ -690,11 +683,9 @@ async fn collection_job_put_idempotence_fixed_size_current_batch() {
             .run_unnamed_tx(|tx| {
                 let task_id = *test_case.task.id();
                 Box::pin(async move {
-                    let vdaf = dummy_vdaf::Vdaf::new();
+                    let vdaf = dummy::Vdaf::new(1);
                     let collection_jobs = tx
-                        .get_collection_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
-                            &vdaf, &task_id,
-                        )
+                        .get_collection_jobs_for_task::<0, FixedSize, dummy::Vdaf>(&vdaf, &task_id)
                         .await
                         .unwrap();
                     assert_eq!(collection_jobs.len(), 1);
@@ -723,7 +714,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch_mutate_aggregat
     let collection_job_id = random();
     let request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
-        AggregationParam(0).get_encoded().unwrap(),
+        dummy::AggregationParam(0).get_encoded().unwrap(),
     );
 
     let response = test_case
@@ -734,7 +725,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch_mutate_aggregat
 
     let mutated_request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
-        AggregationParam(1).get_encoded().unwrap(),
+        dummy::AggregationParam(1).get_encoded().unwrap(),
     );
 
     let response = test_case
@@ -752,7 +743,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch_no_extra_report
     let collection_job_id_2 = random();
     let request = Arc::new(CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
-        AggregationParam(0).get_encoded().unwrap(),
+        dummy::AggregationParam(0).get_encoded().unwrap(),
     ));
 
     // Create the first collection job.
@@ -806,10 +797,10 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id() {
         .run_unnamed_tx(|tx| {
             let task_id = *test_case.task.id();
             Box::pin(async move {
-                tx.put_batch(&Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                tx.put_batch(&Batch::<0, FixedSize, dummy::Vdaf>::new(
                     task_id,
                     batch_id,
-                    AggregationParam(0),
+                    dummy::AggregationParam(0),
                     BatchState::Closed,
                     0,
                     Interval::new(
@@ -828,7 +819,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id() {
 
     let request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
-        AggregationParam(0).get_encoded().unwrap(),
+        dummy::AggregationParam(0).get_encoded().unwrap(),
     );
 
     for _ in 0..2 {
@@ -861,10 +852,10 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_batch_id()
             let task_id = *test_case.task.id();
             Box::pin(async move {
                 for batch_id in [first_batch_id, second_batch_id] {
-                    tx.put_batch(&Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                    tx.put_batch(&Batch::<0, FixedSize, dummy::Vdaf>::new(
                         task_id,
                         batch_id,
-                        AggregationParam(0),
+                        dummy::AggregationParam(0),
                         BatchState::Closed,
                         0,
                         Interval::new(
@@ -889,7 +880,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_batch_id()
                 Query::new_fixed_size(FixedSizeQuery::ByBatchId {
                     batch_id: first_batch_id,
                 }),
-                AggregationParam(0).get_encoded().unwrap(),
+                dummy::AggregationParam(0).get_encoded().unwrap(),
             ),
         )
         .await;
@@ -902,7 +893,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_batch_id()
                 Query::new_fixed_size(FixedSizeQuery::ByBatchId {
                     batch_id: second_batch_id,
                 }),
-                AggregationParam(0).get_encoded().unwrap(),
+                dummy::AggregationParam(0).get_encoded().unwrap(),
             ),
         )
         .await;
@@ -922,8 +913,8 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_aggregatio
 
     let collection_job_id = random();
     let batch_id = random();
-    let first_aggregation_param = AggregationParam(0);
-    let second_aggregation_param = AggregationParam(1);
+    let first_aggregation_param = dummy::AggregationParam(0);
+    let second_aggregation_param = dummy::AggregationParam(1);
 
     test_case
         .datastore
@@ -931,7 +922,7 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_aggregatio
             let task_id = *test_case.task.id();
             Box::pin(async move {
                 for aggregation_param in [first_aggregation_param, second_aggregation_param] {
-                    tx.put_batch(&Batch::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                    tx.put_batch(&Batch::<0, FixedSize, dummy::Vdaf>::new(
                         task_id,
                         batch_id,
                         aggregation_param,
