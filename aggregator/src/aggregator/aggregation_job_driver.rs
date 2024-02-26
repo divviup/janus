@@ -1,7 +1,7 @@
 use super::{error::handle_ping_pong_error, Error};
 use crate::aggregator::{
     accumulator::Accumulator, aggregate_step_failure_counter,
-    aggregation_job_writer::AggregationJobWriter, http_handlers::AGGREGATION_JOB_ROUTE,
+    aggregation_job_writer::UpdatedAggregationJobWriter, http_handlers::AGGREGATION_JOB_ROUTE,
     query_type::CollectableQueryType, send_request_to_helper, RequestBody,
 };
 use anyhow::{anyhow, Result};
@@ -757,7 +757,7 @@ where
         }
 
         // Write everything back to storage.
-        let mut aggregation_job_writer = AggregationJobWriter::new(Arc::clone(&task));
+        let mut aggregation_job_writer = UpdatedAggregationJobWriter::new(Arc::clone(&task));
         let new_step = aggregation_job.step().increment();
         aggregation_job_writer.update(
             aggregation_job.with_step(new_step),
@@ -894,7 +894,8 @@ where
                         )
                         .await?;
 
-                    let mut aggregation_job_writer = AggregationJobWriter::new(Arc::new(task));
+                    let mut aggregation_job_writer =
+                        UpdatedAggregationJobWriter::new(Arc::new(task));
                     aggregation_job_writer.update(aggregation_job, report_aggregations)?;
 
                     try_join!(
