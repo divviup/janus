@@ -1067,7 +1067,7 @@ pub enum ReportAggregationMetadataState {
 /// Metadata from the state of a single client report's ongoing aggregation. This is like
 /// [`ReportAggregation`], but omits the report aggregation state and report shares.
 ///
-/// This is only used with report aggregations in the `StartLeader` state.
+/// This is only used with report aggregations in the `StartLeader` or `Failed` states.
 #[derive(Clone, Debug)]
 pub struct ReportAggregationMetadata {
     task_id: TaskId,
