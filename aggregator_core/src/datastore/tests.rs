@@ -2568,7 +2568,7 @@ async fn create_report_aggregation_from_client_reports_table(
                     0,
                     ReportAggregationMetadataState::Start,
                 );
-                tx.create_leader_report_aggregation(&report_aggregation_metadata)
+                tx.put_leader_report_aggregation(&report_aggregation_metadata)
                     .await
                     .unwrap();
 

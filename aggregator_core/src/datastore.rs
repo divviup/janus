@@ -2367,7 +2367,7 @@ impl<C: Clock> Transaction<'_, C> {
     ///
     /// Report shares are copied directly from the `client_reports` table.
     #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
-    pub async fn create_leader_report_aggregation(
+    pub async fn put_leader_report_aggregation(
         &self,
         report_aggregation_metadata: &ReportAggregationMetadata,
     ) -> Result<(), Error> {

@@ -76,7 +76,7 @@ where
         vdaf: Arc<A>,
     ) -> Result<(), Error> {
         self.updates
-            .write(tx, vdaf, NewAggregationJobBatchUpdate)
+            .write::<C, NewAggregationJobBatchUpdate>(tx, vdaf)
             .await?;
         Ok(())
     }
@@ -88,7 +88,6 @@ struct NewAggregationJobBatchUpdate;
 
 impl BatchUpdateCallback for NewAggregationJobBatchUpdate {
     fn update_batch<'a, const SEED_SIZE: usize, Q, A, RA>(
-        &self,
         batch: Batch<SEED_SIZE, Q, A>,
         aggregation_jobs: impl Iterator<
             Item = (
@@ -122,8 +121,8 @@ impl BatchUpdateCallback for NewAggregationJobBatchUpdate {
             .with_client_timestamp_interval(client_timestamp_interval))
     }
 
-    fn creating_aggregation_jobs(&self) -> bool {
-        true
+    fn write_type() -> AggregationJobWriteType {
+        AggregationJobWriteType::Create
     }
 }
 
@@ -180,7 +179,7 @@ where
         vdaf: Arc<A>,
     ) -> Result<HashSet<ReportId>, Error> {
         self.updates
-            .write(tx, vdaf, UpdatedAggregationJobBatchUpdate)
+            .write::<C, UpdatedAggregationJobBatchUpdate>(tx, vdaf)
             .await
     }
 }
@@ -191,7 +190,6 @@ struct UpdatedAggregationJobBatchUpdate;
 
 impl BatchUpdateCallback for UpdatedAggregationJobBatchUpdate {
     fn update_batch<'a, const SEED_SIZE: usize, Q, A, RA>(
-        &self,
         batch: Batch<SEED_SIZE, Q, A>,
         aggregation_jobs: impl Iterator<
             Item = (
@@ -223,8 +221,8 @@ impl BatchUpdateCallback for UpdatedAggregationJobBatchUpdate {
         Ok(batch.with_outstanding_aggregation_jobs(outstanding_aggregation_jobs))
     }
 
-    fn creating_aggregation_jobs(&self) -> bool {
-        false
+    fn write_type() -> AggregationJobWriteType {
+        AggregationJobWriteType::Update
     }
 }
 
@@ -358,17 +356,17 @@ where
 
     /// Writes all queued aggregation job updates to the datastore. Returns report IDs of reports in
     /// batches that were already collected.
-    async fn write<C>(
+    async fn write<C, BUC>(
         &self,
         tx: &Transaction<'_, C>,
         vdaf: Arc<A>,
-        batch_update_callback: impl BatchUpdateCallback,
     ) -> Result<HashSet<ReportId>, Error>
     where
         C: Clock,
         A: Send + Sync,
         A::AggregationParam: PartialEq + Eq,
         A::PrepareState: Encode,
+        BUC: BatchUpdateCallback,
     {
         let aggregation_parameter = if let Some(agg_param) = self.aggregation_parameter().as_ref() {
             agg_param
@@ -383,14 +381,13 @@ where
 
         indexed.update_aggregation_job_state_from_ra_states();
 
-        let creating_aggregation_jobs = batch_update_callback.creating_aggregation_jobs();
-        indexed.update_batches(batch_update_callback, tx.clock(), creating_aggregation_jobs)?;
+        indexed.update_batches::<BUC>(tx.clock())?;
 
         // Write batches, aggregation jobs, and report aggregations.
         let write_batches_future = try_join_all(indexed.batches.values().map(
             |(batch_op, batch)| async move {
-                match (creating_aggregation_jobs, batch_op) {
-                    (true, Operation::Put) => {
+                match (BUC::write_type(), batch_op) {
+                    (AggregationJobWriteType::Create, Operation::Put) => {
                         let rslt = tx.put_batch(batch).await;
                         if matches!(rslt, Err(Error::MutationTargetAlreadyExists)) {
                             // This codepath can be taken due to a quirk of how the Repeatable Read
@@ -420,7 +417,7 @@ where
                         rslt
                     }
                     (_, Operation::Update) => tx.update_batch(batch).await,
-                    (false, Operation::Put) => panic!(
+                    (AggregationJobWriteType::Update, Operation::Put) => panic!(
                         "Unexpectedly missing batch while updating existing aggregation jobs"
                     ),
                 }
@@ -431,7 +428,7 @@ where
                  aggregation_job,
                  report_aggregations,
              }| async move {
-                if creating_aggregation_jobs {
+                if let AggregationJobWriteType::Create = BUC::write_type() {
                     // These operations must occur serially since report aggregation rows have a
                     // foreign-key constraint on the related aggregation job existing. We could
                     // speed things up for initial writes by switching to DEFERRED constraints:
@@ -581,7 +578,6 @@ trait BatchUpdateCallback {
     /// reflect changes due to the aggregation job. Particularly, it will update the
     /// `outstanding_aggregation_jobs` counter and the `client_timestamp_interval`.
     fn update_batch<'a, const SEED_SIZE: usize, Q, A, RA>(
-        &self,
         batch: Batch<SEED_SIZE, Q, A>,
         aggregation_jobs: impl Iterator<
             Item = (
@@ -596,8 +592,14 @@ trait BatchUpdateCallback {
         A: vdaf::Aggregator<SEED_SIZE, 16> + 'a,
         RA: ReportAggregationUpdate + Clone + 'a;
 
-    /// Returns a flag indicating whether aggregation jobs are being created or updated.
-    fn creating_aggregation_jobs(&self) -> bool;
+    /// Returns a value indicating whether aggregation jobs are being created or updated.
+    fn write_type() -> AggregationJobWriteType;
+}
+
+/// Indicates whether aggregation jobs are being created or updated.
+enum AggregationJobWriteType {
+    Create,
+    Update,
 }
 
 /// Contains internal implementation details of [`AggregationJobUpdates::write`].
@@ -806,11 +808,9 @@ where
     }
 
     /// Update batches to reflect updates to aggregation jobs.
-    fn update_batches(
+    fn update_batches<BUC: BatchUpdateCallback>(
         &mut self,
-        batch_update_callback: impl BatchUpdateCallback,
         clock: &impl Clock,
-        creating_aggregation_jobs: bool,
     ) -> Result<(), Error> {
         // Update in-memory state of batches: outstanding job counts will change based on new or
         // completed aggregation jobs affecting each batch; the client timestamp interval will
@@ -820,11 +820,11 @@ where
             .iter()
             .flat_map(|(batch_identifier, by_aggregation_job_index)| {
                 let (batch_op, mut batch) = match (
-                    creating_aggregation_jobs,
+                    BUC::write_type(),
                     self.batches.remove(batch_identifier),
                 ) {
                     (_, Some((batch_op, batch))) => (batch_op, batch),
-                    (true, None) => (
+                    (AggregationJobWriteType::Create, None) => (
                         Operation::Put,
                         Batch::new(
                             *self.task.id(),
@@ -835,7 +835,7 @@ where
                             Interval::EMPTY,
                         ),
                     ),
-                    (false, None) => {
+                    (AggregationJobWriteType::Update, None) => {
                         // The batch does not currently exist in the datastore. But since we first
                         // write the batch when an aggregation job referencing that batch is
                         // created, and we are stepping the aggregation job here, we must have
@@ -886,7 +886,7 @@ where
                         )
                     },
                 );
-                batch = match batch_update_callback.update_batch(batch, agg_job_iter) {
+                batch = match BUC::update_batch(batch, agg_job_iter) {
                     Ok(batch) => batch,
                     Err(error) => return Some(Err(error)),
                 };
@@ -1002,7 +1002,7 @@ impl ReportAggregationUpdate for ReportAggregationMetadata {
     }
 
     async fn write_new(&self, tx: &Transaction<impl Clock>) -> Result<(), Error> {
-        tx.create_leader_report_aggregation(self).await
+        tx.put_leader_report_aggregation(self).await
     }
 
     async fn write_update(&self, _tx: &Transaction<impl Clock>) -> Result<(), Error> {
