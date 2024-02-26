@@ -5,8 +5,8 @@ use self::models::{
     AggregatorRole, AuthenticationTokenType, Batch, BatchAggregation, BatchAggregationState,
     BatchAggregationStateCode, CollectionJob, CollectionJobState, CollectionJobStateCode,
     GlobalHpkeKeypair, HpkeKeyState, LeaderStoredReport, Lease, LeaseToken, OutstandingBatch,
-    ReportAggregation, ReportAggregationState, ReportAggregationStateCode, SqlInterval,
-    TaskUploadCounter,
+    ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
+    ReportAggregationState, ReportAggregationStateCode, SqlInterval, TaskUploadCounter,
 };
 use crate::{
     query_type::{AccumulableQueryType, CollectableQueryType},
@@ -1149,7 +1149,7 @@ impl<C: Clock> Transaction<'_, C> {
         vdaf: &A,
         task_id: &TaskId,
         limit: usize,
-    ) -> Result<Vec<LeaderStoredReport<SEED_SIZE, A>>, Error>
+    ) -> Result<Vec<ReportMetadata>, Error>
     where
         A::InputShare: PartialEq,
         A::PublicShare: PartialEq,
@@ -1169,8 +1169,7 @@ impl<C: Clock> Transaction<'_, C> {
                 UPDATE client_reports SET
                     aggregation_started = TRUE, updated_at = $3, updated_by = $4
                 WHERE id IN (SELECT id FROM unaggregated_reports)
-                RETURNING report_id, client_timestamp, extensions, public_share, leader_input_share,
-                          helper_encrypted_input_share",
+                RETURNING report_id, client_timestamp",
             )
             .await?;
         let rows = self
@@ -1188,12 +1187,10 @@ impl<C: Clock> Transaction<'_, C> {
 
         rows.into_iter()
             .map(|row| {
-                Self::client_report_from_row(
-                    vdaf,
-                    *task_id,
+                Ok(ReportMetadata::new(
                     row.get_bytea_and_convert::<ReportId>("report_id")?,
-                    row,
-                )
+                    Time::from_naive_date_time(&row.get("client_timestamp")),
+                ))
             })
             .collect::<Result<Vec<_>, Error>>()
     }
@@ -2363,6 +2360,104 @@ impl<C: Clock> Transaction<'_, C> {
             ],
         )
         .await?;
+        Ok(())
+    }
+
+    /// Creates a report aggregation in the `StartLeader` state from its metadata.
+    ///
+    /// Report shares are copied directly from the `client_reports` table.
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
+    pub async fn put_leader_report_aggregation(
+        &self,
+        report_aggregation_metadata: &ReportAggregationMetadata,
+    ) -> Result<(), Error> {
+        match report_aggregation_metadata.state() {
+            ReportAggregationMetadataState::Start => {
+                let stmt = self
+                .prepare_cached(
+                    "INSERT INTO report_aggregations
+                        (task_id, aggregation_job_id, client_report_id, client_timestamp, ord,
+                        state, public_share, leader_extensions, leader_input_share,
+                        helper_encrypted_input_share, created_at, updated_at, updated_by)
+                    SELECT
+                        tasks.id, aggregation_jobs.id, $3::BYTEA, $4::TIMESTAMP, $5::BIGINT,
+                        'START'::REPORT_AGGREGATION_STATE, client_reports.public_share,
+                        client_reports.extensions, client_reports.leader_input_share,
+                        client_reports.helper_encrypted_input_share, $6, $7, $8
+                    FROM aggregation_jobs
+                    JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                    JOIN client_reports
+                        ON tasks.id = client_reports.task_id
+                        AND client_reports.report_id = $3::BYTEA
+                    WHERE tasks.task_id = $1
+                    AND aggregation_job_id = $2
+                    AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($9::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                    ON CONFLICT DO NOTHING",
+                )
+                .await?;
+                self.execute(
+                    &stmt,
+                    &[
+                        /* task_id */ &report_aggregation_metadata.task_id().as_ref(),
+                        /* aggregation_job_id */
+                        &report_aggregation_metadata.aggregation_job_id().as_ref(),
+                        /* client_report_id */
+                        &report_aggregation_metadata.report_id().as_ref(),
+                        /* client_timestamp */
+                        &report_aggregation_metadata.time().as_naive_date_time()?,
+                        /* ord */
+                        &TryInto::<i64>::try_into(report_aggregation_metadata.ord())?,
+                        /* created_at */ &self.clock.now().as_naive_date_time()?,
+                        /* updated_at */ &self.clock.now().as_naive_date_time()?,
+                        /* updated_by */ &self.name,
+                        /* now */ &self.clock.now().as_naive_date_time()?,
+                    ],
+                )
+                .await?;
+            }
+            ReportAggregationMetadataState::Failed { prepare_error } => {
+                let stmt = self
+                    .prepare_cached(
+                        "INSERT INTO report_aggregations
+                            (task_id, aggregation_job_id, client_report_id, client_timestamp, ord,
+                            state, error_code, created_at, updated_at, updated_by)
+                        SELECT
+                            tasks.id, aggregation_jobs.id, $3::BYTEA, $4::TIMESTAMP, $5::BIGINT,
+                            'FAILED'::REPORT_AGGREGATION_STATE, $6, $7, $8, $9
+                        FROM aggregation_jobs
+                        JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                        JOIN client_reports
+                            ON tasks.id = client_reports.task_id
+                            AND client_reports.report_id = $3::BYTEA
+                        WHERE tasks.task_id = $1
+                        AND aggregation_job_id = $2
+                        AND UPPER(aggregation_jobs.client_timestamp_interval) >= COALESCE($10::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
+                        ON CONFLICT DO NOTHING",
+                    )
+                    .await?;
+                self.execute(
+                    &stmt,
+                    &[
+                        /* task_id */ &report_aggregation_metadata.task_id().as_ref(),
+                        /* aggregation_job_id */
+                        &report_aggregation_metadata.aggregation_job_id().as_ref(),
+                        /* client_report_id */
+                        &report_aggregation_metadata.report_id().as_ref(),
+                        /* client_timestamp */
+                        &report_aggregation_metadata.time().as_naive_date_time()?,
+                        /* ord */
+                        &TryInto::<i64>::try_into(report_aggregation_metadata.ord())?,
+                        /* error_code */ &(*prepare_error as i16),
+                        /* created_at */ &self.clock.now().as_naive_date_time()?,
+                        /* updated_at */ &self.clock.now().as_naive_date_time()?,
+                        /* updated_by */ &self.name,
+                        /* now */ &self.clock.now().as_naive_date_time()?,
+                    ],
+                )
+                .await?;
+            }
+        }
+
         Ok(())
     }
 
