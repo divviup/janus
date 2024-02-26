@@ -690,7 +690,7 @@ where
             .collect();
 
         // Read all relevant batches and report counts from the datastore.
-        let (batches, batches_with_reports) = try_join!(
+        let (batches, batches_with_unaggregated_reports) = try_join!(
             try_join_all(
                 updates
                     .by_batch_identifier_index
@@ -725,8 +725,10 @@ where
             })
             .collect();
 
-        let batches_with_unaggregated_reports: HashSet<_> =
-            batches_with_reports.into_iter().flatten().collect();
+        let batches_with_unaggregated_reports: HashSet<_> = batches_with_unaggregated_reports
+            .into_iter()
+            .flatten()
+            .collect();
 
         Ok(Self {
             task: &updates.task,
