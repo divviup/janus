@@ -160,6 +160,7 @@ where
         &self.helper_encrypted_input_share
     }
 
+    #[cfg(feature = "test-util")]
     pub fn as_start_leader_report_aggregation(
         &self,
         aggregation_job_id: AggregationJobId,
