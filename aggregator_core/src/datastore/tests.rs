@@ -4,8 +4,8 @@ use crate::{
             AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
             AggregationJobState, Batch, BatchAggregation, BatchAggregationState, BatchState,
             CollectionJob, CollectionJobState, GlobalHpkeKeypair, HpkeKeyState, LeaderStoredReport,
-            Lease, OutstandingBatch, ReportAggregation, ReportAggregationState, SqlInterval,
-            TaskUploadCounter,
+            Lease, OutstandingBatch, ReportAggregation, ReportAggregationMetadata,
+            ReportAggregationMetadataState, ReportAggregationState, SqlInterval, TaskUploadCounter,
         },
         schema_versions_template,
         test_util::{ephemeral_datastore_schema_version, generate_aead_key, EphemeralDatastore},
@@ -816,13 +816,13 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
         })
         .await
         .unwrap();
-    got_reports.sort_by_key(|report| *report.metadata().id());
+    got_reports.sort_by_key(|report_metadata| *report_metadata.id());
 
     let mut want_reports = Vec::from([
-        first_unaggregated_report.clone(),
-        second_unaggregated_report.clone(),
+        first_unaggregated_report.metadata().clone(),
+        second_unaggregated_report.metadata().clone(),
     ]);
-    want_reports.sort_by_key(|report| *report.metadata().id());
+    want_reports.sort_by_key(|report_metadata| *report_metadata.id());
 
     assert_eq!(got_reports, want_reports);
 
@@ -887,7 +887,10 @@ async fn get_unaggregated_client_reports_for_task(ephemeral_datastore: Ephemeral
         .await
         .unwrap();
 
-    assert_eq!(got_reports, Vec::from([first_unaggregated_report.clone()]),);
+    assert_eq!(
+        got_reports,
+        Vec::from([first_unaggregated_report.metadata().clone()])
+    );
 
     ds.run_unnamed_tx(|tx| {
         let (first_unaggregated_report, second_unaggregated_report) = (
@@ -2662,6 +2665,136 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
         .await
         .unwrap();
     assert!(got_report_aggregations.is_empty());
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
+async fn create_report_aggregation_from_client_reports_table(
+    ephemeral_datastore: EphemeralDatastore,
+) {
+    install_test_trace_subscriber();
+
+    let clock = MockClock::new(OLDEST_ALLOWED_REPORT_TIMESTAMP);
+    let ds = ephemeral_datastore.datastore(clock.clone()).await;
+
+    let report_id = random();
+    let vdaf = Arc::new(Poplar1::new_shake128(1));
+    let verify_key: [u8; VERIFY_KEY_LENGTH] = random();
+    let aggregation_param =
+        Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[false])]))
+            .unwrap();
+
+    let vdaf_transcript = run_vdaf(
+        vdaf.as_ref(),
+        &verify_key,
+        &aggregation_param,
+        &report_id,
+        &IdpfInput::from_bools(&[false]),
+    );
+
+    let task = TaskBuilder::new(
+        task::QueryType::TimeInterval,
+        VdafInstance::Poplar1 { bits: 1 },
+    )
+    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+    .build()
+    .leader_view()
+    .unwrap();
+    let aggregation_job_id = random();
+    let want_report_aggregations = ds
+        .run_unnamed_tx(|tx| {
+            let clock = clock.clone();
+            let task = task.clone();
+            let vdaf = vdaf.clone();
+            let vdaf_transcript = vdaf_transcript.clone();
+            let aggregation_param = aggregation_param.clone();
+            Box::pin(async move {
+                tx.put_aggregator_task(&task).await.unwrap();
+                tx.put_aggregation_job(&AggregationJob::<
+                    VERIFY_KEY_LENGTH,
+                    TimeInterval,
+                    Poplar1<XofShake128, 16>,
+                >::new(
+                    *task.id(),
+                    aggregation_job_id,
+                    aggregation_param,
+                    (),
+                    Interval::new(OLDEST_ALLOWED_REPORT_TIMESTAMP, Duration::from_seconds(1))
+                        .unwrap(),
+                    AggregationJobState::InProgress,
+                    AggregationJobStep::from(0),
+                ))
+                .await
+                .unwrap();
+
+                let report_id = random();
+                let timestamp = clock.now();
+                let leader_stored_report = LeaderStoredReport::new(
+                    *task.id(),
+                    ReportMetadata::new(report_id, timestamp),
+                    vdaf_transcript.public_share,
+                    Vec::new(),
+                    vdaf_transcript.leader_input_share,
+                    HpkeCiphertext::new(
+                        HpkeConfigId::from(9),
+                        Vec::from(b"encapsulated"),
+                        Vec::from(b"encrypted helper share"),
+                    ),
+                );
+                tx.put_client_report(vdaf.as_ref(), &leader_stored_report)
+                    .await
+                    .unwrap();
+
+                let report_aggregation_metadata = ReportAggregationMetadata::new(
+                    *task.id(),
+                    aggregation_job_id,
+                    report_id,
+                    timestamp,
+                    0,
+                    ReportAggregationMetadataState::Start,
+                );
+                tx.put_leader_report_aggregation(&report_aggregation_metadata)
+                    .await
+                    .unwrap();
+
+                Ok(Vec::from([ReportAggregation::new(
+                    *task.id(),
+                    aggregation_job_id,
+                    report_id,
+                    timestamp,
+                    0,
+                    None,
+                    ReportAggregationState::<16, Poplar1<XofShake128, 16>>::StartLeader {
+                        public_share: leader_stored_report.public_share().clone(),
+                        leader_extensions: leader_stored_report.leader_extensions().to_owned(),
+                        leader_input_share: leader_stored_report.leader_input_share().clone(),
+                        helper_encrypted_input_share: leader_stored_report
+                            .helper_encrypted_input_share()
+                            .clone(),
+                    },
+                )]))
+            })
+        })
+        .await
+        .unwrap();
+
+    let got_report_aggregations = ds
+        .run_unnamed_tx(|tx| {
+            let vdaf = vdaf.clone();
+            let task = task.clone();
+            Box::pin(async move {
+                tx.get_report_aggregations_for_aggregation_job(
+                    vdaf.as_ref(),
+                    &Role::Leader,
+                    task.id(),
+                    &aggregation_job_id,
+                )
+                .await
+            })
+        })
+        .await
+        .unwrap();
+    assert_eq!(want_report_aggregations, got_report_aggregations);
 }
 
 #[tokio::test]
