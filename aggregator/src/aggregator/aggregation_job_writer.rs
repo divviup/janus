@@ -24,7 +24,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::try_join;
-use tracing::{debug, error};
+use tracing::{debug, error, Level};
 
 /// Contains logic used to write new aggregation jobs. It is used only by the leader.
 pub struct NewAggregationJobWriter<
@@ -70,6 +70,11 @@ where
     /// operation (aggregation into a collected batch is not allowed). These report aggregations
     /// will be written with a `Failed(BatchCollected)` state, and the associated report IDs will be
     /// returned.
+    #[tracing::instrument(
+        name = "NewAggregationJobWriter::write",
+        skip(self, tx),
+        err(level = Level::DEBUG),
+    )]
     pub async fn write<C: Clock>(
         &self,
         tx: &Transaction<'_, C>,
@@ -173,6 +178,11 @@ where
     /// operation (aggregation into a collected batch is not allowed). These report aggregations
     /// will be written with a `Failed(BatchCollected)` state, and the associated report IDs will be
     /// returned.
+    #[tracing::instrument(
+        name = "UpdatedAggregationJobWriter::write",
+        skip(self, tx),
+        err(level = Level::DEBUG),
+    )]
     pub async fn write<C: Clock>(
         &self,
         tx: &Transaction<'_, C>,
