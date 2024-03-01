@@ -7611,8 +7611,13 @@ async fn roundtrip_task_upload_counter(ephemeral_datastore: EphemeralDatastore) 
         .run_unnamed_tx(|tx| {
             let task_id = *task.id();
             Box::pin(async move {
-                let counter = tx.get_task_upload_counter(&task_id).await.unwrap();
+                // Returns None for non-existent task.
+                let counter = tx.get_task_upload_counter(&random()).await.unwrap();
                 assert_eq!(counter, None);
+
+                // Returns Some for a task that has just been created and has no counters.
+                let counter = tx.get_task_upload_counter(&task_id).await.unwrap();
+                assert_eq!(counter, Some(TaskUploadCounter::default()));
 
                 let ord = thread_rng().gen_range(0..32);
                 tx.increment_task_upload_counter(
