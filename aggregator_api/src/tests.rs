@@ -767,21 +767,36 @@ async fn get_task_upload_metrics() {
                 let task_id = *task.id();
                 tx.put_aggregator_task(&task).await.unwrap();
 
-                tx.increment_task_upload_counter(
-                    &task_id,
-                    1,
-                    &TaskUploadCounter::new_with_values(0, 0, 2, 4, 6, 100, 25, 12),
-                )
-                .await
-                .unwrap();
-
                 Ok(task_id)
             })
         })
         .await
         .unwrap();
 
+    // Verify: requesting metrics on a fresh task returns zeroes.
+    assert_response!(
+        get(&format!("/tasks/{}/metrics/uploads", &task_id))
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .run_async(&handler)
+            .await,
+        Status::Ok,
+        serde_json::to_string(&GetTaskUploadMetricsResp(TaskUploadCounter::default())).unwrap(),
+    );
+
     // Verify: requesting metrics on a task returns the correct result.
+    ds.run_unnamed_tx(|tx| {
+        Box::pin(async move {
+            tx.increment_task_upload_counter(
+                &task_id,
+                1,
+                &TaskUploadCounter::new_with_values(0, 0, 2, 4, 6, 100, 25, 12),
+            )
+            .await
+        })
+    })
+    .await
+    .unwrap();
     assert_response!(
         get(&format!("/tasks/{}/metrics/uploads", &task_id))
             .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
