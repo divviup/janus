@@ -36,7 +36,9 @@ use {
     janus_aggregator_core::datastore::TRANSACTION_RETRIES_METER_NAME,
     opentelemetry::{metrics::MetricsError, KeyValue},
     opentelemetry_sdk::{
-        metrics::{new_view, Aggregation, Instrument, InstrumentKind, MeterProvider, Stream, View},
+        metrics::{
+            new_view, Aggregation, Instrument, InstrumentKind, SdkMeterProvider, Stream, View,
+        },
         Resource,
     },
 };
@@ -89,7 +91,7 @@ pub enum MetricsExporterHandle {
         port: u16,
     },
     #[cfg(feature = "otlp")]
-    Otlp(MeterProvider),
+    Otlp(SdkMeterProvider),
     Noop,
 }
 
@@ -168,11 +170,11 @@ impl View for CustomView {
 #[cfg(feature = "prometheus")]
 fn build_opentelemetry_prometheus_meter_provider(
     registry: Registry,
-) -> Result<MeterProvider, MetricsError> {
+) -> Result<SdkMeterProvider, MetricsError> {
     let reader = opentelemetry_prometheus::exporter()
         .with_registry(registry)
         .build()?;
-    let meter_provider = MeterProvider::builder()
+    let meter_provider = SdkMeterProvider::builder()
         .with_reader(reader)
         .with_view(CustomView::new()?)
         .with_resource(resource())
@@ -256,7 +258,7 @@ pub async fn install_metrics_exporter(
                     Box::new(DefaultTemporalitySelector::new()),
                 )?;
             let reader = PeriodicReader::builder(exporter, Tokio).build();
-            let meter_provider = MeterProvider::builder()
+            let meter_provider = SdkMeterProvider::builder()
                 .with_reader(reader)
                 .with_view(CustomView::new()?)
                 .with_resource(resource())
