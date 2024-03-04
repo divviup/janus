@@ -21,7 +21,7 @@ base64.workspace = true
 clap.workspace = true
 futures = "0.3.30"
 hex = "0.4"
-http = "0.2"
+http = "1.1"
 itertools.workspace = true
 janus_aggregator = { workspace = true, features = ["test-util"] }
 janus_aggregator_core = { workspace = true, features = ["test-util"] }
