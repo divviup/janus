@@ -27,7 +27,7 @@ use {
 use {
     git_version::git_version,
     opentelemetry::KeyValue,
-    opentelemetry_sdk::{metrics::MeterProvider, Resource},
+    opentelemetry_sdk::{metrics::SdkMeterProvider, Resource},
     std::str::FromStr,
 };
 
@@ -85,7 +85,7 @@ pub enum MetricsExporterHandle {
         port: u16,
     },
     #[cfg(feature = "otlp")]
-    Otlp(MeterProvider),
+    Otlp(SdkMeterProvider),
     Noop,
 }
 
@@ -130,7 +130,7 @@ pub async fn install_metrics_exporter(
                 .build()?;
 
             set_meter_provider(
-                MeterProvider::builder()
+                SdkMeterProvider::builder()
                     .with_reader(exporter)
                     .with_resource(resource())
                     .build(),
