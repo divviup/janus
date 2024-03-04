@@ -1,5 +1,5 @@
-use crate::common::{submit_measurements_and_verify_aggregate, test_task_builder};
-use janus_aggregator_core::task::QueryType;
+use crate::common::{build_test_task, submit_measurements_and_verify_aggregate, TestContext};
+use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
 use janus_core::{
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
     vdaf::VdafInstance,
@@ -23,9 +23,9 @@ async fn daphne_janus() {
 
     // Start servers.
     let network = generate_network_name();
-    let (mut task_parameters, task_builder) = test_task_builder(
-        VdafInstance::Prio3Count,
-        QueryType::TimeInterval,
+    let (mut task_parameters, task_builder) = build_test_task(
+        TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count),
+        TestContext::VirtualNetwork,
         Duration::from_millis(500),
         Duration::from_secs(60),
     );
@@ -66,9 +66,9 @@ async fn janus_daphne() {
 
     // Start servers.
     let network = generate_network_name();
-    let (mut task_parameters, task_builder) = test_task_builder(
-        VdafInstance::Prio3Count,
-        QueryType::TimeInterval,
+    let (mut task_parameters, task_builder) = build_test_task(
+        TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count),
+        TestContext::VirtualNetwork,
         Duration::from_millis(500),
         Duration::from_secs(60),
     );
@@ -110,9 +110,9 @@ async fn janus_in_process_daphne() {
     // Start servers.
     let network = generate_network_name();
     let container_client = container_client();
-    let (mut task_parameters, mut task_builder) = test_task_builder(
-        VdafInstance::Prio3Count,
-        QueryType::TimeInterval,
+    let (mut task_parameters, mut task_builder) = build_test_task(
+        TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count),
+        TestContext::VirtualNetwork,
         Duration::from_millis(500),
         Duration::from_secs(60),
     );

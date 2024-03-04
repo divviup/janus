@@ -1,8 +1,6 @@
 #![cfg(feature = "in-cluster")]
 
-use crate::common::{
-    submit_measurements_and_verify_aggregate, test_task_builder, test_task_builder_remote,
-};
+use crate::common::{build_test_task, submit_measurements_and_verify_aggregate, TestContext};
 use chrono::prelude::*;
 use clap::{CommandFactory, FromArgMatches, Parser};
 use divviup_client::{
@@ -178,19 +176,19 @@ impl InClusterJanusPair {
         let leader_aggregator_dap_url = aggregators
             .iter()
             .find(|a| a.id == leader_aggregator_id)
-            .map(|a| &a.dap_url)
+            .map(|a| a.dap_url.clone())
             .unwrap();
         let helper_aggregator_dap_url = aggregators
             .iter()
             .find(|a| a.id == helper_aggregator_id)
-            .map(|a| &a.dap_url)
+            .map(|a| a.dap_url.clone())
             .unwrap();
 
-        let (task_parameters, task_builder) = test_task_builder_remote(
-            vdaf,
-            query_type,
-            leader_aggregator_dap_url,
-            helper_aggregator_dap_url,
+        let (task_parameters, task_builder) = build_test_task(
+            TaskBuilder::new(query_type, vdaf)
+                .with_leader_aggregator_endpoint(leader_aggregator_dap_url)
+                .with_helper_aggregator_endpoint(helper_aggregator_dap_url),
+            TestContext::Remote,
             Duration::from_secs(30),
             Duration::from_secs(600),
         );
@@ -271,9 +269,9 @@ impl InClusterJanusPair {
 
         let cluster = Cluster::new(&kubeconfig_path, &kubectl_context_name);
 
-        let (task_parameters, task_builder) = test_task_builder(
-            vdaf,
-            query_type,
+        let (task_parameters, task_builder) = build_test_task(
+            TaskBuilder::new(query_type, vdaf),
+            TestContext::VirtualNetwork,
             Duration::from_millis(500),
             Duration::from_secs(60),
         );

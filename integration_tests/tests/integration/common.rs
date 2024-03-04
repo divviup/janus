@@ -22,125 +22,85 @@ use std::{iter, time::Duration as StdDuration};
 use tokio::time::{self, sleep};
 use url::Url;
 
-/// Returns a tuple of [`TaskParameters`] and a task builder. This is suitable for test aggregators
-/// running in virtual networks (a Docker network or a Kind cluster).
-pub fn test_task_builder(
-    vdaf: VdafInstance,
-    query_type: QueryType,
-    collector_max_interval: time::Duration,
-    collector_max_elapsed_time: time::Duration,
-) -> (TaskParameters, TaskBuilder) {
-    let endpoint_random_value = hex::encode(random::<[u8; 4]>());
-    let endpoint_fragments = EndpointFragments {
-        leader: AggregatorEndpointFragments::VirtualNetwork {
-            host: format!("leader-{endpoint_random_value}"),
-            path: "/".to_string(),
-        },
-        helper: AggregatorEndpointFragments::VirtualNetwork {
-            host: format!("helper-{endpoint_random_value}"),
-            path: "/".to_string(),
-        },
-    };
-
-    test_task_builder_inner(
-        vdaf,
-        query_type,
-        &Url::parse(&format!("http://leader-{endpoint_random_value}:8080/")).unwrap(),
-        &Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
-        endpoint_fragments,
-        true,
-        collector_max_interval,
-        collector_max_elapsed_time,
-    )
+/// Different contexts or test harnesses that integration tests may be run against, which require
+/// different configuration customizations.
+pub enum TestContext {
+    /// Aggregators are running in a virtual network, like a Docker network or a Kind cluster.
+    VirtualNetwork,
+    /// Aggregators are running natively on the same host as the test driver.
+    Host,
+    /// Aggregators are running remotely, say in a staging environment.
+    #[cfg(feature = "in-cluster")]
+    Remote,
 }
 
-/// Returns a tuple of [`TaskParameters`] and a task builder. This is suitable for test aggregators
-/// running on the host. Note that the task builder must be updated with the helper's endpoint
-/// before passing task parameters to the leader.
-pub fn test_task_builder_host(
-    vdaf: VdafInstance,
-    query_type: QueryType,
+/// Configures the provided task builder to run in the provided test context, and constructs a
+/// corresponding [`TaskParameters`].
+pub fn build_test_task(
+    mut task_builder: TaskBuilder,
+    test_context: TestContext,
     collector_max_interval: time::Duration,
     collector_max_elapsed_time: time::Duration,
 ) -> (TaskParameters, TaskBuilder) {
-    let endpoint_fragments = EndpointFragments {
-        leader: AggregatorEndpointFragments::Localhost {
-            path: "/".to_string(),
-        },
-        helper: AggregatorEndpointFragments::Localhost {
-            path: "/".to_string(),
-        },
+    let (leader_endpoint, helper_endpoint, endpoint_fragments) = match test_context {
+        TestContext::VirtualNetwork => {
+            let endpoint_random_value = hex::encode(random::<[u8; 4]>());
+            (
+                Url::parse(&format!("http://leader-{endpoint_random_value}:8080/")).unwrap(),
+                Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
+                EndpointFragments {
+                    leader: AggregatorEndpointFragments::VirtualNetwork {
+                        host: format!("leader-{endpoint_random_value}"),
+                        path: "/".to_string(),
+                    },
+                    helper: AggregatorEndpointFragments::VirtualNetwork {
+                        host: format!("helper-{endpoint_random_value}"),
+                        path: "/".to_string(),
+                    },
+                },
+            )
+        }
+        TestContext::Host => (
+            Url::parse("http://invalid/").unwrap(),
+            Url::parse("http://invalid/").unwrap(),
+            EndpointFragments {
+                leader: AggregatorEndpointFragments::Localhost {
+                    path: "/".to_string(),
+                },
+                helper: AggregatorEndpointFragments::Localhost {
+                    path: "/".to_string(),
+                },
+            },
+        ),
+        #[cfg(feature = "in-cluster")]
+        TestContext::Remote => (
+            task_builder.leader_aggregator_endpoint().clone(),
+            task_builder.helper_aggregator_endpoint().clone(),
+            EndpointFragments {
+                leader: AggregatorEndpointFragments::Remote {
+                    url: task_builder.leader_aggregator_endpoint().clone(),
+                },
+                helper: AggregatorEndpointFragments::Remote {
+                    url: task_builder.helper_aggregator_endpoint().clone(),
+                },
+            },
+        ),
     };
 
-    test_task_builder_inner(
-        vdaf,
-        query_type,
-        &Url::parse("http://invalid/").unwrap(),
-        &Url::parse("http://invalid/").unwrap(),
-        endpoint_fragments,
-        true,
-        collector_max_interval,
-        collector_max_elapsed_time,
-    )
-}
+    task_builder = task_builder
+        .with_leader_aggregator_endpoint(leader_endpoint)
+        .with_helper_aggregator_endpoint(helper_endpoint)
+        .with_min_batch_size(46)
+        // TODO(timg): is it OK to unconditionally set these? I think the remote case will ignore
+        // the values anyway
+        .with_dap_auth_aggregator_token()
+        .with_dap_auth_collector_token();
 
-/// Returns a tuple of [`TaskParameters`] and a task builder. This is suitable for test aggregators
-/// running remotely, say in a staging environment.
-#[cfg(feature = "in-cluster")]
-pub fn test_task_builder_remote(
-    vdaf: VdafInstance,
-    query_type: QueryType,
-    leader_endpoint: &Url,
-    helper_endpoint: &Url,
-    collector_max_interval: time::Duration,
-    collector_max_elapsed_time: time::Duration,
-) -> (TaskParameters, TaskBuilder) {
-    let endpoint_fragments = EndpointFragments {
-        leader: AggregatorEndpointFragments::Remote {
-            url: leader_endpoint.clone(),
-        },
-        helper: AggregatorEndpointFragments::Remote {
-            url: helper_endpoint.clone(),
-        },
-    };
-
-    test_task_builder_inner(
-        vdaf,
-        query_type,
-        leader_endpoint,
-        helper_endpoint,
-        endpoint_fragments,
-        false,
-        collector_max_interval,
-        collector_max_elapsed_time,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn test_task_builder_inner(
-    vdaf: VdafInstance,
-    query_type: QueryType,
-    leader_endpoint: &Url,
-    helper_endpoint: &Url,
-    endpoint_fragments: EndpointFragments,
-    dap_auth_tokens: bool,
-    collector_max_interval: time::Duration,
-    collector_max_elapsed_time: time::Duration,
-) -> (TaskParameters, TaskBuilder) {
-    let mut task_builder = TaskBuilder::new(query_type, vdaf.clone())
-        .with_leader_aggregator_endpoint(leader_endpoint.clone())
-        .with_helper_aggregator_endpoint(helper_endpoint.clone())
-        .with_min_batch_size(46);
-    if dap_auth_tokens {
-        task_builder = task_builder
-            .with_dap_auth_aggregator_token()
-            .with_dap_auth_collector_token();
-    }
     let task_parameters = TaskParameters {
         task_id: *task_builder.task_id(),
         endpoint_fragments,
-        query_type,
-        vdaf,
+        query_type: *task_builder.query_type(),
+        vdaf: task_builder.vdaf().clone(),
         min_batch_size: task_builder.min_batch_size(),
         time_precision: *task_builder.time_precision(),
         collector_hpke_keypair: task_builder.collector_hpke_keypair().clone(),
@@ -148,7 +108,6 @@ fn test_task_builder_inner(
         collector_max_interval,
         collector_max_elapsed_time,
     };
-
     (task_parameters, task_builder)
 }
 
