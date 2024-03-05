@@ -62,10 +62,10 @@ janus_messages.workspace = true
 k8s-openapi.workspace = true
 kube.workspace = true
 opentelemetry.workspace = true
-opentelemetry-otlp = { version = "0.14", optional = true, features = ["metrics"] }
-opentelemetry-prometheus = { version = "0.14", optional = true }
+opentelemetry-otlp = { version = "0.15", optional = true, features = ["metrics"] }
+opentelemetry-prometheus = { version = "0.15", optional = true }
 opentelemetry_sdk = { workspace = true, features = ["rt-tokio"], optional = true }
-opentelemetry-semantic-conventions = { version = "0.13", optional = true }
+opentelemetry-semantic-conventions = { version = "0.14", optional = true }
 postgres-protocol = "0.6.6"
 postgres-types = { version = "0.2.6", features = ["derive", "array-impls"] }
 prio.workspace = true
@@ -91,7 +91,7 @@ tokio-postgres-rustls = "0.11.1"
 tracing = "0.1.40"
 tracing-chrome = "0.7.1"
 tracing-log = "0.2.0"
-tracing-opentelemetry = { version = "0.22", optional = true }
+tracing-opentelemetry = { version = "0.23", optional = true }
 tracing-stackdriver = "0.9.0"
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt", "json"] }
 trillium.workspace = true
