@@ -1,7 +1,5 @@
-#[cfg(feature = "testcontainer")]
-use crate::common::test_task_builder;
-use crate::common::{submit_measurements_and_verify_aggregate, test_task_builder_host};
-use janus_aggregator_core::task::QueryType;
+use crate::common::{build_test_task, submit_measurements_and_verify_aggregate, TestContext};
+use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType};
 #[cfg(feature = "testcontainer")]
 use janus_core::test_util::testcontainers::container_client;
 use janus_core::{test_util::install_test_trace_subscriber, vdaf::VdafInstance};
@@ -38,9 +36,9 @@ impl<'a> JanusContainerPair<'a> {
         vdaf: VdafInstance,
         query_type: QueryType,
     ) -> JanusContainerPair<'a> {
-        let (task_parameters, task_builder) = test_task_builder(
-            vdaf,
-            query_type,
+        let (task_parameters, task_builder) = build_test_task(
+            TaskBuilder::new(query_type, vdaf),
+            TestContext::VirtualNetwork,
             Duration::from_millis(500),
             Duration::from_secs(60),
         );
@@ -75,10 +73,10 @@ struct JanusInProcessPair {
 impl JanusInProcessPair {
     /// Set up a new pair of in-process Janus test instances, and set up a new task in each using
     /// the given VDAF and query type.
-    pub async fn new(vdaf: VdafInstance, query_type: QueryType) -> JanusInProcessPair {
-        let (task_parameters, mut task_builder) = test_task_builder_host(
-            vdaf,
-            query_type,
+    pub async fn new(task_builder: TaskBuilder) -> JanusInProcessPair {
+        let (task_parameters, mut task_builder) = build_test_task(
+            task_builder,
+            TestContext::Host,
             Duration::from_millis(500),
             Duration::from_secs(60),
         );
@@ -132,8 +130,11 @@ async fn janus_in_process_count() {
     install_test_trace_subscriber();
 
     // Start servers.
-    let janus_pair =
-        JanusInProcessPair::new(VdafInstance::Prio3Count, QueryType::TimeInterval).await;
+    let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
+        QueryType::TimeInterval,
+        VdafInstance::Prio3Count,
+    ))
+    .await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
@@ -178,8 +179,11 @@ async fn janus_in_process_sum_16() {
     install_test_trace_subscriber();
 
     // Start servers.
-    let janus_pair =
-        JanusInProcessPair::new(VdafInstance::Prio3Sum { bits: 16 }, QueryType::TimeInterval).await;
+    let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
+        QueryType::TimeInterval,
+        VdafInstance::Prio3Sum { bits: 16 },
+    ))
+    .await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
@@ -227,13 +231,13 @@ async fn janus_in_process_histogram_4_buckets() {
     install_test_trace_subscriber();
 
     // Start servers.
-    let janus_pair = JanusInProcessPair::new(
+    let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
+        QueryType::TimeInterval,
         VdafInstance::Prio3Histogram {
             length: 4,
             chunk_length: 2,
         },
-        QueryType::TimeInterval,
-    )
+    ))
     .await;
 
     // Run the behavioral test.
@@ -282,13 +286,13 @@ async fn janus_in_process_fixed_size() {
     install_test_trace_subscriber();
 
     // Start servers.
-    let janus_pair = JanusInProcessPair::new(
-        VdafInstance::Prio3Count,
+    let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
         QueryType::FixedSize {
             max_batch_size: Some(50),
             batch_time_window_size: None,
         },
-    )
+        VdafInstance::Prio3Count,
+    ))
     .await;
 
     // Run the behavioral test.
@@ -335,14 +339,14 @@ async fn janus_janus_sum_vec() {
 async fn janus_in_process_sum_vec() {
     install_test_trace_subscriber();
 
-    let janus_pair = JanusInProcessPair::new(
+    let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
+        QueryType::TimeInterval,
         VdafInstance::Prio3SumVec {
             bits: 16,
             length: 15,
             chunk_length: 16,
         },
-        QueryType::TimeInterval,
-    )
+    ))
     .await;
 
     submit_measurements_and_verify_aggregate(
@@ -360,15 +364,15 @@ async fn janus_in_process_sum_vec() {
 async fn janus_in_process_customized_sum_vec() {
     install_test_trace_subscriber();
 
-    let janus_pair = JanusInProcessPair::new(
+    let janus_pair = JanusInProcessPair::new(TaskBuilder::new(
+        QueryType::TimeInterval,
         VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 {
             proofs: 2,
             bits: 16,
             length: 15,
             chunk_length: 16,
         },
-        QueryType::TimeInterval,
-    )
+    ))
     .await;
 
     submit_measurements_and_verify_aggregate(

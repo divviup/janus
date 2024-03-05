@@ -1147,6 +1147,16 @@ pub mod test_util {
             })
         }
 
+        /// Gets the query type for the eventual task
+        pub fn query_type(&self) -> &QueryType {
+            self.0.query_type()
+        }
+
+        /// Gets the VDAF for the eventual task
+        pub fn vdaf(&self) -> &VdafInstance {
+            self.0.vdaf()
+        }
+
         /// Associates the eventual task with the given aggregator endpoint for the Leader.
         pub fn with_leader_aggregator_endpoint(self, leader_aggregator_endpoint: Url) -> Self {
             Self(Task {
