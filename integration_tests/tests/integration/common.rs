@@ -91,8 +91,10 @@ pub fn build_test_task(
         .with_leader_aggregator_endpoint(leader_endpoint)
         .with_helper_aggregator_endpoint(helper_endpoint)
         .with_min_batch_size(46)
-        // TODO(timg): is it OK to unconditionally set these? I think the remote case will ignore
-        // the values anyway
+        // The randomly generated auth tokens will only be used in the TestContext::VirtualNetwork
+        // and TestContext::Host cases. They will be ignored in the TestContext::Remote case,
+        // because the auth tokens will be provisioned via divviup-api, but it's harmless to set
+        // them in the task builder.
         .with_dap_auth_aggregator_token()
         .with_dap_auth_collector_token();
 
