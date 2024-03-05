@@ -498,7 +498,7 @@ mod tests {
     };
     use opentelemetry::metrics::MeterProvider as _;
     use opentelemetry_sdk::{
-        metrics::{data::Gauge, MeterProvider, PeriodicReader},
+        metrics::{data::Gauge, PeriodicReader, SdkMeterProvider},
         runtime::Tokio,
         testing::metrics::InMemoryMetricsExporter,
     };
@@ -659,7 +659,9 @@ mod tests {
 
         let exporter = InMemoryMetricsExporter::default();
         let reader = PeriodicReader::builder(exporter.clone(), Tokio).build();
-        let meter_provider = MeterProvider::builder().with_reader(reader.clone()).build();
+        let meter_provider = SdkMeterProvider::builder()
+            .with_reader(reader.clone())
+            .build();
         let meter = meter_provider.meter("tests");
 
         register_database_pool_status_metrics(pool.clone(), &meter).unwrap();
@@ -681,7 +683,7 @@ mod tests {
     }
 
     async fn check_database_pool_gauges(
-        meter_provider: &MeterProvider,
+        meter_provider: &SdkMeterProvider,
         exporter: &InMemoryMetricsExporter,
         expected_available: u64,
         expected_total: u64,
