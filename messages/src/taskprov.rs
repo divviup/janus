@@ -308,10 +308,10 @@ pub enum VdafType {
         bits: u8,
     },
     Prio3SumVec {
-        /// Bit length of each summand.
-        bits: u8,
         /// Number of summands.
         length: u32,
+        /// Bit length of each summand.
+        bits: u8,
         /// Size of each proof chunk.
         chunk_length: u32,
     },
@@ -344,13 +344,13 @@ impl Encode for VdafType {
                 bits.encode(bytes);
             }
             Self::Prio3SumVec {
-                bits,
                 length,
+                bits,
                 chunk_length,
             } => {
                 Self::PRIO3SUMVEC.encode(bytes);
-                bits.encode(bytes);
                 length.encode(bytes);
+                bits.encode(bytes);
                 chunk_length.encode(bytes);
             }
             Self::Prio3Histogram {
@@ -389,8 +389,8 @@ impl Decode for VdafType {
                 bits: u8::decode(bytes)?,
             }),
             Self::PRIO3SUMVEC => Ok(Self::Prio3SumVec {
-                bits: u8::decode(bytes)?,
                 length: u32::decode(bytes)?,
+                bits: u8::decode(bytes)?,
                 chunk_length: u32::decode(bytes)?,
             }),
             Self::PRIO3HISTOGRAM => Ok(Self::Prio3Histogram {
@@ -519,8 +519,8 @@ mod tests {
                 },
                 concat!(
                     "00000002", // algorithm ID
-                    "08",       // bits
                     "0000000C", // length
+                    "08",       // bits
                     "0000000E"  // chunk_length
                 ),
             ),
@@ -569,13 +569,13 @@ mod tests {
                 VdafConfig::new(
                     DpConfig::new(DpMechanism::None),
                     VdafType::Prio3SumVec {
-                        bits: 8,
                         length: 12,
+                        bits: 8,
                         chunk_length: 14,
                     },
                 )
                 .unwrap(),
-                concat!("01", concat!("00000002", "08", "0000000C", "0000000E")),
+                concat!("01", concat!("00000002", "0000000C", "08", "0000000E")),
             ),
             (
                 VdafConfig::new(
