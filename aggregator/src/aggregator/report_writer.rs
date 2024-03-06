@@ -27,7 +27,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::{sleep_until, Instant},
 };
-use tracing::debug;
+use tracing::{debug, error};
 
 type ReportResult<C> = Result<Box<dyn ReportWriter<C>>, ReportRejection>;
 
@@ -195,21 +195,30 @@ impl<C: Clock> ReportWriteBatcher<C> {
                         }
                     }))
                     .await;
-
-                    if enable_task_counters {
-                        // Failure of writing counters is considered a whole transaction failure.
-                        // The logic behind it is simple enough that if it is failing, then likely
-                        // something _very_ wrong is going on and we should rollback.
-                        task_upload_counters.write(counter_shard_count, tx).await?;
-                    }
-
-                    Ok(results)
+                    Ok((results, task_upload_counters))
                 })
             })
             .await;
 
         match results {
-            Ok(results) => {
+            Ok((results, task_upload_counters)) => {
+                // Write the task upload counters in a separate transaction from uploads. This is
+                // to prevent seralization conflicts causing excess repeated work when INSERTing.
+                //
+                // We're fine with this being non-transactional with the actual report uploads.
+                // If the process dies before being able to write counters, it's not a big deal.
+                if enable_task_counters {
+                    let _ = ds
+                        .run_tx("update_task_upload_counters", |tx| {
+                            let task_upload_counters = task_upload_counters.clone();
+                            Box::pin(async move {
+                                task_upload_counters.write(counter_shard_count, tx).await
+                            })
+                        })
+                        .await
+                        .map_err(|err| error!(?err, "Failed to write upload metrics"));
+                }
+
                 // Individual, per-request results.
                 assert_eq!(result_senders.len(), results.len()); // sanity check: should be guaranteed.
                 for (result_tx, result) in result_senders.into_iter().zip(results.into_iter()) {
