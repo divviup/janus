@@ -197,18 +197,15 @@ impl<C: Clock> ReportWriteBatcher<C> {
                 //
                 // We're fine with this being non-transactional with the actual report uploads.
                 // If the process dies before being able to write counters, it's not a big deal.
-                ds.run_tx("update_task_upload_counters", |tx| {
-                    let task_upload_counters = task_upload_counters.clone();
-                    Box::pin(
-                        async move { task_upload_counters.write(counter_shard_count, tx).await },
-                    )
-                })
-                .await
-                .map_err(|err| {
-                    error!(?err, "Failed to write upload metrics");
-                    err
-                })
-                .ok();
+                let _ = ds
+                    .run_tx("update_task_upload_counters", |tx| {
+                        let task_upload_counters = task_upload_counters.clone();
+                        Box::pin(async move {
+                            task_upload_counters.write(counter_shard_count, tx).await
+                        })
+                    })
+                    .await
+                    .map_err(|err| error!(?err, "Failed to write upload metrics"));
 
                 // Individual, per-request results.
                 assert_eq!(result_senders.len(), results.len()); // sanity check: should be guaranteed.
