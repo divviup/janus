@@ -116,7 +116,11 @@ impl VdafInstance {
             | VdafInstance::FakeFailsPrepInit
             | VdafInstance::FakeFailsPrepStep => 0,
 
-            // All "real" VDAFs use a verify key of length 16 currently.
+            VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. } => {
+                VERIFY_KEY_LENGTH_HMACSHA256_AES128
+            }
+
+            // All other VDAFs (Prio3 as-specified and Poplar1) have the same verify key length.
             _ => VERIFY_KEY_LENGTH,
         }
     }
