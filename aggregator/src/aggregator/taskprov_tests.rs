@@ -36,7 +36,7 @@ use janus_core::{
     taskprov::TASKPROV_HEADER,
     test_util::{install_test_trace_subscriber, runtime::TestRuntime, VdafTranscript},
     time::{Clock, DurationExt, MockClock, TimeExt},
-    vdaf::VERIFY_KEY_LENGTH,
+    vdaf::{new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128, VERIFY_KEY_LENGTH},
 };
 use janus_messages::{
     codec::{Decode, Encode},
@@ -56,6 +56,7 @@ use prio::{
     vdaf::{
         poplar1::{Poplar1, Poplar1AggregationParam},
         xof::XofTurboShake128,
+        Aggregator, Client, Vdaf,
     },
 };
 use rand::random;
@@ -71,7 +72,7 @@ use url::Url;
 
 type TestVdaf = Poplar1<XofTurboShake128, 16>;
 
-pub struct TaskprovTestCase {
+pub struct TaskprovTestCase<V: Vdaf, const VERIFY_KEY_SIZE: usize> {
     _ephemeral_datastore: EphemeralDatastore,
     clock: MockClock,
     collector_hpke_keypair: HpkeKeypair,
@@ -81,12 +82,41 @@ pub struct TaskprovTestCase {
     task: Task,
     task_config: TaskConfig,
     task_id: TaskId,
-    vdaf: TestVdaf,
+    vdaf: V,
+    measurement: V::Measurement,
+    aggregation_param: V::AggregationParam,
     global_hpke_key: HpkeKeypair,
 }
 
-impl TaskprovTestCase {
+impl TaskprovTestCase<TestVdaf, 16> {
     async fn new() -> Self {
+        // We use a real VDAF since taskprov doesn't have any allowance for a test VDAF, and we use
+        // Poplar1 so that the VDAF wil take more than one step, so we can exercise aggregation
+        // continuation.
+        let vdaf = Poplar1::new(1);
+        let vdaf_config = VdafConfig::new(
+            DpConfig::new(DpMechanism::None),
+            VdafType::Poplar1 { bits: 1 },
+        )
+        .unwrap();
+        let measurement = IdpfInput::from_bools(&[true]);
+        let aggregation_param =
+            Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[true])]))
+                .unwrap();
+        Self::with_vdaf(vdaf_config, vdaf, measurement, aggregation_param).await
+    }
+}
+
+impl<V, const VERIFY_KEY_SIZE: usize> TaskprovTestCase<V, VERIFY_KEY_SIZE>
+where
+    V: Vdaf + Client<16> + Aggregator<VERIFY_KEY_SIZE, 16> + Clone,
+{
+    async fn with_vdaf(
+        vdaf_config: VdafConfig,
+        vdaf: V,
+        measurement: V::Measurement,
+        aggregation_param: V::AggregationParam,
+    ) -> Self {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
@@ -148,20 +178,11 @@ impl TaskprovTestCase {
                 TaskprovQuery::FixedSize { max_batch_size },
             ),
             task_expiration,
-            VdafConfig::new(
-                DpConfig::new(DpMechanism::None),
-                VdafType::Poplar1 { bits: 1 },
-            )
-            .unwrap(),
+            vdaf_config,
         )
         .unwrap();
 
         let task_config_encoded = task_config.get_encoded().unwrap();
-
-        // We use a real VDAF since taskprov doesn't have any allowance for a test VDAF, and we use
-        // Poplar1 so that the VDAF wil take more than one step, so we can exercise aggregation
-        // continuation.
-        let vdaf = Poplar1::new(1);
 
         let task_id = TaskId::try_from(digest(&SHA256, &task_config_encoded).as_ref()).unwrap();
         let vdaf_instance = task_config.vdaf_config().vdaf_type().try_into().unwrap();
@@ -197,6 +218,8 @@ impl TaskprovTestCase {
             task_config,
             task_id,
             vdaf,
+            measurement,
+            aggregation_param,
             global_hpke_key,
         }
     }
@@ -204,9 +227,9 @@ impl TaskprovTestCase {
     fn next_report_share(
         &self,
     ) -> (
-        VdafTranscript<16, TestVdaf>,
+        VdafTranscript<VERIFY_KEY_SIZE, V>,
         ReportShare,
-        Poplar1AggregationParam,
+        V::AggregationParam,
     ) {
         self.next_report_share_with_extensions(Vec::from([Extension::new(
             ExtensionType::Taskprov,
@@ -218,24 +241,20 @@ impl TaskprovTestCase {
         &self,
         extensions: Vec<Extension>,
     ) -> (
-        VdafTranscript<16, TestVdaf>,
+        VdafTranscript<VERIFY_KEY_SIZE, V>,
         ReportShare,
-        Poplar1AggregationParam,
+        V::AggregationParam,
     ) {
-        let aggregation_param =
-            Poplar1AggregationParam::try_from_prefixes(Vec::from([IdpfInput::from_bools(&[true])]))
-                .unwrap();
-        let measurement = IdpfInput::from_bools(&[true]);
         let (report_share, transcript) = PrepareInitGenerator::new(
             self.clock.clone(),
             self.task.helper_view().unwrap(),
             self.vdaf.clone(),
-            aggregation_param.clone(),
+            self.aggregation_param.clone(),
         )
         .with_hpke_config(self.global_hpke_key.config().clone())
         .with_extensions(extensions)
-        .next_report_share(&measurement);
-        (transcript, report_share, aggregation_param)
+        .next_report_share(&self.measurement);
+        (transcript, report_share, self.aggregation_param.clone())
     }
 }
 
@@ -1118,7 +1137,7 @@ async fn taskprov_aggregate_share() {
 /// This runs aggregation job init, aggregation job continue, and aggregate share requests against a
 /// taskprov-enabled helper, and confirms that correct results are returned.
 #[tokio::test]
-async fn end_to_end() {
+async fn end_to_end_poplar1() {
     let test = TaskprovTestCase::new().await;
     let (auth_header_name, auth_header_value) = test
         .peer_aggregator
@@ -1204,6 +1223,110 @@ async fn end_to_end() {
     let prepare_resp = &aggregation_job_resp.prepare_resps()[0];
     assert_eq!(prepare_resp.report_id(), report_share.metadata().id());
     assert_matches!(prepare_resp.result(), PrepareStepResult::Finished);
+
+    let checksum = ReportIdChecksum::for_report_id(report_share.metadata().id());
+    let aggregate_share_request = AggregateShareReq::new(
+        BatchSelector::new_fixed_size(batch_id),
+        aggregation_param.get_encoded().unwrap(),
+        1,
+        checksum,
+    );
+
+    let mut test_conn = post(test.task.aggregate_shares_uri().unwrap().path())
+        .with_request_header(auth_header_name, auth_header_value.clone())
+        .with_request_header(
+            KnownHeaderName::ContentType,
+            AggregateShareReq::<FixedSize>::MEDIA_TYPE,
+        )
+        .with_request_header(
+            TASKPROV_HEADER,
+            URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+        )
+        .with_request_body(aggregate_share_request.get_encoded().unwrap())
+        .run_async(&test.handler)
+        .await;
+
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_headers!(&test_conn, "content-type" => (AggregateShareMessage::MEDIA_TYPE));
+    let aggregate_share_resp: AggregateShareMessage = decode_response_body(&mut test_conn).await;
+
+    let plaintext = hpke::open(
+        &test.collector_hpke_keypair,
+        &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
+        aggregate_share_resp.encrypted_aggregate_share(),
+        &AggregateShareAad::new(
+            test.task_id,
+            aggregation_param.get_encoded().unwrap(),
+            aggregate_share_request.batch_selector().clone(),
+        )
+        .get_encoded()
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        plaintext,
+        transcript.helper_aggregate_share.get_encoded().unwrap()
+    );
+}
+
+#[tokio::test]
+async fn end_to_end_sumvec_hmac() {
+    let vdaf = new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128(2, 8, 12, 14).unwrap();
+    let vdaf_config = VdafConfig::new(
+        DpConfig::new(DpMechanism::None),
+        VdafType::Prio3SumVecField64MultiproofHmacSha256Aes128 {
+            length: 12,
+            bits: 8,
+            chunk_length: 14,
+            proofs: 2,
+        },
+    )
+    .unwrap();
+    let measurement = Vec::from([255, 1, 10, 20, 30, 0, 99, 100, 0, 0, 0, 0]);
+    let test = TaskprovTestCase::with_vdaf(vdaf_config, vdaf, measurement, ()).await;
+    let (auth_header_name, auth_header_value) = test
+        .peer_aggregator
+        .primary_aggregator_auth_token()
+        .request_authentication();
+    let batch_id = random();
+    let aggregation_job_id = random();
+    let (transcript, report_share, aggregation_param) = test.next_report_share();
+    let aggregation_job_init_request = AggregationJobInitializeReq::new(
+        aggregation_param.get_encoded().unwrap(),
+        PartialBatchSelector::new_fixed_size(batch_id),
+        Vec::from([PrepareInit::new(
+            report_share.clone(),
+            transcript.leader_prepare_transitions[0].message.clone(),
+        )]),
+    );
+
+    let mut test_conn = put(test
+        .task
+        .aggregation_job_uri(&aggregation_job_id)
+        .unwrap()
+        .path())
+    .with_request_header(auth_header_name, auth_header_value.clone())
+    .with_request_header(
+        KnownHeaderName::ContentType,
+        AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+    )
+    .with_request_header(
+        TASKPROV_HEADER,
+        URL_SAFE_NO_PAD.encode(test.task_config.get_encoded().unwrap()),
+    )
+    .with_request_body(aggregation_job_init_request.get_encoded().unwrap())
+    .run_async(&test.handler)
+    .await;
+
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_headers!(&test_conn, "content-type" => (AggregationJobResp::MEDIA_TYPE));
+    let aggregation_job_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
+
+    assert_eq!(aggregation_job_resp.prepare_resps().len(), 1);
+    let prepare_resp = &aggregation_job_resp.prepare_resps()[0];
+    assert_eq!(prepare_resp.report_id(), report_share.metadata().id());
+    let message = assert_matches!(prepare_resp.result(), PrepareStepResult::Continue { message } => message.clone());
+    assert_eq!(message, transcript.helper_prepare_transitions[0].message);
 
     let checksum = ReportIdChecksum::for_report_id(report_share.metadata().id());
     let aggregate_share_request = AggregateShareReq::new(
