@@ -1067,6 +1067,14 @@ impl Display for HpkePublicKey {
     }
 }
 
+impl FromStr for HpkePublicKey {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self::from(URL_SAFE_NO_PAD.decode(s)?))
+    }
+}
+
 /// This customized implementation serializes a [`HpkePublicKey`] as a base64url-encoded string,
 /// instead of as a byte array. This is more compact and ergonomic when serialized to YAML.
 impl Serialize for HpkePublicKey {
