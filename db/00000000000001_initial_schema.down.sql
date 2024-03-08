@@ -9,8 +9,6 @@ DROP TABLE collection_jobs CASCADE;
 DROP TYPE COLLECTION_JOB_STATE CASCADE;
 DROP TABLE batch_aggregations CASCADE;
 DROP TYPE BATCH_AGGREGATION_STATE;
-DROP TABLE batches CASCADE;
-DROP TYPE BATCH_STATE CASCADE;
 DROP INDEX report_aggregations_client_report_id_index CASCADE;
 DROP INDEX report_aggregations_aggregation_job_id_index CASCADE;
 DROP TABLE report_aggregations CASCADE;

@@ -12,6 +12,7 @@ version.workspace = true
 default = []
 test-util = [
     "dep:hex",
+    "dep:itertools",
     "dep:sqlx",
     "dep:testcontainers",
     "janus_core/test-util",
@@ -33,6 +34,7 @@ futures = "0.3.30"
 hex = { version = "0.4.3", features = ["serde"], optional = true }
 http = "0.2.11"
 http-api-problem = "0.57.0"
+itertools = { workspace = true, optional = true }
 janus_core.workspace = true
 janus_messages.workspace = true
 k8s-openapi.workspace = true

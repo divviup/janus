@@ -1,7 +1,7 @@
 use crate::{
     datastore::{
         self,
-        models::{AggregateShareJob, Batch, BatchAggregation, CollectionJob},
+        models::{BatchAggregation, CollectionJob},
         Transaction,
     },
     task::AggregatorTask,
@@ -11,7 +11,7 @@ use futures::future::try_join_all;
 use janus_core::time::{Clock, IntervalExt as _, TimeExt as _};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
-    Duration, FixedSizeQuery, Interval, Query, ReportMetadata, TaskId, Time,
+    Duration, FixedSizeQuery, Interval, Query, TaskId, Time,
 };
 use prio::vdaf;
 use std::iter;
@@ -26,18 +26,6 @@ pub trait AccumulableQueryType: QueryType {
         _: &Self::PartialBatchIdentifier,
         client_timestamp: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error>;
-
-    async fn get_conflicting_aggregate_share_jobs<
-        const SEED_SIZE: usize,
-        C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
-    >(
-        tx: &Transaction<'_, C>,
-        vdaf: &A,
-        task_id: &TaskId,
-        partial_batch_identifier: &Self::PartialBatchIdentifier,
-        report_metadata: &ReportMetadata,
-    ) -> Result<Vec<AggregateShareJob<SEED_SIZE, Self, A>>, datastore::Error>;
 
     /// Retrieves collection jobs which include the given batch identifier.
     async fn get_collection_jobs_including<
@@ -93,25 +81,6 @@ impl AccumulableQueryType for TimeInterval {
             .map_err(|e| datastore::Error::User(e.into()))
     }
 
-    async fn get_conflicting_aggregate_share_jobs<
-        const SEED_SIZE: usize,
-        C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
-    >(
-        tx: &Transaction<'_, C>,
-        vdaf: &A,
-        task_id: &TaskId,
-        _: &Self::PartialBatchIdentifier,
-        report_metadata: &ReportMetadata,
-    ) -> Result<Vec<AggregateShareJob<SEED_SIZE, Self, A>>, datastore::Error> {
-        tx.get_aggregate_share_jobs_including_time::<SEED_SIZE, A>(
-            vdaf,
-            task_id,
-            report_metadata.time(),
-        )
-        .await
-    }
-
     async fn get_collection_jobs_including<
         const SEED_SIZE: usize,
         C: Clock,
@@ -162,21 +131,6 @@ impl AccumulableQueryType for FixedSize {
         _: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error> {
         Ok(*batch_id)
-    }
-
-    async fn get_conflicting_aggregate_share_jobs<
-        const SEED_SIZE: usize,
-        C: Clock,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
-    >(
-        tx: &Transaction<'_, C>,
-        vdaf: &A,
-        task_id: &TaskId,
-        batch_id: &Self::PartialBatchIdentifier,
-        _: &ReportMetadata,
-    ) -> Result<Vec<AggregateShareJob<SEED_SIZE, Self, A>>, datastore::Error> {
-        tx.get_aggregate_share_jobs_by_batch_id(vdaf, task_id, batch_id)
-            .await
     }
 
     async fn get_collection_jobs_including<
@@ -283,38 +237,6 @@ pub trait CollectableQueryType: AccumulableQueryType {
                             &aggregation_param,
                         )
                         .await
-                    }
-                },
-            ),
-        )
-        .await?
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>())
-    }
-
-    /// Retrieves all batches identified by the given collection identifier.
-    async fn get_batches_for_collection_identifier<
-        const SEED_SIZE: usize,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
-        C: Clock,
-    >(
-        tx: &Transaction<C>,
-        task: &AggregatorTask,
-        collection_identifier: &Self::BatchIdentifier,
-        aggregation_param: &A::AggregationParam,
-    ) -> Result<Vec<Batch<SEED_SIZE, Self, A>>, datastore::Error>
-    where
-        A::AggregationParam: Send + Sync,
-        A::AggregateShare: Send + Sync,
-    {
-        Ok(try_join_all(
-            Self::batch_identifiers_for_collection_identifier(task, collection_identifier).map(
-                |batch_identifier| {
-                    let (task_id, aggregation_param) = (*task.id(), aggregation_param.clone());
-                    async move {
-                        tx.get_batch(&task_id, &batch_identifier, &aggregation_param)
-                            .await
                     }
                 },
             ),

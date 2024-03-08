@@ -176,9 +176,9 @@ mod tests {
     use janus_aggregator_core::{
         datastore::{
             models::{
-                AggregateShareJob, AggregationJob, AggregationJobState, Batch, BatchAggregation,
-                BatchAggregationState, BatchState, CollectionJob, CollectionJobState,
-                LeaderStoredReport, ReportAggregation, ReportAggregationState,
+                AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
+                BatchAggregationState, CollectionJob, CollectionJobState, LeaderStoredReport,
+                ReportAggregation, ReportAggregationState,
             },
             test_util::ephemeral_datastore,
         },
@@ -225,13 +225,6 @@ mod tests {
 
                     // Client report artifacts.
                     let client_timestamp = clock.now().sub(&Duration::from_seconds(2)).unwrap();
-                    let batch_identifier = Interval::new(
-                        client_timestamp
-                            .to_batch_interval_start(task.time_precision())
-                            .unwrap(),
-                        *task.time_precision(),
-                    )
-                    .unwrap();
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
                     tx.put_client_report(&vdaf, &report).await.unwrap();
 
@@ -256,27 +249,20 @@ mod tests {
                     .unwrap();
 
                     // Collection artifacts.
-                    tx.put_batch(&Batch::<0, TimeInterval, dummy::Vdaf>::new(
-                        *task.id(),
-                        Interval::from_time(&client_timestamp).unwrap(), // unrealistic, but induces GC
-                        dummy::AggregationParam(0),
-                        BatchState::Closed,
-                        0,
-                        Interval::from_time(&client_timestamp).unwrap(),
-                    ))
-                    .await
-                    .unwrap();
-
+                    let batch_identifier = Interval::from_time(&client_timestamp).unwrap(); // unrealistic, but induces GC
                     tx.put_batch_aggregation(
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             batch_identifier,
                             dummy::AggregationParam(0),
                             0,
+                            batch_identifier,
                             BatchAggregationState::Collected {
                                 aggregate_share: Some(dummy::AggregateShare(11)),
                                 report_count: 1,
                                 checksum: random(),
+                                aggregation_jobs_created: 3,
+                                aggregation_jobs_terminated: 3,
                             },
                         ),
                     )
@@ -345,11 +331,6 @@ mod tests {
                     .unwrap()
                     .is_empty());
                 assert!(tx
-                    .get_batches_for_task::<0, TimeInterval, dummy::Vdaf>(task.id())
-                    .await
-                    .unwrap()
-                    .is_empty());
-                assert!(tx
                     .get_batch_aggregations_for_task::<0, TimeInterval, dummy::Vdaf>(
                         &vdaf,
                         task.id(),
@@ -392,13 +373,6 @@ mod tests {
 
                     // Client report artifacts.
                     let client_timestamp = clock.now().sub(&Duration::from_seconds(2)).unwrap();
-                    let batch_identifier = Interval::new(
-                        client_timestamp
-                            .to_batch_interval_start(task.time_precision())
-                            .unwrap(),
-                        *task.time_precision(),
-                    )
-                    .unwrap();
                     let report_share = ReportShare::new(
                         ReportMetadata::new(random(), client_timestamp),
                         Vec::new(),
@@ -437,27 +411,20 @@ mod tests {
                     .unwrap();
 
                     // Collection artifacts.
-                    tx.put_batch(&Batch::<0, TimeInterval, dummy::Vdaf>::new(
-                        *task.id(),
-                        Interval::from_time(&client_timestamp).unwrap(), // unrealistic, but induces GC
-                        dummy::AggregationParam(0),
-                        BatchState::Closed,
-                        0,
-                        Interval::from_time(&client_timestamp).unwrap(),
-                    ))
-                    .await
-                    .unwrap();
-
+                    let batch_identifier = Interval::from_time(&client_timestamp).unwrap(); // unrealistic, but induces GC
                     tx.put_batch_aggregation(
                         &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                             *task.id(),
                             batch_identifier,
                             dummy::AggregationParam(0),
                             0,
+                            batch_identifier,
                             BatchAggregationState::Collected {
                                 aggregate_share: Some(dummy::AggregateShare(11)),
                                 report_count: 1,
                                 checksum: random(),
+                                aggregation_jobs_created: 5,
+                                aggregation_jobs_terminated: 5,
                             },
                         ),
                     )
@@ -524,11 +491,6 @@ mod tests {
                         &Role::Leader,
                         task.id(),
                     )
-                    .await
-                    .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_batches_for_task::<0, TimeInterval, dummy::Vdaf>(task.id())
                     .await
                     .unwrap()
                     .is_empty());
@@ -612,13 +574,19 @@ mod tests {
                         .unwrap();
 
                     // Collection artifacts.
-                    tx.put_batch(&Batch::<0, FixedSize, dummy::Vdaf>::new(
+                    tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy::Vdaf>::new(
                         *task.id(),
                         batch_id,
                         dummy::AggregationParam(0),
-                        BatchState::Closed,
                         0,
                         Interval::from_time(&client_timestamp).unwrap(),
+                        BatchAggregationState::Collected {
+                            aggregate_share: Some(dummy::AggregateShare(11)),
+                            report_count: 1,
+                            checksum: random(),
+                            aggregation_jobs_created: 5,
+                            aggregation_jobs_terminated: 5,
+                        },
                     ))
                     .await
                     .unwrap();
@@ -626,20 +594,6 @@ mod tests {
                     tx.put_outstanding_batch(task.id(), &batch_id, &None)
                         .await
                         .unwrap();
-
-                    tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy::Vdaf>::new(
-                        *task.id(),
-                        batch_id,
-                        dummy::AggregationParam(0),
-                        0,
-                        BatchAggregationState::Collected {
-                            aggregate_share: Some(dummy::AggregateShare(11)),
-                            report_count: 1,
-                            checksum: random(),
-                        },
-                    ))
-                    .await
-                    .unwrap();
 
                     tx.put_collection_job(&CollectionJob::<0, FixedSize, dummy::Vdaf>::new(
                         *task.id(),
@@ -703,17 +657,12 @@ mod tests {
                     .unwrap()
                     .is_empty());
                 assert!(tx
-                    .get_batches_for_task::<0, FixedSize, dummy::Vdaf>(task.id())
+                    .get_batch_aggregations_for_task::<0, FixedSize, dummy::Vdaf>(&vdaf, task.id(),)
                     .await
                     .unwrap()
                     .is_empty());
                 assert!(tx
                     .get_outstanding_batches(task.id(), &None)
-                    .await
-                    .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_batch_aggregations_for_task::<0, FixedSize, dummy::Vdaf>(&vdaf, task.id(),)
                     .await
                     .unwrap()
                     .is_empty());
@@ -801,13 +750,19 @@ mod tests {
                         .unwrap();
 
                     // Collection artifacts.
-                    tx.put_batch(&Batch::<0, FixedSize, dummy::Vdaf>::new(
+                    tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy::Vdaf>::new(
                         *task.id(),
                         batch_id,
                         dummy::AggregationParam(0),
-                        BatchState::Closed,
                         0,
                         Interval::from_time(&client_timestamp).unwrap(),
+                        BatchAggregationState::Collected {
+                            aggregate_share: Some(dummy::AggregateShare(11)),
+                            report_count: 1,
+                            checksum: random(),
+                            aggregation_jobs_created: 6,
+                            aggregation_jobs_terminated: 6,
+                        },
                     ))
                     .await
                     .unwrap();
@@ -815,20 +770,6 @@ mod tests {
                     tx.put_outstanding_batch(task.id(), &batch_id, &None)
                         .await
                         .unwrap();
-
-                    tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy::Vdaf>::new(
-                        *task.id(),
-                        batch_id,
-                        dummy::AggregationParam(0),
-                        0,
-                        BatchAggregationState::Collected {
-                            aggregate_share: Some(dummy::AggregateShare(11)),
-                            report_count: 1,
-                            checksum: random(),
-                        },
-                    ))
-                    .await
-                    .unwrap();
 
                     tx.put_aggregate_share_job(
                         &AggregateShareJob::<0, FixedSize, dummy::Vdaf>::new(
@@ -893,11 +834,6 @@ mod tests {
                         &Role::Leader,
                         task.id(),
                     )
-                    .await
-                    .unwrap()
-                    .is_empty());
-                assert!(tx
-                    .get_batches_for_task::<0, FixedSize, dummy::Vdaf>(task.id())
                     .await
                     .unwrap()
                     .is_empty());

@@ -221,7 +221,6 @@ CREATE TABLE aggregation_jobs(
     state                      AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
     step                       INTEGER NOT NULL,                -- current step of the aggregation job
     last_request_hash          BYTEA,                           -- SHA-256 hash of the most recently received AggregationJobInitReq or AggregationJobContinueReq (helper only)
-    trace_context              JSONB,                           -- distributed tracing metadata
 
     lease_expiry             TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this aggregation job expires; -infinity implies no current lease
     lease_token              BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
@@ -287,33 +286,6 @@ CREATE TABLE report_aggregations(
 CREATE INDEX report_aggregations_aggregation_job_id_index ON report_aggregations(aggregation_job_id);
 CREATE INDEX report_aggregations_client_report_id_index ON report_aggregations(client_report_id);
 
--- Specifies the possible state of aggregation for a given batch.
-CREATE TYPE BATCH_STATE AS ENUM(
-    'OPEN',     -- this batch can accept additional aggregation jobs.
-    'CLOSING',  -- this batch can accept additional aggregation jobs, but will transition to CLOSED when there are no outstanding aggregation jobs.
-    'CLOSED'    -- this batch can no longer accept additional aggregation jobs.
-);
-
--- Tracks the state of a given batch, by aggregation parameter.
-CREATE TABLE batches(
-    id                    BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    task_id                       BIGINT NOT NULL,       -- the task ID
-    batch_identifier              BYTEA NOT NULL,        -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector)
-    batch_interval                TSRANGE,
-    aggregation_param             BYTEA NOT NULL,        -- the aggregation parameter (opaque VDAF message)
-    state                         BATCH_STATE NOT NULL,  -- the state of aggregations for this batch
-    outstanding_aggregation_jobs  BIGINT NOT NULL,       -- the number of outstanding aggregation jobs
-    client_timestamp_interval     TSRANGE NOT NULL,
-
-    -- creation/update records
-    created_at TIMESTAMP NOT NULL,  -- when the row was created
-    updated_at TIMESTAMP NOT NULL,  -- when the row was last changed
-    updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
-
-    CONSTRAINT batches_unique_id UNIQUE(task_id, batch_identifier, aggregation_param),
-    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
-);
-
 -- Specifies the possible states of a batch aggregation.
 CREATE TYPE BATCH_AGGREGATION_STATE AS ENUM(
     'AGGREGATING',  -- this batch aggregation has not been collected & permits further aggregation
@@ -324,15 +296,20 @@ CREATE TYPE BATCH_AGGREGATION_STATE AS ENUM(
 -- Information on aggregation for a single batch. This information may be incremental if the VDAF
 -- supports incremental aggregation. Each batch's aggregation is sharded via the `ord` column.
 CREATE TABLE batch_aggregations(
-    id                         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    task_id                    BIGINT NOT NULL,                   -- the task ID
-    batch_identifier           BYTEA NOT NULL,                    -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector)
-    aggregation_param          BYTEA NOT NULL,                    -- the aggregation parameter (opaque VDAF message)
-    ord                        BIGINT NOT NULL,                   -- the index of this batch aggregation shard, over (task ID, batch_identifier, aggregation_param).
-    state                      BATCH_AGGREGATION_STATE NOT NULL,  -- the current state of this batch aggregation
-    aggregate_share            BYTEA,                             -- the (possibly-incremental) aggregate share; populated unless report_count is 0 or the batch aggregation has been scrubbed.
-    report_count               BIGINT,                            -- the (possibly-incremental) client report count; populated unless the batch aggregation has been scrubbed.
-    checksum                   BYTEA,                             -- the (possibly-incremental) checksum; populated unless the batch aggregation has been scrubbed.
+    id                          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
+    task_id                     BIGINT NOT NULL,                   -- the task ID
+    batch_identifier            BYTEA NOT NULL,                    -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector)
+    batch_interval              TSRANGE,                           -- batch interval, as a TSRANGE, populated only for time-interval tasks. (will always match batch_identifier)
+    aggregation_param           BYTEA NOT NULL,                    -- the aggregation parameter (opaque VDAF message)
+    ord                         BIGINT NOT NULL,                   -- the index of this batch aggregation shard, over (task ID, batch_identifier, aggregation_param).
+
+    client_timestamp_interval   TSRANGE NOT NULL,                  -- the minimal interval containing all of client timestamps included in this batch aggregation
+    state                       BATCH_AGGREGATION_STATE NOT NULL,  -- the current state of this batch aggregation
+    aggregate_share             BYTEA,                             -- the (possibly-incremental) aggregate share; populated unless report_count is 0 or the batch aggregation has been scrubbed.
+    report_count                BIGINT,                            -- the (possibly-incremental) client report count; populated unless the batch aggregation has been scrubbed.
+    checksum                    BYTEA,                             -- the (possibly-incremental) checksum; populated unless the batch aggregation has been scrubbed.
+    aggregation_jobs_created    BIGINT,                            -- the number of aggregation jobs that have been created for this batch; populated unless the batch aggregation has been scrubbed.
+    aggregation_jobs_terminated BIGINT,                            -- the number of aggregation jobs that have been terminated (finished or abandoned) for this batch; populated unless the batch aggregation has been scrubbed.
 
     -- creation/update records
     created_at TIMESTAMP NOT NULL,  -- when the row was created
@@ -346,42 +323,41 @@ CREATE TABLE batch_aggregations(
 -- Specifies the possible state of a collection job.
 CREATE TYPE COLLECTION_JOB_STATE AS ENUM(
     'START',        -- this collection job is waiting for reports to be aggregated
-    'COLLECTABLE',  -- this collection job is ready to be collected
-    'FINISHED',     -- this collection job has run successfully and is ready for collection
+    'FINISHED',     -- this collection job has run successfully and is ready to be retrieved by the collector
     'ABANDONED',    -- this collection job has been abandoned & will never be run again
     'DELETED'       -- this collection job has been deleted
 );
 
 -- The leader's view of collect requests from the Collector.
 CREATE TABLE collection_jobs(
-    id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    task_id                 BIGINT NOT NULL,             -- the task ID being collected
-    collection_job_id       BYTEA NOT NULL,              -- 16 byte identifier used by collector to refer to this job
-    query                   BYTEA NOT NULL,              -- encoded query-type-specific query (corresponds to Query)
-    aggregation_param       BYTEA NOT NULL,              -- the aggregation parameter (opaque VDAF message)
-    batch_identifier        BYTEA NOT NULL,              -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector)
-    batch_interval          TSRANGE,                     -- batch interval, as a TSRANGE, populated only for time-interval tasks. (will always match batch_identifier)
-    state                   COLLECTION_JOB_STATE NOT NULL,  -- the current state of this collection job
-    report_count            BIGINT,                      -- the number of reports included in this collection job (only if in state FINISHED)
-    helper_aggregate_share  BYTEA,                       -- the helper's encrypted aggregate share (HpkeCiphertext, only if in state FINISHED)
-    leader_aggregate_share  BYTEA,                       -- the leader's unencrypted aggregate share (opaque VDAF message, only if in state FINISHED)
-    trace_context           JSONB,                       -- distributed tracing metadata
+    id                         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
+    task_id                    BIGINT NOT NULL,                -- the task ID being collected
+    collection_job_id          BYTEA NOT NULL,                 -- 16 byte identifier used by collector to refer to this job
+    query                      BYTEA NOT NULL,                 -- encoded query-type-specific query (corresponds to Query)
+    aggregation_param          BYTEA NOT NULL,                 -- the aggregation parameter (opaque VDAF message)
+    batch_identifier           BYTEA NOT NULL,                 -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector)
+    batch_interval             TSRANGE,                        -- batch interval, as a TSRANGE, populated only for time-interval tasks. (will always match batch_identifier)
+    state                      COLLECTION_JOB_STATE NOT NULL,  -- the current state of this collection job
+    report_count               BIGINT,                         -- the number of reports included in this collection job (only if in state FINISHED)
+    client_timestamp_interval  TSRANGE,                        -- the minimal interval containing the reports included in this collection job, aligned to the task's time precision (only if in state FINISHED)
+    helper_aggregate_share     BYTEA,                          -- the helper's encrypted aggregate share (HpkeCiphertext, only if in state FINISHED)
+    leader_aggregate_share     BYTEA,                          -- the leader's unencrypted aggregate share (opaque VDAF message, only if in state FINISHED)
 
-    lease_expiry            TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this collection job expires; -infinity implies no current lease
-    lease_token             BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
-    lease_attempts          BIGINT NOT NULL DEFAULT 0,                         -- the number of lease acquiries since the last successful lease release
+    lease_expiry    TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this collection job expires; -infinity implies no current lease
+    lease_token     BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
+    lease_attempts  BIGINT NOT NULL DEFAULT 0,                         -- the number of lease acquiries since the last successful lease release
 
     -- creation/update records
-    created_at TIMESTAMP NOT NULL,  -- when the row was created
-    updated_at TIMESTAMP NOT NULL,  -- when the row was last changed
-    updated_by TEXT NOT NULL,       -- the name of the transaction that last updated the row
+    created_at  TIMESTAMP NOT NULL,  -- when the row was created
+    updated_at  TIMESTAMP NOT NULL,  -- when the row was last changed
+    updated_by  TEXT NOT NULL,       -- the name of the transaction that last updated the row
 
     CONSTRAINT collection_jobs_unique_id UNIQUE(task_id, collection_job_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 CREATE INDEX collection_jobs_task_id_batch_id ON collection_jobs(task_id, batch_identifier);
 -- TODO(#224): verify that this index is optimal for purposes of acquiring collection jobs.
-CREATE INDEX collection_jobs_state_and_lease_expiry ON collection_jobs(state, lease_expiry) WHERE state = 'COLLECTABLE';
+CREATE INDEX collection_jobs_state_and_lease_expiry ON collection_jobs(state, lease_expiry) WHERE state = 'START';
 CREATE INDEX collection_jobs_interval_containment_index ON collection_jobs USING gist (task_id, batch_interval);
 
 -- The helper's view of aggregate share jobs.

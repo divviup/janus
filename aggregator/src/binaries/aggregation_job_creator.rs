@@ -15,6 +15,7 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
     let aggregation_job_creator = Arc::new(AggregationJobCreator::new(
         ctx.datastore,
         ctx.meter,
+        ctx.config.batch_aggregation_shard_count,
         Duration::from_secs(ctx.config.tasks_update_frequency_secs),
         Duration::from_secs(ctx.config.aggregation_job_creation_interval_secs),
         ctx.config.min_aggregation_job_size,
@@ -56,6 +57,7 @@ impl BinaryOptions for Options {
 ///   url: "postgres://postgres:postgres@localhost:5432/postgres"
 /// logging_config: # logging_config is optional
 ///   force_json_output: true
+/// batch_aggregation_shard_count: 32
 /// tasks_update_frequency_secs: 3600
 /// aggregation_job_creation_interval_secs: 60
 /// min_aggregation_job_size: 100
@@ -69,6 +71,10 @@ pub struct Config {
     #[serde(flatten)]
     pub common_config: CommonConfig,
 
+    /// Defines the number of shards to break each batch aggregation into. Increasing this value
+    /// will reduce the amount of database contention during leader aggregation, while increasing
+    /// the cost of collection.
+    pub batch_aggregation_shard_count: u64,
     /// How frequently we look for new tasks to start creating aggregation jobs for, in seconds.
     pub tasks_update_frequency_secs: u64,
     /// How frequently we attempt to create new aggregation jobs for each task, in seconds.
@@ -123,6 +129,7 @@ mod tests {
                 metrics_config: generate_metrics_config(),
                 health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
             },
+            batch_aggregation_shard_count: 32,
             tasks_update_frequency_secs: 3600,
             aggregation_job_creation_interval_secs: 60,
             min_aggregation_job_size: 100,

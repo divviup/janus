@@ -1,307 +1,82 @@
-//! In-memory accumulation of aggregation job (& report aggregation) updates.
+//! In-memory accumulation of aggregation job (& report aggregation) writes, along with related
+//! batch aggregation writes.
 
-use crate::{aggregator::query_type::CollectableQueryType, Operation};
-use anyhow::anyhow;
+use crate::Operation;
 use async_trait::async_trait;
-use futures::{future::try_join_all, TryFutureExt};
+use futures::future::try_join_all;
 use janus_aggregator_core::{
     datastore::{
         models::{
-            AggregationJob, AggregationJobState, Batch, BatchState, CollectionJobState,
+            AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
             ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
             ReportAggregationState,
         },
         Error, Transaction,
     },
+    query_type::AccumulableQueryType,
     task::AggregatorTask,
 };
-use janus_core::time::{Clock, IntervalExt};
-use janus_messages::{AggregationJobId, Interval, PrepareError, ReportId, Time};
-use prio::{codec::Encode, vdaf};
-use std::{
-    borrow::Cow,
-    collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
+use janus_core::{
+    report_id::ReportIdChecksumExt as _,
+    time::{Clock, IntervalExt},
 };
+use janus_messages::{
+    AggregationJobId, Interval, PrepareError, PrepareResp, PrepareStepResult, ReportId,
+    ReportIdChecksum, Time,
+};
+use prio::{codec::Encode, vdaf};
+use rand::{thread_rng, Rng as _};
+use std::{borrow::Cow, collections::HashMap, marker::PhantomData, sync::Arc};
 use tokio::try_join;
-use tracing::{debug, error, Level};
+use tracing::Level;
 
-/// Contains logic used to write new aggregation jobs. It is used only by the leader.
-pub struct NewAggregationJobWriter<
-    const SEED_SIZE: usize,
-    Q: CollectableQueryType,
+/// Buffers pending writes to aggregation jobs and their report aggregations.
+pub struct AggregationJobWriter<const SEED_SIZE: usize, Q, A, WT, RA>
+where
+    Q: AccumulableQueryType,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
-> {
-    updates: AggregationJobUpdates<SEED_SIZE, Q, A, ReportAggregationMetadata>,
+{
+    task: Arc<AggregatorTask>,
+    batch_aggregation_shard_count: u64,
+    aggregation_parameter: Option<A::AggregationParam>,
+    aggregation_jobs: HashMap<AggregationJobId, AggregationJobInfo<SEED_SIZE, Q, A, RA>>,
+    by_batch_identifier_index: HashMap<Q::BatchIdentifier, HashMap<AggregationJobId, Vec<usize>>>,
+
+    _phantom_wt: PhantomData<WT>,
 }
 
-impl<const SEED_SIZE: usize, Q, A> NewAggregationJobWriter<SEED_SIZE, Q, A>
+#[allow(private_bounds)]
+impl<const SEED_SIZE: usize, A, Q, WT, RA> AggregationJobWriter<SEED_SIZE, Q, A, WT, RA>
 where
-    Q: CollectableQueryType,
-    A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
+    Q: AccumulableQueryType,
+    A: vdaf::Aggregator<SEED_SIZE, 16>,
     A::AggregationParam: PartialEq + Eq,
-    A::PrepareState: Encode,
+    WT: WriteType,
+    RA: ReportAggregationUpdate<SEED_SIZE, A>,
 {
-    /// Creates a new, empty aggregation job writer.
-    pub fn new(task: Arc<AggregatorTask>) -> Self {
+    /// Create a new, empty aggregation job writer.
+    pub fn new(task: Arc<AggregatorTask>, batch_aggregation_shard_count: u64) -> Self {
         Self {
-            updates: AggregationJobUpdates::new(task),
+            task,
+            batch_aggregation_shard_count,
+            aggregation_parameter: None,
+            aggregation_jobs: HashMap::new(),
+            by_batch_identifier_index: HashMap::new(),
+
+            _phantom_wt: PhantomData,
         }
     }
 
     /// Returns true if this aggregation job writer does not contain any aggregation jobs.
     pub fn is_empty(&self) -> bool {
-        self.updates.is_empty()
-    }
-
-    /// Queues a new aggregation job to be written to the datastore. Nothing is actually written
-    /// until [`NewAggregationJobWriter::write`] is called.
-    pub fn put(
-        &mut self,
-        aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
-        report_aggregations: Vec<ReportAggregationMetadata>,
-    ) -> Result<(), Error> {
-        self.updates.add(aggregation_job, report_aggregations)
-    }
-
-    /// Writes all queued aggregation jobs to the datastore.
-    ///
-    /// Some report aggregations may turn out to be unaggregatable due to a concurrent collection
-    /// operation (aggregation into a collected batch is not allowed). These report aggregations
-    /// will be written with a `Failed(BatchCollected)` state, and the associated report IDs will be
-    /// returned.
-    #[tracing::instrument(
-        name = "NewAggregationJobWriter::write",
-        skip(self, tx),
-        err(level = Level::DEBUG),
-    )]
-    pub async fn write<C: Clock>(
-        &self,
-        tx: &Transaction<'_, C>,
-        vdaf: Arc<A>,
-    ) -> Result<(), Error> {
-        self.updates
-            .write::<C, NewAggregationJobBatchUpdate>(tx, vdaf)
-            .await?;
-        Ok(())
-    }
-}
-
-/// This holds a flag and a callback used internally by [`AggregationJobUpdates`] when updating
-/// batches, and is specific to creation of new aggregation jobs.
-struct NewAggregationJobBatchUpdate;
-
-impl BatchUpdateCallback for NewAggregationJobBatchUpdate {
-    fn update_batch<'a, const SEED_SIZE: usize, Q, A, RA>(
-        batch: Batch<SEED_SIZE, Q, A>,
-        aggregation_jobs: impl Iterator<
-            Item = (
-                &'a AggregationJob<SEED_SIZE, Q, A>,
-                &'a [Cow<'a, RA>],
-                &'a [usize],
-            ),
-        >,
-    ) -> Result<Batch<SEED_SIZE, Q, A>, Error>
-    where
-        Q: CollectableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + 'a,
-        RA: ReportAggregationUpdate + Clone + 'a,
-    {
-        // Increment outstanding job count by the number of new, incomplete aggregation jobs we are
-        // writing. Update the time interval too.
-        let mut outstanding_aggregation_jobs = batch.outstanding_aggregation_jobs();
-        let mut client_timestamp_interval = *batch.client_timestamp_interval();
-        for (agg_job, report_aggs, report_aggregation_ords) in aggregation_jobs {
-            if let AggregationJobState::InProgress = agg_job.state() {
-                outstanding_aggregation_jobs += 1;
-            }
-            update_client_timestamp_interval(
-                &mut client_timestamp_interval,
-                report_aggs,
-                report_aggregation_ords,
-            )?;
-        }
-        Ok(batch
-            .with_outstanding_aggregation_jobs(outstanding_aggregation_jobs)
-            .with_client_timestamp_interval(client_timestamp_interval))
-    }
-
-    fn write_type() -> AggregationJobWriteType {
-        AggregationJobWriteType::Create
-    }
-}
-
-/// Contains logic used to write updates to aggregation jobs. It is used only by the leader.
-pub struct UpdatedAggregationJobWriter<
-    const SEED_SIZE: usize,
-    Q: CollectableQueryType,
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-> {
-    updates: AggregationJobUpdates<SEED_SIZE, Q, A, ReportAggregation<SEED_SIZE, A>>,
-}
-
-impl<const SEED_SIZE: usize, Q, A> UpdatedAggregationJobWriter<SEED_SIZE, Q, A>
-where
-    Q: CollectableQueryType,
-    A: vdaf::Aggregator<SEED_SIZE, 16> + Send + Sync,
-    A::AggregationParam: PartialEq + Eq,
-    A::PublicShare: Sync,
-    A::InputShare: Sync,
-    A::PrepareMessage: Sync,
-    A::PrepareState: Encode + Sync,
-{
-    /// Creates a new, empty aggregation job writer.
-    pub fn new(task: Arc<AggregatorTask>) -> Self {
-        Self {
-            updates: AggregationJobUpdates::new(task),
-        }
-    }
-
-    /// Returns whether this aggregation job writer does not contain any aggregation jobs.
-    pub fn is_empty(&self) -> bool {
-        self.updates.is_empty()
-    }
-
-    /// Queues an update to an aggregation job to be written to the datastore. Nothing is actually
-    /// written until [`UpdatedAggregationJobWriter::write`] is called.
-    pub fn update(
-        &mut self,
-        aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
-        report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-    ) -> Result<(), Error> {
-        self.updates.add(aggregation_job, report_aggregations)
-    }
-
-    /// Writes all queued aggregation jobs to the datastore.
-    ///
-    /// Some report aggregations may turn out to be unaggregatable due to a concurrent collection
-    /// operation (aggregation into a collected batch is not allowed). These report aggregations
-    /// will be written with a `Failed(BatchCollected)` state, and the associated report IDs will be
-    /// returned.
-    #[tracing::instrument(
-        name = "UpdatedAggregationJobWriter::write",
-        skip(self, tx),
-        err(level = Level::DEBUG),
-    )]
-    pub async fn write<C: Clock>(
-        &self,
-        tx: &Transaction<'_, C>,
-        vdaf: Arc<A>,
-    ) -> Result<HashSet<ReportId>, Error> {
-        self.updates
-            .write::<C, UpdatedAggregationJobBatchUpdate>(tx, vdaf)
-            .await
-    }
-}
-
-/// This holds a flag and a callback used internally by [`AggregationJobUpdates`] when updating
-/// batches, and is specific to updates to existing aggregation jobs.
-struct UpdatedAggregationJobBatchUpdate;
-
-impl BatchUpdateCallback for UpdatedAggregationJobBatchUpdate {
-    fn update_batch<'a, const SEED_SIZE: usize, Q, A, RA>(
-        batch: Batch<SEED_SIZE, Q, A>,
-        aggregation_jobs: impl Iterator<
-            Item = (
-                &'a AggregationJob<SEED_SIZE, Q, A>,
-                &'a [Cow<'a, RA>],
-                &'a [usize],
-            ),
-        >,
-    ) -> Result<Batch<SEED_SIZE, Q, A>, Error>
-    where
-        Q: CollectableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + 'a,
-        RA: ReportAggregationUpdate + Clone + 'a,
-    {
-        // Decrement outstanding job count by the number of updated, complete aggregation jobs we
-        // are writing. (We assume any update to a terminal state is the first time we have updated
-        // to a terminal state, as the system does not touch aggregation jobs once they have reached
-        // a terminal state, and it would add code complexity and runtime cost to determine if we
-        // are in a repeated-terminal-write case.)
-        //
-        // Note that it is not necessary to update the client timestamp interval, as that was
-        // already done when creating the aggregation job previously.
-        let mut outstanding_aggregation_jobs = batch.outstanding_aggregation_jobs();
-        for (agg_job, _report_aggs, _report_aggregation_ords) in aggregation_jobs {
-            if !matches!(agg_job.state(), AggregationJobState::InProgress) {
-                outstanding_aggregation_jobs -= 1;
-            }
-        }
-        Ok(batch.with_outstanding_aggregation_jobs(outstanding_aggregation_jobs))
-    }
-
-    fn write_type() -> AggregationJobWriteType {
-        AggregationJobWriteType::Update
-    }
-}
-
-/// Expands a client timestamp interval as necessary to include a set of report aggregations.
-///
-/// This takes a slice of report aggregations, and a slice of offsets within that list. Only those
-/// report aggregations pointed to by the offsets are considered when updating the client timestamp
-/// interval.
-///
-/// # Panics
-///
-/// This will panic if any offset points outside the bounds of the slice of report aggregations.
-fn update_client_timestamp_interval<RA>(
-    client_timestamp_interval: &mut Interval,
-    report_aggregations: &[Cow<'_, RA>],
-    report_aggregation_ords: &[usize],
-) -> Result<(), janus_messages::Error>
-where
-    RA: ReportAggregationUpdate + Clone,
-{
-    for ra_ord in report_aggregation_ords {
-        // unwrap safety: index lookup
-        let report_aggregation = report_aggregations.get(*ra_ord).unwrap();
-        *client_timestamp_interval =
-            client_timestamp_interval.merged_with(report_aggregation.time())?;
-    }
-    Ok(())
-}
-
-/// Buffers pending updates to aggregation jobs and their report aggregations. Generic storage and
-/// logic for both [`NewAggregationJobWriter`] and [`UpdatedAggregationJobWriter`].
-struct AggregationJobUpdates<const SEED_SIZE: usize, Q, A, RA>
-where
-    Q: CollectableQueryType,
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-{
-    task: Arc<AggregatorTask>,
-    aggregation_parameter: Option<A::AggregationParam>,
-    aggregation_jobs: HashMap<AggregationJobId, AggregationJobInfo<SEED_SIZE, Q, A, RA>>,
-    by_batch_identifier_index: HashMap<Q::BatchIdentifier, HashMap<AggregationJobId, Vec<usize>>>,
-}
-
-impl<const SEED_SIZE: usize, A, Q, RA> AggregationJobUpdates<SEED_SIZE, Q, A, RA>
-where
-    Q: CollectableQueryType,
-    A: vdaf::Aggregator<SEED_SIZE, 16>,
-    A::AggregationParam: PartialEq + Eq,
-    RA: ReportAggregationUpdate + Clone,
-{
-    /// Create a new, empty set of aggregation job updates.
-    fn new(task: Arc<AggregatorTask>) -> Self {
-        Self {
-            task,
-            aggregation_parameter: None,
-            aggregation_jobs: HashMap::new(),
-            by_batch_identifier_index: HashMap::new(),
-        }
-    }
-
-    /// Check if this set of updates is empty.
-    fn is_empty(&self) -> bool {
         self.aggregation_jobs.is_empty()
     }
 
     /// Returns the aggregation parameter of the aggregation jobs, if known.
     ///
-    /// All aggregation jobs updated at once must have the same aggregation parameter. If at least
-    /// one aggregation job update has been stored, then its aggregation parameter will be returned.
-    /// Otherwise, if this set of updates is empty, `None` will be returned.
+    /// All aggregation jobs written at once must have the same aggregation parameter. If at least
+    /// one aggregation job has been stored, then its aggregation parameter will be returned.
+    /// Otherwise, this writer is empty, and `None` will be returned.
     fn aggregation_parameter(&self) -> &Option<A::AggregationParam> {
         &self.aggregation_parameter
     }
@@ -322,8 +97,13 @@ where
         }
     }
 
-    /// Add a new or updated aggregation and its report aggregations.
-    fn add(
+    /// Add an aggregation job to be written.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the aggregation parameter of the aggregation job does not match that of previous
+    /// aggregation jobs.
+    pub fn put(
         &mut self,
         aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
         report_aggregations: Vec<RA>,
@@ -345,13 +125,13 @@ where
         assert_eq!(batch_identifiers.len(), report_aggregations.len());
 
         // Modify our state to record this aggregation job. (starting here, failure is not allowed)
-        for (ord, batch_identifier) in batch_identifiers.into_iter().enumerate() {
+        for (idx, batch_identifier) in batch_identifiers.into_iter().enumerate() {
             self.by_batch_identifier_index
                 .entry(batch_identifier)
                 .or_default()
                 .entry(*aggregation_job.id())
                 .or_default()
-                .push(ord);
+                .push(idx);
         }
 
         self.aggregation_jobs.insert(
@@ -364,280 +144,299 @@ where
         Ok(())
     }
 
-    /// Writes all queued aggregation job updates to the datastore. Returns report IDs of reports in
-    /// batches that were already collected.
-    async fn write<C, BUC>(
+    /// Writes all queued aggregation jobs to the datastore.
+    ///
+    /// Some report aggregations may turn out to be unaggregatable due to a concurrent collection
+    /// operation (aggregation into a collected batch is not allowed). These report aggregations
+    /// will be written with a `Failed(BatchCollected)` state.
+    ///
+    /// A map from aggregation job ID to the associated preparation responses (if any) will be
+    /// returned. In the case that a report aggregation was unaggregatable, these preparation
+    /// responses will be updated from the preparation responses originally included in the given
+    /// report aggregations.
+    #[tracing::instrument(
+        name = "AggregationJobWriter::write",
+        skip(self, tx),
+        err(level = Level::DEBUG),
+    )]
+    pub async fn write<C>(
         &self,
         tx: &Transaction<'_, C>,
         vdaf: Arc<A>,
-    ) -> Result<HashSet<ReportId>, Error>
+    ) -> Result<HashMap<AggregationJobId, Vec<PrepareResp>>, Error>
     where
         C: Clock,
         A: Send + Sync,
-        A::AggregationParam: PartialEq + Eq,
+        A::AggregationParam: PartialEq + Eq + Send + Sync,
         A::PrepareState: Encode,
-        BUC: BatchUpdateCallback,
     {
-        let aggregation_parameter = if let Some(agg_param) = self.aggregation_parameter().as_ref() {
-            agg_param
-        } else {
-            return Ok(HashSet::new()); // None means there is nothing to write.
-        };
+        // Read & update state based on the aggregation jobs to be written. We will read batch
+        // aggregations, then update aggregation jobs/report aggregations/batch aggregations based
+        // on the state we read.
+        let mut state = WriteState::new(tx, vdaf.as_ref(), self).await?;
+        state.fail_collected_report_aggregations();
+        state.update_aggregation_job_state_from_ra_states();
+        state.update_batch_aggregations()?;
 
-        let mut indexed =
-            IndexedAggregationJobUpdates::new(tx, self, aggregation_parameter).await?;
+        // Write aggregation jobs, report aggregations, and batch aggregations back to the
+        // datastore.
+        let write_agg_jobs_future = try_join_all(state.by_aggregation_job.values().map(
+            |aggregation_job_info| async move {
+                WT::write_aggregation_job(tx, aggregation_job_info).await
+            },
+        ));
 
-        indexed.fail_collected_report_aggregations();
-
-        indexed.update_aggregation_job_state_from_ra_states();
-
-        indexed.update_batches::<BUC>(tx.clock())?;
-
-        // Write batches, aggregation jobs, and report aggregations.
-        let write_batches_future = try_join_all(indexed.batches.values().map(
-            |(batch_op, batch)| async move {
-                match (BUC::write_type(), batch_op) {
-                    (AggregationJobWriteType::Create, Operation::Put) => {
-                        let rslt = tx.put_batch(batch).await;
+        // Prevent deadlocks when inserting into shards by providing a deterministic order to shard
+        // updates. Suppose two concurrent processes are attempting to update a batch aggregation.
+        // We want to avoid this situation:
+        //
+        // A> BEGIN;
+        // A> UPDATE batch_aggregations WHERE ord = 1 ... -- Row with ord 1 is locked for update.
+        // B> BEGIN;
+        // B> UPDATE batch_aggregations WHERE ord = 2 ... -- Row with ord 2 is locked for update.
+        // A> UPDATE batch_aggregations WHERE ord = 2 ... -- A is now blocked waiting for B to finish.
+        // B> UPDATE batch_aggregations WHERE ord = 1 ... -- Kaboom!
+        //
+        // To avoid this, we sort by `batch_identifier` and `ord`.
+        //
+        // However, `try_join_all` executes futures concurrently thus there's no guarantee that the
+        // order will be respected, so there remains the possibility of deadlock. This is rare--in
+        // testing we have noticed that the probability of deadlock is drastically lower with a
+        // sorted list than with an unsorted list.
+        //
+        // There could be changes in the `AggregationJobWriter`'s usage patterns or changes in the
+        // tokio scheduler that cause this to regress, in which case the next possible solution is
+        // to execute batch aggregation updates serially.
+        let mut batch_aggregations: Vec<_> = state.batch_aggregations.values().collect();
+        batch_aggregations.sort_unstable_by_key(|(_, ba)| (ba.batch_identifier(), ba.ord()));
+        let write_batch_aggs_future =
+            try_join_all(batch_aggregations.iter().map(|(op, ba)| async move {
+                match op {
+                    Operation::Put => {
+                        let rslt = tx.put_batch_aggregation(ba).await;
                         if matches!(rslt, Err(Error::MutationTargetAlreadyExists)) {
                             // This codepath can be taken due to a quirk of how the Repeatable Read
                             // isolation level works. It cannot occur at the Serializable isolation
                             // level.
                             //
                             // For this codepath to be taken, two writers must concurrently choose
-                            // to write the same batch (by task ID, batch ID, and aggregation
-                            // parameter), and this batch must not already exist in the datastore.
+                            // to write the same batch aggregation shard (by task, batch,
+                            // aggregation parameter, and shard), and this batch aggregation shard
+                            // must not already exist in the datastore.
                             //
-                            // Both writers will receive `None` from the `get_batch` call, and then
-                            // both will try to `put_batch`. One of the writers will succeed. The
-                            // other will fail with a unique constraint violation on (task_id,
-                            // batch_identifier, aggregation_param), since unique constraints are
-                            // still enforced even in the presence of snapshot isolation. This
-                            // unique constraint will be translated to a MutationTargetAlreadyExists
-                            // error.
+                            // Both writers will receive `None` from the `get_batch_aggregation`
+                            // call, and then both will try to `put_batch_aggregation`. One of the
+                            // writers will succeed. The other will fail with a unique constraint
+                            // violation on (task_id, batch_identifier, aggregation_param, ord),
+                            // since unique constraints are still enforced even in the presence of
+                            // snapshot isolation, which will be translated to a
+                            // MutationTargetAlreadyExists error.
                             //
                             // The failing writer, in this case, can't do anything about this
                             // problem while in its current transaction: further attempts to read
-                            // the batch will continue to return `None` (since all reads in the same
-                            // transaction are from the same snapshot), so it can't update the
-                            // now-written batch. All it can do is give up on this transaction and
-                            // try again, by calling `retry` and returning an error.
+                            // the batch aggregation will continue to return `None` (since all reads
+                            // in the same transaction are from the same snapshot), so it can't
+                            // update the now-written batch aggregation. All it can do is give up on
+                            // this transaction and try again, by calling `retry` and returning an
+                            // error.
                             tx.retry();
                         }
                         rslt
                     }
-                    (_, Operation::Update) => tx.update_batch(batch).await,
-                    (AggregationJobWriteType::Update, Operation::Put) => panic!(
-                        "Unexpectedly missing batch while updating existing aggregation jobs"
-                    ),
+                    Operation::Update => tx.update_batch_aggregation(ba).await,
                 }
-            },
-        ));
-        let write_agg_jobs_future = try_join_all(indexed.by_aggregation_job.values().map(
-            |CowAggregationJobInfo {
-                 aggregation_job,
-                 report_aggregations,
-             }| async move {
-                if let AggregationJobWriteType::Create = BUC::write_type() {
-                    // These operations must occur serially since report aggregation rows have a
-                    // foreign-key constraint on the related aggregation job existing. We could
-                    // speed things up for initial writes by switching to DEFERRED constraints:
-                    // https://www.postgresql.org/docs/current/sql-set-constraints.html
-                    tx.put_aggregation_job(aggregation_job).await?;
-                    try_join_all(report_aggregations.iter().map(|ra| ra.write_new(tx))).await?;
-                } else {
-                    try_join!(
-                        tx.update_aggregation_job(aggregation_job),
-                        try_join_all(report_aggregations.iter().map(|ra| ra.write_update(tx)),)
-                    )?;
-                };
-                Ok(())
-            },
-        ));
-        let collection_jobs_future =
-            try_join_all(indexed.newly_closed_batches.iter().map(|batch_identifier| {
-                Q::get_collection_jobs_including(
-                    tx,
-                    vdaf.as_ref(),
-                    self.task.id(),
-                    batch_identifier,
-                )
-            }))
-            .map_ok(|collection_jobs| {
-                collection_jobs
-                    .into_iter()
-                    .flatten()
-                    .flat_map(|job| match job.state() {
-                        CollectionJobState::Start => Some((*job.id(), job)),
-                        _ => None,
-                    })
-                    .collect::<HashMap<_, _>>()
-            });
-        let (_, _, affected_collection_jobs) = try_join!(
-            // Write updated batches.
-            write_batches_future,
-            // Write updated aggregation jobs & report aggregations.
-            write_agg_jobs_future,
-            // Read any collection jobs associated with a batch which just transitioned to CLOSED
-            // state.
-            collection_jobs_future
-        )?;
+            }));
+        try_join!(write_agg_jobs_future, write_batch_aggs_future)?;
 
-        // Find all batches which are relevant to a collection job that just had a batch move into
-        // CLOSED state.
-        let relevant_batches: Arc<HashMap<_, _>> = Arc::new({
-            let batches = Arc::new(Mutex::new(indexed.batches));
-            let relevant_batch_identifiers: HashSet<_> = affected_collection_jobs
-                .values()
-                .flat_map(|collection_job| {
-                    Q::batch_identifiers_for_collection_identifier(
-                        &self.task,
-                        collection_job.batch_identifier(),
-                    )
-                })
-                .collect();
-            try_join_all(
-                relevant_batch_identifiers
-                    .into_iter()
-                    .map(|batch_identifier| {
-                        let batches = Arc::clone(&batches);
-                        async move {
-                            // We put the lock/remove operation into its own statement to ensure the
-                            // lock is dropped by the time we call `get_batch`.
-                            let batch = batches.lock().unwrap().remove(&batch_identifier);
-                            let batch = match batch {
-                                Some((_batch_op, batch)) => Some(batch),
-                                None => {
-                                    tx.get_batch::<SEED_SIZE, Q, A>(
-                                        self.task.id(),
-                                        &batch_identifier,
-                                        aggregation_parameter,
-                                    )
-                                    .await?
-                                }
-                            };
-                            Ok::<_, Error>((batch_identifier, batch))
-                        }
-                    }),
-            )
-            .await?
+        Ok(state
+            .by_aggregation_job
             .into_iter()
-            .collect()
-        });
-
-        // For any collection jobs for which all relevant batches are now in CLOSED state, update
-        // the collection job's state to COLLECTABLE to allow the collection process to proceed.
-        let relevant_batches = Arc::new(relevant_batches);
-        try_join_all(
-            affected_collection_jobs
-                .into_values()
-                .map(|collection_job| {
-                    let relevant_batches = Arc::clone(&relevant_batches);
-                    async move {
-                        let mut is_collectable = true;
-                        for batch_identifier in Q::batch_identifiers_for_collection_identifier(
-                            &self.task,
-                            collection_job.batch_identifier(),
-                        ) {
-                            let batch = match relevant_batches.get(&batch_identifier) {
-                                Some(batch) => batch,
-                                None => {
-                                    return Err(Error::User(
-                                        anyhow!(
-                                        "impossible: did not attempt to read all required batches"
-                                    )
-                                        .into(),
-                                    ))
-                                }
-                            };
-                            let batch = match batch.as_ref() {
-                                Some(batch) => batch,
-                                None => {
-                                    return Err(Error::User(
-                                        anyhow!(
-                                        "impossible: expected batch does not exist in datastore"
-                                    )
-                                        .into(),
-                                    ));
-                                }
-                            };
-                            if batch.state() != &BatchState::Closed {
-                                is_collectable = false;
-                            }
-                        }
-                        if is_collectable {
-                            tx.update_collection_job(
-                                &collection_job.with_state(CollectionJobState::Collectable),
-                            )
-                            .await?;
-                        }
-                        Ok(())
-                    }
-                }),
-        )
-        .await?;
-
-        Ok(indexed.unwritable_report_ids)
+            .map(|(agg_job_id, agg_job_info)| {
+                (
+                    agg_job_id,
+                    agg_job_info
+                        .report_aggregations
+                        .iter()
+                        .map(AsRef::as_ref)
+                        .filter_map(RA::last_prep_resp)
+                        .cloned()
+                        .collect(),
+                )
+            })
+            .collect())
     }
 }
 
 /// Generic callback used in the internals of aggregation job writers. Different implementations are
 /// used when creating new aggregation jobs versus updating existing aggregation jobs.
-trait BatchUpdateCallback {
-    /// This takes one batch and an iterator of aggregation jobs, and returns that batch updated to
-    /// reflect changes due to the aggregation job. Particularly, it will update the
-    /// `outstanding_aggregation_jobs` counter and the `client_timestamp_interval`.
-    fn update_batch<'a, const SEED_SIZE: usize, Q, A, RA>(
-        batch: Batch<SEED_SIZE, Q, A>,
-        aggregation_jobs: impl Iterator<
-            Item = (
-                &'a AggregationJob<SEED_SIZE, Q, A>,
-                &'a [Cow<'a, RA>],
-                &'a [usize],
-            ),
-        >,
-    ) -> Result<Batch<SEED_SIZE, Q, A>, Error>
+#[async_trait]
+trait WriteType {
+    /// Writes an aggregation job back to the datastore.
+    async fn write_aggregation_job<'a, const SEED_SIZE: usize, C, Q, A, RA>(
+        tx: &Transaction<'_, C>,
+        aggregation_job_info: &CowAggregationJobInfo<'a, SEED_SIZE, Q, A, RA>,
+    ) -> Result<(), Error>
     where
-        Q: CollectableQueryType,
-        A: vdaf::Aggregator<SEED_SIZE, 16> + 'a,
-        RA: ReportAggregationUpdate + Clone + 'a;
+        C: Clock,
+        Q: AccumulableQueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A::AggregationParam: Send + Sync,
+        RA: ReportAggregationUpdate<SEED_SIZE, A>;
 
-    /// Returns a value indicating whether aggregation jobs are being created or updated.
-    fn write_type() -> AggregationJobWriteType;
+    fn update_batch_aggregation_for_agg_job<const SEED_SIZE: usize, Q, A>(
+        batch_aggregation: &mut BatchAggregation<SEED_SIZE, Q, A>,
+        aggregation_job: &AggregationJob<SEED_SIZE, Q, A>,
+    ) -> Result<(), Error>
+    where
+        Q: AccumulableQueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>;
 }
 
-/// Indicates whether aggregation jobs are being created or updated.
-enum AggregationJobWriteType {
-    Create,
-    Update,
+/// Represents the initial write of a set of aggregation jobs.
+pub struct InitialWrite;
+
+#[async_trait]
+impl WriteType for InitialWrite {
+    async fn write_aggregation_job<'a, const SEED_SIZE: usize, C, Q, A, RA>(
+        tx: &Transaction<'_, C>,
+        aggregation_job_info: &CowAggregationJobInfo<'a, SEED_SIZE, Q, A, RA>,
+    ) -> Result<(), Error>
+    where
+        C: Clock,
+        Q: AccumulableQueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A::AggregationParam: Send + Sync,
+        RA: ReportAggregationUpdate<SEED_SIZE, A>,
+    {
+        // These operations must occur serially since report aggregation rows have a
+        // foreign-key constraint on the related aggregation job existing. We could
+        // speed things up for initial writes by switching to DEFERRED constraints:
+        // https://www.postgresql.org/docs/current/sql-set-constraints.html
+        tx.put_aggregation_job(&aggregation_job_info.aggregation_job)
+            .await?;
+        try_join_all(
+            aggregation_job_info
+                .report_aggregations
+                .iter()
+                .map(|ra| ra.write_new(tx)),
+        )
+        .await?;
+        Ok(())
+    }
+
+    fn update_batch_aggregation_for_agg_job<const SEED_SIZE: usize, Q, A>(
+        batch_aggregation: &mut BatchAggregation<SEED_SIZE, Q, A>,
+        aggregation_job: &AggregationJob<SEED_SIZE, Q, A>,
+    ) -> Result<(), Error>
+    where
+        Q: AccumulableQueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+    {
+        // For new writes (inserts) of aggregation jobs in a non-terminal state, increment
+        // aggregation_jobs_created.
+        if aggregation_job.state() == &AggregationJobState::InProgress {
+            *batch_aggregation = BatchAggregation::new(
+                *batch_aggregation.task_id(),
+                batch_aggregation.batch_identifier().clone(),
+                batch_aggregation.aggregation_parameter().clone(),
+                batch_aggregation.ord(),
+                Interval::EMPTY,
+                BatchAggregationState::Aggregating {
+                    aggregate_share: None,
+                    report_count: 0,
+                    checksum: ReportIdChecksum::default(),
+                    aggregation_jobs_created: 1,
+                    aggregation_jobs_terminated: 0,
+                },
+            )
+            .merged_with(batch_aggregation)?;
+        }
+        Ok(())
+    }
 }
 
-/// Contains internal implementation details of [`AggregationJobUpdates::write`].
+/// Represents a update write of a set of aggregation jobs.
+pub struct UpdateWrite;
+
+#[async_trait]
+impl WriteType for UpdateWrite {
+    async fn write_aggregation_job<'a, const SEED_SIZE: usize, C, Q, A, RA>(
+        tx: &Transaction<'_, C>,
+        aggregation_job_info: &CowAggregationJobInfo<'a, SEED_SIZE, Q, A, RA>,
+    ) -> Result<(), Error>
+    where
+        C: Clock,
+        Q: AccumulableQueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+        A::AggregationParam: Send + Sync,
+        RA: ReportAggregationUpdate<SEED_SIZE, A>,
+    {
+        try_join!(
+            tx.update_aggregation_job(&aggregation_job_info.aggregation_job),
+            try_join_all(
+                aggregation_job_info
+                    .report_aggregations
+                    .iter()
+                    .map(|ra| ra.write_update(tx)),
+            )
+        )?;
+        Ok(())
+    }
+
+    fn update_batch_aggregation_for_agg_job<const SEED_SIZE: usize, Q, A>(
+        batch_aggregation: &mut BatchAggregation<SEED_SIZE, Q, A>,
+        aggregation_job: &AggregationJob<SEED_SIZE, Q, A>,
+    ) -> Result<(), Error>
+    where
+        Q: AccumulableQueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+    {
+        // For updates of aggregation jobs into a terminal state, increment
+        // aggregation_jobs_terminated. (This is safe to do since we will not process a terminal
+        // aggregation job again.)
+        if aggregation_job.state() != &AggregationJobState::InProgress {
+            *batch_aggregation = BatchAggregation::new(
+                *batch_aggregation.task_id(),
+                batch_aggregation.batch_identifier().clone(),
+                batch_aggregation.aggregation_parameter().clone(),
+                batch_aggregation.ord(),
+                Interval::EMPTY,
+                BatchAggregationState::Aggregating {
+                    aggregate_share: None,
+                    report_count: 0,
+                    checksum: ReportIdChecksum::default(),
+                    aggregation_jobs_created: 0,
+                    aggregation_jobs_terminated: 1,
+                },
+            )
+            .merged_with(batch_aggregation)?;
+        }
+        Ok(())
+    }
+}
+
+/// Contains internal state & implementation details of [`AggregationJobWriter::write`].
 ///
-/// This tracks adjustments to aggregation jobs and report aggregations, before they can be written
-/// to the datastore, behind copy-on-write smart pointers, and maintains multiple maps to look up
-/// aggregation jobs, report aggregations, and batches.
-struct IndexedAggregationJobUpdates<'a, const SEED_SIZE: usize, Q, A, RA>
+/// This tracks in-memory adjustments to aggregation jobs and report aggregations behind
+/// copy-on-write smart pointers, and maintains indices to efficiently look up aggregation jobs,
+/// report aggregations, and batch aggregations.
+struct WriteState<'a, const SEED_SIZE: usize, Q, A, WT, RA>
 where
-    Q: CollectableQueryType,
+    Q: AccumulableQueryType,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
-    RA: Clone,
+    A::AggregationParam: Send + Sync,
+    RA: ReportAggregationUpdate<SEED_SIZE, A>,
 {
-    task: &'a AggregatorTask,
-    aggregation_parameter: &'a A::AggregationParam,
-    by_batch_identifier_index:
-        &'a HashMap<Q::BatchIdentifier, HashMap<AggregationJobId, Vec<usize>>>,
+    writer: &'a AggregationJobWriter<SEED_SIZE, Q, A, WT, RA>,
+    batch_aggregation_ord: u64,
     by_aggregation_job: HashMap<AggregationJobId, CowAggregationJobInfo<'a, SEED_SIZE, Q, A, RA>>,
-    batches: HashMap<Q::BatchIdentifier, (Operation, Batch<SEED_SIZE, Q, A>)>,
-    batches_with_unaggregated_reports: HashSet<Q::BatchIdentifier>,
-    unwritable_report_ids: HashSet<ReportId>,
-    newly_closed_batches: Vec<Q::BatchIdentifier>,
+    batch_aggregations: HashMap<Q::BatchIdentifier, (Operation, BatchAggregation<SEED_SIZE, Q, A>)>,
 }
 
 /// An aggregation job and its accompanying report aggregations.
 struct AggregationJobInfo<const SEED_SIZE: usize, Q, A, RA>
 where
-    Q: CollectableQueryType,
+    Q: AccumulableQueryType,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
 {
     aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
@@ -647,34 +446,51 @@ where
 /// Copy-on-write version of [`AggregationJobInfo`].
 struct CowAggregationJobInfo<'a, const SEED_SIZE: usize, Q, A, RA>
 where
-    Q: CollectableQueryType,
+    Q: AccumulableQueryType,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
-    RA: Clone,
+    A::AggregationParam: Send + Sync,
+    RA: ReportAggregationUpdate<SEED_SIZE, A>,
 {
     aggregation_job: Cow<'a, AggregationJob<SEED_SIZE, Q, A>>,
     report_aggregations: Vec<Cow<'a, RA>>,
 }
 
-impl<'a, const SEED_SIZE: usize, Q, A, RA> IndexedAggregationJobUpdates<'a, SEED_SIZE, Q, A, RA>
+impl<'a, const SEED_SIZE: usize, Q, A, WT, RA> WriteState<'a, SEED_SIZE, Q, A, WT, RA>
 where
-    Q: CollectableQueryType,
+    Q: AccumulableQueryType,
     A: vdaf::Aggregator<SEED_SIZE, 16>,
-    RA: ReportAggregationUpdate + Clone,
+    A::AggregationParam: PartialEq + Eq + Send + Sync,
+    WT: WriteType,
+    RA: ReportAggregationUpdate<SEED_SIZE, A>,
 {
-    /// Construct a new set of lookup maps and copy-on-write data structures, from a set of
-    /// aggregation job updates and the current state of the datastore.
+    /// Construct a new set of lookup maps and copy-on-write data structures, from a provided set of
+    /// aggregation jobs and the current state of the datastore.
     pub async fn new<C>(
         tx: &Transaction<'_, C>,
-        updates: &'a AggregationJobUpdates<SEED_SIZE, Q, A, RA>,
-        aggregation_parameter: &'a A::AggregationParam,
+        vdaf: &A,
+        writer: &'a AggregationJobWriter<SEED_SIZE, Q, A, WT, RA>,
     ) -> Result<Self, Error>
     where
         C: Clock,
     {
-        // Create a copy-on-write instance of our state to allow efficient imperative updates.
-        // (Copy-on-write is used here as modifying state requires cloning it, but most pieces of
-        // state will not be modified, so using CoW avoids the cost of cloning in the common case.)
-        let by_aggregation_job = updates
+        let aggregation_parameter = match writer.aggregation_parameter() {
+            Some(aggregation_parameter) => aggregation_parameter,
+            // None means no aggregation jobs to write, so we can safely short-circuit.
+            None => {
+                return Ok(Self {
+                    writer,
+                    batch_aggregation_ord: 0,
+                    by_aggregation_job: HashMap::new(),
+                    batch_aggregations: HashMap::new(),
+                });
+            }
+        };
+
+        // Create a copy-on-write instance of our state to allow efficient imperative updates with
+        // the possibility of needing to retry the entire write. (Copy-on-write is used here as
+        // modifying state requires cloning it to permit retry; but the common case is that most
+        // pieces of state will not be modified, so using CoW avoids the cost of cloning.)
+        let by_aggregation_job = writer
             .aggregation_jobs
             .iter()
             .map(
@@ -699,92 +515,81 @@ where
             )
             .collect();
 
-        // Read all relevant batches and report counts from the datastore.
-        let (batches, batches_with_unaggregated_reports) = try_join!(
-            try_join_all(
-                updates
-                    .by_batch_identifier_index
-                    .keys()
-                    .map(|batch_identifier| {
-                        tx.get_batch::<SEED_SIZE, Q, A>(
-                            updates.task.id(),
-                            batch_identifier,
-                            aggregation_parameter,
-                        )
-                    })
-            ),
-            try_join_all(updates.by_batch_identifier_index.keys().map(
-                |batch_identifier| async move {
-                    if let Some(batch_interval) = Q::to_batch_interval(batch_identifier) {
-                        if tx
-                            .interval_has_unaggregated_reports(updates.task.id(), batch_interval)
-                            .await?
-                        {
-                            return Ok::<_, Error>(Some(batch_identifier.clone()));
-                        }
-                    }
-                    Ok(None)
-                },
-            )),
-        )?;
+        // Read all relevant batch aggregations from the datastore.
+        let batch_aggregation_ord = thread_rng().gen_range(0..writer.batch_aggregation_shard_count);
+        let batch_aggregations = try_join_all(writer.by_batch_identifier_index.keys().map(
+            |batch_identifier| {
+                tx.get_batch_aggregation::<SEED_SIZE, Q, A>(
+                    vdaf,
+                    writer.task.id(),
+                    batch_identifier,
+                    aggregation_parameter,
+                    batch_aggregation_ord,
+                )
+            },
+        ))
+        .await?;
 
-        let batches: HashMap<_, _> = batches
-            .into_iter()
-            .flat_map(|batch: Option<Batch<SEED_SIZE, Q, A>>| {
-                batch.map(|b| (b.batch_identifier().clone(), (Operation::Update, b)))
-            })
-            .collect();
-
-        let batches_with_unaggregated_reports: HashSet<_> = batches_with_unaggregated_reports
+        let batch_aggregations: HashMap<_, _> = batch_aggregations
             .into_iter()
             .flatten()
+            .map(|ba| (ba.batch_identifier().clone(), (Operation::Update, ba)))
             .collect();
 
         Ok(Self {
-            task: &updates.task,
-            aggregation_parameter,
-            by_batch_identifier_index: &updates.by_batch_identifier_index,
+            writer,
+            batch_aggregation_ord,
             by_aggregation_job,
-            batches,
-            batches_with_unaggregated_reports,
-            unwritable_report_ids: HashSet::new(),
-            newly_closed_batches: Vec::new(),
+            batch_aggregations,
         })
     }
 
-    /// Update report aggregations with failure states if they land in previously collected batches.
+    /// Update report aggregations with failure states if they land in already-collected batches.
+    /// Returns the set of report IDs which were found to be unwritable.
     fn fail_collected_report_aggregations(&mut self) {
         // Update in-memory state of report aggregations: any report aggregations applying to a
-        // closed batch instead fail with a BatchCollected error (unless they were already in an
-        // failed state).
-        for (batch_identifier, by_aggregation_job_index) in self.by_batch_identifier_index {
-            if self.batches.get(batch_identifier).map(|(_, b)| *b.state())
-                != Some(BatchState::Closed)
-            {
+        // batch which is not still accepting aggregations (i.e. not in the Aggregating state)
+        // instead fail with a BatchCollected error (unless they were already in an failed state).
+        for (batch_identifier, by_aggregation_job_index) in &self.writer.by_batch_identifier_index {
+            if !matches!(
+                self.batch_aggregations
+                    .get(batch_identifier)
+                    .map(|(_, b)| b.state()),
+                Some(BatchAggregationState::Collected { .. } | BatchAggregationState::Scrubbed)
+            ) {
                 continue;
             }
-            for (aggregation_job_id, report_aggregation_ords) in by_aggregation_job_index {
-                for ord in report_aggregation_ords {
+            for (aggregation_job_id, report_aggregation_idxs) in by_aggregation_job_index {
+                // If we are abandoning this aggregation job, don't modify any of the report
+                // aggregations.
+                //
+                // Unwrap safety: index lookup.
+                let aggregation_job = &self
+                    .by_aggregation_job
+                    .get(aggregation_job_id)
+                    .unwrap()
+                    .aggregation_job;
+                if matches!(aggregation_job.state(), AggregationJobState::Abandoned) {
+                    continue;
+                }
+
+                for idx in report_aggregation_idxs {
                     // unwrap safety: index lookup
                     let report_aggregation = self
                         .by_aggregation_job
                         .get_mut(aggregation_job_id)
                         .unwrap()
                         .report_aggregations
-                        .get_mut(*ord)
+                        .get_mut(*idx)
                         .unwrap();
                     if report_aggregation.is_failed() {
                         continue;
                     }
 
-                    self.unwritable_report_ids
-                        .insert(*report_aggregation.report_id());
-                    *report_aggregation = Cow::Owned(
-                        report_aggregation
-                            .as_ref()
-                            .clone()
-                            .with_failure(PrepareError::BatchCollected),
-                    );
+                    *report_aggregation.to_mut() = report_aggregation
+                        .as_ref()
+                        .clone()
+                        .with_failure(PrepareError::BatchCollected);
                 }
             }
         }
@@ -809,113 +614,142 @@ where
             }
 
             if report_aggregations.iter().all(|ra| ra.is_terminal()) {
-                *aggregation_job = Cow::Owned(
-                    aggregation_job
-                        .as_ref()
-                        .clone()
-                        .with_state(AggregationJobState::Finished),
-                );
+                *aggregation_job.to_mut() = aggregation_job
+                    .as_ref()
+                    .clone()
+                    .with_state(AggregationJobState::Finished);
             }
         }
     }
 
-    /// Update batches to reflect updates to aggregation jobs.
-    fn update_batches<BUC: BatchUpdateCallback>(
-        &mut self,
-        clock: &impl Clock,
-    ) -> Result<(), Error> {
-        // Update in-memory state of batches: outstanding job counts will change based on new or
-        // completed aggregation jobs affecting each batch; the client timestamp interval will
-        // change based on the report aggregations included in the batch.
-        self.batches = self
-            .by_batch_identifier_index
-            .iter()
-            .flat_map(|(batch_identifier, by_aggregation_job_index)| {
-                let (batch_op, mut batch) = match (
-                    BUC::write_type(),
-                    self.batches.remove(batch_identifier),
-                ) {
-                    (_, Some((batch_op, batch))) => (batch_op, batch),
-                    (AggregationJobWriteType::Create, None) => (
+    /// Update batch aggregations to reflect the aggregation jobs that will be written.
+    fn update_batch_aggregations(&mut self) -> Result<(), Error> {
+        let aggregation_parameter = match self.writer.aggregation_parameter() {
+            Some(aggregation_parameter) => aggregation_parameter,
+            // None means there are no aggregation jobs to write, so we can safely short-circuit.
+            None => return Ok(()),
+        };
+
+        for (batch_identifier, by_aggregation_job_index) in &self.writer.by_batch_identifier_index {
+            // Grab the batch aggregation we read for this batch identifier, or create a new empty
+            // one to aggregate into.
+            let (_, batch_aggregation) = self
+                .batch_aggregations
+                .entry(batch_identifier.clone())
+                .or_insert_with(|| {
+                    (
                         Operation::Put,
-                        Batch::new(
-                            *self.task.id(),
+                        BatchAggregation::new(
+                            *self.writer.task.id(),
                             batch_identifier.clone(),
-                            self.aggregation_parameter.clone(),
-                            BatchState::Open,
-                            0,
+                            aggregation_parameter.clone(),
+                            self.batch_aggregation_ord,
                             Interval::EMPTY,
+                            BatchAggregationState::Aggregating {
+                                aggregate_share: None,
+                                report_count: 0,
+                                checksum: ReportIdChecksum::default(),
+                                aggregation_jobs_created: 0,
+                                aggregation_jobs_terminated: 0,
+                            },
                         ),
-                    ),
-                    (AggregationJobWriteType::Update, None) => {
-                        // The batch does not currently exist in the datastore. But since we first
-                        // write the batch when an aggregation job referencing that batch is
-                        // created, and we are stepping the aggregation job here, we must have
-                        // deleted the batch at some point between creating and stepping this
-                        // aggregation job. This should only be possible if the batch is GC'ed. In
-                        // that case, it is acceptable to skip writing the batch entirely; and
-                        // indeed, we must do so, since otherwise we might underflow the
-                        // outstanding_aggregation_jobs counter.
-                        //
-                        // See https://github.com/divviup/janus/issues/2464 for more detail.
-                        if Q::is_batch_garbage_collected(clock, batch_identifier) != Some(true) {
-                            error!(
-                                task_id = ?self.task.id(),
-                                batch_id = ?batch_identifier,
-                                "Unexpectedly missing batch while updating existing aggregation \
-                                jobs"
-                            );
-                            panic!(
-                                "Unexpectedly missing batch while updating existing aggregation \
-                                jobs"
-                            );
-                        }
+                    )
+                });
 
-                        debug!(
-                            task_id = ?self.task.id(),
-                            batch_id = ?batch_identifier,
-                            "Skipping batch write for GC'ed batch"
-                        );
-                        return None;
-                    }
-                };
-                if batch.state() == &BatchState::Closed {
-                    // Never update a closed batch.
-                    return None;
+            // Never update a batch aggregation which is no longer aggregating (because it has been
+            // collected or scrubbed).
+            if !matches!(
+                batch_aggregation.state(),
+                BatchAggregationState::Aggregating { .. }
+            ) {
+                continue;
+            }
+
+            for (aggregation_job_id, report_aggregation_idxs) in by_aggregation_job_index {
+                // Update the batch aggregation based on the aggregation job & the write type.
+                // unwrap safety: index lookup
+                let aggregation_job_info = self.by_aggregation_job.get(aggregation_job_id).unwrap();
+                WT::update_batch_aggregation_for_agg_job(
+                    batch_aggregation,
+                    &aggregation_job_info.aggregation_job,
+                )?;
+
+                // Update the batch aggregation based on the state of each finished report
+                // aggregation.
+                for ra_idx in report_aggregation_idxs {
+                    // unwrap safety: index lookup
+                    let report_aggregation = aggregation_job_info
+                        .report_aggregations
+                        .get(*ra_idx)
+                        .unwrap();
+
+                    let batch_aggregation_state =
+                        if let Some(output_share) = report_aggregation.is_finished() {
+                            BatchAggregationState::Aggregating {
+                                aggregate_share: Some(output_share.clone().into()),
+                                report_count: 1,
+                                checksum: ReportIdChecksum::for_report_id(
+                                    report_aggregation.report_id(),
+                                ),
+                                aggregation_jobs_created: 0,
+                                aggregation_jobs_terminated: 0,
+                            }
+                        } else {
+                            BatchAggregationState::Aggregating {
+                                aggregate_share: None,
+                                report_count: 0,
+                                checksum: ReportIdChecksum::default(),
+                                aggregation_jobs_created: 0,
+                                aggregation_jobs_terminated: 0,
+                            }
+                        };
+
+                    *batch_aggregation = BatchAggregation::new(
+                        *self.writer.task.id(),
+                        batch_identifier.clone(),
+                        aggregation_parameter.clone(),
+                        self.batch_aggregation_ord,
+                        Interval::from_time(report_aggregation.time())?,
+                        batch_aggregation_state,
+                    )
+                    .merged_with(batch_aggregation)?;
                 }
-
-                let agg_job_iter = by_aggregation_job_index.iter().map(
-                    |(aggregation_job_id, report_aggregation_ords)| {
-                        // unwrap safety: index lookup
-                        let CowAggregationJobInfo {
-                            aggregation_job,
-                            report_aggregations,
-                        } = self.by_aggregation_job.get(aggregation_job_id).unwrap();
-                        (
-                            aggregation_job.as_ref(),
-                            report_aggregations.as_slice(),
-                            report_aggregation_ords.as_slice(),
-                        )
-                    },
-                );
-                batch = match BUC::update_batch(batch, agg_job_iter) {
-                    Ok(batch) => batch,
-                    Err(error) => return Some(Err(error)),
-                };
-                if batch.state() == &BatchState::Closing
-                    && batch.outstanding_aggregation_jobs() == 0
-                    && !self
-                        .batches_with_unaggregated_reports
-                        .contains(batch.batch_identifier())
-                {
-                    batch = batch.with_state(BatchState::Closed);
-                    self.newly_closed_batches.push(batch_identifier.clone());
-                }
-
-                Some(Ok((batch_identifier.clone(), (batch_op, batch))))
-            })
-            .collect::<Result<_, _>>()?;
+            }
+        }
         Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct WritableReportAggregation<const SEED_SIZE: usize, A>
+where
+    A: vdaf::Aggregator<SEED_SIZE, 16>,
+{
+    report_aggregation: ReportAggregation<SEED_SIZE, A>,
+    output_share: Option<A::OutputShare>,
+}
+
+impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
+    WritableReportAggregation<SEED_SIZE, A>
+{
+    /// Creates a new WritableReportAggregation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the report aggregation is Finished but no output share is provided, or if the
+    /// report aggregation is not Finished but an output share is provided.
+    pub fn new(
+        report_aggregation: ReportAggregation<SEED_SIZE, A>,
+        output_share: Option<A::OutputShare>,
+    ) -> Self {
+        assert!(
+            output_share.is_some()
+                == matches!(report_aggregation.state(), ReportAggregationState::Finished)
+        );
+        Self {
+            report_aggregation,
+            output_share,
+        }
     }
 }
 
@@ -923,15 +757,18 @@ where
 ///
 /// See [`ReportAggregation`] and [`ReportAggregationMetadata`].
 #[async_trait]
-trait ReportAggregationUpdate {
+pub trait ReportAggregationUpdate<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>:
+    Clone + Send + Sync
+{
     /// Returns the report ID associated with this report aggregation.
     fn report_id(&self) -> &ReportId;
 
     /// Returns the client timestamp associated with this report aggregation.
     fn time(&self) -> &Time;
 
-    /// Returns whether this report aggregation is in a terminal state ("Finished" or "Failed").
-    fn is_terminal(&self) -> bool;
+    /// Returns whether this report aggregation is (successfully) finished; if so, returns a
+    /// reference to the output share.
+    fn is_finished(&self) -> Option<&A::OutputShare>;
 
     /// Returns whether this report aggregation is failed.
     fn is_failed(&self) -> bool;
@@ -940,6 +777,9 @@ trait ReportAggregationUpdate {
     /// the "Failed" state, with the given [`PrepareError`].
     fn with_failure(self, prepare_error: PrepareError) -> Self;
 
+    /// Returns the last preparation response from this report aggregation, if any.
+    fn last_prep_resp(&self) -> Option<&PrepareResp>;
+
     /// Write this report aggregation to the datastore. This must be used only with newly-created
     /// report aggregations.
     async fn write_new(&self, tx: &Transaction<impl Clock>) -> Result<(), Error>;
@@ -947,16 +787,83 @@ trait ReportAggregationUpdate {
     /// Write this report aggregation to the datastore. This must be used only for updates to
     /// existing report aggregations.
     async fn write_update(&self, tx: &Transaction<impl Clock>) -> Result<(), Error>;
+
+    /// Returns whether this report aggregation is in a terminal state ("Finished" or "Failed").
+    fn is_terminal(&self) -> bool {
+        self.is_finished().is_some() || self.is_failed()
+    }
 }
 
 #[async_trait]
-impl<const SEED_SIZE: usize, A> ReportAggregationUpdate for ReportAggregation<SEED_SIZE, A>
+impl<const SEED_SIZE: usize, A> ReportAggregationUpdate<SEED_SIZE, A>
+    for WritableReportAggregation<SEED_SIZE, A>
 where
     A: vdaf::Aggregator<SEED_SIZE, 16>,
-    A::PublicShare: Sync,
-    A::InputShare: Sync,
-    A::PrepareMessage: Sync,
-    A::PrepareState: Encode + Sync,
+    A::InputShare: Send + Sync,
+    A::OutputShare: Send + Sync,
+    A::PrepareState: Encode + Send + Sync,
+    A::PrepareMessage: Send + Sync,
+    A::PublicShare: Send + Sync,
+{
+    fn report_id(&self) -> &ReportId {
+        self.report_aggregation.report_id()
+    }
+
+    fn time(&self) -> &Time {
+        self.report_aggregation.time()
+    }
+
+    fn is_finished(&self) -> Option<&A::OutputShare> {
+        self.output_share.as_ref()
+    }
+
+    fn is_failed(&self) -> bool {
+        matches!(
+            self.report_aggregation.state(),
+            ReportAggregationState::Failed { .. }
+        )
+    }
+
+    fn with_failure(self, prepare_error: PrepareError) -> Self {
+        let mut report_aggregation = self
+            .report_aggregation
+            .with_state(ReportAggregationState::Failed { prepare_error });
+
+        // This check effectively checks if we are the Helper. (The Helper will always set
+        // last_prep_resp for all non-failed report aggregations, and most failed report
+        // aggregations [everything but ReportDropped].)
+        if report_aggregation.last_prep_resp().is_some() {
+            let report_id = *report_aggregation.report_id();
+            report_aggregation = report_aggregation.with_last_prep_resp(Some(PrepareResp::new(
+                report_id,
+                PrepareStepResult::Reject(prepare_error),
+            )));
+        }
+
+        Self {
+            report_aggregation,
+            output_share: None,
+        }
+    }
+
+    /// Returns the last preparation response from this report aggregation, if any.
+    fn last_prep_resp(&self) -> Option<&PrepareResp> {
+        self.report_aggregation.last_prep_resp()
+    }
+
+    async fn write_new(&self, tx: &Transaction<impl Clock>) -> Result<(), Error> {
+        tx.put_report_aggregation(&self.report_aggregation).await
+    }
+
+    async fn write_update(&self, tx: &Transaction<impl Clock>) -> Result<(), Error> {
+        tx.update_report_aggregation(&self.report_aggregation).await
+    }
+}
+
+#[async_trait]
+impl<const SEED_SIZE: usize, A> ReportAggregationUpdate<SEED_SIZE, A> for ReportAggregationMetadata
+where
+    A: vdaf::Aggregator<SEED_SIZE, 16>,
 {
     fn report_id(&self) -> &ReportId {
         self.report_id()
@@ -966,51 +873,21 @@ where
         self.time()
     }
 
-    fn is_failed(&self) -> bool {
-        matches!(self.state(), ReportAggregationState::Failed { .. })
-    }
-
-    fn is_terminal(&self) -> bool {
-        matches!(
-            self.state(),
-            ReportAggregationState::Finished { .. } | ReportAggregationState::Failed { .. }
-        )
-    }
-
-    fn with_failure(self, prepare_error: PrepareError) -> Self {
-        self.with_state(ReportAggregationState::Failed { prepare_error })
-    }
-
-    async fn write_new(&self, tx: &Transaction<impl Clock>) -> Result<(), Error> {
-        tx.put_report_aggregation(self).await
-    }
-
-    async fn write_update(&self, tx: &Transaction<impl Clock>) -> Result<(), Error> {
-        tx.update_report_aggregation(self).await
-    }
-}
-
-#[async_trait]
-impl ReportAggregationUpdate for ReportAggregationMetadata {
-    fn report_id(&self) -> &ReportId {
-        self.report_id()
-    }
-
-    fn time(&self) -> &Time {
-        self.time()
+    fn is_finished(&self) -> Option<&A::OutputShare> {
+        None
     }
 
     fn is_failed(&self) -> bool {
         matches!(self.state(), ReportAggregationMetadataState::Failed { .. })
     }
 
-    fn is_terminal(&self) -> bool {
-        // Note that ReportAggregationMetadata can only represent the Start and Failed states, not Finished.
-        self.is_failed()
-    }
-
     fn with_failure(self, prepare_error: PrepareError) -> Self {
         self.with_state(ReportAggregationMetadataState::Failed { prepare_error })
+    }
+
+    /// Returns the last preparation response from this report aggregation, if any.
+    fn last_prep_resp(&self) -> Option<&PrepareResp> {
+        None
     }
 
     async fn write_new(&self, tx: &Transaction<impl Clock>) -> Result<(), Error> {

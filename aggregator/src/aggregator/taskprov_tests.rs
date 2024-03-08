@@ -14,8 +14,8 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator_core::{
     datastore::{
         models::{
-            AggregateShareJob, AggregationJob, AggregationJobState, Batch, BatchAggregation,
-            BatchAggregationState, BatchState, ReportAggregation, ReportAggregationState,
+            AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
+            BatchAggregationState, ReportAggregation, ReportAggregationState,
         },
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
@@ -1012,26 +1012,18 @@ async fn taskprov_aggregate_share() {
                 tx.put_aggregator_task(&task.taskprov_helper_view().unwrap())
                     .await?;
 
-                tx.put_batch(&Batch::<16, FixedSize, TestVdaf>::new(
-                    *task.id(),
-                    batch_id,
-                    aggregation_param.clone(),
-                    BatchState::Closed,
-                    0,
-                    interval,
-                ))
-                .await
-                .unwrap();
-
                 tx.put_batch_aggregation(&BatchAggregation::<16, FixedSize, TestVdaf>::new(
                     *task.id(),
                     batch_id,
                     aggregation_param,
                     0,
+                    interval,
                     BatchAggregationState::Aggregating {
                         aggregate_share: Some(transcript.helper_aggregate_share),
                         report_count: 1,
                         checksum: ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
+                        aggregation_jobs_created: 1,
+                        aggregation_jobs_terminated: 1,
                     },
                 ))
                 .await

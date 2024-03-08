@@ -167,6 +167,7 @@ impl JanusInProcess {
         };
         let aggregation_job_creator_config = AggregationJobCreatorConfig {
             common_config: common_config.clone(),
+            batch_aggregation_shard_count: 32,
             tasks_update_frequency_secs: 2,
             aggregation_job_creation_interval_secs: 1,
             min_aggregation_job_size: 1,
@@ -211,6 +212,7 @@ impl JanusInProcess {
                 retry_max_elapsed_time_millis: 300_000,
             },
             batch_aggregation_shard_count: 32,
+            min_collection_job_retry_delay_secs: 1,
         };
 
         // Spawn each component.

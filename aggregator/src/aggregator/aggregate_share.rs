@@ -8,8 +8,8 @@ use janus_aggregator_core::{
     },
     task::AggregatorTask,
 };
-use janus_core::report_id::ReportIdChecksumExt;
-use janus_messages::{query_type::QueryType, ReportIdChecksum};
+use janus_core::{report_id::ReportIdChecksumExt, time::IntervalExt as _};
+use janus_messages::{query_type::QueryType, Interval, ReportIdChecksum};
 use prio::vdaf::{self, Aggregatable};
 
 /// Computes the aggregate share over the provided batch aggregations.
@@ -25,7 +25,7 @@ pub(crate) async fn compute_aggregate_share<
 >(
     task: &AggregatorTask,
     batch_aggregations: &[BatchAggregation<SEED_SIZE, Q, A>],
-) -> Result<(A::AggregateShare, u64, ReportIdChecksum), Error> {
+) -> Result<(A::AggregateShare, u64, Interval, ReportIdChecksum), Error> {
     // At the moment we construct an aggregate share (either handling AggregateShareReq in the
     // helper or driving a collection job in the leader), there could be some incomplete aggregation
     // jobs whose results not been accumulated into the batch aggregations we just queried from the
@@ -48,6 +48,7 @@ pub(crate) async fn compute_aggregate_share<
     // In either case, we go ahead and service the aggregate share request with whatever batch
     // aggregations are available now.
     let mut total_report_count = 0;
+    let mut client_timestamp_interval = Interval::EMPTY;
     let mut total_checksum = ReportIdChecksum::default();
     let mut total_aggregate_share: Option<A::AggregateShare> = None;
 
@@ -57,16 +58,23 @@ pub(crate) async fn compute_aggregate_share<
                 aggregate_share,
                 report_count,
                 checksum,
+                ..
             } => (aggregate_share, report_count, checksum),
             BatchAggregationState::Collected {
                 aggregate_share,
                 report_count,
                 checksum,
+                ..
             } => (aggregate_share, report_count, checksum),
             BatchAggregationState::Scrubbed => {
                 return Err(Error::Datastore(datastore::Error::Scrubbed))
             }
         };
+
+        // Merge the intervals spanned by the constituent batch aggregations into the interval
+        // spanned by the collection.
+        client_timestamp_interval =
+            client_timestamp_interval.merge(batch_aggregation.client_timestamp_interval())?;
 
         // XOR this batch interval's checksum into the overall checksum
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.2
@@ -92,11 +100,19 @@ pub(crate) async fn compute_aggregate_share<
     let total_aggregate_share = total_aggregate_share
         .ok_or_else(|| Error::InvalidBatchSize(*task.id(), total_report_count))?;
 
+    client_timestamp_interval =
+        client_timestamp_interval.align_to_time_precision(task.time_precision())?;
+
     // Validate batch size per
     // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
     if !task.validate_batch_size(total_report_count) {
         return Err(Error::InvalidBatchSize(*task.id(), total_report_count));
     }
 
-    Ok((total_aggregate_share, total_report_count, total_checksum))
+    Ok((
+        total_aggregate_share,
+        total_report_count,
+        client_timestamp_interval,
+        total_checksum,
+    ))
 }
