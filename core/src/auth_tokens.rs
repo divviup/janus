@@ -139,6 +139,12 @@ impl AsRef<[u8]> for DapAuthToken {
     }
 }
 
+impl From<DapAuthToken> for AuthenticationToken {
+    fn from(value: DapAuthToken) -> Self {
+        Self::DapAuth(value)
+    }
+}
+
 impl TryFrom<String> for DapAuthToken {
     type Error = anyhow::Error;
 
@@ -238,6 +244,12 @@ impl AsRef<str> for BearerToken {
 impl AsRef<[u8]> for BearerToken {
     fn as_ref(&self) -> &[u8] {
         self.0.as_bytes()
+    }
+}
+
+impl From<BearerToken> for AuthenticationToken {
+    fn from(value: BearerToken) -> Self {
+        Self::Bearer(value)
     }
 }
 
