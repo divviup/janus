@@ -23,6 +23,8 @@ pub enum Error {
     InvalidConfiguration(&'static str),
     #[error("unsupported KEM")]
     UnsupportedKem,
+    #[error("base64 decode failure: {0}")]
+    Base64Decode(#[from] base64::DecodeError),
 }
 
 /// Checks whether the algorithms used by the provided [`HpkeConfig`] are supported.
@@ -109,10 +111,10 @@ impl From<Vec<u8>> for HpkePrivateKey {
 }
 
 impl FromStr for HpkePrivateKey {
-    type Err = hex::FromHexError;
+    type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(HpkePrivateKey(hex::decode(s)?))
+        Ok(Self::from(URL_SAFE_NO_PAD.decode(s)?))
     }
 }
 
