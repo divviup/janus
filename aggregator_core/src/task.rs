@@ -777,7 +777,7 @@ pub mod test_util {
         },
         time::DurationExt,
         url_ensure_trailing_slash,
-        vdaf::{VdafInstance, VERIFY_KEY_LENGTH, VERIFY_KEY_LENGTH_HMACSHA256_AES128},
+        vdaf::VdafInstance,
     };
     use janus_messages::{
         AggregationJobId, CollectionJobId, Duration, HpkeConfigId, Role, TaskId, Time,
@@ -785,22 +785,6 @@ pub mod test_util {
     use rand::{distributions::Standard, random, thread_rng, Rng};
     use std::collections::HashMap;
     use url::Url;
-
-    /// Returns the expected length of a VDAF verification key for a VDAF of this type.
-    fn verify_key_length(vdaf: &VdafInstance) -> usize {
-        match vdaf {
-            VdafInstance::Fake
-            | VdafInstance::FakeFailsPrepInit
-            | VdafInstance::FakeFailsPrepStep => 0,
-
-            VdafInstance::Prio3SumVecField64MultiproofHmacSha256Aes128 { .. } => {
-                VERIFY_KEY_LENGTH_HMACSHA256_AES128
-            }
-
-            // All other VDAFs (Prio3 as-specified and Poplar1) have the same verify key length.
-            _ => VERIFY_KEY_LENGTH,
-        }
-    }
 
     /// All parameters and secrets for a task, for all participants.
     #[derive(Clone, Derivative, PartialEq, Eq)]
@@ -1096,7 +1080,7 @@ pub mod test_util {
             let vdaf_verify_key = SecretBytes::new(
                 thread_rng()
                     .sample_iter(Standard)
-                    .take(verify_key_length(&vdaf))
+                    .take(vdaf.verify_key_length())
                     .collect(),
             );
 
