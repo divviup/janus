@@ -16,7 +16,7 @@ anyhow = "1"
 base64 = "0.22.0"
 clap = { version = "4.5.2", features = ["cargo", "derive", "env"] }
 derivative.workspace = true
-fixed = { version = "1.25", optional = true }
+fixed = { version = "1.26", optional = true }
 janus_collector.workspace = true
 janus_core.workspace = true
 janus_messages.workspace = true
