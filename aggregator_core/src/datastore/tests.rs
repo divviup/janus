@@ -3207,7 +3207,8 @@ async fn run_collection_job_acquire_test_case<Q: TestQueryTypeExt>(
                             test_case.query_type,
                             VdafInstance::Fake,
                         ),
-                        clock.now().as_naive_date_time().unwrap() + chrono::Duration::seconds(100),
+                        clock.now().as_naive_date_time().unwrap()
+                            + chrono::Duration::try_seconds(100).unwrap(),
                     )
                 })
                 .collect();
@@ -3344,7 +3345,8 @@ async fn time_interval_collection_job_acquire_release_happy_path(
                 assert_eq!(acquired_job.leased(), reacquired_job.leased());
                 assert_eq!(
                     *acquired_job.lease_expiry_time(),
-                    *reacquired_job.lease_expiry_time() + chrono::Duration::seconds(100),
+                    *reacquired_job.lease_expiry_time()
+                        + chrono::Duration::try_seconds(100).unwrap(),
                 );
             }
 
@@ -3482,7 +3484,8 @@ async fn fixed_size_collection_job_acquire_release_happy_path(
                 assert_eq!(acquired_job.leased(), reacquired_job.leased());
                 assert_eq!(
                     *acquired_job.lease_expiry_time(),
-                    *reacquired_job.lease_expiry_time() + chrono::Duration::seconds(100),
+                    *reacquired_job.lease_expiry_time()
+                        + chrono::Duration::try_seconds(100).unwrap(),
                 );
             }
 
@@ -3946,7 +3949,8 @@ async fn collection_job_acquire_job_max(ephemeral_datastore: EphemeralDatastore)
                             task::QueryType::TimeInterval,
                             VdafInstance::Fake,
                         ),
-                        clock.now().as_naive_date_time().unwrap() + chrono::Duration::seconds(100),
+                        clock.now().as_naive_date_time().unwrap()
+                            + chrono::Duration::try_seconds(100).unwrap(),
                     )
                 })
                 .collect();

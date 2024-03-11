@@ -257,7 +257,7 @@ where
         // remains until the expiry time, minus the clock skew allowance. All math saturates, since
         // we want to timeout immediately if any of these subtractions would underflow.
         Duration::from_secs(
-            u64::try_from(lease_expiry.timestamp())
+            u64::try_from(lease_expiry.and_utc().timestamp())
                 .unwrap_or_default()
                 .saturating_sub(self.clock.now().as_seconds_since_epoch())
                 .saturating_sub(self.worker_lease_clock_skew_allowance.as_secs()),
@@ -268,7 +268,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::JobDriver;
-    use chrono::NaiveDateTime;
+    use chrono::{DateTime, NaiveDateTime, Utc};
     use janus_aggregator_core::{
         datastore::{self, models::Lease},
         test_util::noop_meter,
@@ -333,12 +333,12 @@ mod tests {
                 IncompleteJob {
                     task_id: random(),
                     job_id: random(),
-                    lease_expiry: NaiveDateTime::from_timestamp_opt(100, 0).unwrap(),
+                    lease_expiry: DateTime::<Utc>::from_timestamp(100, 0).unwrap().naive_utc(),
                 },
                 IncompleteJob {
                     task_id: random(),
                     job_id: random(),
-                    lease_expiry: NaiveDateTime::from_timestamp_opt(200, 0).unwrap(),
+                    lease_expiry: DateTime::<Utc>::from_timestamp(200, 0).unwrap().naive_utc(),
                 },
             ]),
             // Second job finder call will be immediately after the first: no more jobs
@@ -350,12 +350,12 @@ mod tests {
                 IncompleteJob {
                     task_id: random(),
                     job_id: random(),
-                    lease_expiry: NaiveDateTime::from_timestamp_opt(300, 0).unwrap(),
+                    lease_expiry: DateTime::<Utc>::from_timestamp(300, 0).unwrap().naive_utc(),
                 },
                 IncompleteJob {
                     task_id: random(),
                     job_id: random(),
-                    lease_expiry: NaiveDateTime::from_timestamp_opt(400, 0).unwrap(),
+                    lease_expiry: DateTime::<Utc>::from_timestamp(400, 0).unwrap().naive_utc(),
                 },
             ]),
         ]));

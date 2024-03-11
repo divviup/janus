@@ -746,7 +746,7 @@ impl<V: vdaf::Collector> Collector<V> {
 mod tests {
     use crate::{Collection, CollectionJob, Collector, Error, PollResult};
     use assert_matches::assert_matches;
-    use chrono::{NaiveDateTime, TimeZone, Utc};
+    use chrono::{DateTime, TimeZone, Utc};
     #[cfg(feature = "fpvec_bounded_l2")]
     use fixed_macro::fixed;
     use janus_core::{
@@ -989,10 +989,8 @@ mod tests {
                 PartialBatchSelector::new_time_interval(),
                 1,
                 (
-                    Utc.from_utc_datetime(
-                        &NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
-                    ),
-                    chrono::Duration::seconds(3600),
+                    DateTime::<Utc>::from_timestamp(1_000_000, 0).unwrap(),
+                    chrono::Duration::try_seconds(3600).unwrap(),
                 ),
                 1,
             ),
@@ -1061,10 +1059,8 @@ mod tests {
                 PartialBatchSelector::new_time_interval(),
                 1,
                 (
-                    Utc.from_utc_datetime(
-                        &NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
-                    ),
-                    chrono::Duration::seconds(3600),
+                    DateTime::<Utc>::from_timestamp(1_000_000, 0).unwrap(),
+                    chrono::Duration::try_seconds(3600).unwrap(),
                 ),
                 144
             )
@@ -1132,10 +1128,8 @@ mod tests {
                 PartialBatchSelector::new_time_interval(),
                 1,
                 (
-                    Utc.from_utc_datetime(
-                        &NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
-                    ),
-                    chrono::Duration::seconds(3600),
+                    DateTime::<Utc>::from_timestamp(1_000_000, 0).unwrap(),
+                    chrono::Duration::try_seconds(3600).unwrap(),
                 ),
                 Vec::from([0, 0, 0, 1])
             )
@@ -1212,10 +1206,8 @@ mod tests {
                 PartialBatchSelector::new_time_interval(),
                 1,
                 (
-                    Utc.from_utc_datetime(
-                        &NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
-                    ),
-                    chrono::Duration::seconds(3600),
+                    DateTime::<Utc>::from_timestamp(1_000_000, 0).unwrap(),
+                    chrono::Duration::try_seconds(3600).unwrap(),
                 ),
                 Vec::from([0.0625, 0.125, 0.25])
             )
@@ -1284,8 +1276,8 @@ mod tests {
                 PartialBatchSelector::new_fixed_size(batch_id),
                 1,
                 (
-                    Utc.from_utc_datetime(&NaiveDateTime::from_timestamp_opt(0, 0).unwrap()),
-                    chrono::Duration::seconds(1),
+                    DateTime::<Utc>::from_timestamp(0, 0).unwrap(),
+                    chrono::Duration::try_seconds(1).unwrap(),
                 ),
                 1
             )
@@ -1367,10 +1359,8 @@ mod tests {
                 PartialBatchSelector::new_time_interval(),
                 1,
                 (
-                    Utc.from_utc_datetime(
-                        &NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
-                    ),
-                    chrono::Duration::seconds(3600),
+                    DateTime::<Utc>::from_timestamp(1_000_000, 0).unwrap(),
+                    chrono::Duration::try_seconds(3600).unwrap(),
                 ),
                 1,
             )
