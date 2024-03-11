@@ -1286,6 +1286,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "event-listener"
+version = "5.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b5fb89194fa3cad959b833185b3063ba881dbfc7030680b314250779fb4cc91"
+dependencies = [
+ "concurrent-queue",
+ "parking",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "event-listener-strategy"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4653,11 +4664,11 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stopper"
-version = "0.2.4"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed8bff52ab3d70adfb76df17a225936c7676efdda1a1567ed5b11c22e3577bd3"
+checksum = "eb29dcd6766b0303882c945c8efc9229a1826b0307ced080d8382e5e1acc9de1"
 dependencies = [
- "event-listener 4.0.3",
+ "event-listener 5.2.0",
  "futures-lite 2.2.0",
  "pin-project-lite",
 ]
