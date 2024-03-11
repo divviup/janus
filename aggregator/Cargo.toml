@@ -52,7 +52,7 @@ fixed = { version = "1.26", optional = true }
 futures = "0.3.30"
 git-version = "0.3.9"
 hex = { version = "0.4.3", features = ["serde"], optional = true }
-http = "0.2.11"
+http = "0.2.12"
 http-api-problem = "0.57.0"
 itertools.workspace = true
 janus_aggregator_api.workspace = true
