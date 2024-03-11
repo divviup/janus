@@ -1,6 +1,6 @@
 //! Utilities for timestamps and durations.
 
-use chrono::{NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use janus_messages::{Duration, Error, Interval, Time};
 use std::{
     fmt::{Debug, Formatter},
@@ -114,10 +114,13 @@ pub trait DurationExt: Sized {
 
 impl DurationExt for Duration {
     fn as_chrono_duration(&self) -> Result<chrono::Duration, Error> {
-        Ok(chrono::Duration::seconds(
+        chrono::Duration::try_seconds(
             self.as_seconds()
                 .try_into()
                 .map_err(|_| Error::IllegalTimeArithmetic("number of seconds too big for i64"))?,
+        )
+        .ok_or(Error::IllegalTimeArithmetic(
+            "number of milliseconds too big for i64",
         ))
     }
 
@@ -220,7 +223,7 @@ impl TimeExt for Time {
     }
 
     fn as_naive_date_time(&self) -> Result<NaiveDateTime, Error> {
-        NaiveDateTime::from_timestamp_opt(
+        DateTime::<Utc>::from_timestamp(
             self.as_seconds_since_epoch()
                 .try_into()
                 .map_err(|_| Error::IllegalTimeArithmetic("number of seconds too big for i64"))?,
@@ -229,10 +232,11 @@ impl TimeExt for Time {
         .ok_or(Error::IllegalTimeArithmetic(
             "number of seconds is out of range",
         ))
+        .map(|dt| dt.naive_utc())
     }
 
     fn from_naive_date_time(time: &NaiveDateTime) -> Self {
-        Self::from_seconds_since_epoch(time.timestamp() as u64)
+        Self::from_seconds_since_epoch(time.and_utc().timestamp() as u64)
     }
 
     fn add(&self, duration: &Duration) -> Result<Self, Error> {
