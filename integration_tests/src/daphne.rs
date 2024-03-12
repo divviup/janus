@@ -8,7 +8,7 @@ use janus_interop_binaries::{
 use janus_messages::{Role, Time};
 use testcontainers::{clients::Cli, GenericImage, RunnableImage};
 
-const DAPHNE_HELPER_IMAGE_NAME_AND_TAG: &str = "cloudflare/daphne-worker-helper:sha-f6b3ef1";
+const DAPHNE_HELPER_IMAGE_NAME_AND_TAG: &str = "daphne_interop:latest";
 
 /// Represents a running Daphne test instance.
 pub struct Daphne<'a> {
@@ -16,7 +16,7 @@ pub struct Daphne<'a> {
 }
 
 impl<'a> Daphne<'a> {
-    const INTERNAL_SERVING_PORT: u16 = 8080;
+    const INTERNAL_SERVING_PORT: u16 = 8788;
 
     /// Create and start a new hermetic Daphne test instance in the given Docker network, configured
     /// to service the given task. The aggregator port is also exposed to the host.
