@@ -736,6 +736,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     /// yet have a report aggregation, and batch them into new aggregation jobs. This should only
     /// be used with VDAFs that have non-unit type aggregation parameters.
     // This is only used in tests thus far.
+    #[cfg(feature = "test-util")]
     async fn create_aggregation_jobs_for_time_interval_task_with_param<const SEED_SIZE: usize, A>(
         self: Arc<Self>,
         task: Arc<AggregatorTask>,
@@ -967,7 +968,7 @@ mod tests {
     };
     use rand::random;
     use std::{
-        any::Any,
+        any::{Any, TypeId},
         collections::{HashMap, HashSet},
         hash::Hash,
         iter,
@@ -3254,12 +3255,12 @@ mod tests {
                 batch_2_reports.clone(),
             );
             Box::pin(async move {
-                tx.put_aggregator_task(&task).await?;
+                tx.put_aggregator_task(&task).await.unwrap();
                 for report in batch_1_reports {
-                    tx.put_client_report(vdaf.deref(), &report).await?;
+                    tx.put_client_report(vdaf.deref(), &report).await.unwrap();
                 }
                 for report in batch_2_reports {
-                    tx.put_client_report(vdaf.deref(), &report).await?;
+                    tx.put_client_report(vdaf.deref(), &report).await.unwrap();
                 }
                 Ok(())
             })
@@ -3533,8 +3534,9 @@ mod tests {
         )
         .unwrap();
 
-        // Verify that all reports we saw a report aggregation for are scrubbed.
-        let all_seen_report_ids: HashSet<(A::AggregationParam, _)> = agg_jobs_and_report_ids
+        // Verify that all reports we saw a report aggregation for are scrubbed, if the aggregation
+        // parameter is not the unit type.
+        let all_seen_report_ids: HashSet<_> = agg_jobs_and_report_ids
             .iter()
             .flat_map(|(agg_job, report_aggs)| {
                 report_aggs.iter().map(|ra| {
@@ -3545,18 +3547,17 @@ mod tests {
                 })
             })
             .collect();
-        for (agg_param, report_id) in &all_seen_report_ids {
-            if agg_param.type_id() == ().type_id() {
+        for (_, report_id) in &all_seen_report_ids {
+            if is_unit_type::<A::AggregationParam>() {
                 tx.verify_client_report_scrubbed(task_id, report_id).await;
             }
         }
 
-        // Verify that if the aggregation parameter is (), all reports we saw a report aggregation
-        // for are scrubbed. Reports aggregated with a non-unit aggregation parameter should not get
-        // scrubbed. We check that a report is scrubbed by reading the report, since reading a
-        // report will fail if the report is scrubbed.
+        // Verify that reports aggregated with a non-unit aggregation parameter do not get scrubbed.
+        // We check that a report is scrubbed by reading the report, since reading a report will
+        // fail if the report is scrubbed.
         for (report_id, agg_param) in want_ra_states.keys() {
-            if agg_param.type_id() == ().type_id() {
+            if is_unit_type::<A::AggregationParam>() {
                 if all_seen_report_ids.contains(&(agg_param.clone(), report_id)) {
                     continue;
                 }
@@ -3570,5 +3571,9 @@ mod tests {
             agg_jobs_and_report_ids,
             merge_batch_aggregations_by_batch(batch_aggregations),
         )
+    }
+
+    fn is_unit_type<T: 'static>() -> bool {
+        TypeId::of::<T>() == TypeId::of::<()>()
     }
 }

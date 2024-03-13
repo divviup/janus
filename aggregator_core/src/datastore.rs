@@ -1256,6 +1256,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// This function deliberately ignores the `client_reports.aggregation_started` column, which
     /// only has meaning for VDAFs without aggregation parameters.
     #[tracing::instrument(skip(self), err)]
+    #[cfg(feature = "test-util")]
     pub async fn get_unaggregated_client_report_ids_by_collect_for_task<const SEED_SIZE: usize, A>(
         &self,
         task_id: &TaskId,
