@@ -5292,7 +5292,7 @@ mod tests {
                                 0,
                                 interval_1,
                                 BatchAggregationState::Aggregating {
-                                    aggregate_share: Some(dummy::AggregateShare(64)),
+                                    aggregate_share: Some(dummy::AggregateShare(16)),
                                     report_count: interval_1_report_count,
                                     checksum: interval_1_checksum,
                                     aggregation_jobs_created: 1,
@@ -5311,7 +5311,7 @@ mod tests {
                                 0,
                                 interval_2,
                                 BatchAggregationState::Aggregating {
-                                    aggregate_share: Some(dummy::AggregateShare(128)),
+                                    aggregate_share: Some(dummy::AggregateShare(32)),
                                     report_count: interval_2_report_count,
                                     checksum: interval_2_checksum,
                                     aggregation_jobs_created: 1,
@@ -5330,7 +5330,7 @@ mod tests {
                                 0,
                                 interval_3,
                                 BatchAggregationState::Aggregating {
-                                    aggregate_share: Some(dummy::AggregateShare(256)),
+                                    aggregate_share: Some(dummy::AggregateShare(64)),
                                     report_count: interval_3_report_count,
                                     checksum: interval_3_checksum,
                                     aggregation_jobs_created: 1,
@@ -5349,7 +5349,7 @@ mod tests {
                                 0,
                                 interval_4,
                                 BatchAggregationState::Aggregating {
-                                    aggregate_share: Some(dummy::AggregateShare(512)),
+                                    aggregate_share: Some(dummy::AggregateShare(128)),
                                     report_count: interval_4_report_count,
                                     checksum: interval_4_checksum,
                                     aggregation_jobs_created: 1,
@@ -5501,7 +5501,7 @@ mod tests {
                     10,
                     ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
                 ),
-                dummy::AggregateShare(64 + 128),
+                dummy::expected_aggregate_result(0, [16, 32]),
             ),
             (
                 "third and fourth batches",
@@ -5518,7 +5518,7 @@ mod tests {
                     ReportIdChecksum::get_decoded(&[8 ^ 4; 32]).unwrap(),
                 ),
                 // Should get sum over the third and fourth batches
-                dummy::AggregateShare(256 + 512),
+                dummy::expected_aggregate_result(0, [64, 128]),
             ),
         ] {
             // Request the aggregate share multiple times. If the request parameters don't change,
@@ -5569,7 +5569,8 @@ mod tests {
                 let decoded_aggregate_share =
                     dummy::AggregateShare::get_decoded(aggregate_share.as_ref()).unwrap();
                 assert_eq!(
-                    decoded_aggregate_share, expected_result,
+                    decoded_aggregate_share,
+                    dummy::AggregateShare(expected_result),
                     "test case: {label:?}, iteration: {iteration}"
                 );
 

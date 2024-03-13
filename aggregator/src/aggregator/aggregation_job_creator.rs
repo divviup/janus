@@ -3437,14 +3437,18 @@ mod tests {
         let (mut quiescent_check_agg_jobs, _) = job_creator
             .datastore
             .run_unnamed_tx(|tx| {
-                let (task, vdaf) = (Arc::clone(&task), Arc::clone(&vdaf));
+                let (task, vdaf, expected_report_aggregations) = (
+                    Arc::clone(&task),
+                    Arc::clone(&vdaf),
+                    expected_report_aggregations.clone(),
+                );
                 Box::pin(async move {
                     Ok(
                         read_and_verify_aggregate_info_for_task::<0, TimeInterval, dummy::Vdaf, _>(
                             tx,
                             &vdaf,
                             task.id(),
-                            &HashMap::new(),
+                            &expected_report_aggregations,
                         )
                         .await,
                     )
