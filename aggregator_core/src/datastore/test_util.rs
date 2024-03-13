@@ -109,13 +109,37 @@ pub struct EphemeralDatastore {
     migrator: Migrator,
 }
 
+pub const TEST_DATASTORE_MAX_TRANSACTION_RETRIES: u64 = 1000;
+
 impl EphemeralDatastore {
     /// Creates a Datastore instance based on this EphemeralDatastore. All returned Datastore
     /// instances will refer to the same underlying durable state.
     pub async fn datastore<C: Clock>(&self, clock: C) -> Datastore<C> {
-        Datastore::new(self.pool(), self.crypter(), clock, &noop_meter())
-            .await
-            .unwrap()
+        Datastore::new(
+            self.pool(),
+            self.crypter(),
+            clock,
+            &noop_meter(),
+            TEST_DATASTORE_MAX_TRANSACTION_RETRIES,
+        )
+        .await
+        .unwrap()
+    }
+
+    pub async fn datastore_with_max_transaction_retries<C: Clock>(
+        &self,
+        clock: C,
+        max_transaction_retries: u64,
+    ) -> Datastore<C> {
+        Datastore::new(
+            self.pool(),
+            self.crypter(),
+            clock,
+            &noop_meter(),
+            max_transaction_retries,
+        )
+        .await
+        .unwrap()
     }
 
     /// Retrieves the connection pool used for this EphemeralDatastore. Typically, this would be

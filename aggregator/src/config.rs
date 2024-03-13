@@ -47,10 +47,20 @@ pub struct CommonConfig {
     /// Address to serve HTTP health check requests on.
     #[serde(default = "default_health_check_listen_address")]
     pub health_check_listen_address: SocketAddr,
+
+    /// The maximum number of times a transaction can be retried. The intent is to guard against bugs
+    /// that induce infinite retries. It should be set to a reasonably high limit to prevent legitimate
+    /// work from being cancelled.
+    #[serde(default = "default_max_transaction_retries")]
+    pub max_transaction_retries: u64,
 }
 
 fn default_health_check_listen_address() -> SocketAddr {
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9001)
+}
+
+pub fn default_max_transaction_retries() -> u64 {
+    1000
 }
 
 /// Trait describing configuration structures for various Janus binaries.
@@ -326,6 +336,7 @@ pub mod test_util {
 mod tests {
     use crate::{
         config::{
+            default_max_transaction_retries,
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
             CommonConfig, DbConfig, JobDriverConfig,
         },
@@ -356,6 +367,7 @@ mod tests {
             logging_config: generate_trace_config(),
             metrics_config: generate_metrics_config(),
             health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
+            max_transaction_retries: default_max_transaction_retries(),
         })
     }
 

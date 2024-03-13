@@ -459,6 +459,7 @@ mod tests {
     use crate::{
         aggregator,
         config::{
+            default_max_transaction_retries,
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
             BinaryConfig, CommonConfig, TaskprovConfig,
         },
@@ -509,6 +510,7 @@ mod tests {
                 logging_config: generate_trace_config(),
                 metrics_config: generate_metrics_config(),
                 health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
+                max_transaction_retries: default_max_transaction_retries(),
             },
             response_headers: Vec::from([HeaderEntry {
                 name: "name".to_owned(),
