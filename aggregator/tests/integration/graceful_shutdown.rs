@@ -11,7 +11,10 @@ use janus_aggregator::{
         aggregator::{AggregatorApi, Config as AggregatorConfig},
         collection_job_driver::Config as CollectionJobDriverConfig,
     },
-    config::{BinaryConfig, CommonConfig, DbConfig, JobDriverConfig, TaskprovConfig},
+    config::{
+        default_max_transaction_retries, BinaryConfig, CommonConfig, DbConfig, JobDriverConfig,
+        TaskprovConfig,
+    },
     metrics::MetricsConfiguration,
     trace::TraceConfiguration,
 };
@@ -252,6 +255,7 @@ async fn aggregator_shutdown() {
             logging_config: TraceConfiguration::default(),
             metrics_config: MetricsConfiguration::default(),
             health_check_listen_address: "127.0.0.1:9001".parse().unwrap(),
+            max_transaction_retries: default_max_transaction_retries(),
         },
         taskprov_config: TaskprovConfig::default(),
         garbage_collection: None,
@@ -286,6 +290,7 @@ async fn aggregation_job_creator_shutdown() {
             logging_config: TraceConfiguration::default(),
             metrics_config: MetricsConfiguration::default(),
             health_check_listen_address: "127.0.0.1:9001".parse().unwrap(),
+            max_transaction_retries: default_max_transaction_retries(),
         },
         batch_aggregation_shard_count: 32,
         tasks_update_frequency_secs: 3600,
@@ -312,6 +317,7 @@ async fn aggregation_job_driver_shutdown() {
             logging_config: TraceConfiguration::default(),
             metrics_config: MetricsConfiguration::default(),
             health_check_listen_address: "127.0.0.1:9001".parse().unwrap(),
+            max_transaction_retries: default_max_transaction_retries(),
         },
         job_driver_config: JobDriverConfig {
             job_discovery_interval_secs: 10,
@@ -346,6 +352,7 @@ async fn collection_job_driver_shutdown() {
             logging_config: TraceConfiguration::default(),
             metrics_config: MetricsConfiguration::default(),
             health_check_listen_address: "127.0.0.1:9001".parse().unwrap(),
+            max_transaction_retries: default_max_transaction_retries(),
         },
         job_driver_config: JobDriverConfig {
             job_discovery_interval_secs: 10,

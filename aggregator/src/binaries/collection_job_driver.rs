@@ -139,6 +139,7 @@ impl BinaryConfig for Config {
 mod tests {
     use super::{Config, Options};
     use crate::config::{
+        default_max_transaction_retries,
         test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
         CommonConfig, JobDriverConfig,
     };
@@ -159,6 +160,7 @@ mod tests {
                 logging_config: generate_trace_config(),
                 metrics_config: generate_metrics_config(),
                 health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
+                max_transaction_retries: default_max_transaction_retries(),
             },
             job_driver_config: JobDriverConfig {
                 job_discovery_interval_secs: 10,

@@ -9,7 +9,10 @@ use crate::{
             SqlInterval, TaskUploadCounter,
         },
         schema_versions_template,
-        test_util::{ephemeral_datastore_schema_version, generate_aead_key, EphemeralDatastore},
+        test_util::{
+            ephemeral_datastore_schema_version, generate_aead_key, EphemeralDatastore,
+            EphemeralDatastoreBuilder, TEST_DATASTORE_MAX_TRANSACTION_RETRIES,
+        },
         Crypter, Datastore, Error, RowExt, Transaction, SUPPORTED_SCHEMA_VERSIONS,
     },
     query_type::CollectableQueryType,
@@ -52,7 +55,10 @@ use std::{
     collections::{HashMap, HashSet},
     iter,
     ops::RangeInclusive,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::Duration as StdDuration,
 };
 use tokio::{time::timeout, try_join};
@@ -82,6 +88,7 @@ async fn reject_unsupported_schema_version(ephemeral_datastore: EphemeralDatasto
         MockClock::default(),
         &noop_meter(),
         &[0],
+        TEST_DATASTORE_MAX_TRANSACTION_RETRIES,
     )
     .await
     .unwrap_err();
@@ -98,6 +105,38 @@ async fn down_migrations(
     ephemeral_datastore: EphemeralDatastore,
 ) {
     ephemeral_datastore.downgrade(0).await;
+}
+
+#[tokio::test]
+async fn retry_limit() {
+    install_test_trace_subscriber();
+    for max_transaction_retries in [0, 1, 1000] {
+        let ephemeral_datastore = EphemeralDatastoreBuilder::new().build().await;
+        let datastore = ephemeral_datastore
+            .datastore_with_max_transaction_retries(MockClock::default(), max_transaction_retries)
+            .await;
+
+        // The number of times the transaction was actually run.
+        let num_runs = Arc::new(AtomicU64::new(0));
+
+        // Induce infinite retry loop.
+        let result = datastore
+            .run_unnamed_tx(|tx| {
+                let num_runs = Arc::clone(&num_runs);
+                Box::pin(async move {
+                    num_runs.fetch_add(1, Ordering::Relaxed);
+                    tx.retry();
+                    Ok(())
+                })
+            })
+            .await;
+
+        assert_matches!(result, Err(Error::TooManyRetries { .. }));
+        assert_eq!(
+            num_runs.load(Ordering::Relaxed),
+            max_transaction_retries + 1
+        );
+    }
 }
 
 #[rstest_reuse::apply(schema_versions_template)]
