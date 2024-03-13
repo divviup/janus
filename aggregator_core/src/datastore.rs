@@ -3209,6 +3209,9 @@ impl<C: Clock> Transaction<'_, C> {
         aggregation_parameter: &A::AggregationParam,
         ord: u64,
     ) -> Result<Option<BatchAggregation<SEED_SIZE, Q, A>>, Error> {
+        // non_gc_batches finds batches (by task ID, batch identifier, and aggregation param) which
+        // are _not_ garbage collected. This is used to evaluate whether given batch_aggregations
+        // rows are GC'ed.
         let stmt = self
             .prepare_cached(
                 "WITH non_gc_batches AS (
@@ -3273,6 +3276,9 @@ impl<C: Clock> Transaction<'_, C> {
         batch_identifier: &Q::BatchIdentifier,
         aggregation_parameter: &A::AggregationParam,
     ) -> Result<Vec<BatchAggregation<SEED_SIZE, Q, A>>, Error> {
+        // non_gc_batches finds batches (by task ID, batch identifier, and aggregation param) which
+        // are _not_ garbage collected. This is used to evaluate whether given batch_aggregations
+        // rows are GC'ed.
         let stmt = self
             .prepare_cached(
                 "WITH non_gc_batches AS (
@@ -3333,6 +3339,9 @@ impl<C: Clock> Transaction<'_, C> {
         vdaf: &A,
         task_id: &TaskId,
     ) -> Result<Vec<BatchAggregation<SEED_SIZE, Q, A>>, Error> {
+        // non_gc_batches finds batches (by task ID, batch identifier, and aggregation param) which
+        // are _not_ garbage collected. This is used to evaluate whether given batch_aggregations
+        // rows are GC'ed.
         let stmt = self
             .prepare_cached(
                 "WITH non_gc_batches AS (
@@ -3945,6 +3954,14 @@ impl<C: Clock> Transaction<'_, C> {
         batch_id: &BatchId,
         time_bucket_start: &Option<Time>,
     ) -> Result<(), Error> {
+        // non_gc_batches finds batches (by task ID, batch identifier, and aggregation param) which
+        // are _not_ garbage collected. This is used to evaluate whether given batch_aggregations
+        // rows are GC'ed.
+        //
+        // Note that this ignores aggregation parameter, as `outstanding_batches` does not need to
+        // worry about aggregation parameters.
+        //
+        // TODO(#225): reevaluate whether we can ignore aggregation parameter here once we have experience with VDAFs requiring multiple aggregations per batch.
         let stmt = self
             .prepare_cached(
                 "WITH non_gc_batches AS (
@@ -4021,6 +4038,9 @@ impl<C: Clock> Transaction<'_, C> {
         time_bucket_start: &Option<Time>,
     ) -> Result<Vec<OutstandingBatch>, Error> {
         let rows = if let Some(time_bucket_start) = time_bucket_start {
+            // non_gc_batches finds batches (by task ID, batch identifier, and aggregation param)
+            // which are _not_ garbage collected. This is used to evaluate whether given
+            // batch_aggregations rows are GC'ed.
             let stmt = self
                 .prepare_cached(
                     "WITH non_gc_batches AS (
@@ -4049,6 +4069,9 @@ impl<C: Clock> Transaction<'_, C> {
             )
             .await?
         } else {
+            // non_gc_batches finds batches (by task ID, batch identifier, and aggregation param)
+            // which are _not_ garbage collected. This is used to evaluate whether given
+            // batch_aggregations rows are GC'ed.
             let stmt = self
                 .prepare_cached(
                     "WITH non_gc_batches AS (
@@ -4142,6 +4165,9 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         min_report_count: u64,
     ) -> Result<Option<BatchId>, Error> {
+        // non_gc_batches finds batches (by task ID, batch identifier, and aggregation param) which
+        // are _not_ garbage collected. This is used to evaluate whether given batch_aggregations
+        // rows are GC'ed.
         let stmt = self.prepare_cached(
             "WITH non_gc_batches AS (
                 SELECT

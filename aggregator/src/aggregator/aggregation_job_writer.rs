@@ -551,14 +551,15 @@ where
         // batch which is not still accepting aggregations (i.e. not in the Aggregating state)
         // instead fail with a BatchCollected error (unless they were already in an failed state).
         for (batch_identifier, by_aggregation_job_index) in &self.writer.by_batch_identifier_index {
-            if !matches!(
-                self.batch_aggregations
-                    .get(batch_identifier)
-                    .map(|(_, b)| b.state()),
-                Some(BatchAggregationState::Collected { .. } | BatchAggregationState::Scrubbed)
-            ) {
+            if self
+                .batch_aggregations
+                .get(batch_identifier)
+                .map(|(_, b)| b.state().is_accepting_aggregations())
+                .unwrap_or(true)
+            {
                 continue;
             }
+
             for (aggregation_job_id, report_aggregation_idxs) in by_aggregation_job_index {
                 // If we are abandoning this aggregation job, don't modify any of the report
                 // aggregations.
@@ -658,10 +659,7 @@ where
 
             // Never update a batch aggregation which is no longer aggregating (because it has been
             // collected or scrubbed).
-            if !matches!(
-                batch_aggregation.state(),
-                BatchAggregationState::Aggregating { .. }
-            ) {
+            if !batch_aggregation.state().is_accepting_aggregations() {
                 continue;
             }
 
