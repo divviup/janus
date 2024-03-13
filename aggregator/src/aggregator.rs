@@ -2039,6 +2039,8 @@ impl VdafOps {
                 agg_param,
                 req.batch_selector().batch_identifier().clone(),
                 client_timestamp_interval,
+                // For one-round VDAFs, the aggregation job will actually be finished, but the
+                // aggregation job writer handles updating its state.
                 AggregationJobState::InProgress,
                 AggregationJobStep::from(0),
             )
