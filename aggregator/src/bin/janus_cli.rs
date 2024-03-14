@@ -322,6 +322,7 @@ async fn datastore_from_opts(
             .datastore_keys(&command_line_options.common_options, kube_client)
             .await?,
         config_file.common_config().database.check_schema_version,
+        config_file.common_config().max_transaction_retries,
     )
     .await
 }
@@ -463,7 +464,7 @@ mod tests {
     use janus_aggregator::{
         binary_utils::CommonBinaryOptions,
         config::test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
-        config::CommonConfig,
+        config::{default_max_transaction_retries, CommonConfig},
     };
     use janus_aggregator_core::{
         datastore::{test_util::ephemeral_datastore, Datastore},
@@ -881,6 +882,7 @@ mod tests {
                 logging_config: generate_trace_config(),
                 metrics_config: generate_metrics_config(),
                 health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
+                max_transaction_retries: default_max_transaction_retries(),
             },
         })
     }

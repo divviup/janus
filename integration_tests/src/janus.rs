@@ -17,7 +17,9 @@ use janus_aggregator::{
         },
     },
     binary_utils::{BinaryContext, CommonBinaryOptions},
-    config::{CommonConfig, DbConfig, JobDriverConfig, TaskprovConfig},
+    config::{
+        default_max_transaction_retries, CommonConfig, DbConfig, JobDriverConfig, TaskprovConfig,
+    },
     metrics::MetricsConfiguration,
     trace::{TokioConsoleConfiguration, TraceConfiguration},
 };
@@ -144,6 +146,7 @@ impl JanusInProcess {
             logging_config,
             metrics_config: MetricsConfiguration { exporter: None },
             health_check_listen_address: (Ipv4Addr::LOCALHOST, 0).into(),
+            max_transaction_retries: default_max_transaction_retries(),
         };
         let aggregator_options = AggregatorOptions {
             common: common_binary_options.clone(),
