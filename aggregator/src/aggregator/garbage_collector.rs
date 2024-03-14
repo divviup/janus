@@ -382,7 +382,9 @@ mod tests {
                             Vec::from("payload_0"),
                         ),
                     );
-                    tx.put_report_share(task.id(), &report_share).await.unwrap();
+                    tx.put_scrubbed_report(task.id(), &report_share)
+                        .await
+                        .unwrap();
 
                     // Aggregation artifacts.
                     let aggregation_job_id = random();
@@ -721,7 +723,9 @@ mod tests {
                             Vec::from("payload_0"),
                         ),
                     );
-                    tx.put_report_share(task.id(), &report_share).await.unwrap();
+                    tx.put_scrubbed_report(task.id(), &report_share)
+                        .await
+                        .unwrap();
 
                     // Aggregation artifacts.
                     let batch_id = random();

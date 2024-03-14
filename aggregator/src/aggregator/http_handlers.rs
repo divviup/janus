@@ -760,9 +760,7 @@ pub mod test_util {
 mod tests {
     use crate::{
         aggregator::{
-            aggregate_init_tests::{
-                put_aggregation_job, setup_aggregate_init_test, PrepareInitGenerator,
-            },
+            aggregate_init_tests::{put_aggregation_job, PrepareInitGenerator},
             aggregation_job_continue::test_util::{
                 post_aggregation_job_and_decode, post_aggregation_job_expecting_error,
             },
@@ -1964,10 +1962,10 @@ mod tests {
 
                     // report_share_4 and report_share_8 are already in the datastore as they were
                     // referenced by existing aggregation jobs.
-                    tx.put_report_share(task.id(), &report_share_4)
+                    tx.put_scrubbed_report(task.id(), &report_share_4)
                         .await
                         .unwrap();
-                    tx.put_report_share(task.id(), &report_share_8)
+                    tx.put_scrubbed_report(task.id(), &report_share_8)
                         .await
                         .unwrap();
 
@@ -2577,87 +2575,6 @@ mod tests {
         );
     }
 
-    #[allow(clippy::unit_arg)]
-    #[tokio::test]
-    async fn aggregate_init_change_report_timestamp() {
-        let test_case = setup_aggregate_init_test().await;
-
-        let other_aggregation_parameter = dummy::AggregationParam(1);
-        assert_ne!(test_case.aggregation_param, other_aggregation_parameter);
-
-        // This report has the same ID as the previous one, but a different timestamp.
-        let mutated_timestamp_report_metadata = ReportMetadata::new(
-            *test_case.aggregation_job_init_req.prepare_inits()[0]
-                .report_share()
-                .metadata()
-                .id(),
-            test_case
-                .clock
-                .now()
-                .add(test_case.task.time_precision())
-                .unwrap(),
-        );
-        let (mutated_timestamp_prepare_init, _) = test_case
-            .prepare_init_generator
-            .next_with_metadata(mutated_timestamp_report_metadata, &0);
-
-        // Send another aggregate job re-using the same report ID but with a different timestamp. It
-        // should be flagged as a replay.
-        let request = AggregationJobInitializeReq::new(
-            other_aggregation_parameter.get_encoded().unwrap(),
-            PartialBatchSelector::new_time_interval(),
-            Vec::from([mutated_timestamp_prepare_init.clone()]),
-        );
-
-        let mut test_conn =
-            put_aggregation_job(&test_case.task, &random(), &request, &test_case.handler).await;
-        assert_eq!(test_conn.status(), Some(Status::Ok));
-        let aggregate_resp: AggregationJobResp = decode_response_body(&mut test_conn).await;
-
-        assert_eq!(aggregate_resp.prepare_resps().len(), 1);
-
-        let prepare_step = aggregate_resp.prepare_resps().first().unwrap();
-        assert_eq!(
-            prepare_step.report_id(),
-            mutated_timestamp_prepare_init
-                .report_share()
-                .metadata()
-                .id(),
-        );
-        assert_matches!(
-            prepare_step.result(),
-            &PrepareStepResult::Reject(PrepareError::ReportReplayed)
-        );
-
-        // The attempt to mutate the report share timestamp should not cause any change in the
-        // datastore.
-        let client_reports = test_case
-            .datastore
-            .run_unnamed_tx(|tx| {
-                let task_id = *test_case.task.id();
-                Box::pin(async move {
-                    let reports = tx.get_report_metadatas_for_task(&task_id).await.unwrap();
-
-                    Ok(reports)
-                })
-            })
-            .await
-            .unwrap();
-        assert_eq!(client_reports.len(), 2);
-        assert_eq!(
-            &client_reports[0],
-            test_case.aggregation_job_init_req.prepare_inits()[0]
-                .report_share()
-                .metadata()
-        );
-        assert_eq!(
-            &client_reports[1],
-            test_case.aggregation_job_init_req.prepare_inits()[1]
-                .report_share()
-                .metadata()
-        );
-    }
-
     #[tokio::test]
     async fn aggregate_init_prep_init_failed() {
         let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
@@ -2914,13 +2831,13 @@ mod tests {
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
 
-                    tx.put_report_share(task.id(), &report_share_0)
+                    tx.put_scrubbed_report(task.id(), &report_share_0)
                         .await
                         .unwrap();
-                    tx.put_report_share(task.id(), &report_share_1)
+                    tx.put_scrubbed_report(task.id(), &report_share_1)
                         .await
                         .unwrap();
-                    tx.put_report_share(task.id(), &report_share_2)
+                    tx.put_scrubbed_report(task.id(), &report_share_2)
                         .await
                         .unwrap();
 
@@ -3298,13 +3215,13 @@ mod tests {
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
 
-                    tx.put_report_share(task.id(), &report_share_0)
+                    tx.put_scrubbed_report(task.id(), &report_share_0)
                         .await
                         .unwrap();
-                    tx.put_report_share(task.id(), &report_share_1)
+                    tx.put_scrubbed_report(task.id(), &report_share_1)
                         .await
                         .unwrap();
-                    tx.put_report_share(task.id(), &report_share_2)
+                    tx.put_scrubbed_report(task.id(), &report_share_2)
                         .await
                         .unwrap();
 
@@ -3627,13 +3544,13 @@ mod tests {
                 let aggregation_param = aggregation_param.clone();
 
                 Box::pin(async move {
-                    tx.put_report_share(task.id(), &report_share_3)
+                    tx.put_scrubbed_report(task.id(), &report_share_3)
                         .await
                         .unwrap();
-                    tx.put_report_share(task.id(), &report_share_4)
+                    tx.put_scrubbed_report(task.id(), &report_share_4)
                         .await
                         .unwrap();
-                    tx.put_report_share(task.id(), &report_share_5)
+                    tx.put_scrubbed_report(task.id(), &report_share_5)
                         .await
                         .unwrap();
 
@@ -3877,7 +3794,7 @@ mod tests {
                 );
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
-                    tx.put_report_share(
+                    tx.put_scrubbed_report(
                         task.id(),
                         &ReportShare::new(
                             report_metadata.clone(),
@@ -3998,7 +3915,7 @@ mod tests {
 
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
-                    tx.put_report_share(task.id(), &helper_report_share)
+                    tx.put_scrubbed_report(task.id(), &helper_report_share)
                         .await
                         .unwrap();
                     tx.put_aggregation_job(&AggregationJob::<
@@ -4075,12 +3992,11 @@ mod tests {
                         .unwrap()
                         .unwrap();
                     let report_aggregation = tx
-                        .get_report_aggregation(
+                        .get_report_aggregation_by_report_id(
                             &vdaf,
                             &Role::Helper,
                             task.id(),
                             &aggregation_job_id,
-                            aggregation_job.aggregation_parameter(),
                             report_metadata.id(),
                         )
                         .await
@@ -4160,7 +4076,7 @@ mod tests {
 
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
-                    tx.put_report_share(
+                    tx.put_scrubbed_report(
                         task.id(),
                         &ReportShare::new(
                             report_metadata.clone(),
@@ -4294,7 +4210,7 @@ mod tests {
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
 
-                    tx.put_report_share(
+                    tx.put_scrubbed_report(
                         task.id(),
                         &ReportShare::new(
                             report_metadata_0.clone(),
@@ -4308,7 +4224,7 @@ mod tests {
                     )
                     .await
                     .unwrap();
-                    tx.put_report_share(
+                    tx.put_scrubbed_report(
                         task.id(),
                         &ReportShare::new(
                             report_metadata_1.clone(),
@@ -4432,7 +4348,7 @@ mod tests {
                 let (task, report_metadata) = (helper_task.clone(), report_metadata.clone());
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
-                    tx.put_report_share(
+                    tx.put_scrubbed_report(
                         task.id(),
                         &ReportShare::new(
                             report_metadata.clone(),

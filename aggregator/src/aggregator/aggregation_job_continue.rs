@@ -427,7 +427,7 @@ mod tests {
 
                 Box::pin(async move {
                     tx.put_aggregator_task(&task).await.unwrap();
-                    tx.put_report_share(task.id(), prepare_init.report_share())
+                    tx.put_scrubbed_report(task.id(), prepare_init.report_share())
                         .await
                         .unwrap();
 
@@ -654,7 +654,7 @@ mod tests {
                     test_case.aggregation_job_id,
                 );
                 Box::pin(async move {
-                    tx.put_report_share(&task_id, unrelated_prepare_init.report_share())
+                    tx.put_scrubbed_report(&task_id, unrelated_prepare_init.report_share())
                         .await
                         .unwrap();
 

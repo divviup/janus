@@ -253,9 +253,9 @@ CREATE TABLE report_aggregations(
     id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     task_id             BIGINT NOT NULL,                    -- ID of related task
     aggregation_job_id  BIGINT NOT NULL,                    -- the aggregation job ID this report aggregation is associated with
+    ord                 BIGINT NOT NULL,                    -- a value used to specify the ordering of client reports in the aggregation job
     client_report_id    BYTEA NOT NULL,                     -- the client report ID this report aggregation is associated with
     client_timestamp    TIMESTAMP NOT NULL,                 -- the client timestamp this report aggregation is associated with
-    ord                 BIGINT NOT NULL,                    -- a value used to specify the ordering of client reports in the aggregation job
     last_prep_resp      BYTEA,                              -- the last PrepareResp message sent to the Leader, to assist in replay (opaque DAP message, populated for Helper only)
     state               REPORT_AGGREGATION_STATE NOT NULL,  -- the current state of this report aggregation
 

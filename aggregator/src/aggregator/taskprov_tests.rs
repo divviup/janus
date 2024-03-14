@@ -888,7 +888,7 @@ async fn taskprov_aggregate_continue() {
                 tx.put_aggregator_task(&task.taskprov_helper_view().unwrap())
                     .await?;
 
-                tx.put_report_share(task.id(), &report_share).await?;
+                tx.put_scrubbed_report(task.id(), &report_share).await?;
 
                 tx.put_aggregation_job(
                     &AggregationJob::<VERIFY_KEY_LENGTH, FixedSize, TestVdaf>::new(
