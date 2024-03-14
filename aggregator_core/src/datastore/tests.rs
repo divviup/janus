@@ -110,8 +110,9 @@ async fn down_migrations(
 #[tokio::test]
 async fn retry_limit() {
     install_test_trace_subscriber();
+    let ephemeral_datastore = EphemeralDatastoreBuilder::new().build().await;
+
     for max_transaction_retries in [0, 1, 1000] {
-        let ephemeral_datastore = EphemeralDatastoreBuilder::new().build().await;
         let datastore = ephemeral_datastore
             .datastore_with_max_transaction_retries(MockClock::default(), max_transaction_retries)
             .await;
