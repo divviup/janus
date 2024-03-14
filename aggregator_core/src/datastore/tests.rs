@@ -9,8 +9,8 @@ use crate::{
         },
         schema_versions_template,
         test_util::{
-            ephemeral_datastore_schema_version, generate_aead_key, EphemeralDatastore,
-            EphemeralDatastoreBuilder, TEST_DATASTORE_MAX_TRANSACTION_RETRIES,
+            ephemeral_datastore, ephemeral_datastore_schema_version, generate_aead_key,
+            EphemeralDatastore, TEST_DATASTORE_MAX_TRANSACTION_RETRIES,
         },
         Crypter, Datastore, Error, RowExt, Transaction, SUPPORTED_SCHEMA_VERSIONS,
     },
@@ -111,7 +111,7 @@ async fn down_migrations(
 #[tokio::test]
 async fn retry_limit() {
     install_test_trace_subscriber();
-    let ephemeral_datastore = EphemeralDatastoreBuilder::new().build().await;
+    let ephemeral_datastore = ephemeral_datastore().await;
 
     for max_transaction_retries in [0, 1, 1000] {
         let datastore = ephemeral_datastore
