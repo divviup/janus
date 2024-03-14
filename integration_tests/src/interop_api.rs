@@ -14,7 +14,11 @@ pub async fn aggregator_add_task(port: u16, task: Task, role: Role) {
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success());
+    assert!(
+        resp.status().is_success(),
+        "unexpected status: {}",
+        resp.status()
+    );
     let resp: HashMap<String, Option<String>> = resp.json().await.unwrap();
     assert_eq!(
         resp.get("status"),

@@ -13,6 +13,8 @@ use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
 use std::time::Duration;
 
+const VERSION_PATH: &str = "/v09/";
+
 // This test places Daphne in the leader role & Janus in the helper role.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "Daphne does not yet publish a leader container image"]
@@ -30,19 +32,27 @@ async fn daphne_janus() {
         Duration::from_secs(60),
     );
 
-    // Daphne is hardcoded to serve from a path starting with /v04/.
+    // Daphne is hardcoded to serve from a path starting with /v09/.
     task_parameters
         .endpoint_fragments
         .leader
-        .set_path("/v04/".to_string());
+        .set_path(VERSION_PATH.to_string());
     let mut leader_aggregator_endpoint = task_builder.leader_aggregator_endpoint().clone();
-    leader_aggregator_endpoint.set_path("/v04/");
+    leader_aggregator_endpoint.set_path(VERSION_PATH);
     let task = task_builder
         .with_leader_aggregator_endpoint(leader_aggregator_endpoint)
         .build();
 
     let container_client = container_client();
-    let leader = Daphne::new(TEST_NAME, &container_client, &network, &task, Role::Leader).await;
+    let leader = Daphne::new(
+        TEST_NAME,
+        &container_client,
+        &network,
+        &task,
+        Role::Leader,
+        true,
+    )
+    .await;
     let helper =
         JanusContainer::new(TEST_NAME, &container_client, &network, &task, Role::Helper).await;
 
@@ -73,13 +83,13 @@ async fn janus_daphne() {
         Duration::from_secs(60),
     );
 
-    // Daphne is hardcoded to serve from a path starting with /v04/.
+    // Daphne is hardcoded to serve from a path starting with /v09/.
     task_parameters
         .endpoint_fragments
         .helper
-        .set_path("/v04/".to_string());
+        .set_path(VERSION_PATH.to_string());
     let mut helper_aggregator_endpoint = task_builder.helper_aggregator_endpoint().clone();
-    helper_aggregator_endpoint.set_path("/v04/");
+    helper_aggregator_endpoint.set_path(VERSION_PATH);
     let task = task_builder
         .with_helper_aggregator_endpoint(helper_aggregator_endpoint)
         .build();
@@ -87,7 +97,15 @@ async fn janus_daphne() {
     let container_client = container_client();
     let leader =
         JanusContainer::new(TEST_NAME, &container_client, &network, &task, Role::Leader).await;
-    let helper = Daphne::new(TEST_NAME, &container_client, &network, &task, Role::Helper).await;
+    let helper = Daphne::new(
+        TEST_NAME,
+        &container_client,
+        &network,
+        &task,
+        Role::Helper,
+        true,
+    )
+    .await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
@@ -122,13 +140,14 @@ async fn janus_in_process_daphne() {
     task_parameters
         .endpoint_fragments
         .helper
-        .set_path("/v04/".to_owned());
+        .set_path(VERSION_PATH.to_owned());
     let helper = Daphne::new(
         TEST_NAME,
         &container_client,
         &network,
         &task_builder.clone().build(),
         Role::Helper,
+        true,
     )
     .await;
     task_builder = task_builder.with_helper_aggregator_endpoint(
