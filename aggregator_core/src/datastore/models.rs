@@ -30,7 +30,7 @@ use rand::{distributions::Standard, prelude::Distribution};
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display, Formatter},
-    hash::{Hash, Hasher},
+    hash::Hash,
     ops::RangeInclusive,
 };
 
@@ -1164,6 +1164,10 @@ pub struct BatchAggregation<
     /// The index of this batch aggregation among all batch aggregations for
     /// this (task_id, batch_identifier, aggregation_parameter).
     ord: u64,
+
+    /// The minimal interval of time spanned by the reports included in this batch aggregation
+    /// shard.
+    client_timestamp_interval: Interval,
     /// The current state of the batch aggregation.
     state: BatchAggregationState<SEED_SIZE, A>,
 }
@@ -1178,6 +1182,7 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         batch_identifier: Q::BatchIdentifier,
         aggregation_parameter: A::AggregationParam,
         ord: u64,
+        client_timestamp_interval: Interval,
         state: BatchAggregationState<SEED_SIZE, A>,
     ) -> Self {
         Self {
@@ -1185,6 +1190,7 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
             batch_identifier,
             aggregation_parameter,
             ord,
+            client_timestamp_interval,
             state,
         }
     }
@@ -1214,6 +1220,12 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
         self.ord
     }
 
+    /// Returns the minimal interval of time spanned by the reports included in this batch
+    /// aggregation shard.
+    pub fn client_timestamp_interval(&self) -> &Interval {
+        &self.client_timestamp_interval
+    }
+
     /// Returns the current state associated with this batch aggregation.
     pub fn state(&self) -> &BatchAggregationState<SEED_SIZE, A> {
         &self.state
@@ -1232,11 +1244,15 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
                 aggregate_share,
                 report_count,
                 checksum,
+                aggregation_jobs_created,
+                aggregation_jobs_terminated,
             } => Ok(Self {
                 state: BatchAggregationState::Collected {
                     aggregate_share,
                     report_count,
                     checksum,
+                    aggregation_jobs_created,
+                    aggregation_jobs_terminated,
                 },
                 ..self
             }),
@@ -1263,11 +1279,15 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
                     aggregate_share: lhs_aggregate_share,
                     report_count: lhs_report_count,
                     checksum: lhs_checksum,
+                    aggregation_jobs_created: lhs_aggregation_jobs_created,
+                    aggregation_jobs_terminated: lhs_aggregation_jobs_terminated,
                 },
                 BatchAggregationState::Aggregating {
                     aggregate_share: rhs_aggregate_share,
                     report_count: rhs_report_count,
                     checksum: rhs_checksum,
+                    aggregation_jobs_created: rhs_aggregation_jobs_created,
+                    aggregation_jobs_terminated: rhs_aggregation_jobs_terminated,
                 },
             ) => {
                 let merged_aggregate_share = match (lhs_aggregate_share, rhs_aggregate_share) {
@@ -1287,7 +1307,14 @@ impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
                         aggregate_share: merged_aggregate_share,
                         report_count: lhs_report_count + rhs_report_count,
                         checksum: lhs_checksum.combined_with(rhs_checksum),
+                        aggregation_jobs_created: lhs_aggregation_jobs_created
+                            + rhs_aggregation_jobs_created,
+                        aggregation_jobs_terminated: lhs_aggregation_jobs_terminated
+                            + rhs_aggregation_jobs_terminated,
                     },
+                    client_timestamp_interval: self
+                        .client_timestamp_interval
+                        .merge(&other.client_timestamp_interval)?,
                     ..self
                 })
             }
@@ -1359,6 +1386,10 @@ pub enum BatchAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_
         /// Checksum over the aggregated report shares.
         #[derivative(Debug = "ignore")]
         checksum: ReportIdChecksum,
+        /// The number of aggregation jobs that have been created for this batch.
+        aggregation_jobs_created: u64,
+        /// The number of aggregation jobs that have been terminated for this batch.
+        aggregation_jobs_terminated: u64,
     },
 
     Collected {
@@ -1371,6 +1402,10 @@ pub enum BatchAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_
         /// Checksum over the aggregated report shares.
         #[derivative(Debug = "ignore")]
         checksum: ReportIdChecksum,
+        /// The number of aggregation jobs that have been created for this batch.
+        aggregation_jobs_created: u64,
+        /// The number of aggregation jobs that have been terminated for this batch.
+        aggregation_jobs_terminated: u64,
     },
 
     Scrubbed,
@@ -1379,6 +1414,12 @@ pub enum BatchAggregationState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_
 impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     BatchAggregationState<SEED_SIZE, A>
 {
+    /// Returns true if this batch aggregation state indicates the batch aggregation is still
+    /// accepting additional aggregation.
+    pub fn is_accepting_aggregations(&self) -> bool {
+        matches!(self, Self::Aggregating { .. })
+    }
+
     pub(super) fn state_code(&self) -> BatchAggregationStateCode {
         match self {
             BatchAggregationState::Aggregating { .. } => BatchAggregationStateCode::Aggregating,
@@ -1395,11 +1436,15 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
                 aggregate_share,
                 report_count,
                 checksum,
+                aggregation_jobs_created,
+                aggregation_jobs_terminated,
             }
             | BatchAggregationState::Collected {
                 aggregate_share,
                 report_count,
                 checksum,
+                aggregation_jobs_created,
+                aggregation_jobs_terminated,
             } => EncodedBatchAggregationStateValues {
                 aggregate_share: aggregate_share
                     .as_ref()
@@ -1407,6 +1452,8 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
                     .transpose()?,
                 report_count: Some(i64::try_from(*report_count)?),
                 checksum: Some(checksum.get_encoded()?),
+                aggregation_jobs_created: Some(i64::try_from(*aggregation_jobs_created)?),
+                aggregation_jobs_terminated: Some(i64::try_from(*aggregation_jobs_terminated)?),
             },
             BatchAggregationState::Scrubbed => EncodedBatchAggregationStateValues::default(),
         })
@@ -1419,6 +1466,8 @@ pub(super) struct EncodedBatchAggregationStateValues {
     pub(super) aggregate_share: Option<Vec<u8>>,
     pub(super) report_count: Option<i64>,
     pub(super) checksum: Option<Vec<u8>>,
+    pub(super) aggregation_jobs_created: Option<i64>,
+    pub(super) aggregation_jobs_terminated: Option<i64>,
 }
 
 #[cfg(feature = "test-util")]
@@ -1434,32 +1483,44 @@ where
                     aggregate_share: lhs_aggregate_share,
                     report_count: lhs_report_count,
                     checksum: lhs_checksum,
+                    aggregation_jobs_created: lhs_aggregation_jobs_created,
+                    aggregation_jobs_terminated: lhs_aggregation_jobs_terminated,
                 },
                 Self::Aggregating {
                     aggregate_share: rhs_aggregate_share,
                     report_count: rhs_report_count,
                     checksum: rhs_checksum,
+                    aggregation_jobs_created: rhs_aggregation_jobs_created,
+                    aggregation_jobs_terminated: rhs_aggregation_jobs_terminated,
                 },
             ) => {
                 lhs_aggregate_share == rhs_aggregate_share
                     && lhs_report_count == rhs_report_count
                     && lhs_checksum == rhs_checksum
+                    && lhs_aggregation_jobs_created == rhs_aggregation_jobs_created
+                    && lhs_aggregation_jobs_terminated == rhs_aggregation_jobs_terminated
             }
             (
                 Self::Collected {
                     aggregate_share: lhs_aggregate_share,
                     report_count: lhs_report_count,
                     checksum: lhs_checksum,
+                    aggregation_jobs_created: lhs_aggregation_jobs_created,
+                    aggregation_jobs_terminated: lhs_aggregation_jobs_terminated,
                 },
                 Self::Collected {
                     aggregate_share: rhs_aggregate_share,
                     report_count: rhs_report_count,
                     checksum: rhs_checksum,
+                    aggregation_jobs_created: rhs_aggregation_jobs_created,
+                    aggregation_jobs_terminated: rhs_aggregation_jobs_terminated,
                 },
             ) => {
                 lhs_aggregate_share == rhs_aggregate_share
                     && lhs_report_count == rhs_report_count
                     && lhs_checksum == rhs_checksum
+                    && lhs_aggregation_jobs_created == rhs_aggregation_jobs_created
+                    && lhs_aggregation_jobs_terminated == rhs_aggregation_jobs_terminated
             }
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }
@@ -1488,6 +1549,56 @@ pub(super) enum BatchAggregationStateCode {
     Collected,
     #[postgres(name = "SCRUBBED")]
     Scrubbed,
+}
+
+/// Merges batch aggregations for the same batch (by task ID, batch identifier, and aggregation
+/// parameter), returning a single merged batch aggregation per batch with ord 0. Batch aggregations
+/// for different batches are returned sorted by task ID, batch identifier, and aggregation
+/// parameter.
+#[cfg(feature = "test-util")]
+pub fn merge_batch_aggregations_by_batch<
+    const SEED_SIZE: usize,
+    Q: QueryType,
+    A: vdaf::Aggregator<SEED_SIZE, 16>,
+>(
+    mut batch_aggregations: Vec<BatchAggregation<SEED_SIZE, Q, A>>,
+) -> Vec<BatchAggregation<SEED_SIZE, Q, A>>
+where
+    A::AggregationParam: PartialEq,
+{
+    use itertools::Itertools as _;
+
+    // We sort using encoded aggregation param, removing requirement for AggregationParam: Ord,
+    // which is not satisfied by all VDAFs (e.g. Poplar1).
+    batch_aggregations.sort_by_key(|ba| {
+        (
+            *ba.task_id(),
+            ba.batch_identifier().clone(),
+            ba.aggregation_parameter().get_encoded().unwrap(),
+        )
+    });
+    batch_aggregations
+        .into_iter()
+        .group_by(|ba| {
+            (
+                *ba.task_id(),
+                ba.batch_identifier().clone(),
+                ba.aggregation_parameter().clone(),
+            )
+        })
+        .into_iter()
+        .map(|(_, bas)| bas.reduce(|l, r| l.merged_with(&r).unwrap()).unwrap())
+        .map(|ba| {
+            BatchAggregation::new(
+                *ba.task_id(),
+                ba.batch_identifier().clone(),
+                ba.aggregation_parameter().clone(),
+                0,
+                *ba.client_timestamp_interval(),
+                ba.state().clone(),
+            )
+        })
+        .collect()
 }
 
 /// CollectionJob represents a row in the `collection_jobs` table, used by leaders to represent
@@ -1623,10 +1734,12 @@ where
 #[derivative(Debug)]
 pub enum CollectionJobState<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>> {
     Start,
-    Collectable,
     Finished {
         /// The number of reports included in this collection job.
         report_count: u64,
+        /// The minimal interval containing the timestamps of all reports included in this
+        /// collection job, aligned to the task's time precision.
+        client_timestamp_interval: Interval,
         /// The helper's encrypted aggregate share over the input shares in the interval.
         encrypted_helper_aggregate_share: HpkeCiphertext,
         /// The leader's aggregate share over the input shares in the interval.
@@ -1644,7 +1757,6 @@ where
     pub fn collection_job_state_code(&self) -> CollectionJobStateCode {
         match self {
             Self::Start => CollectionJobStateCode::Start,
-            Self::Collectable => CollectionJobStateCode::Collectable,
             Self::Finished { .. } => CollectionJobStateCode::Finished,
             Self::Abandoned => CollectionJobStateCode::Abandoned,
             Self::Deleted => CollectionJobStateCode::Deleted,
@@ -1662,7 +1774,6 @@ where
             "{}",
             match self {
                 Self::Start => "start",
-                Self::Collectable => "collectable",
                 Self::Finished { .. } => "finished",
                 Self::Abandoned => "abandoned",
                 Self::Deleted => "deleted",
@@ -1681,16 +1792,19 @@ where
             (
                 Self::Finished {
                     report_count: self_report_count,
+                    client_timestamp_interval: self_client_timestamp_interval,
                     encrypted_helper_aggregate_share: self_helper_agg_share,
                     leader_aggregate_share: self_leader_agg_share,
                 },
                 Self::Finished {
                     report_count: other_report_count,
+                    client_timestamp_interval: other_client_timestamp_interval,
                     encrypted_helper_aggregate_share: other_helper_agg_share,
                     leader_aggregate_share: other_leader_agg_share,
                 },
             ) => {
                 self_report_count == other_report_count
+                    && self_client_timestamp_interval == other_client_timestamp_interval
                     && self_helper_agg_share == other_helper_agg_share
                     && self_leader_agg_share == other_leader_agg_share
             }
@@ -1706,13 +1820,11 @@ where
 {
 }
 
-#[derive(Debug, FromSql, ToSql)]
+#[derive(Debug, Copy, Clone, FromSql, ToSql)]
 #[postgres(name = "collection_job_state")]
 pub enum CollectionJobStateCode {
     #[postgres(name = "START")]
     Start,
-    #[postgres(name = "COLLECTABLE")]
-    Collectable,
     #[postgres(name = "FINISHED")]
     Finished,
     #[postgres(name = "ABANDONED")]
@@ -1888,150 +2000,6 @@ impl OutstandingBatch {
     /// aggregation process.
     pub fn size(&self) -> &RangeInclusive<usize> {
         &self.size
-    }
-}
-
-/// Represents the state of a `Batch`.
-#[derive(Copy, Clone, Debug, FromSql, ToSql, PartialEq, Eq, Hash)]
-#[postgres(name = "batch_state")]
-pub enum BatchState {
-    /// This batch can accept the creation of additional aggregation jobs.
-    #[postgres(name = "OPEN")]
-    Open,
-    /// This batch can accept the creation of additional aggregation jobs, but will transition
-    /// to state `CLOSED` once there are no outstanding aggregation jobs remaining.
-    #[postgres(name = "CLOSING")]
-    Closing,
-    /// This batch can no longer accept the creation of additional aggregation jobs.
-    #[postgres(name = "CLOSED")]
-    Closed,
-}
-
-/// Represents the state of a given batch (and aggregation parameter).
-#[derive(Clone, Derivative)]
-#[derivative(Debug)]
-pub struct Batch<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> {
-    task_id: TaskId,
-    batch_identifier: Q::BatchIdentifier,
-    #[derivative(Debug = "ignore")]
-    aggregation_parameter: A::AggregationParam,
-    state: BatchState,
-    outstanding_aggregation_jobs: u64,
-    client_timestamp_interval: Interval,
-}
-
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>>
-    Batch<SEED_SIZE, Q, A>
-{
-    /// Creates a new [`Batch`].
-    pub fn new(
-        task_id: TaskId,
-        batch_identifier: Q::BatchIdentifier,
-        aggregation_parameter: A::AggregationParam,
-        state: BatchState,
-        outstanding_aggregation_jobs: u64,
-        client_timestamp_interval: Interval,
-    ) -> Self {
-        Self {
-            task_id,
-            batch_identifier,
-            aggregation_parameter,
-            state,
-            outstanding_aggregation_jobs,
-            client_timestamp_interval,
-        }
-    }
-
-    /// Gets the task ID associated with this batch.
-    pub fn task_id(&self) -> &TaskId {
-        &self.task_id
-    }
-
-    /// Gets the batch identifier associated with this batch.
-    pub fn batch_identifier(&self) -> &Q::BatchIdentifier {
-        &self.batch_identifier
-    }
-
-    /// Gets the aggregation parameter associated with this batch.
-    pub fn aggregation_parameter(&self) -> &A::AggregationParam {
-        &self.aggregation_parameter
-    }
-
-    /// Gets the state associated with this batch.
-    pub fn state(&self) -> &BatchState {
-        &self.state
-    }
-
-    /// Returns a new batch equivalent to the current batch, but with the given state.
-    pub fn with_state(self, state: BatchState) -> Self {
-        Self { state, ..self }
-    }
-
-    /// Gets the count of outstanding aggregation jobs associated with this batch.
-    pub fn outstanding_aggregation_jobs(&self) -> u64 {
-        self.outstanding_aggregation_jobs
-    }
-
-    /// Returns a new batch equivalent to the current batch, but with the given count of
-    /// outstanding aggregation jobs.
-    pub fn with_outstanding_aggregation_jobs(self, outstanding_aggregation_jobs: u64) -> Self {
-        Self {
-            outstanding_aggregation_jobs,
-            ..self
-        }
-    }
-
-    /// Gets the minimal interval of time spanned by the reports included in this batch.
-    pub fn client_timestamp_interval(&self) -> &Interval {
-        &self.client_timestamp_interval
-    }
-
-    /// Returns a new batch equivalent to the current batch, but with the given client timestamp
-    /// interval.
-    pub fn with_client_timestamp_interval(self, client_timestamp_interval: Interval) -> Self {
-        Self {
-            client_timestamp_interval,
-            ..self
-        }
-    }
-}
-
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> PartialEq
-    for Batch<SEED_SIZE, Q, A>
-where
-    A::AggregationParam: PartialEq,
-    Q::BatchIdentifier: PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        self.task_id == other.task_id
-            && self.batch_identifier == other.batch_identifier
-            && self.aggregation_parameter == other.aggregation_parameter
-            && self.state == other.state
-            && self.outstanding_aggregation_jobs == other.outstanding_aggregation_jobs
-            && self.client_timestamp_interval == other.client_timestamp_interval
-    }
-}
-
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Eq
-    for Batch<SEED_SIZE, Q, A>
-where
-    A::AggregationParam: Eq,
-    Q::BatchIdentifier: Eq,
-{
-}
-
-impl<const SEED_SIZE: usize, Q: QueryType, A: vdaf::Aggregator<SEED_SIZE, 16>> Hash
-    for Batch<SEED_SIZE, Q, A>
-where
-    A::AggregationParam: Hash,
-{
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.task_id.hash(state);
-        self.batch_identifier.hash(state);
-        self.aggregation_parameter.hash(state);
-        self.state.hash(state);
-        self.outstanding_aggregation_jobs.hash(state);
-        self.client_timestamp_interval.hash(state);
     }
 }
 

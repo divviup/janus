@@ -34,6 +34,7 @@ pub async fn main_callback(ctx: BinaryContext<RealClock, Options, Config>) -> Re
         ctx.config.job_driver_config.retry_config(),
         &ctx.meter,
         ctx.config.batch_aggregation_shard_count,
+        Duration::from_secs(ctx.config.min_collection_job_retry_delay_secs),
     ));
     let lease_duration =
         Duration::from_secs(ctx.config.job_driver_config.worker_lease_duration_secs);
@@ -102,6 +103,7 @@ impl BinaryOptions for Options {
 /// retry_max_interval_millis: 30000
 /// retry_max_elapsed_time_millis: 300000
 /// batch_aggregation_shard_count: 32
+/// min_collection_job_retry_delay_secs: 600
 /// "#;
 ///
 /// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
@@ -117,6 +119,10 @@ pub struct Config {
     /// will reduce the amount of database contention during leader aggregation, while increasing
     /// the cost of collection.
     pub batch_aggregation_shard_count: u64,
+
+    /// The minimum duration to wait, in seconds, before retrying a collection job that has been
+    /// stepped but was not ready yet because not all included reports had finished aggregation.
+    pub min_collection_job_retry_delay_secs: u64,
 }
 
 impl BinaryConfig for Config {
@@ -167,6 +173,7 @@ mod tests {
                 retry_max_elapsed_time_millis: 300_000,
             },
             batch_aggregation_shard_count: 32,
+            min_collection_job_retry_delay_secs: 600,
         })
     }
 

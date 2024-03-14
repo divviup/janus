@@ -787,9 +787,9 @@ mod tests {
     use janus_aggregator_core::{
         datastore::{
             models::{
-                AggregateShareJob, AggregationJob, AggregationJobState, Batch, BatchAggregation,
-                BatchAggregationState, BatchState, CollectionJob, CollectionJobState, HpkeKeyState,
-                ReportAggregation, ReportAggregationState,
+                merge_batch_aggregations_by_batch, AggregationJob, AggregationJobState,
+                BatchAggregation, BatchAggregationState, CollectionJob, CollectionJobState,
+                HpkeKeyState, ReportAggregation, ReportAggregationState,
             },
             test_util::EphemeralDatastoreBuilder,
         },
@@ -809,7 +809,7 @@ mod tests {
         },
         report_id::ReportIdChecksumExt,
         test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntime},
-        time::{Clock, DurationExt, MockClock, TimeExt},
+        time::{Clock, DurationExt, IntervalExt, MockClock, TimeExt},
         vdaf::{VdafInstance, VERIFY_KEY_LENGTH},
     };
     use janus_messages::{
@@ -917,9 +917,10 @@ mod tests {
             .run_unnamed_tx(|tx| {
                 let keypair = first_hpke_keypair.clone();
                 Box::pin(async move {
-                    tx.put_global_hpke_keypair(&keypair).await?;
+                    tx.put_global_hpke_keypair(&keypair).await.unwrap();
                     tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
-                        .await?;
+                        .await
+                        .unwrap();
                     Ok(())
                 })
             })
@@ -1053,9 +1054,10 @@ mod tests {
             .run_unnamed_tx(|tx| {
                 let keypair = first_hpke_keypair.clone();
                 Box::pin(async move {
-                    tx.put_global_hpke_keypair(&keypair).await?;
+                    tx.put_global_hpke_keypair(&keypair).await.unwrap();
                     tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
-                        .await?;
+                        .await
+                        .unwrap();
                     Ok(())
                 })
             })
@@ -1955,15 +1957,19 @@ mod tests {
             .run_unnamed_tx(|tx| {
                 let task = helper_task.clone();
                 let report_share_4 = prepare_init_4.report_share().clone();
-                let report_share_5 = prepare_init_5.report_share().clone();
                 let report_share_8 = prepare_init_8.report_share().clone();
+
                 Box::pin(async move {
-                    tx.put_aggregator_task(&task).await?;
+                    tx.put_aggregator_task(&task).await.unwrap();
 
                     // report_share_4 and report_share_8 are already in the datastore as they were
                     // referenced by existing aggregation jobs.
-                    tx.put_report_share(task.id(), &report_share_4).await?;
-                    tx.put_report_share(task.id(), &report_share_8).await?;
+                    tx.put_report_share(task.id(), &report_share_4)
+                        .await
+                        .unwrap();
+                    tx.put_report_share(task.id(), &report_share_8)
+                        .await
+                        .unwrap();
 
                     // Put in an aggregation job and report aggregation for report_share_4. It uses
                     // the same aggregation parameter as the aggregation job this test will later
@@ -2026,23 +2032,25 @@ mod tests {
                     .await
                     .unwrap();
 
-                    // Put in an aggregate share job for the interval that report_share_5 falls into
-                    // which should cause it to later fail to prepare.
-                    tx.put_aggregate_share_job::<0, TimeInterval, dummy::Vdaf>(
-                        &AggregateShareJob::new(
-                            *task.id(),
-                            Interval::new(
+                    // Write collected batch aggregations for the interval that report_share_5 falls
+                    // into, which will cause it to fail to prepare.
+                    try_join_all(
+                        empty_batch_aggregations::<0, TimeInterval, dummy::Vdaf>(
+                            &task,
+                            BATCH_AGGREGATION_SHARD_COUNT,
+                            &Interval::new(
                                 Time::from_seconds_since_epoch(0),
                                 *task.time_precision(),
                             )
                             .unwrap(),
-                            dummy::AggregationParam(0),
-                            dummy::AggregateShare(0),
-                            1,
-                            ReportIdChecksum::for_report_id(report_share_5.metadata().id()),
-                        ),
+                            &dummy::AggregationParam(0),
+                            &[],
+                        )
+                        .iter()
+                        .map(|ba| tx.put_batch_aggregation(ba)),
                     )
-                    .await?;
+                    .await
+                    .unwrap();
 
                     Ok((conflicting_aggregation_job, non_conflicting_aggregation_job))
                 })
@@ -2180,12 +2188,14 @@ mod tests {
                             tx.get_aggregation_jobs_for_task::<0, TimeInterval, dummy::Vdaf>(
                                 task.id(),
                             )
-                            .await?,
+                            .await
+                            .unwrap(),
                             tx.get_batch_aggregations_for_task::<0, TimeInterval, _>(
                                 &vdaf,
                                 task.id(),
                             )
-                            .await?,
+                            .await
+                            .unwrap(),
                         ))
                     })
                 })
@@ -2266,15 +2276,6 @@ mod tests {
                 let timestamp = *prepare_init.report_share().metadata().time();
                 Box::pin(async move {
                     let interval = Interval::new(timestamp, Duration::from_seconds(1)).unwrap();
-                    let batch = Batch::<0, FixedSize, dummy::Vdaf>::new(
-                        *task.id(),
-                        batch_id,
-                        dummy::AggregationParam(0),
-                        BatchState::Open,
-                        0,
-                        interval,
-                    );
-                    tx.put_batch(&batch).await.unwrap();
 
                     // Insert for all possible shards, since we non-deterministically assign shards
                     // to batches on insertion.
@@ -2284,10 +2285,13 @@ mod tests {
                             batch_id,
                             dummy::AggregationParam(0),
                             shard,
+                            interval,
                             BatchAggregationState::Collected {
                                 aggregate_share: Some(dummy::OutputShare(0).into()),
                                 report_count: 1,
                                 checksum: ReportIdChecksum::for_report_id(&random()),
+                                aggregation_jobs_created: 1,
+                                aggregation_jobs_terminated: 1,
                             },
                         );
                         tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
@@ -2366,9 +2370,11 @@ mod tests {
                 Box::pin(async move {
                     // Leave these in the PENDING state--they should still be decryptable.
                     tx.put_global_hpke_keypair(&global_hpke_keypair_same_id)
-                        .await?;
+                        .await
+                        .unwrap();
                     tx.put_global_hpke_keypair(&global_hpke_keypair_different_id)
-                        .await?;
+                        .await
+                        .unwrap();
                     Ok(())
                 })
             })
@@ -2904,14 +2910,19 @@ mod tests {
                     report_metadata_2.clone(),
                 );
                 let aggregation_param = aggregation_param.clone();
-                let helper_aggregate_share = transcript_0.helper_aggregate_share.clone();
 
                 Box::pin(async move {
-                    tx.put_aggregator_task(&task).await?;
+                    tx.put_aggregator_task(&task).await.unwrap();
 
-                    tx.put_report_share(task.id(), &report_share_0).await?;
-                    tx.put_report_share(task.id(), &report_share_1).await?;
-                    tx.put_report_share(task.id(), &report_share_2).await?;
+                    tx.put_report_share(task.id(), &report_share_0)
+                        .await
+                        .unwrap();
+                    tx.put_report_share(task.id(), &report_share_1)
+                        .await
+                        .unwrap();
+                    tx.put_report_share(task.id(), &report_share_2)
+                        .await
+                        .unwrap();
 
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
@@ -2927,7 +2938,8 @@ mod tests {
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
-                    .await?;
+                    .await
+                    .unwrap();
 
                     tx.put_report_aggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
                         &ReportAggregation::new(
@@ -2937,10 +2949,13 @@ mod tests {
                             *report_metadata_0.time(),
                             0,
                             None,
-                            ReportAggregationState::WaitingHelper{prepare_state: helper_prep_state_0},
+                            ReportAggregationState::WaitingHelper {
+                                prepare_state: helper_prep_state_0,
+                            },
                         ),
                     )
-                    .await?;
+                    .await
+                    .unwrap();
                     tx.put_report_aggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
                         &ReportAggregation::new(
                             *task.id(),
@@ -2949,10 +2964,13 @@ mod tests {
                             *report_metadata_1.time(),
                             1,
                             None,
-                            ReportAggregationState::WaitingHelper{prepare_state: helper_prep_state_1},
+                            ReportAggregationState::WaitingHelper {
+                                prepare_state: helper_prep_state_1,
+                            },
                         ),
                     )
-                    .await?;
+                    .await
+                    .unwrap();
                     tx.put_report_aggregation::<VERIFY_KEY_LENGTH, Poplar1<XofTurboShake128, 16>>(
                         &ReportAggregation::new(
                             *task.id(),
@@ -2961,26 +2979,39 @@ mod tests {
                             *report_metadata_2.time(),
                             2,
                             None,
-                            ReportAggregationState::WaitingHelper{prepare_state: helper_prep_state_2},
+                            ReportAggregationState::WaitingHelper {
+                                prepare_state: helper_prep_state_2,
+                            },
                         ),
                     )
-                    .await?;
+                    .await
+                    .unwrap();
 
-                    tx.put_aggregate_share_job::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>(
-                        &AggregateShareJob::new(
-                            *task.id(),
-                            Interval::new(
+                    // Write collected batch aggregations for the interval that report_share_2 falls
+                    // into, which will cause it to fail to prepare.
+                    try_join_all(
+                        empty_batch_aggregations::<
+                            VERIFY_KEY_LENGTH,
+                            TimeInterval,
+                            Poplar1<XofTurboShake128, 16>,
+                        >(
+                            &task,
+                            BATCH_AGGREGATION_SHARD_COUNT,
+                            &Interval::new(
                                 Time::from_seconds_since_epoch(0),
                                 *task.time_precision(),
                             )
                             .unwrap(),
-                            aggregation_param.clone(),
-                            helper_aggregate_share,
-                            0,
-                            ReportIdChecksum::default(),
-                        ),
+                            &aggregation_param,
+                            &[],
+                        )
+                        .iter()
+                        .map(|ba| tx.put_batch_aggregation(ba)),
                     )
                     .await
+                    .unwrap();
+
+                    Ok(())
                 })
             })
             .await
@@ -3121,13 +3152,11 @@ mod tests {
             Poplar1AggregationParam::try_from_prefixes(vec![measurement.clone()]).unwrap();
 
         // report_share_0 is a "happy path" report.
-        let report_metadata_0 = ReportMetadata::new(
-            random(),
-            first_batch_interval_clock
-                .now()
-                .to_batch_interval_start(task.time_precision())
-                .unwrap(),
-        );
+        let report_time_0 = first_batch_interval_clock
+            .now()
+            .to_batch_interval_start(task.time_precision())
+            .unwrap();
+        let report_metadata_0 = ReportMetadata::new(random(), report_time_0);
         let transcript_0 = run_vdaf(
             &vdaf,
             verify_key.as_bytes(),
@@ -3148,13 +3177,11 @@ mod tests {
 
         // report_share_1 is another "happy path" report to exercise in-memory accumulation of
         // output shares
-        let report_metadata_1 = ReportMetadata::new(
-            random(),
-            first_batch_interval_clock
-                .now()
-                .to_batch_interval_start(task.time_precision())
-                .unwrap(),
-        );
+        let report_time_1 = first_batch_interval_clock
+            .now()
+            .to_batch_interval_start(task.time_precision())
+            .unwrap();
+        let report_metadata_1 = ReportMetadata::new(random(), report_time_1);
         let transcript_1 = run_vdaf(
             &vdaf,
             verify_key.as_bytes(),
@@ -3208,6 +3235,11 @@ mod tests {
             *task.time_precision(),
         )
         .unwrap();
+        let first_batch_interval = Interval::from_time(&report_time_0)
+            .unwrap()
+            .merged_with(&report_time_1)
+            .unwrap();
+
         let second_batch_identifier = Interval::new(
             report_metadata_2
                 .time()
@@ -3216,7 +3248,8 @@ mod tests {
             *task.time_precision(),
         )
         .unwrap();
-        let second_batch_want_batch_aggregations = empty_batch_aggregations::<
+
+        let second_batch_want_batch_aggregations: Vec<_> = empty_batch_aggregations::<
             VERIFY_KEY_LENGTH,
             TimeInterval,
             Poplar1<XofTurboShake128, 16>,
@@ -3226,7 +3259,19 @@ mod tests {
             &second_batch_identifier,
             &aggregation_param,
             &[],
-        );
+        )
+        .into_iter()
+        .map(|ba| {
+            BatchAggregation::new(
+                *ba.task_id(),
+                *ba.batch_identifier(),
+                ba.aggregation_parameter().clone(),
+                ba.ord(),
+                second_batch_identifier,
+                ba.state().clone(),
+            )
+        })
+        .collect();
 
         datastore
             .run_unnamed_tx(|tx| {
@@ -3251,11 +3296,17 @@ mod tests {
                     second_batch_want_batch_aggregations.clone();
 
                 Box::pin(async move {
-                    tx.put_aggregator_task(&task).await?;
+                    tx.put_aggregator_task(&task).await.unwrap();
 
-                    tx.put_report_share(task.id(), &report_share_0).await?;
-                    tx.put_report_share(task.id(), &report_share_1).await?;
-                    tx.put_report_share(task.id(), &report_share_2).await?;
+                    tx.put_report_share(task.id(), &report_share_0)
+                        .await
+                        .unwrap();
+                    tx.put_report_share(task.id(), &report_share_1)
+                        .await
+                        .unwrap();
+                    tx.put_report_share(task.id(), &report_share_2)
+                        .await
+                        .unwrap();
 
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
@@ -3271,7 +3322,8 @@ mod tests {
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
-                    .await?;
+                    .await
+                    .unwrap();
 
                     tx.put_report_aggregation(&ReportAggregation::<
                         VERIFY_KEY_LENGTH,
@@ -3287,7 +3339,8 @@ mod tests {
                             prepare_state: helper_prep_state_0,
                         },
                     ))
-                    .await?;
+                    .await
+                    .unwrap();
                     tx.put_report_aggregation(&ReportAggregation::<
                         VERIFY_KEY_LENGTH,
                         Poplar1<XofTurboShake128, 16>,
@@ -3302,7 +3355,8 @@ mod tests {
                             prepare_state: helper_prep_state_1,
                         },
                     ))
-                    .await?;
+                    .await
+                    .unwrap();
                     tx.put_report_aggregation(&ReportAggregation::<
                         VERIFY_KEY_LENGTH,
                         Poplar1<XofTurboShake128, 16>,
@@ -3317,24 +3371,29 @@ mod tests {
                             prepare_state: helper_prep_state_2,
                         },
                     ))
-                    .await?;
+                    .await
+                    .unwrap();
 
-                    for batch_identifier in [first_batch_identifier, second_batch_identifier] {
-                        tx.put_batch(&Batch::<
-                            VERIFY_KEY_LENGTH,
-                            TimeInterval,
-                            Poplar1<XofTurboShake128, 16>,
-                        >::new(
-                            *task.id(),
-                            batch_identifier,
-                            aggregation_param.clone(),
-                            BatchState::Closed,
-                            0,
-                            batch_identifier,
-                        ))
-                        .await
-                        .unwrap()
-                    }
+                    tx.put_batch_aggregation(&BatchAggregation::<
+                        VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        Poplar1<XofTurboShake128, 16>,
+                    >::new(
+                        *task.id(),
+                        first_batch_identifier,
+                        aggregation_param.clone(),
+                        0,
+                        first_batch_identifier,
+                        BatchAggregationState::Aggregating {
+                            aggregate_share: None,
+                            report_count: 0,
+                            checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 2,
+                            aggregation_jobs_terminated: 0,
+                        },
+                    ))
+                    .await
+                    .unwrap();
 
                     try_join_all(
                         second_batch_want_batch_aggregations
@@ -3364,7 +3423,7 @@ mod tests {
             post_aggregation_job_and_decode(&task, &aggregation_job_id_0, &request, &handler).await;
 
         // Map the batch aggregation ordinal value to 0, as it may vary due to sharding.
-        let first_batch_got_batch_aggregations: Vec<_> = datastore
+        let first_batch_got_batch_aggregations = datastore
             .run_unnamed_tx(|tx| {
                 let (task, vdaf, report_metadata_0, aggregation_param) = (
                     helper_task.clone(),
@@ -3373,40 +3432,32 @@ mod tests {
                     aggregation_param.clone(),
                 );
                 Box::pin(async move {
-                    TimeInterval::get_batch_aggregations_for_collection_identifier::<
-                        VERIFY_KEY_LENGTH,
-                        Poplar1<XofTurboShake128, 16>,
-                        _,
-                    >(
-                        tx,
-                        &task,
-                        &vdaf,
-                        &Interval::new(
-                            report_metadata_0
-                                .time()
-                                .to_batch_interval_start(task.time_precision())
-                                .unwrap(),
-                            *task.time_precision(),
+                    Ok(merge_batch_aggregations_by_batch(
+                        TimeInterval::get_batch_aggregations_for_collection_identifier::<
+                            VERIFY_KEY_LENGTH,
+                            Poplar1<XofTurboShake128, 16>,
+                            _,
+                        >(
+                            tx,
+                            &task,
+                            &vdaf,
+                            &Interval::new(
+                                report_metadata_0
+                                    .time()
+                                    .to_batch_interval_start(task.time_precision())
+                                    .unwrap(),
+                                *task.time_precision(),
+                            )
+                            .unwrap(),
+                            &aggregation_param,
                         )
+                        .await
                         .unwrap(),
-                        &aggregation_param,
-                    )
-                    .await
+                    ))
                 })
             })
             .await
-            .unwrap()
-            .into_iter()
-            .map(|agg| {
-                BatchAggregation::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>::new(
-                    *agg.task_id(),
-                    *agg.batch_identifier(),
-                    agg.aggregation_parameter().clone(),
-                    0,
-                    agg.state().clone(),
-                )
-            })
-            .collect();
+            .unwrap();
 
         let aggregate_share = vdaf
             .aggregate(
@@ -3424,22 +3475,18 @@ mod tests {
             first_batch_got_batch_aggregations,
             Vec::from([BatchAggregation::new(
                 *task.id(),
-                Interval::new(
-                    report_metadata_0
-                        .time()
-                        .to_batch_interval_start(task.time_precision())
-                        .unwrap(),
-                    *task.time_precision()
-                )
-                .unwrap(),
+                first_batch_identifier,
                 aggregation_param.clone(),
                 0,
+                first_batch_interval,
                 BatchAggregationState::Aggregating {
                     aggregate_share: Some(aggregate_share),
                     report_count: 2,
                     checksum,
+                    aggregation_jobs_created: 2,
+                    aggregation_jobs_terminated: 1,
                 },
-            ),])
+            )])
         );
 
         let second_batch_got_batch_aggregations = datastore
@@ -3479,16 +3526,14 @@ mod tests {
             second_batch_want_batch_aggregations
         );
 
-        // Aggregate some more reports, which should get accumulated into the
-        // batch_aggregations rows created earlier.
+        // Aggregate some more reports, which should get accumulated into the batch_aggregations
+        // rows created earlier.
         // report_share_3 gets aggreated into the first batch interval.
-        let report_metadata_3 = ReportMetadata::new(
-            random(),
-            first_batch_interval_clock
-                .now()
-                .to_batch_interval_start(task.time_precision())
-                .unwrap(),
-        );
+        let report_time_3 = first_batch_interval_clock
+            .now()
+            .to_batch_interval_start(task.time_precision())
+            .unwrap();
+        let report_metadata_3 = ReportMetadata::new(random(), report_time_3);
         let transcript_3 = run_vdaf(
             &vdaf,
             verify_key.as_bytes(),
@@ -3582,9 +3627,15 @@ mod tests {
                 let aggregation_param = aggregation_param.clone();
 
                 Box::pin(async move {
-                    tx.put_report_share(task.id(), &report_share_3).await?;
-                    tx.put_report_share(task.id(), &report_share_4).await?;
-                    tx.put_report_share(task.id(), &report_share_5).await?;
+                    tx.put_report_share(task.id(), &report_share_3)
+                        .await
+                        .unwrap();
+                    tx.put_report_share(task.id(), &report_share_4)
+                        .await
+                        .unwrap();
+                    tx.put_report_share(task.id(), &report_share_5)
+                        .await
+                        .unwrap();
 
                     tx.put_aggregation_job(&AggregationJob::<
                         VERIFY_KEY_LENGTH,
@@ -3600,7 +3651,8 @@ mod tests {
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
-                    .await?;
+                    .await
+                    .unwrap();
 
                     tx.put_report_aggregation(&ReportAggregation::<
                         VERIFY_KEY_LENGTH,
@@ -3616,7 +3668,8 @@ mod tests {
                             prepare_state: helper_prep_state_3,
                         },
                     ))
-                    .await?;
+                    .await
+                    .unwrap();
                     tx.put_report_aggregation(&ReportAggregation::<
                         VERIFY_KEY_LENGTH,
                         Poplar1<XofTurboShake128, 16>,
@@ -3631,7 +3684,8 @@ mod tests {
                             prepare_state: helper_prep_state_4,
                         },
                     ))
-                    .await?;
+                    .await
+                    .unwrap();
                     tx.put_report_aggregation(&ReportAggregation::<
                         VERIFY_KEY_LENGTH,
                         Poplar1<XofTurboShake128, 16>,
@@ -3646,7 +3700,8 @@ mod tests {
                             prepare_state: helper_prep_state_5,
                         },
                     ))
-                    .await?;
+                    .await
+                    .unwrap();
 
                     Ok(())
                 })
@@ -3669,7 +3724,7 @@ mod tests {
         // Map the batch aggregation ordinal value to 0, as it may vary due to sharding, and merge
         // batch aggregations over the same interval. (the task & aggregation parameter will always
         // be the same)
-        let merged_first_batch_aggregation = datastore
+        let first_batch_got_batch_aggregations = datastore
             .run_unnamed_tx(|tx| {
                 let (task, vdaf, report_metadata_0, aggregation_param) = (
                     helper_task.clone(),
@@ -3678,42 +3733,34 @@ mod tests {
                     aggregation_param.clone(),
                 );
                 Box::pin(async move {
-                    TimeInterval::get_batch_aggregations_for_collection_identifier::<
-                        VERIFY_KEY_LENGTH,
-                        Poplar1<XofTurboShake128, 16>,
-                        _,
-                    >(
-                        tx,
-                        &task,
-                        &vdaf,
-                        &Interval::new(
-                            report_metadata_0
-                                .time()
-                                .to_batch_interval_start(task.time_precision())
-                                .unwrap(),
-                            Duration::from_seconds(task.time_precision().as_seconds()),
+                    Ok(merge_batch_aggregations_by_batch(
+                        TimeInterval::get_batch_aggregations_for_collection_identifier::<
+                            VERIFY_KEY_LENGTH,
+                            Poplar1<XofTurboShake128, 16>,
+                            _,
+                        >(
+                            tx,
+                            &task,
+                            &vdaf,
+                            &Interval::new(
+                                report_metadata_0
+                                    .time()
+                                    .to_batch_interval_start(task.time_precision())
+                                    .unwrap(),
+                                Duration::from_seconds(task.time_precision().as_seconds()),
+                            )
+                            .unwrap(),
+                            &aggregation_param,
                         )
+                        .await
                         .unwrap(),
-                        &aggregation_param,
-                    )
-                    .await
+                    ))
                 })
             })
             .await
-            .unwrap()
-            .into_iter()
-            .map(|agg| {
-                BatchAggregation::<VERIFY_KEY_LENGTH, TimeInterval, Poplar1<XofTurboShake128, 16>>::new(
-                    *agg.task_id(),
-                    *agg.batch_identifier(),
-                    agg.aggregation_parameter().clone(),
-                    0,
-                    agg.state().clone(),
-                )
-            })
-            .reduce(|left, right| left.merged_with(&right).unwrap())
             .unwrap();
 
+        let first_batch_interval = first_batch_interval.merged_with(&report_time_3).unwrap();
         let first_aggregate_share = vdaf
             .aggregate(
                 &aggregation_param,
@@ -3731,8 +3778,8 @@ mod tests {
             .updated_with(report_metadata_3.id());
 
         assert_eq!(
-            merged_first_batch_aggregation,
-            BatchAggregation::new(
+            first_batch_got_batch_aggregations,
+            Vec::from([BatchAggregation::new(
                 *task.id(),
                 Interval::new(
                     report_metadata_0
@@ -3744,12 +3791,15 @@ mod tests {
                 .unwrap(),
                 aggregation_param.clone(),
                 0,
+                first_batch_interval,
                 BatchAggregationState::Aggregating {
                     aggregate_share: Some(first_aggregate_share),
                     report_count: 3,
                     checksum: first_checksum,
+                    aggregation_jobs_created: 2,
+                    aggregation_jobs_terminated: 2,
                 },
-            ),
+            )]),
         );
 
         let second_batch_got_batch_aggregations = datastore
@@ -3826,7 +3876,7 @@ mod tests {
                     transcript.clone(),
                 );
                 Box::pin(async move {
-                    tx.put_aggregator_task(&task).await?;
+                    tx.put_aggregator_task(&task).await.unwrap();
                     tx.put_report_share(
                         task.id(),
                         &ReportShare::new(
@@ -3839,7 +3889,8 @@ mod tests {
                             ),
                         ),
                     )
-                    .await?;
+                    .await
+                    .unwrap();
 
                     tx.put_aggregation_job(&AggregationJob::<
                         16,
@@ -3855,7 +3906,8 @@ mod tests {
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
-                    .await?;
+                    .await
+                    .unwrap();
                     tx.put_report_aggregation(
                         &ReportAggregation::<16, Poplar1<XofTurboShake128, 16>>::new(
                             *task.id(),
@@ -3945,8 +3997,10 @@ mod tests {
                 );
 
                 Box::pin(async move {
-                    tx.put_aggregator_task(&task).await?;
-                    tx.put_report_share(task.id(), &helper_report_share).await?;
+                    tx.put_aggregator_task(&task).await.unwrap();
+                    tx.put_report_share(task.id(), &helper_report_share)
+                        .await
+                        .unwrap();
                     tx.put_aggregation_job(&AggregationJob::<
                         16,
                         TimeInterval,
@@ -3961,7 +4015,8 @@ mod tests {
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
-                    .await?;
+                    .await
+                    .unwrap();
                     tx.put_report_aggregation(
                         &ReportAggregation::<16, Poplar1<XofTurboShake128, 16>>::new(
                             *task.id(),
@@ -4104,7 +4159,7 @@ mod tests {
                 );
 
                 Box::pin(async move {
-                    tx.put_aggregator_task(&task).await?;
+                    tx.put_aggregator_task(&task).await.unwrap();
                     tx.put_report_share(
                         task.id(),
                         &ReportShare::new(
@@ -4117,7 +4172,8 @@ mod tests {
                             ),
                         ),
                     )
-                    .await?;
+                    .await
+                    .unwrap();
                     tx.put_aggregation_job(&AggregationJob::<
                         16,
                         TimeInterval,
@@ -4132,7 +4188,8 @@ mod tests {
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
-                    .await?;
+                    .await
+                    .unwrap();
                     tx.put_report_aggregation(
                         &ReportAggregation::<16, Poplar1<XofTurboShake128, 16>>::new(
                             *task.id(),
@@ -4235,7 +4292,7 @@ mod tests {
                 );
 
                 Box::pin(async move {
-                    tx.put_aggregator_task(&task).await?;
+                    tx.put_aggregator_task(&task).await.unwrap();
 
                     tx.put_report_share(
                         task.id(),
@@ -4249,7 +4306,8 @@ mod tests {
                             ),
                         ),
                     )
-                    .await?;
+                    .await
+                    .unwrap();
                     tx.put_report_share(
                         task.id(),
                         &ReportShare::new(
@@ -4262,7 +4320,8 @@ mod tests {
                             ),
                         ),
                     )
-                    .await?;
+                    .await
+                    .unwrap();
 
                     tx.put_aggregation_job(&AggregationJob::<
                         16,
@@ -4278,7 +4337,8 @@ mod tests {
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
-                    .await?;
+                    .await
+                    .unwrap();
 
                     tx.put_report_aggregation(&ReportAggregation::<
                         16,
@@ -4296,7 +4356,8 @@ mod tests {
                                 .clone(),
                         },
                     ))
-                    .await?;
+                    .await
+                    .unwrap();
                     tx.put_report_aggregation(
                         &ReportAggregation::<16, Poplar1<XofTurboShake128, 16>>::new(
                             *task.id(),
@@ -4370,7 +4431,7 @@ mod tests {
             .run_unnamed_tx(|tx| {
                 let (task, report_metadata) = (helper_task.clone(), report_metadata.clone());
                 Box::pin(async move {
-                    tx.put_aggregator_task(&task).await?;
+                    tx.put_aggregator_task(&task).await.unwrap();
                     tx.put_report_share(
                         task.id(),
                         &ReportShare::new(
@@ -4383,7 +4444,8 @@ mod tests {
                             ),
                         ),
                     )
-                    .await?;
+                    .await
+                    .unwrap();
                     tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
@@ -4394,7 +4456,8 @@ mod tests {
                         AggregationJobState::InProgress,
                         AggregationJobStep::from(0),
                     ))
-                    .await?;
+                    .await
+                    .unwrap();
                     tx.put_report_aggregation(&ReportAggregation::<0, dummy::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
@@ -4751,27 +4814,6 @@ mod tests {
             aggregation_param.get_encoded().unwrap(),
         );
 
-        test_case
-            .datastore
-            .run_unnamed_tx(|tx| {
-                let task_id = *test_case.task.id();
-
-                Box::pin(async move {
-                    tx.put_batch(&Batch::<0, TimeInterval, dummy::Vdaf>::new(
-                        task_id,
-                        batch_interval,
-                        aggregation_param,
-                        BatchState::Open,
-                        1,
-                        batch_interval,
-                    ))
-                    .await?;
-                    Ok(())
-                })
-            })
-            .await
-            .unwrap();
-
         let test_conn = test_case
             .put_collection_job(&collection_job_id, &request)
             .await;
@@ -4784,34 +4826,24 @@ mod tests {
             batch_interval,
             CollectionJobState::Start,
         );
-        let want_batches = Vec::from([Batch::<0, TimeInterval, dummy::Vdaf>::new(
-            *test_case.task.id(),
-            batch_interval,
-            aggregation_param,
-            BatchState::Closing,
-            1,
-            batch_interval,
-        )]);
 
-        let (got_collection_job, got_batches) = test_case
+        let got_collection_job = test_case
             .datastore
             .run_unnamed_tx(|tx| {
                 let task_id = *test_case.task.id();
 
                 Box::pin(async move {
-                    let got_collection_job = tx
+                    Ok(tx
                         .get_collection_job(&dummy::Vdaf::new(1), &task_id, &collection_job_id)
-                        .await?
-                        .unwrap();
-                    let got_batches = tx.get_batches_for_task(&task_id).await?;
-                    Ok((got_collection_job, got_batches))
+                        .await
+                        .unwrap()
+                        .unwrap())
                 })
             })
             .await
             .unwrap();
 
         assert_eq!(want_collection_job, got_collection_job);
-        assert_eq!(want_batches, got_batches);
 
         assert_eq!(test_conn.status(), Some(Status::Created));
 
@@ -4855,6 +4887,7 @@ mod tests {
                         .unwrap()
                         .with_state(CollectionJobState::Finished {
                             report_count: 12,
+                            client_timestamp_interval: batch_interval,
                             encrypted_helper_aggregate_share,
                             leader_aggregate_share,
                         });
@@ -4961,10 +4994,13 @@ mod tests {
                             .unwrap(),
                             dummy::AggregationParam(0),
                             0,
+                            interval,
                             BatchAggregationState::Aggregating {
                                 aggregate_share: Some(dummy::AggregateShare(0)),
                                 report_count: 10,
                                 checksum: ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
+                                aggregation_jobs_created: 1,
+                                aggregation_jobs_terminated: 1,
                             },
                         ),
                     )
@@ -5025,10 +5061,13 @@ mod tests {
                             interval,
                             dummy::AggregationParam(0),
                             0,
+                            interval,
                             BatchAggregationState::Aggregating {
                                 aggregate_share: Some(dummy::AggregateShare(0)),
                                 report_count: 10,
                                 checksum: ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
+                                aggregation_jobs_created: 1,
+                                aggregation_jobs_terminated: 1,
                             },
                         ),
                     )
@@ -5043,9 +5082,7 @@ mod tests {
             Query::new_time_interval(
                 Interval::new(
                     Time::from_seconds_since_epoch(0),
-                    Duration::from_microseconds(
-                        2 * test_case.task.time_precision().as_microseconds().unwrap(),
-                    ),
+                    Duration::from_seconds(2 * test_case.task.time_precision().as_seconds()),
                 )
                 .unwrap(),
             ),
@@ -5327,104 +5364,76 @@ mod tests {
                     for aggregation_param in
                         [dummy::AggregationParam(0), dummy::AggregationParam(1)]
                     {
-                        tx.put_batch(&Batch::<0, TimeInterval, dummy::Vdaf>::new(
-                            *task.id(),
-                            interval_1,
-                            aggregation_param,
-                            BatchState::Closed,
-                            0,
-                            interval_1,
-                        ))
-                        .await
-                        .unwrap();
                         tx.put_batch_aggregation(
                             &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                                 *task.id(),
                                 interval_1,
                                 aggregation_param,
                                 0,
+                                interval_1,
                                 BatchAggregationState::Aggregating {
                                     aggregate_share: Some(dummy::AggregateShare(64)),
                                     report_count: interval_1_report_count,
                                     checksum: interval_1_checksum,
+                                    aggregation_jobs_created: 1,
+                                    aggregation_jobs_terminated: 1,
                                 },
                             ),
                         )
                         .await
                         .unwrap();
 
-                        tx.put_batch(&Batch::<0, TimeInterval, dummy::Vdaf>::new(
-                            *task.id(),
-                            interval_2,
-                            aggregation_param,
-                            BatchState::Closed,
-                            0,
-                            interval_2,
-                        ))
-                        .await
-                        .unwrap();
                         tx.put_batch_aggregation(
                             &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                                 *task.id(),
                                 interval_2,
                                 aggregation_param,
                                 0,
+                                interval_2,
                                 BatchAggregationState::Aggregating {
                                     aggregate_share: Some(dummy::AggregateShare(128)),
                                     report_count: interval_2_report_count,
                                     checksum: interval_2_checksum,
+                                    aggregation_jobs_created: 1,
+                                    aggregation_jobs_terminated: 1,
                                 },
                             ),
                         )
                         .await
                         .unwrap();
 
-                        tx.put_batch(&Batch::<0, TimeInterval, dummy::Vdaf>::new(
-                            *task.id(),
-                            interval_3,
-                            aggregation_param,
-                            BatchState::Closed,
-                            0,
-                            interval_3,
-                        ))
-                        .await
-                        .unwrap();
                         tx.put_batch_aggregation(
                             &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                                 *task.id(),
                                 interval_3,
                                 aggregation_param,
                                 0,
+                                interval_3,
                                 BatchAggregationState::Aggregating {
                                     aggregate_share: Some(dummy::AggregateShare(256)),
                                     report_count: interval_3_report_count,
                                     checksum: interval_3_checksum,
+                                    aggregation_jobs_created: 1,
+                                    aggregation_jobs_terminated: 1,
                                 },
                             ),
                         )
                         .await
                         .unwrap();
 
-                        tx.put_batch(&Batch::<0, TimeInterval, dummy::Vdaf>::new(
-                            *task.id(),
-                            interval_4,
-                            aggregation_param,
-                            BatchState::Closed,
-                            0,
-                            interval_4,
-                        ))
-                        .await
-                        .unwrap();
                         tx.put_batch_aggregation(
                             &BatchAggregation::<0, TimeInterval, dummy::Vdaf>::new(
                                 *task.id(),
                                 interval_4,
                                 aggregation_param,
                                 0,
+                                interval_4,
                                 BatchAggregationState::Aggregating {
                                     aggregate_share: Some(dummy::AggregateShare(512)),
                                     report_count: interval_4_report_count,
                                     checksum: interval_4_checksum,
+                                    aggregation_jobs_created: 1,
+                                    aggregation_jobs_terminated: 1,
                                 },
                             ),
                         )

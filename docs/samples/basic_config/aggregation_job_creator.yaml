@@ -9,6 +9,10 @@ health_check_listen_address: "0.0.0.0:8000"
 
 # Aggregation job creator-specific parameters:
 
+# Number of sharded database records per batch aggregation. Must not be greater
+# than the equivalent setting in the collection job driver. (required)
+batch_aggregation_shard_count: 32
+
 # Interval on which to check the database for new tasks. (required)
 tasks_update_frequency_secs: 3600
 

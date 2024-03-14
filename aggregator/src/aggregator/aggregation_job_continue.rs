@@ -1,12 +1,14 @@
 //! Implements portions of aggregation job continuation for the helper.
 
 use super::error::handle_ping_pong_error;
-use crate::aggregator::{accumulator::Accumulator, Error, VdafOps};
-use futures::future::try_join_all;
+use crate::aggregator::{
+    aggregation_job_writer::{AggregationJobWriter, UpdateWrite, WritableReportAggregation},
+    Error, VdafOps,
+};
 use janus_aggregator_core::{
     datastore::{
         self,
-        models::{AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState},
+        models::{AggregationJob, ReportAggregation, ReportAggregationState},
         Transaction,
     },
     query_type::AccumulableQueryType,
@@ -24,7 +26,6 @@ use prio::{
     vdaf,
 };
 use std::sync::Arc;
-use tokio::try_join;
 use tracing::trace_span;
 
 impl VdafOps {
@@ -35,9 +36,9 @@ impl VdafOps {
         task: Arc<AggregatorTask>,
         vdaf: Arc<A>,
         batch_aggregation_shard_count: u64,
-        helper_aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
-        mut report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
-        leader_aggregation_job: Arc<AggregationJobContinueReq>,
+        aggregation_job: AggregationJob<SEED_SIZE, Q, A>,
+        report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
+        req: Arc<AggregationJobContinueReq>,
         request_hash: [u8; 32],
         aggregate_step_failure_counter: Counter<u64>,
     ) -> Result<AggregationJobResp, datastore::Error>
@@ -45,17 +46,17 @@ impl VdafOps {
         C: Clock,
         Q: AccumulableQueryType,
         A: vdaf::Aggregator<SEED_SIZE, 16> + 'static + Send + Sync,
+        A::AggregationParam: Send + Sync + PartialEq + Eq,
+        A::InputShare: Send + Sync,
+        A::OutputShare: Send + Sync,
+        A::PrepareMessage: Send + Sync,
+        A::PublicShare: Send + Sync,
         for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
     {
         // Handle each transition in the request.
-        let mut report_aggregations_iter = report_aggregations.iter_mut();
-        let mut accumulator = Accumulator::<SEED_SIZE, Q, A>::new(
-            Arc::clone(&task),
-            batch_aggregation_shard_count,
-            helper_aggregation_job.aggregation_parameter().clone(),
-        );
-
-        for prep_step in leader_aggregation_job.prepare_steps() {
+        let mut report_aggregations_iter = report_aggregations.into_iter();
+        let mut report_aggregations_to_write = Vec::new();
+        for prep_step in req.prepare_steps() {
             // Match preparation step received from leader to stored report aggregation, and extract
             // the stored preparation step.
             let report_aggregation = loop {
@@ -75,41 +76,19 @@ impl VdafOps {
                         report_agg.state(),
                         ReportAggregationState::WaitingHelper { .. }
                     ) {
-                        *report_agg = report_agg
-                            .clone()
-                            .with_state(ReportAggregationState::Failed {
-                                prepare_error: PrepareError::ReportDropped,
-                            })
-                            .with_last_prep_resp(None);
+                        report_aggregations_to_write.push(WritableReportAggregation::new(
+                            report_agg
+                                .with_state(ReportAggregationState::Failed {
+                                    prepare_error: PrepareError::ReportDropped,
+                                })
+                                .with_last_prep_resp(None),
+                            None,
+                        ));
                     }
                     continue;
                 }
                 break report_agg;
             };
-
-            // Make sure this report is not part of a batch that has started collection.
-            let conflicting_aggregate_share_jobs =
-                Q::get_conflicting_aggregate_share_jobs::<SEED_SIZE, C, A>(
-                    tx,
-                    &vdaf,
-                    task.id(),
-                    helper_aggregation_job.partial_batch_identifier(),
-                    &report_aggregation.report_metadata(),
-                )
-                .await?;
-
-            if !conflicting_aggregate_share_jobs.is_empty() {
-                *report_aggregation = report_aggregation
-                    .clone()
-                    .with_state(ReportAggregationState::Failed {
-                        prepare_error: PrepareError::BatchCollected,
-                    })
-                    .with_last_prep_resp(Some(PrepareResp::new(
-                        *prep_step.report_id(),
-                        PrepareStepResult::Reject(PrepareError::BatchCollected),
-                    )));
-                continue;
-            }
 
             let prep_state = match report_aggregation.state() {
                 ReportAggregationState::WaitingHelper { prepare_state } => prepare_state,
@@ -139,7 +118,7 @@ impl VdafOps {
                         // Continue with the incoming message.
                         vdaf.helper_continued(
                             PingPongState::Continued(prep_state.clone()),
-                            helper_aggregation_job.aggregation_parameter(),
+                            aggregation_job.aggregation_parameter(),
                             prep_step.message(),
                         )
                         .and_then(
@@ -192,112 +171,54 @@ impl VdafOps {
                         )
                     });
 
-            *report_aggregation = report_aggregation
-                .clone()
-                .with_state(report_aggregation_state)
-                .with_last_prep_resp(Some(PrepareResp::new(
-                    *prep_step.report_id(),
-                    prepare_step_result,
-                )));
-            if let Some(output_share) = output_share {
-                accumulator.update(
-                    helper_aggregation_job.partial_batch_identifier(),
-                    prep_step.report_id(),
-                    report_aggregation.time(),
-                    &output_share,
-                )?;
-            }
+            report_aggregations_to_write.push(WritableReportAggregation::new(
+                report_aggregation
+                    .with_state(report_aggregation_state)
+                    .with_last_prep_resp(Some(PrepareResp::new(
+                        *prep_step.report_id(),
+                        prepare_step_result,
+                    ))),
+                output_share,
+            ));
         }
 
-        for report_agg in report_aggregations_iter {
+        for report_aggregation in report_aggregations_iter {
             // This report was omitted by the leader because of a prior failure. Note that the
             // report was dropped (if it's not already in an error state) and continue.
             if matches!(
-                report_agg.state(),
+                report_aggregation.state(),
                 ReportAggregationState::WaitingHelper { .. }
             ) {
-                *report_agg = report_agg
-                    .clone()
-                    .with_state(ReportAggregationState::Failed {
-                        prepare_error: PrepareError::ReportDropped,
-                    })
-                    .with_last_prep_resp(None);
+                report_aggregations_to_write.push(WritableReportAggregation::new(
+                    report_aggregation
+                        .with_state(ReportAggregationState::Failed {
+                            prepare_error: PrepareError::ReportDropped,
+                        })
+                        .with_last_prep_resp(None),
+                    None,
+                ));
             }
         }
 
-        // Write accumulated aggregation values back to the datastore; mark any reports that can't
-        // be aggregated because the batch is collected with error BatchCollected.
-        let unwritable_reports = accumulator.flush_to_datastore(tx, &vdaf).await?;
-        for report_aggregation in &mut report_aggregations {
-            if unwritable_reports.contains(report_aggregation.report_id()) {
-                *report_aggregation = report_aggregation
-                    .clone()
-                    .with_state(ReportAggregationState::Failed {
-                        prepare_error: PrepareError::BatchCollected,
-                    })
-                    .with_last_prep_resp(Some(PrepareResp::new(
-                        *report_aggregation.report_id(),
-                        PrepareStepResult::Reject(PrepareError::BatchCollected),
-                    )));
-            }
-        }
-
-        let saw_continue = report_aggregations.iter().any(|report_agg| {
-            matches!(
-                report_agg.last_prep_resp().map(PrepareResp::result),
-                Some(PrepareStepResult::Continue { .. })
-            )
-        });
-        let saw_finish = report_aggregations.iter().any(|report_agg| {
-            matches!(
-                report_agg.last_prep_resp().map(PrepareResp::result),
-                Some(PrepareStepResult::Finished { .. })
-            )
-        });
-        let helper_aggregation_job = helper_aggregation_job
-            // Advance the job to the leader's step
-            .with_step(leader_aggregation_job.step())
-            .with_state(match (saw_continue, saw_finish) {
-                (false, false) => AggregationJobState::Finished, // everything failed, or there were no reports
-                (true, false) => AggregationJobState::InProgress,
-                (false, true) => AggregationJobState::Finished,
-                (true, true) => {
-                    return Err(datastore::Error::User(
-                        Error::Internal(
-                            "VDAF took an inconsistent number of steps to reach Finish state"
-                                .to_string(),
-                        )
-                        .into(),
-                    ))
-                }
-            })
+        // Write accumulated aggregation values back to the datastore; this will mark any reports
+        // that can't be aggregated because the batch is collected with error BatchCollected.
+        let aggregation_job_id = *aggregation_job.id();
+        let aggregation_job = aggregation_job
+            .with_step(req.step()) // Advance the job to the leader's step
             .with_last_request_hash(request_hash);
-
-        try_join!(
-            tx.update_aggregation_job(&helper_aggregation_job),
-            try_join_all(
-                report_aggregations
-                    .iter()
-                    .map(|report_agg| tx.update_report_aggregation(report_agg)),
-            ),
-        )?;
-
-        Ok(Self::aggregation_job_resp_for(report_aggregations))
-    }
-
-    /// Constructs an AggregationJobResp from a given set of Helper report aggregations.
-    pub(super) fn aggregation_job_resp_for<const SEED_SIZE: usize, A>(
-        report_aggregations: impl IntoIterator<Item = ReportAggregation<SEED_SIZE, A>>,
-    ) -> AggregationJobResp
-    where
-        A: vdaf::Aggregator<SEED_SIZE, 16>,
-    {
-        AggregationJobResp::new(
-            report_aggregations
-                .into_iter()
-                .filter_map(|v| v.last_prep_resp().cloned())
-                .collect(),
-        )
+        let mut aggregation_job_writer =
+            AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
+                task,
+                batch_aggregation_shard_count,
+                Some(aggregate_step_failure_counter),
+            );
+        aggregation_job_writer.put(aggregation_job, report_aggregations_to_write)?;
+        let prepare_resps = aggregation_job_writer
+            .write(tx, vdaf)
+            .await?
+            .remove(&aggregation_job_id)
+            .unwrap_or_default();
+        Ok(AggregationJobResp::new(prepare_resps))
     }
 }
 

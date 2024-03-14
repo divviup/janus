@@ -1,5 +1,6 @@
 //! In-memory data structure to incrementally build fixed-size batches.
 
+use crate::aggregator::aggregation_job_writer::{AggregationJobWriter, InitialWrite};
 use futures::future::try_join_all;
 use janus_aggregator_core::datastore::{
     models::{
@@ -24,8 +25,6 @@ use std::{
 use tokio::try_join;
 use tracing::debug;
 
-use super::aggregation_job_writer::NewAggregationJobWriter;
-
 /// This data structure loads existing outstanding batches, incrementally assigns new reports to
 /// outstanding batches and aggregation jobs, and provides unused reports at the end. If time
 /// bucketing is enabled, reports will be separated by timestamp into different sets of outstanding
@@ -35,7 +34,13 @@ where
     A: Aggregator<SEED_SIZE, 16>,
 {
     properties: Properties,
-    aggregation_job_writer: &'a mut NewAggregationJobWriter<SEED_SIZE, FixedSize, A>,
+    aggregation_job_writer: &'a mut AggregationJobWriter<
+        SEED_SIZE,
+        FixedSize,
+        A,
+        InitialWrite,
+        ReportAggregationMetadata,
+    >,
     buckets: HashMap<Option<Time>, Bucket>,
     new_batches: Vec<(BatchId, Option<Time>)>,
     report_ids_to_scrub: HashSet<ReportId>,
@@ -65,7 +70,13 @@ where
         task_min_batch_size: usize,
         task_max_batch_size: Option<usize>,
         task_batch_time_window_size: Option<Duration>,
-        aggregation_job_writer: &'a mut NewAggregationJobWriter<SEED_SIZE, FixedSize, A>,
+        aggregation_job_writer: &'a mut AggregationJobWriter<
+            SEED_SIZE,
+            FixedSize,
+            A,
+            InitialWrite,
+            ReportAggregationMetadata,
+        >,
     ) -> Self {
         Self {
             properties: Properties {
@@ -146,7 +157,13 @@ where
     /// size range.
     fn process_batches(
         properties: &Properties,
-        aggregation_job_writer: &mut NewAggregationJobWriter<SEED_SIZE, FixedSize, A>,
+        aggregation_job_writer: &mut AggregationJobWriter<
+            SEED_SIZE,
+            FixedSize,
+            A,
+            InitialWrite,
+            ReportAggregationMetadata,
+        >,
         report_ids_to_scrub: &mut HashSet<ReportId>,
         new_batches: &mut Vec<(BatchId, Option<Time>)>,
         time_bucket_start: &Option<Time>,
@@ -285,7 +302,13 @@ where
         batch_id: BatchId,
         aggregation_job_size: usize,
         unaggregated_reports: &mut VecDeque<ReportMetadata>,
-        aggregation_job_writer: &mut NewAggregationJobWriter<SEED_SIZE, FixedSize, A>,
+        aggregation_job_writer: &mut AggregationJobWriter<
+            SEED_SIZE,
+            FixedSize,
+            A,
+            InitialWrite,
+            ReportAggregationMetadata,
+        >,
         report_ids_to_scrub: &mut HashSet<ReportId>,
     ) -> Result<(), Error> {
         let aggregation_job_id = random();

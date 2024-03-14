@@ -287,6 +287,7 @@ async fn aggregation_job_creator_shutdown() {
             metrics_config: MetricsConfiguration::default(),
             health_check_listen_address: "127.0.0.1:9001".parse().unwrap(),
         },
+        batch_aggregation_shard_count: 32,
         tasks_update_frequency_secs: 3600,
         aggregation_job_creation_interval_secs: 60,
         min_aggregation_job_size: 100,
@@ -359,6 +360,7 @@ async fn collection_job_driver_shutdown() {
             retry_max_elapsed_time_millis: 300_000,
         },
         batch_aggregation_shard_count: 32,
+        min_collection_job_retry_delay_secs: 1,
     };
 
     graceful_shutdown(trycmd::cargo::cargo_bin!("collection_job_driver"), config).await;

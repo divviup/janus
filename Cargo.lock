@@ -2211,6 +2211,7 @@ dependencies = [
  "hex",
  "http",
  "http-api-problem",
+ "itertools 0.11.0",
  "janus_aggregator_core",
  "janus_core",
  "janus_messages 0.7.0-prerelease-4",

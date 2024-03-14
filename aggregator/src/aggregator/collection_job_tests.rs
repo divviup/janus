@@ -3,15 +3,15 @@ use crate::aggregator::{
         aggregator_handler,
         test_util::{decode_response_body, take_problem_details},
     },
+    test_util::BATCH_AGGREGATION_SHARD_COUNT,
     Config,
 };
 use http::StatusCode;
 use janus_aggregator_core::{
     datastore::{
         models::{
-            AggregationJob, AggregationJobState, Batch, BatchAggregation, BatchAggregationState,
-            BatchState, CollectionJobState, LeaderStoredReport, ReportAggregation,
-            ReportAggregationState,
+            AggregationJob, AggregationJobState, BatchAggregation, BatchAggregationState,
+            CollectionJobState, LeaderStoredReport, ReportAggregation, ReportAggregationState,
         },
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
@@ -32,7 +32,7 @@ use janus_core::{
 use janus_messages::{
     query_type::{FixedSize, QueryType as QueryTypeTrait, TimeInterval},
     AggregateShareAad, AggregationJobStep, BatchId, BatchSelector, Collection, CollectionJobId,
-    CollectionReq, Duration, FixedSizeQuery, Interval, Query, ReportIdChecksum, Role, Time,
+    CollectionReq, FixedSizeQuery, Interval, Query, ReportIdChecksum, Role, Time,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -146,7 +146,7 @@ pub(crate) async fn setup_collection_job_test_case(
         TestRuntime::default(),
         &noop_meter(),
         Config {
-            batch_aggregation_shard_count: 32,
+            batch_aggregation_shard_count: BATCH_AGGREGATION_SHARD_COUNT,
             ..Default::default()
         },
     )
@@ -178,11 +178,7 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
     let batch_id_1 = random();
     let batch_id_2 = random();
     let time = test_case.clock.now();
-    let interval = Interval::new(
-        time,
-        Duration::from_seconds(test_case.task.time_precision().as_seconds() / 2),
-    )
-    .unwrap();
+    let client_timestamp_interval = Interval::from_time(&time).unwrap();
 
     test_case
         .datastore
@@ -196,7 +192,7 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
                         aggregation_job_id,
                         dummy::AggregationParam::default(),
                         batch_id,
-                        interval,
+                        client_timestamp_interval,
                         AggregationJobState::Finished,
                         AggregationJobStep::from(1),
                     ))
@@ -227,22 +223,14 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
                         batch_id,
                         dummy::AggregationParam::default(),
                         0,
+                        client_timestamp_interval,
                         BatchAggregationState::Aggregating {
                             aggregate_share: Some(dummy::AggregateShare(0)),
                             report_count: task.min_batch_size() + 1,
                             checksum: ReportIdChecksum::default(),
+                            aggregation_jobs_created: 1,
+                            aggregation_jobs_terminated: 1,
                         },
-                    ))
-                    .await
-                    .unwrap();
-
-                    tx.put_batch::<0, FixedSize, dummy::Vdaf>(&Batch::new(
-                        *task.id(),
-                        batch_id,
-                        dummy::AggregationParam::default(),
-                        BatchState::Closed,
-                        0,
-                        interval,
                     ))
                     .await
                     .unwrap();
@@ -258,7 +246,7 @@ async fn setup_fixed_size_current_batch_collection_job_test_case(
         .await
         .unwrap();
 
-    (test_case, batch_id_1, batch_id_2, interval)
+    (test_case, batch_id_1, batch_id_2, client_timestamp_interval)
 }
 
 #[tokio::test]
@@ -331,6 +319,7 @@ async fn collection_job_success_fixed_size() {
                     tx.update_collection_job::<0, FixedSize, dummy::Vdaf>(
                         &collection_job.with_state(CollectionJobState::Finished {
                             report_count: task.min_batch_size() + 1,
+                            client_timestamp_interval: spanned_interval,
                             encrypted_helper_aggregate_share,
                             leader_aggregate_share,
                         }),
@@ -354,17 +343,13 @@ async fn collection_job_success_fixed_size() {
 
         let mut test_conn = test_case.post_collection_job(&collection_job_id).await;
         assert_headers!(&test_conn, "content-type" => (Collection::<FixedSize>::MEDIA_TYPE));
+
         let collect_resp: Collection<FixedSize> = decode_response_body(&mut test_conn).await;
         assert_eq!(
             collect_resp.report_count(),
             test_case.task.min_batch_size() + 1
         );
-        assert_eq!(
-            collect_resp.interval(),
-            &spanned_interval
-                .align_to_time_precision(test_case.task.time_precision())
-                .unwrap(),
-        );
+        assert_eq!(collect_resp.interval(), &spanned_interval);
 
         let decrypted_leader_aggregate_share = hpke::open(
             test_case.task.collector_hpke_keypair(),
@@ -792,31 +777,6 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id() {
     let collection_job_id = random();
     let batch_id = random();
 
-    test_case
-        .datastore
-        .run_unnamed_tx(|tx| {
-            let task_id = *test_case.task.id();
-            Box::pin(async move {
-                tx.put_batch(&Batch::<0, FixedSize, dummy::Vdaf>::new(
-                    task_id,
-                    batch_id,
-                    dummy::AggregationParam(0),
-                    BatchState::Closed,
-                    0,
-                    Interval::new(
-                        Time::from_seconds_since_epoch(1000),
-                        Duration::from_seconds(100),
-                    )
-                    .unwrap(),
-                ))
-                .await
-                .unwrap();
-                Ok(())
-            })
-        })
-        .await
-        .unwrap();
-
     let request = CollectionReq::new(
         Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
         dummy::AggregationParam(0).get_encoded().unwrap(),
@@ -845,33 +805,6 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_batch_id()
     let collection_job_id = random();
     let first_batch_id = random();
     let second_batch_id = random();
-
-    test_case
-        .datastore
-        .run_unnamed_tx(|tx| {
-            let task_id = *test_case.task.id();
-            Box::pin(async move {
-                for batch_id in [first_batch_id, second_batch_id] {
-                    tx.put_batch(&Batch::<0, FixedSize, dummy::Vdaf>::new(
-                        task_id,
-                        batch_id,
-                        dummy::AggregationParam(0),
-                        BatchState::Closed,
-                        0,
-                        Interval::new(
-                            Time::from_seconds_since_epoch(1000),
-                            Duration::from_seconds(100),
-                        )
-                        .unwrap(),
-                    ))
-                    .await
-                    .unwrap();
-                }
-                Ok(())
-            })
-        })
-        .await
-        .unwrap();
 
     let response = test_case
         .put_collection_job(
@@ -915,33 +848,6 @@ async fn collection_job_put_idempotence_fixed_size_by_batch_id_mutate_aggregatio
     let batch_id = random();
     let first_aggregation_param = dummy::AggregationParam(0);
     let second_aggregation_param = dummy::AggregationParam(1);
-
-    test_case
-        .datastore
-        .run_unnamed_tx(|tx| {
-            let task_id = *test_case.task.id();
-            Box::pin(async move {
-                for aggregation_param in [first_aggregation_param, second_aggregation_param] {
-                    tx.put_batch(&Batch::<0, FixedSize, dummy::Vdaf>::new(
-                        task_id,
-                        batch_id,
-                        aggregation_param,
-                        BatchState::Closed,
-                        0,
-                        Interval::new(
-                            Time::from_seconds_since_epoch(1000),
-                            Duration::from_seconds(100),
-                        )
-                        .unwrap(),
-                    ))
-                    .await
-                    .unwrap();
-                }
-                Ok(())
-            })
-        })
-        .await
-        .unwrap();
 
     let response = test_case
         .put_collection_job(
