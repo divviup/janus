@@ -1417,10 +1417,7 @@ impl<const SEED_SIZE: usize, A: vdaf::Aggregator<SEED_SIZE, 16>>
     /// Returns true if this batch aggregation state indicates the batch aggregation is still
     /// accepting additional aggregation.
     pub fn is_accepting_aggregations(&self) -> bool {
-        match self {
-            Self::Aggregating { .. } => true,
-            _ => false,
-        }
+        matches!(self, Self::Aggregating { .. })
     }
 
     pub(super) fn state_code(&self) -> BatchAggregationStateCode {
