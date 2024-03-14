@@ -112,6 +112,7 @@ pub struct Datastore<C: Clock> {
     transaction_retry_histogram: Histogram<u64>,
     rollback_error_counter: Counter<u64>,
     transaction_duration_histogram: Histogram<f64>,
+    max_transaction_retries: u64,
 }
 
 impl<C: Clock> Debug for Datastore<C> {
@@ -128,9 +129,17 @@ impl<C: Clock> Datastore<C> {
         crypter: Crypter,
         clock: C,
         meter: &Meter,
+        max_transaction_retries: u64,
     ) -> Result<Datastore<C>, Error> {
-        Self::new_with_supported_versions(pool, crypter, clock, meter, SUPPORTED_SCHEMA_VERSIONS)
-            .await
+        Self::new_with_supported_versions(
+            pool,
+            crypter,
+            clock,
+            meter,
+            SUPPORTED_SCHEMA_VERSIONS,
+            max_transaction_retries,
+        )
+        .await
     }
 
     async fn new_with_supported_versions(
@@ -139,8 +148,16 @@ impl<C: Clock> Datastore<C> {
         clock: C,
         meter: &Meter,
         supported_schema_versions: &[i64],
+        max_transaction_retries: u64,
     ) -> Result<Datastore<C>, Error> {
-        let datastore = Self::new_without_supported_versions(pool, crypter, clock, meter).await;
+        let datastore = Self::new_without_supported_versions(
+            pool,
+            crypter,
+            clock,
+            meter,
+            max_transaction_retries,
+        )
+        .await;
 
         let (current_version, migration_description) = datastore
             .run_tx("check schema version", |tx| {
@@ -163,6 +180,7 @@ impl<C: Clock> Datastore<C> {
         crypter: Crypter,
         clock: C,
         meter: &Meter,
+        max_transaction_retries: u64,
     ) -> Datastore<C> {
         let transaction_status_counter = meter
             .u64_counter(TRANSACTION_METER_NAME)
@@ -196,6 +214,7 @@ impl<C: Clock> Datastore<C> {
             transaction_retry_histogram,
             rollback_error_counter,
             transaction_duration_histogram,
+            max_transaction_retries,
         }
     }
 
@@ -218,12 +237,19 @@ impl<C: Clock> Datastore<C> {
         let mut retry_count = 0;
         loop {
             let before = Instant::now();
-            let (rslt, retry) = self.run_tx_once(name, &f).await;
+            let (mut rslt, retry) = self.run_tx_once(name, &f).await;
             let elapsed = before.elapsed();
             self.transaction_duration_histogram
                 .record(elapsed.as_secs_f64(), &[KeyValue::new("tx", name)]);
+            let retries_exceeded = retry_count + 1 > self.max_transaction_retries;
             let status = match (rslt.as_ref(), retry) {
-                (_, true) => "retry",
+                (_, true) => {
+                    if retries_exceeded {
+                        "error_too_many_retries"
+                    } else {
+                        "retry"
+                    }
+                }
                 (Ok(_), _) => "success",
                 (Err(Error::Db(_)), _) | (Err(Error::Pool(_)), _) => "error_db",
                 (Err(_), _) => "error_other",
@@ -232,9 +258,22 @@ impl<C: Clock> Datastore<C> {
                 1,
                 &[KeyValue::new("status", status), KeyValue::new("tx", name)],
             );
+
             if retry {
-                retry_count += 1;
-                continue;
+                if retries_exceeded {
+                    let err = rslt.err();
+                    error!(
+                        retry_count,
+                        last_err = ?err,
+                        "too many retries, aborting transaction"
+                    );
+                    rslt = Err(Error::TooManyRetries {
+                        source: err.map(Box::new),
+                    });
+                } else {
+                    retry_count += 1;
+                    continue;
+                }
             }
 
             self.transaction_retry_histogram
@@ -5244,6 +5283,9 @@ pub enum Error {
     /// scrubbed from the system.
     #[error("already scrubbed")]
     Scrubbed,
+    /// The transaction was aborted because it retried too many times.
+    #[error("too many retries")]
+    TooManyRetries { source: Option<Box<Error>> },
 }
 
 impl From<ring::error::Unspecified> for Error {
