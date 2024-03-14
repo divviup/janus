@@ -18,7 +18,7 @@ pub struct Daphne<'a> {
 }
 
 impl<'a> Daphne<'a> {
-    const INTERNAL_SERVING_PORT: u16 = 8080;
+    const INTERNAL_SERVING_PORT: u16 = 8788;
 
     /// Create and start a new hermetic Daphne test instance in the given Docker network, configured
     /// to service the given task. The aggregator port is also exposed to the host.
@@ -50,7 +50,7 @@ impl<'a> Daphne<'a> {
             let daphne_container = ContainerLogsDropGuard::new(
                 test_name,
                 container_client.run(runnable_image),
-                ContainerLogsSource::Docker,
+                ContainerLogsSource::Path("/logs".into()),
             );
             let port = daphne_container.get_host_port_ipv4(Self::INTERNAL_SERVING_PORT);
             (port, Some(daphne_container))
