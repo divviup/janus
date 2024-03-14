@@ -24,11 +24,12 @@ use janus_messages::{
     AggregationJobId, Interval, PrepareError, PrepareResp, PrepareStepResult, ReportId,
     ReportIdChecksum, Time,
 };
+use opentelemetry::{metrics::Counter, KeyValue};
 use prio::{codec::Encode, vdaf};
 use rand::{thread_rng, Rng as _};
 use std::{borrow::Cow, collections::HashMap, marker::PhantomData, sync::Arc};
 use tokio::try_join;
-use tracing::Level;
+use tracing::{warn, Level};
 
 /// Buffers pending writes to aggregation jobs and their report aggregations.
 pub struct AggregationJobWriter<const SEED_SIZE: usize, Q, A, WT, RA>
@@ -41,6 +42,7 @@ where
     aggregation_parameter: Option<A::AggregationParam>,
     aggregation_jobs: HashMap<AggregationJobId, AggregationJobInfo<SEED_SIZE, Q, A, RA>>,
     by_batch_identifier_index: HashMap<Q::BatchIdentifier, HashMap<AggregationJobId, Vec<usize>>>,
+    failure_counter: Option<Counter<u64>>,
 
     _phantom_wt: PhantomData<WT>,
 }
@@ -55,13 +57,18 @@ where
     RA: ReportAggregationUpdate<SEED_SIZE, A>,
 {
     /// Create a new, empty aggregation job writer.
-    pub fn new(task: Arc<AggregatorTask>, batch_aggregation_shard_count: u64) -> Self {
+    pub fn new(
+        task: Arc<AggregatorTask>,
+        batch_aggregation_shard_count: u64,
+        failure_counter: Option<Counter<u64>>,
+    ) -> Self {
         Self {
             task,
             batch_aggregation_shard_count,
             aggregation_parameter: None,
             aggregation_jobs: HashMap::new(),
             by_batch_identifier_index: HashMap::new(),
+            failure_counter,
 
             _phantom_wt: PhantomData,
         }
@@ -174,9 +181,10 @@ where
         // aggregations, then update aggregation jobs/report aggregations/batch aggregations based
         // on the state we read.
         let mut state = WriteState::new(tx, vdaf.as_ref(), self).await?;
-        state.fail_collected_report_aggregations();
-        state.update_aggregation_job_state_from_ra_states();
-        state.update_batch_aggregations()?;
+        state.fail_report_aggregations_for_collected_batches();
+        state.update_batch_aggregations_from_report_aggregations()?;
+        state.update_aggregation_job_state_from_report_aggregations();
+        state.update_batch_aggregations_from_aggregation_jobs()?;
 
         // Write aggregation jobs, report aggregations, and batch aggregations back to the
         // datastore.
@@ -546,7 +554,7 @@ where
 
     /// Update report aggregations with failure states if they land in already-collected batches.
     /// Returns the set of report IDs which were found to be unwritable.
-    fn fail_collected_report_aggregations(&mut self) {
+    fn fail_report_aggregations_for_collected_batches(&mut self) {
         // Update in-memory state of report aggregations: any report aggregations applying to a
         // batch which is not still accepting aggregations (i.e. not in the Aggregating state)
         // instead fail with a BatchCollected error (unless they were already in an failed state).
@@ -596,35 +604,8 @@ where
         }
     }
 
-    /// Update aggregation job states if all their report aggregations have reached a terminal
-    /// state.
-    fn update_aggregation_job_state_from_ra_states(&mut self) {
-        // Update in-memory state of aggregation jobs: any aggregation jobs whose report
-        // aggregations are all in a terminal state should be considered Finished (unless the
-        // aggregation job was already in a terminal state).
-        for CowAggregationJobInfo {
-            aggregation_job,
-            report_aggregations,
-        } in self.by_aggregation_job.values_mut()
-        {
-            if matches!(
-                aggregation_job.state(),
-                AggregationJobState::Finished | AggregationJobState::Abandoned
-            ) {
-                continue;
-            }
-
-            if report_aggregations.iter().all(|ra| ra.is_terminal()) {
-                *aggregation_job.to_mut() = aggregation_job
-                    .as_ref()
-                    .clone()
-                    .with_state(AggregationJobState::Finished);
-            }
-        }
-    }
-
-    /// Update batch aggregations to reflect the aggregation jobs that will be written.
-    fn update_batch_aggregations(&mut self) -> Result<(), Error> {
+    /// Update batch aggregations to reflect the report aggregations that will be written.
+    fn update_batch_aggregations_from_report_aggregations(&mut self) -> Result<(), Error> {
         let aggregation_parameter = match self.writer.aggregation_parameter() {
             Some(aggregation_parameter) => aggregation_parameter,
             // None means there are no aggregation jobs to write, so we can safely short-circuit.
@@ -664,13 +645,9 @@ where
             }
 
             for (aggregation_job_id, report_aggregation_idxs) in by_aggregation_job_index {
-                // Update the batch aggregation based on the aggregation job & the write type.
                 // unwrap safety: index lookup
-                let aggregation_job_info = self.by_aggregation_job.get(aggregation_job_id).unwrap();
-                WT::update_batch_aggregation_for_agg_job(
-                    batch_aggregation,
-                    &aggregation_job_info.aggregation_job,
-                )?;
+                let aggregation_job_info =
+                    self.by_aggregation_job.get_mut(aggregation_job_id).unwrap();
 
                 // Update the batch aggregation based on the state of each finished report
                 // aggregation.
@@ -678,10 +655,15 @@ where
                     // unwrap safety: index lookup
                     let report_aggregation = aggregation_job_info
                         .report_aggregations
-                        .get(*ra_idx)
+                        .get_mut(*ra_idx)
                         .unwrap();
 
-                    let batch_aggregation_state =
+                    let ra_batch_aggregation = BatchAggregation::new(
+                        *self.writer.task.id(),
+                        batch_identifier.clone(),
+                        aggregation_parameter.clone(),
+                        self.batch_aggregation_ord,
+                        Interval::from_time(report_aggregation.time())?,
                         if let Some(output_share) = report_aggregation.is_finished() {
                             BatchAggregationState::Aggregating {
                                 aggregate_share: Some(output_share.clone().into()),
@@ -700,18 +682,108 @@ where
                                 aggregation_jobs_created: 0,
                                 aggregation_jobs_terminated: 0,
                             }
-                        };
+                        },
+                    );
 
-                    *batch_aggregation = BatchAggregation::new(
-                        *self.writer.task.id(),
-                        batch_identifier.clone(),
-                        aggregation_parameter.clone(),
-                        self.batch_aggregation_ord,
-                        Interval::from_time(report_aggregation.time())?,
-                        batch_aggregation_state,
-                    )
-                    .merged_with(batch_aggregation)?;
+                    match ra_batch_aggregation.merged_with(batch_aggregation) {
+                        Ok(merged_batch_aggregation) => {
+                            *batch_aggregation = merged_batch_aggregation
+                        }
+                        Err(err) => {
+                            warn!(report_id = %report_aggregation.report_id(), ?err, "Couldn't update batch aggregation");
+                            if let Some(failure_counter) = self.writer.failure_counter.as_ref() {
+                                failure_counter
+                                    .add(1, &[KeyValue::new("type", "accumulate_failure")]);
+                            }
+                            *report_aggregation.to_mut() = report_aggregation
+                                .as_ref()
+                                .clone()
+                                .with_failure(PrepareError::VdafPrepError);
+                        }
+                    }
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Update aggregation job states if all their report aggregations have reached a terminal
+    /// state.
+    fn update_aggregation_job_state_from_report_aggregations(&mut self) {
+        // Update in-memory state of aggregation jobs: any aggregation jobs whose report
+        // aggregations are all in a terminal state should be considered Finished (unless the
+        // aggregation job was already in a terminal state).
+        for CowAggregationJobInfo {
+            aggregation_job,
+            report_aggregations,
+        } in self.by_aggregation_job.values_mut()
+        {
+            if matches!(
+                aggregation_job.state(),
+                AggregationJobState::Finished | AggregationJobState::Abandoned
+            ) {
+                continue;
+            }
+
+            if report_aggregations.iter().all(|ra| ra.is_terminal()) {
+                *aggregation_job.to_mut() = aggregation_job
+                    .as_ref()
+                    .clone()
+                    .with_state(AggregationJobState::Finished);
+            }
+        }
+    }
+
+    /// Update batch aggregation state based on aggregation job state.
+    fn update_batch_aggregations_from_aggregation_jobs(&mut self) -> Result<(), Error> {
+        let aggregation_parameter = match self.writer.aggregation_parameter() {
+            Some(aggregation_parameter) => aggregation_parameter,
+            // None means there are no aggregation jobs to write, so we can safely short-circuit.
+            None => return Ok(()),
+        };
+
+        for (batch_identifier, by_aggregation_job_index) in &self.writer.by_batch_identifier_index {
+            // Grab the batch aggregation we read for this batch identifier, or create a new empty
+            // one to aggregate into.
+            let (_, batch_aggregation) = self
+                .batch_aggregations
+                .entry(batch_identifier.clone())
+                .or_insert_with(|| {
+                    (
+                        Operation::Put,
+                        BatchAggregation::new(
+                            *self.writer.task.id(),
+                            batch_identifier.clone(),
+                            aggregation_parameter.clone(),
+                            self.batch_aggregation_ord,
+                            Interval::EMPTY,
+                            BatchAggregationState::Aggregating {
+                                aggregate_share: None,
+                                report_count: 0,
+                                checksum: ReportIdChecksum::default(),
+                                aggregation_jobs_created: 0,
+                                aggregation_jobs_terminated: 0,
+                            },
+                        ),
+                    )
+                });
+
+            // Never update a batch aggregation which is no longer aggregating (because it has been
+            // collected or scrubbed).
+            if !batch_aggregation.state().is_accepting_aggregations() {
+                continue;
+            }
+
+            for aggregation_job_id in by_aggregation_job_index.keys() {
+                // Update the batch aggregation based on the aggregation job & the write type.
+                // unwrap safety: index lookup
+                let aggregation_job = self
+                    .by_aggregation_job
+                    .get(aggregation_job_id)
+                    .unwrap()
+                    .aggregation_job
+                    .as_ref();
+                WT::update_batch_aggregation_for_agg_job(batch_aggregation, aggregation_job)?;
             }
         }
         Ok(())

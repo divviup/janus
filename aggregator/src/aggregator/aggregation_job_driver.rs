@@ -673,6 +673,7 @@ where
             AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
                 Arc::clone(&task),
                 self.batch_aggregation_shard_count,
+                Some(self.aggregate_step_failure_counter.clone()),
             );
         let new_step = aggregation_job.step().increment();
         aggregation_job_writer.put(
@@ -807,6 +808,7 @@ where
                         AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
                             Arc::new(task),
                             batch_aggregation_shard_count,
+                            None,
                         );
                     aggregation_job_writer.put(aggregation_job, report_aggregations)?;
 

@@ -582,6 +582,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         AggregationJobWriter::<SEED_SIZE, _, _, InitialWrite, _>::new(
                             Arc::clone(&task),
                             batch_aggregation_shard_count,
+                            None,
                         );
                     let mut report_ids_to_scrub = HashSet::new();
                     let mut outstanding_reports = Vec::new();
@@ -752,8 +753,11 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         )
                         .await?;
 
-                    let mut aggregation_job_writer =
-                        AggregationJobWriter::new(Arc::clone(&task), batch_aggregation_shard_count);
+                    let mut aggregation_job_writer = AggregationJobWriter::new(
+                        Arc::clone(&task),
+                        batch_aggregation_shard_count,
+                        None,
+                    );
                     let mut batch_creator = BatchCreator::new(
                         this.min_aggregation_job_size,
                         this.max_aggregation_job_size,

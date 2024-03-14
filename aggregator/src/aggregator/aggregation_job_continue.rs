@@ -210,6 +210,7 @@ impl VdafOps {
             AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
                 task,
                 batch_aggregation_shard_count,
+                Some(aggregate_step_failure_counter),
             );
         aggregation_job_writer.put(aggregation_job, report_aggregations_to_write)?;
         let prepare_resps = aggregation_job_writer

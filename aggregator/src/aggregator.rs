@@ -2051,6 +2051,7 @@ impl VdafOps {
             .run_tx("aggregate_init", |tx| {
                 let vdaf = vdaf.clone();
                 let task = Arc::clone(&task);
+                let aggregate_step_failure_counter = aggregate_step_failure_counter.clone();
                 let aggregation_job = Arc::clone(&aggregation_job);
                 let mut report_share_data = report_share_data.clone();
 
@@ -2139,6 +2140,7 @@ impl VdafOps {
                         AggregationJobWriter::<SEED_SIZE, _, _, InitialWrite, _>::new(
                             task,
                             batch_aggregation_shard_count,
+                            Some(aggregate_step_failure_counter),
                         );
                     aggregation_job_writer.put(
                         aggregation_job.as_ref().clone(),
