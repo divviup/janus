@@ -79,11 +79,10 @@ async fn run_error_handler(error: &Error, mut conn: Conn) -> Conn {
         Error::MissingTaskId => {
             conn.with_problem_document(&ProblemDocument::new_dap(DapProblemType::MissingTaskId))
         }
-        Error::UnrecognizedAggregationJob(task_id, aggregation_job_id) => conn
+        Error::UnrecognizedAggregationJob(task_id, _aggregation_job_id) => conn
             .with_problem_document(
                 &ProblemDocument::new_dap(DapProblemType::UnrecognizedAggregationJob)
-                    .with_task_id(task_id)
-                    .with_aggregation_job_id(aggregation_job_id),
+                    .with_task_id(task_id),
             ),
         Error::DeletedAggregationJob(task_id, aggregation_job_id) => conn.with_problem_document(
             &ProblemDocument::new(
