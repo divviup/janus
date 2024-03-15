@@ -601,11 +601,12 @@ impl<C: Clock> Transaction<'_, C> {
                     task_id, aggregator_role, peer_aggregator_endpoint, query_type, vdaf,
                     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
                     time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
-                    aggregator_auth_token_type, aggregator_auth_token, aggregator_auth_token_hash,
-                    collector_auth_token_type, collector_auth_token_hash, created_at, updated_by)
+                    taskprov_task_info, aggregator_auth_token_type, aggregator_auth_token,
+                    aggregator_auth_token_hash, collector_auth_token_type,
+                    collector_auth_token_hash, created_at, updated_by)
                 VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-                    $19, $20
+                    $19, $20, $21
                 )
                 ON CONFLICT DO NOTHING",
             )
@@ -650,6 +651,8 @@ impl<C: Clock> Transaction<'_, C> {
                         "vdaf_verify_key",
                         task.opaque_vdaf_verify_key().as_ref(),
                     )?,
+                    /* taskprov_task_info */
+                    &task.taskprov_task_info(),
                     /* aggregator_auth_token_type */
                     &task
                         .aggregator_auth_token()
@@ -761,8 +764,8 @@ impl<C: Clock> Transaction<'_, C> {
                 "SELECT aggregator_role, peer_aggregator_endpoint, query_type, vdaf,
                     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
                     time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
-                    aggregator_auth_token_type, aggregator_auth_token, aggregator_auth_token_hash,
-                    collector_auth_token_type, collector_auth_token_hash
+                    taskprov_task_info, aggregator_auth_token_type, aggregator_auth_token,
+                    aggregator_auth_token_hash, collector_auth_token_type, collector_auth_token_hash
                 FROM tasks WHERE task_id = $1",
             )
             .await?;
@@ -790,8 +793,8 @@ impl<C: Clock> Transaction<'_, C> {
                 "SELECT task_id, aggregator_role, peer_aggregator_endpoint, query_type, vdaf,
                     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
                     time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
-                    aggregator_auth_token_type, aggregator_auth_token, aggregator_auth_token_hash,
-                    collector_auth_token_type, collector_auth_token_hash
+                    taskprov_task_info, aggregator_auth_token_type, aggregator_auth_token,
+                    aggregator_auth_token_hash, collector_auth_token_type, collector_auth_token_hash
                 FROM tasks",
             )
             .await?;
@@ -875,6 +878,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &encrypted_vdaf_verify_key,
             )
             .map(SecretBytes::new)?;
+        let taskprov_task_info: Option<Vec<u8>> = row.get("taskprov_task_info");
 
         let aggregator_auth_token_type: Option<AuthenticationTokenType> =
             row.get("aggregator_auth_token_type");
@@ -963,7 +967,7 @@ impl<C: Clock> Transaction<'_, C> {
             }
         };
 
-        Ok(AggregatorTask::new(
+        let mut task = AggregatorTask::new(
             *task_id,
             peer_aggregator_endpoint,
             query_type,
@@ -977,7 +981,11 @@ impl<C: Clock> Transaction<'_, C> {
             tolerable_clock_skew,
             hpke_keys,
             aggregator_parameters,
-        )?)
+        )?;
+        if let Some(taskprov_task_info) = taskprov_task_info {
+            task = task.with_taskprov_task_info(taskprov_task_info);
+        }
+        Ok(task)
     }
 
     /// Retrieves task IDs, optionally after some specified lower bound. This method returns tasks

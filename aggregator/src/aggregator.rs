@@ -763,7 +763,8 @@ impl<C: Clock> Aggregator<C> {
                 [],
                 task::AggregatorTaskParameters::TaskprovHelper,
             )
-            .map_err(|err| Error::InvalidTask(*task_id, OptOutReason::TaskParameters(err)))?,
+            .map_err(|err| Error::InvalidTask(*task_id, OptOutReason::TaskParameters(err)))?
+            .with_taskprov_task_info(task_config.task_info().to_vec()),
         );
         self.datastore
             .run_tx("taskprov_put_task", |tx| {

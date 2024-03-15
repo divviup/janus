@@ -205,6 +205,7 @@ where
         .with_min_batch_size(min_batch_size as u64)
         .with_time_precision(Duration::from_seconds(1))
         .with_tolerable_clock_skew(Duration::from_seconds(1))
+        .with_taskprov_task_info(task_config.task_info().to_vec())
         .build();
 
         Self {
@@ -402,7 +403,9 @@ async fn taskprov_aggregate_init() {
                 .state()
                 .eq(&AggregationJobState::InProgress)
     );
-    assert_eq!(test.task.taskprov_helper_view().unwrap(), got_task.unwrap());
+    let got_task = got_task.unwrap();
+    assert_eq!(test.task.taskprov_helper_view().unwrap(), got_task);
+    assert_eq!(got_task.taskprov_task_info(), Some(b"foobar".as_slice()));
 }
 
 #[tokio::test]
