@@ -1446,7 +1446,7 @@ impl<C: Clock> Transaction<'_, C> {
                         excluded.leader_input_share, excluded.helper_encrypted_input_share,
                         excluded.created_at, excluded.updated_at, excluded.updated_by
                     )
-                    WHERE COALESCE(client_reports.client_timestamp < COALESCE($11::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE id = client_reports.task_id) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE)",
+                    WHERE client_reports.client_timestamp < COALESCE($11::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE id = client_reports.task_id) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         check_insert(
@@ -1565,7 +1565,7 @@ impl<C: Clock> Transaction<'_, C> {
                     excluded.leader_input_share, excluded.helper_encrypted_input_share,
                     excluded.created_at, excluded.updated_at, excluded.updated_by
                 )
-                WHERE COALESCE(client_reports.client_timestamp < COALESCE($7::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE id = client_reports.task_id) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE)",
+                WHERE client_reports.client_timestamp < COALESCE($7::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE id = client_reports.task_id) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         check_insert(
@@ -1842,7 +1842,7 @@ impl<C: Clock> Transaction<'_, C> {
                         excluded.last_request_hash, excluded.created_at, excluded.updated_at,
                         excluded.updated_by
                     )
-                    WHERE COALESCE(UPPER(aggregation_jobs.client_timestamp_interval) < COALESCE($12::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE id = aggregation_jobs.task_id) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE)",
+                    WHERE UPPER(aggregation_jobs.client_timestamp_interval) < COALESCE($12::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE id = aggregation_jobs.task_id) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         check_insert(
@@ -2958,7 +2958,7 @@ impl<C: Clock> Transaction<'_, C> {
                         excluded.batch_interval, excluded.state, excluded.created_at,
                         excluded.updated_at, excluded.updated_by
                     )
-                    WHERE COALESCE(COALESCE(LOWER(collection_jobs.batch_interval), (SELECT MAX(UPPER(ba.client_timestamp_interval)) FROM batch_aggregations ba WHERE ba.task_id = collection_jobs.task_id AND ba.batch_identifier = collection_jobs.batch_identifier AND ba.aggregation_param = collection_jobs.aggregation_param), '-infinity'::TIMESTAMP) < COALESCE($11::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE id = collection_jobs.task_id) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE)",
+                    WHERE COALESCE(LOWER(collection_jobs.batch_interval), (SELECT MAX(UPPER(ba.client_timestamp_interval)) FROM batch_aggregations ba WHERE ba.task_id = collection_jobs.task_id AND ba.batch_identifier = collection_jobs.batch_identifier AND ba.aggregation_param = collection_jobs.aggregation_param), '-infinity'::TIMESTAMP) < COALESCE($11::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE id = collection_jobs.task_id) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
 
@@ -3516,7 +3516,7 @@ impl<C: Clock> Transaction<'_, C> {
                         excluded.aggregation_jobs_created, excluded.aggregation_jobs_terminated,
                         excluded.created_at, excluded.updated_at, excluded.updated_by
                     )
-                    WHERE COALESCE(GREATEST(UPPER(COALESCE(batch_aggregations.batch_interval, batch_aggregations.client_timestamp_interval)), (SELECT MAX(UPPER(COALESCE(ba.batch_interval, ba.client_timestamp_interval))) FROM batch_aggregations ba WHERE ba.task_id = batch_aggregations.task_id AND ba.batch_identifier = batch_aggregations.batch_identifier AND ba.aggregation_param = batch_aggregations.aggregation_param)) < COALESCE($16::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE id = batch_aggregations.task_id) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE)",
+                    WHERE GREATEST(UPPER(COALESCE(batch_aggregations.batch_interval, batch_aggregations.client_timestamp_interval)), (SELECT MAX(UPPER(COALESCE(ba.batch_interval, ba.client_timestamp_interval))) FROM batch_aggregations ba WHERE ba.task_id = batch_aggregations.task_id AND ba.batch_identifier = batch_aggregations.batch_identifier AND ba.aggregation_param = batch_aggregations.aggregation_param)) < COALESCE($16::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE id = batch_aggregations.task_id) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         check_insert(
@@ -3586,8 +3586,7 @@ impl<C: Clock> Transaction<'_, C> {
                   AND batch_aggregations.batch_identifier = $11
                   AND batch_aggregations.aggregation_param = $12
                   AND ord = $13
-                  AND GREATEST(UPPER($1::TSRANGE), (SELECT MAX(UPPER(COALESCE(batch_interval, client_timestamp_interval))) FROM batch_aggregations ba WHERE ba.task_id = batch_aggregations.task_id AND ba.batch_identifier = batch_aggregations.batch_identifier AND ba.aggregation_param = batch_aggregations.aggregation_param)) >= COALESCE($14::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)
-                  ",
+                  AND GREATEST(UPPER($1::TSRANGE), (SELECT MAX(UPPER(COALESCE(batch_interval, client_timestamp_interval))) FROM batch_aggregations ba WHERE ba.task_id = batch_aggregations.task_id AND ba.batch_identifier = batch_aggregations.batch_identifier AND ba.aggregation_param = batch_aggregations.aggregation_param)) >= COALESCE($14::TIMESTAMP - tasks.report_expiry_age * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         check_single_row_mutation(
@@ -3861,7 +3860,7 @@ impl<C: Clock> Transaction<'_, C> {
                         excluded.helper_aggregate_share, excluded.report_count, excluded.checksum,
                         excluded.created_at, excluded.updated_by
                     )
-                    WHERE COALESCE(COALESCE(LOWER(aggregate_share_jobs.batch_interval), (SELECT MAX(UPPER(ba.client_timestamp_interval)) FROM batch_aggregations ba WHERE ba.task_id = aggregate_share_jobs.task_id AND ba.batch_identifier = aggregate_share_jobs.batch_identifier AND ba.aggregation_param = aggregate_share_jobs.aggregation_param), '-infinity'::TIMESTAMP) < COALESCE($10::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE id = aggregate_share_jobs.task_id) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP), FALSE)",
+                    WHERE COALESCE(LOWER(aggregate_share_jobs.batch_interval), (SELECT MAX(UPPER(ba.client_timestamp_interval)) FROM batch_aggregations ba WHERE ba.task_id = aggregate_share_jobs.task_id AND ba.batch_identifier = aggregate_share_jobs.batch_identifier AND ba.aggregation_param = aggregate_share_jobs.aggregation_param), '-infinity'::TIMESTAMP) < COALESCE($10::TIMESTAMP - (SELECT report_expiry_age FROM tasks WHERE id = aggregate_share_jobs.task_id) * '1 second'::INTERVAL, '-infinity'::TIMESTAMP)",
             )
             .await?;
         check_insert(
