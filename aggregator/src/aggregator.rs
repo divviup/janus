@@ -2104,8 +2104,6 @@ impl VdafOps {
                         let aggregation_job = Arc::clone(&aggregation_job);
 
                         async move {
-                            // Verify that we haven't seen this report ID and aggregation parameter
-                            // before in another aggregation job.
                             let put_report_share_fut = tx
                                 .put_scrubbed_report(task.id(), &rsd.report_share)
                                 .or_else(|err| async move {
@@ -2114,6 +2112,8 @@ impl VdafOps {
                                         _ => Err(err),
                                     }
                                 });
+                            // Verify that we haven't seen this report ID and aggregation parameter
+                            // before in another aggregation job.
                             let report_aggregation_exists_fut = tx
                                 .check_other_report_aggregation_exists::<SEED_SIZE, A>(
                                     task.id(),
