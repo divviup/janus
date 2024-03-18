@@ -3539,7 +3539,7 @@ mod tests {
         .unwrap();
 
         // Verify that all reports we saw a report aggregation for are scrubbed, if the aggregation
-        // parameter is not the unit type.
+        // parameter is the unit type.
         let all_seen_report_ids: HashSet<_> = agg_jobs_and_report_ids
             .iter()
             .flat_map(|(agg_job, report_aggs)| {
@@ -3551,8 +3551,8 @@ mod tests {
                 })
             })
             .collect();
-        for (_, report_id) in &all_seen_report_ids {
-            if is_unit_type::<A::AggregationParam>() {
+        if is_unit_type::<A::AggregationParam>() {
+            for (_, report_id) in &all_seen_report_ids {
                 tx.verify_client_report_scrubbed(task_id, report_id).await;
             }
         }
@@ -3560,8 +3560,8 @@ mod tests {
         // Verify that reports aggregated with a non-unit aggregation parameter do not get scrubbed.
         // We check that a report is scrubbed by reading the report, since reading a report will
         // fail if the report is scrubbed.
-        for (report_id, agg_param) in want_ra_states.keys() {
-            if is_unit_type::<A::AggregationParam>() {
+        if !is_unit_type::<A::AggregationParam>() {
+            for (report_id, agg_param) in want_ra_states.keys() {
                 if all_seen_report_ids.contains(&(agg_param.clone(), report_id)) {
                     continue;
                 }
