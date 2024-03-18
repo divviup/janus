@@ -1283,12 +1283,11 @@ mod tests {
                         .await.unwrap()
                         .unwrap();
                     let report_aggregation = tx
-                        .get_report_aggregation(
+                        .get_report_aggregation_by_report_id(
                             vdaf.as_ref(),
                             &Role::Leader,
                             task.id(),
                             &aggregation_job_id,
-                            aggregation_job.aggregation_parameter(),
                             &report_id,
                         )
                         .await.unwrap()
@@ -1590,24 +1589,22 @@ mod tests {
                         .unwrap()
                         .unwrap();
                     let report_aggregation = tx
-                        .get_report_aggregation(
+                        .get_report_aggregation_by_report_id(
                             vdaf.as_ref(),
                             &Role::Leader,
                             task.id(),
                             &aggregation_job_id,
-                            aggregation_job.aggregation_parameter(),
                             &report_id,
                         )
                         .await
                         .unwrap()
                         .unwrap();
                     let repeated_extension_report_aggregation = tx
-                        .get_report_aggregation(
+                        .get_report_aggregation_by_report_id(
                             vdaf.as_ref(),
                             &Role::Leader,
                             task.id(),
                             &aggregation_job_id,
-                            aggregation_job.aggregation_parameter(),
                             &repeated_extension_report_id,
                         )
                         .await
@@ -1872,12 +1869,11 @@ mod tests {
                         .await.unwrap()
                         .unwrap();
                     let report_aggregation = tx
-                        .get_report_aggregation(
+                        .get_report_aggregation_by_report_id(
                             vdaf.as_ref(),
                             &Role::Leader,
                             task.id(),
                             &aggregation_job_id,
-                            aggregation_job.aggregation_parameter(),
                             &report_id,
                         )
                         .await.unwrap()
@@ -2516,12 +2512,11 @@ mod tests {
                         .unwrap()
                         .unwrap();
                     let report_aggregation = tx
-                        .get_report_aggregation(
+                        .get_report_aggregation_by_report_id(
                             vdaf.as_ref(),
                             &Role::Leader,
                             task.id(),
                             &aggregation_job_id,
-                            aggregation_job.aggregation_parameter(),
                             &report_id,
                         )
                         .await
@@ -2784,12 +2779,11 @@ mod tests {
                         .await.unwrap()
                         .unwrap();
                     let report_aggregation = tx
-                        .get_report_aggregation(
+                        .get_report_aggregation_by_report_id(
                             vdaf.as_ref(),
                             &Role::Leader,
                             task.id(),
                             &aggregation_job_id,
-                            aggregation_job.aggregation_parameter(),
                             &report_id,
                         )
                         .await.unwrap()
@@ -3130,12 +3124,11 @@ mod tests {
                         .await.unwrap()
                         .unwrap();
                     let report_aggregation = tx
-                        .get_report_aggregation(
+                        .get_report_aggregation_by_report_id(
                             vdaf.as_ref(),
                             &Role::Leader,
                             task.id(),
                             &aggregation_job_id,
-                            aggregation_job.aggregation_parameter(),
                             report_metadata.id(),
                         )
                         .await.unwrap()
@@ -3428,12 +3421,11 @@ mod tests {
                         .await.unwrap()
                         .unwrap();
                     let report_aggregation = tx
-                        .get_report_aggregation(
+                        .get_report_aggregation_by_report_id(
                             vdaf.as_ref(),
                             &Role::Leader,
                             task.id(),
                             &aggregation_job_id,
-                            aggregation_job.aggregation_parameter(),
                             report_metadata.id(),
                         )
                         .await.unwrap()
@@ -3665,12 +3657,11 @@ mod tests {
                         .unwrap()
                         .unwrap();
                     let report_aggregation = tx
-                        .get_report_aggregation(
+                        .get_report_aggregation_by_report_id(
                             vdaf.as_ref(),
                             &Role::Leader,
                             task.id(),
                             aggregation_job.id(),
-                            aggregation_job.aggregation_parameter(),
                             &report_id,
                         )
                         .await

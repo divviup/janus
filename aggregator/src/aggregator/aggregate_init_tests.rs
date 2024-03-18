@@ -9,10 +9,7 @@ use crate::aggregator::{
 use assert_matches::assert_matches;
 use http::StatusCode;
 use janus_aggregator_core::{
-    datastore::{
-        test_util::{ephemeral_datastore, EphemeralDatastore},
-        Datastore,
-    },
+    datastore::test_util::{ephemeral_datastore, EphemeralDatastore},
     task::{
         test_util::{Task, TaskBuilder},
         AggregatorTask, QueryType,
@@ -173,7 +170,6 @@ pub(super) struct AggregationJobInitTestCase<
     aggregation_job_init_resp: Option<AggregationJobResp>,
     pub(super) aggregation_param: V::AggregationParam,
     pub(super) handler: Box<dyn Handler>,
-    pub(super) datastore: Arc<Datastore<MockClock>>,
     _ephemeral_datastore: EphemeralDatastore,
 }
 
@@ -302,7 +298,6 @@ async fn setup_aggregate_init_test_without_sending_request<
         aggregation_job_init_resp: None,
         aggregation_param,
         handler: Box::new(handler),
-        datastore,
         _ephemeral_datastore: ephemeral_datastore,
     }
 }

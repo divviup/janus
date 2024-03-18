@@ -24,7 +24,7 @@ use fixed::{
     types::extra::{U15, U31},
     FixedI16, FixedI32,
 };
-use futures::future::try_join_all;
+use futures::{future::try_join_all, TryFutureExt as _};
 use http::{header::CONTENT_TYPE, Method};
 use itertools::iproduct;
 use janus_aggregator_core::{
@@ -93,7 +93,7 @@ use std::{
     sync::{Arc, Mutex as SyncMutex},
     time::{Duration as StdDuration, Instant},
 };
-use tokio::{join, sync::Mutex, try_join};
+use tokio::{sync::Mutex, try_join};
 use tracing::{debug, info, trace_span, warn, Level};
 use url::Url;
 
@@ -2099,15 +2099,22 @@ impl VdafOps {
                     }
 
                     // Write report shares, and ensure this isn't a repeated report aggregation.
+                    // TODO(#225): on repeated aggregation, verify input share matches previously-received input share
                     try_join_all(report_share_data.iter_mut().map(|rsd| {
                         let task = Arc::clone(&task);
                         let aggregation_job = Arc::clone(&aggregation_job);
 
                         async move {
+                            let put_report_share_fut = tx
+                                .put_scrubbed_report(task.id(), &rsd.report_share)
+                                .or_else(|err| async move {
+                                    match err {
+                                        datastore::Error::MutationTargetAlreadyExists => Ok(()),
+                                        _ => Err(err),
+                                    }
+                                });
                             // Verify that we haven't seen this report ID and aggregation parameter
                             // before in another aggregation job.
-                            let put_report_share_fut =
-                                tx.put_report_share(task.id(), &rsd.report_share);
                             let report_aggregation_exists_fut = tx
                                 .check_other_report_aggregation_exists::<SEED_SIZE, A>(
                                     task.id(),
@@ -2115,17 +2122,10 @@ impl VdafOps {
                                     aggregation_job.aggregation_parameter(),
                                     aggregation_job.id(),
                                 );
-                            let (put_report_share_rslt, report_aggregation_exists_rslt) =
-                                join!(put_report_share_fut, report_aggregation_exists_fut);
+                            let (_, report_aggregation_exists) =
+                                try_join!(put_report_share_fut, report_aggregation_exists_fut)?;
 
-                            let report_share_exists = match put_report_share_rslt {
-                                Ok(()) => false,
-                                Err(datastore::Error::MutationTargetAlreadyExists) => true,
-                                Err(err) => return Err(err),
-                            };
-                            let report_aggregation_exists = report_aggregation_exists_rslt?;
-
-                            if report_share_exists || report_aggregation_exists {
+                            if report_aggregation_exists {
                                 rsd.report_aggregation = rsd
                                     .report_aggregation
                                     .clone()

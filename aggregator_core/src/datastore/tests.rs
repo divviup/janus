@@ -126,7 +126,7 @@ async fn retry_limit() {
                 let num_runs = Arc::clone(&num_runs);
                 Box::pin(async move {
                     num_runs.fetch_add(1, Ordering::Relaxed);
-                    tx.retry();
+                    tx.retry.store(true, Ordering::Relaxed); // artificially force a retry
                     Ok(())
                 })
             })
@@ -1087,7 +1087,7 @@ async fn count_client_reports_for_batch_id(ephemeral_datastore: EphemeralDatasto
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
-async fn roundtrip_report_share(ephemeral_datastore: EphemeralDatastore) {
+async fn roundtrip_scrubbed_report(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
     let ds = ephemeral_datastore.datastore(MockClock::default()).await;
 
@@ -1112,7 +1112,9 @@ async fn roundtrip_report_share(ephemeral_datastore: EphemeralDatastore) {
         let (task, report_share) = (task.clone(), report_share.clone());
         Box::pin(async move {
             tx.put_aggregator_task(&task).await.unwrap();
-            tx.put_report_share(task.id(), &report_share).await.unwrap();
+            tx.put_scrubbed_report(task.id(), &report_share)
+                .await
+                .unwrap();
 
             tx.check_timestamp_columns("client_reports", "test-put-report-share", true)
                 .await;
@@ -1182,18 +1184,6 @@ async fn roundtrip_report_share(ephemeral_datastore: EphemeralDatastore) {
     assert!(got_extensions.is_none());
     assert!(got_leader_input_share.is_none());
     assert!(got_helper_input_share.is_none());
-
-    // Put the same report share again. This should not cause an error.
-    ds.run_unnamed_tx(|tx| {
-        let (task_id, report_share) = (*task.id(), report_share.clone());
-        Box::pin(async move {
-            tx.put_report_share(&task_id, &report_share).await.unwrap();
-
-            Ok(())
-        })
-    })
-    .await
-    .unwrap();
 }
 
 #[rstest_reuse::apply(schema_versions_template)]
@@ -2020,7 +2010,7 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
                     ))
                     .await
                     .unwrap();
-                    tx.put_report_share(
+                    tx.put_scrubbed_report(
                         task.id(),
                         &ReportShare::new(
                             ReportMetadata::new(report_id, OLDEST_ALLOWED_REPORT_TIMESTAMP),
@@ -2081,15 +2071,15 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
 
         let got_report_aggregation = ds
             .run_unnamed_tx(|tx| {
-                let (vdaf, task, aggregation_param) =
-                    (Arc::clone(&vdaf), task.clone(), aggregation_param.clone());
+                let vdaf = Arc::clone(&vdaf);
+                let task = task.clone();
+
                 Box::pin(async move {
-                    tx.get_report_aggregation(
+                    tx.get_report_aggregation_by_report_id(
                         vdaf.as_ref(),
                         &role,
                         task.id(),
                         &aggregation_job_id,
-                        &aggregation_param,
                         &report_id,
                     )
                     .await
@@ -2148,15 +2138,15 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
 
         let got_report_aggregation = ds
             .run_unnamed_tx(|tx| {
-                let (vdaf, task, aggregation_param) =
-                    (Arc::clone(&vdaf), task.clone(), aggregation_param.clone());
+                let vdaf = Arc::clone(&vdaf);
+                let task = task.clone();
+
                 Box::pin(async move {
-                    tx.get_report_aggregation(
+                    tx.get_report_aggregation_by_report_id(
                         vdaf.as_ref(),
                         &role,
                         task.id(),
                         &aggregation_job_id,
-                        &aggregation_param,
                         &report_id,
                     )
                     .await
@@ -2171,15 +2161,15 @@ async fn roundtrip_report_aggregation(ephemeral_datastore: EphemeralDatastore) {
 
         let got_report_aggregation = ds
             .run_unnamed_tx(|tx| {
-                let (vdaf, task, aggregation_param) =
-                    (Arc::clone(&vdaf), task.clone(), aggregation_param.clone());
+                let vdaf = Arc::clone(&vdaf);
+                let task = task.clone();
+
                 Box::pin(async move {
-                    tx.get_report_aggregation(
+                    tx.get_report_aggregation_by_report_id(
                         vdaf.as_ref(),
                         &role,
                         task.id(),
                         &aggregation_job_id,
-                        &aggregation_param,
                         &report_id,
                     )
                     .await
@@ -2224,7 +2214,7 @@ async fn check_other_report_aggregation_exists(ephemeral_datastore: EphemeralDat
             ))
             .await
             .unwrap();
-            tx.put_report_share(
+            tx.put_scrubbed_report(
                 &task_id,
                 &ReportShare::new(
                     ReportMetadata::new(report_id, OLDEST_ALLOWED_REPORT_TIMESTAMP),
@@ -2357,13 +2347,13 @@ async fn report_aggregation_not_found(ephemeral_datastore: EphemeralDatastore) {
     let rslt = ds
         .run_unnamed_tx(|tx| {
             let vdaf = Arc::clone(&vdaf);
+
             Box::pin(async move {
-                tx.get_report_aggregation(
+                tx.get_report_aggregation_by_report_id(
                     vdaf.as_ref(),
                     &Role::Leader,
                     &random(),
                     &random(),
-                    &dummy::AggregationParam::default(),
                     &ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 )
                 .await
@@ -2480,7 +2470,7 @@ async fn get_report_aggregations_for_aggregation_job(ephemeral_datastore: Epheme
                 .enumerate()
                 {
                     let report_id = ReportId::from((ord as u128).to_be_bytes());
-                    tx.put_report_share(
+                    tx.put_scrubbed_report(
                         task.id(),
                         &ReportShare::new(
                             ReportMetadata::new(report_id, OLDEST_ALLOWED_REPORT_TIMESTAMP),
@@ -7173,7 +7163,7 @@ async fn roundtrip_taskprov_peer_aggregator(ephemeral_datastore: EphemeralDatast
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
-async fn reject_expired_reports_with_same_id(ephemeral_datastore: EphemeralDatastore) {
+async fn accept_write_expired_report(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
     let clock = MockClock::default();
     let datastore = ephemeral_datastore.datastore(clock.clone()).await;
@@ -7188,23 +7178,29 @@ async fn reject_expired_reports_with_same_id(ephemeral_datastore: EphemeralDatas
     datastore.put_aggregator_task(&task).await.unwrap();
 
     // Use same ID for each report.
-    let report_id = random();
+    let report = LeaderStoredReport::<0, dummy::Vdaf>::new(
+        *task.id(),
+        ReportMetadata::new(random(), clock.now()),
+        (),
+        Vec::new(),
+        dummy::InputShare::default(),
+        HpkeCiphertext::new(
+            HpkeConfigId::from(13),
+            Vec::from("encapsulated_context_0"),
+            Vec::from("payload_0"),
+        ),
+    );
 
     datastore
         .run_unnamed_tx(|tx| {
-            let report = LeaderStoredReport::<0, dummy::Vdaf>::new(
-                *task.id(),
-                ReportMetadata::new(report_id, clock.now()),
-                (),
-                Vec::new(),
-                dummy::InputShare::default(),
-                HpkeCiphertext::new(
-                    HpkeConfigId::from(13),
-                    Vec::from("encapsulated_context_0"),
-                    Vec::from("payload_0"),
-                ),
-            );
-            Box::pin(async move { tx.put_client_report(&dummy::Vdaf::default(), &report).await })
+            let report = report.clone();
+
+            Box::pin(async move {
+                tx.put_client_report(&dummy::Vdaf::default(), &report)
+                    .await
+                    .unwrap();
+                Ok(())
+            })
         })
         .await
         .unwrap();
@@ -7212,25 +7208,42 @@ async fn reject_expired_reports_with_same_id(ephemeral_datastore: EphemeralDatas
     // Advance the clock well past the report expiry age.
     clock.advance(&report_expiry_age.add(&report_expiry_age).unwrap());
 
-    // Insert a client report with the same ID, but a more current timestamp.
-    let result = datastore
+    // Validate that the report can't be read, that it can be written, and that even after writing
+    // it still can't be read.
+    datastore
         .run_unnamed_tx(|tx| {
-            let report = LeaderStoredReport::<0, dummy::Vdaf>::new(
-                *task.id(),
-                ReportMetadata::new(report_id, clock.now()),
-                (),
-                Vec::new(),
-                dummy::InputShare::default(),
-                HpkeCiphertext::new(
-                    HpkeConfigId::from(13),
-                    Vec::from("encapsulated_context_0"),
-                    Vec::from("payload_0"),
-                ),
-            );
-            Box::pin(async move { tx.put_client_report(&dummy::Vdaf::default(), &report).await })
+            let report = report.clone();
+
+            Box::pin(async move {
+                assert!(tx
+                    .get_client_report(
+                        &dummy::Vdaf::default(),
+                        report.task_id(),
+                        report.metadata().id()
+                    )
+                    .await
+                    .unwrap()
+                    .is_none());
+
+                tx.put_client_report(&dummy::Vdaf::default(), &report)
+                    .await
+                    .unwrap();
+
+                assert!(tx
+                    .get_client_report(
+                        &dummy::Vdaf::default(),
+                        report.task_id(),
+                        report.metadata().id()
+                    )
+                    .await
+                    .unwrap()
+                    .is_none());
+
+                Ok(())
+            })
         })
-        .await;
-    assert_matches!(result, Err(Error::MutationTargetAlreadyExists));
+        .await
+        .unwrap();
 }
 
 #[rstest_reuse::apply(schema_versions_template)]
