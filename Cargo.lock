@@ -3364,12 +3364,12 @@ dependencies = [
 
 [[package]]
 name = "retry-after"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "128d55dc93b909e04874b53878316eb687633459706f8fc647de333cc0620caa"
+checksum = "f0a2a3fe45c9b89f416bc92174669d954594e152d158df845e6df173a9b7aed4"
 dependencies = [
  "chrono",
- "http 0.2.11",
+ "http 1.0.0",
  "thiserror",
 ]
 
