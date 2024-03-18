@@ -25,7 +25,7 @@ version = "0.7.0-prerelease-5"
 [workspace.dependencies]
 anyhow = "1"
 assert_matches = "1"
-base64 = "0.21.7"
+base64 = "0.22.0"
 bytes = "1"
 # Disable default features to disable compatibility with the old `time` crate, and we also don't
 # (yet) need other default features.
