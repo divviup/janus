@@ -92,6 +92,7 @@ pub fn aggregator_api_handler<C: Clock>(
             .get("/task_ids", instrumented(api(get_task_ids::<C>)))
             .post("/tasks", instrumented(api(post_task::<C>)))
             .get("/tasks/:task_id", instrumented(api(get_task::<C>)))
+            .patch("/tasks/:task_id", instrumented(api(patch_task::<C>)))
             .delete("/tasks/:task_id", instrumented(api(delete_task::<C>)))
             .get(
                 "/tasks/:task_id/metrics/uploads",

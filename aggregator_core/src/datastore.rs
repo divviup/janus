@@ -729,7 +729,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Deletes a task from the datastore, along with all related data (client reports,
     /// aggregations, etc).
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn delete_task(&self, task_id: &TaskId) -> Result<(), Error> {
         // Deletion of other data implemented via ON DELETE CASCADE.
         let stmt = self
@@ -740,6 +740,34 @@ impl<C: Clock> Transaction<'_, C> {
                 .await?,
         )?;
         Ok(())
+    }
+
+    /// Sets or unsets the expiration date of a task.
+    #[tracing::instrument(skip(self))]
+    pub async fn update_task_expiration(
+        &self,
+        task_id: &TaskId,
+        task_expiration: Option<&Time>,
+    ) -> Result<(), Error> {
+        let stmt = self
+            .prepare_cached(
+                "UPDATE tasks SET task_expiration = $1, updated_by = $2 WHERE task_id = $3",
+            )
+            .await?;
+        check_single_row_mutation(
+            self.execute(
+                &stmt,
+                &[
+                    /* task_expiration */
+                    &task_expiration.map(Time::as_naive_date_time).transpose()?,
+                    // TODO(#2819): set updated_at
+                    /* updated_by */
+                    &self.name,
+                    /* task_id */ &task_id.as_ref(),
+                ],
+            )
+            .await?,
+        )
     }
 
     /// Fetch the task parameters corresponing to the provided `task_id`.
