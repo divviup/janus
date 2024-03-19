@@ -10,12 +10,14 @@ use prio::{
     vdaf::dummy,
 };
 use rand::random;
-use trillium::KnownHeaderName;
-use trillium_testing::{assert_status, methods::post};
+use trillium_testing::assert_status;
 
 use crate::aggregator::{
     aggregate_init_tests::{put_aggregation_job, PrepareInitGenerator},
-    http_handlers::test_util::{setup_http_handler_test, take_response_body},
+    http_handlers::{
+        test_util::{setup_http_handler_test, take_response_body},
+        tests::aggregate_share::post_aggregate_share_request,
+    },
 };
 
 /// Send multiple aggregation job requests and aggregate share requests for a negative test that
@@ -110,27 +112,9 @@ async fn helper_aggregation_report_share_replay() {
 
     // Make aggregate share requests. If these succeed, then the helper's report_count and checksum
     // match those in the requests.
-    let (auth_header, auth_value) = task.aggregator_auth_token().request_authentication();
-    let test_conn = post(task.aggregate_shares_uri().unwrap().path())
-        .with_request_header(auth_header, auth_value)
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            AggregateShareReq::<FixedSize>::MEDIA_TYPE,
-        )
-        .with_request_body(agg_share_req_1.get_encoded().unwrap())
-        .run_async(&handler)
-        .await;
+    let test_conn = post_aggregate_share_request(&task, &agg_share_req_1, &handler).await;
     assert_status!(test_conn, 200);
 
-    let (auth_header, auth_value) = task.aggregator_auth_token().request_authentication();
-    let test_conn = post(task.aggregate_shares_uri().unwrap().path())
-        .with_request_header(auth_header, auth_value)
-        .with_request_header(
-            KnownHeaderName::ContentType,
-            AggregateShareReq::<FixedSize>::MEDIA_TYPE,
-        )
-        .with_request_body(agg_share_req_2.get_encoded().unwrap())
-        .run_async(&handler)
-        .await;
+    let test_conn = post_aggregate_share_request(&task, &agg_share_req_2, &handler).await;
     assert_status!(test_conn, 200);
 }
