@@ -20,9 +20,7 @@ hex = "0.4"
 num_enum = "0.7.2"
 # We can't pull prio in from the workspace because that would enable default features, and we do not
 # want prio/crypto-dependencies
-# TODO(timg) go back to released prio
-#prio = { version = "0.16.1", default-features = false, features = ["multithreaded", "experimental"] }
-prio = { git = "https://github.com/divviup/libprio-rs", default-features = false, features = ["multithreaded", "experimental"], rev = "8774573dee1932c19c28ab83173b358b42a52b78" }
+prio = { version = "0.16.2", default-features = false, features = ["multithreaded", "experimental"] }
 rand.workspace = true
 serde.workspace = true
 thiserror.workspace = true
