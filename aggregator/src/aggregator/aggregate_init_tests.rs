@@ -23,9 +23,10 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{
-    query_type::TimeInterval, AggregationJobId, AggregationJobInitializeReq, AggregationJobResp,
-    Duration, Extension, ExtensionType, HpkeConfig, PartialBatchSelector, PrepareError,
-    PrepareInit, PrepareResp, PrepareStepResult, ReportMetadata, ReportShare,
+    query_type::{self, TimeInterval},
+    AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, Duration, Extension,
+    ExtensionType, HpkeConfig, PartialBatchSelector, PrepareError, PrepareInit, PrepareResp,
+    PrepareStepResult, ReportMetadata, ReportShare,
 };
 use prio::{
     codec::Encode,
@@ -302,10 +303,10 @@ async fn setup_aggregate_init_test_without_sending_request<
     }
 }
 
-pub(crate) async fn put_aggregation_job(
+pub(crate) async fn put_aggregation_job<Q: query_type::QueryType>(
     task: &Task,
     aggregation_job_id: &AggregationJobId,
-    aggregation_job: &AggregationJobInitializeReq<TimeInterval>,
+    aggregation_job: &AggregationJobInitializeReq<Q>,
     handler: &impl Handler,
 ) -> TestConn {
     let (header, value) = task.aggregator_auth_token().request_authentication();
@@ -313,7 +314,7 @@ pub(crate) async fn put_aggregation_job(
         .with_request_header(header, value)
         .with_request_header(
             KnownHeaderName::ContentType,
-            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            AggregationJobInitializeReq::<Q>::MEDIA_TYPE,
         )
         .with_request_body(aggregation_job.get_encoded().unwrap())
         .run_async(handler)
