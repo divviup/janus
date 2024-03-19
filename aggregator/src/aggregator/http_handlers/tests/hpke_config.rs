@@ -1,0 +1,355 @@
+use crate::{
+    aggregator::{
+        http_handlers::{
+            aggregator_handler_with_aggregator,
+            test_util::{decode_response_body, setup_http_handler_test, take_problem_details},
+        },
+        Config,
+    },
+    config::TaskprovConfig,
+};
+use janus_aggregator_core::{
+    datastore::models::HpkeKeyState,
+    task::{test_util::TaskBuilder, QueryType},
+    test_util::noop_meter,
+};
+use janus_core::{
+    hpke::{
+        self, test_util::generate_test_hpke_config_and_private_key_with_id, HpkeApplicationInfo,
+        HpkeKeypair, Label,
+    },
+    test_util::runtime::TestRuntime,
+    vdaf::VdafInstance,
+};
+use janus_messages::{HpkeConfigList, Role, TaskId};
+use rand::random;
+use serde_json::json;
+use std::{collections::HashMap, sync::Arc};
+use trillium::{KnownHeaderName, Status};
+use trillium_testing::{assert_headers, prelude::get, TestConn};
+
+#[tokio::test]
+async fn hpke_config() {
+    let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+
+    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+        .build()
+        .leader_view()
+        .unwrap();
+    datastore.put_aggregator_task(&task).await.unwrap();
+
+    let unknown_task_id: TaskId = random();
+    let want_hpke_key = task.current_hpke_key().clone();
+
+    // No task ID provided and no global keys are configured.
+    let mut test_conn = get("/hpke_config").run_async(&handler).await;
+    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(
+        take_problem_details(&mut test_conn).await,
+        json!({
+            "status": 400u16,
+            "type": "urn:ietf:params:ppm:dap:error:missingTaskID",
+            "title": "HPKE configuration was requested without specifying a task ID.",
+        })
+    );
+
+    // Unknown task ID provided
+    let mut test_conn = get(&format!("/hpke_config?task_id={unknown_task_id}"))
+        .run_async(&handler)
+        .await;
+    // Expected status and problem type should be per the protocol
+    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.1
+    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+    assert_eq!(
+        take_problem_details(&mut test_conn).await,
+        json!({
+            "status": 400u16,
+            "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
+            "title": "An endpoint received a message with an unknown task ID.",
+            "taskid": format!("{unknown_task_id}"),
+        })
+    );
+
+    // Recognized task ID provided
+    let mut test_conn = get(&format!("/hpke_config?task_id={}", task.id()))
+        .run_async(&handler)
+        .await;
+
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_headers!(
+        &test_conn,
+        "cache-control" => "max-age=86400",
+        "content-type" => (HpkeConfigList::MEDIA_TYPE),
+    );
+
+    let hpke_config_list: HpkeConfigList = decode_response_body(&mut test_conn).await;
+    assert_eq!(
+        hpke_config_list.hpke_configs(),
+        &[want_hpke_key.config().clone()]
+    );
+    check_hpke_config_is_usable(&hpke_config_list, &want_hpke_key);
+}
+
+#[tokio::test]
+async fn global_hpke_config() {
+    let (clock, _ephemeral_datastore, datastore, _) = setup_http_handler_test().await;
+
+    // Insert an HPKE config, i.e. start the application with a keypair already
+    // in the database.
+    let first_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(1);
+    datastore
+        .run_unnamed_tx(|tx| {
+            let keypair = first_hpke_keypair.clone();
+            Box::pin(async move {
+                tx.put_global_hpke_keypair(&keypair).await.unwrap();
+                tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                    .await
+                    .unwrap();
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+    let aggregator = Arc::new(
+        crate::aggregator::Aggregator::new(
+            datastore.clone(),
+            clock.clone(),
+            TestRuntime::default(),
+            &noop_meter(),
+            Config::default(),
+        )
+        .await
+        .unwrap(),
+    );
+    let handler = aggregator_handler_with_aggregator(aggregator.clone(), &noop_meter())
+        .await
+        .unwrap();
+
+    // No task ID provided
+    let mut test_conn = get("/hpke_config").run_async(&handler).await;
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    assert_headers!(
+        &test_conn,
+        "cache-control" => "max-age=86400",
+        "content-type" => (HpkeConfigList::MEDIA_TYPE),
+    );
+    let hpke_config_list: HpkeConfigList = decode_response_body(&mut test_conn).await;
+    assert_eq!(
+        hpke_config_list.hpke_configs(),
+        &[first_hpke_keypair.config().clone()]
+    );
+    check_hpke_config_is_usable(&hpke_config_list, &first_hpke_keypair);
+
+    // Insert an inactive HPKE config.
+    let second_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(2);
+    datastore
+        .run_unnamed_tx(|tx| {
+            let keypair = second_hpke_keypair.clone();
+            Box::pin(async move { tx.put_global_hpke_keypair(&keypair).await })
+        })
+        .await
+        .unwrap();
+    aggregator.refresh_caches().await.unwrap();
+    let mut test_conn = get("/hpke_config").run_async(&handler).await;
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    let hpke_config_list: HpkeConfigList = decode_response_body(&mut test_conn).await;
+    assert_eq!(
+        hpke_config_list.hpke_configs(),
+        &[first_hpke_keypair.config().clone()]
+    );
+
+    // Set key active.
+    datastore
+        .run_unnamed_tx(|tx| {
+            let keypair = second_hpke_keypair.clone();
+            Box::pin(async move {
+                tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                    .await
+            })
+        })
+        .await
+        .unwrap();
+    aggregator.refresh_caches().await.unwrap();
+    let mut test_conn = get("/hpke_config").run_async(&handler).await;
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    let hpke_config_list: HpkeConfigList = decode_response_body(&mut test_conn).await;
+    // Unordered comparison.
+    assert_eq!(
+        HashMap::from_iter(
+            hpke_config_list
+                .hpke_configs()
+                .iter()
+                .map(|config| (config.id(), config))
+        ),
+        HashMap::from([
+            (
+                first_hpke_keypair.config().id(),
+                &first_hpke_keypair.config().clone()
+            ),
+            (
+                second_hpke_keypair.config().id(),
+                &second_hpke_keypair.config().clone()
+            ),
+        ]),
+    );
+
+    // Expire a key.
+    datastore
+        .run_unnamed_tx(|tx| {
+            let keypair = second_hpke_keypair.clone();
+            Box::pin(async move {
+                tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Expired)
+                    .await
+            })
+        })
+        .await
+        .unwrap();
+    aggregator.refresh_caches().await.unwrap();
+    let mut test_conn = get("/hpke_config").run_async(&handler).await;
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    let hpke_config_list: HpkeConfigList = decode_response_body(&mut test_conn).await;
+    assert_eq!(
+        hpke_config_list.hpke_configs(),
+        &[first_hpke_keypair.config().clone()]
+    );
+
+    // Delete a key, no keys left.
+    datastore
+        .run_unnamed_tx(|tx| {
+            let keypair = first_hpke_keypair.clone();
+            Box::pin(async move { tx.delete_global_hpke_keypair(keypair.config().id()).await })
+        })
+        .await
+        .unwrap();
+    aggregator.refresh_caches().await.unwrap();
+    let test_conn = get("/hpke_config").run_async(&handler).await;
+    assert_eq!(test_conn.status(), Some(Status::BadRequest));
+}
+
+#[tokio::test]
+async fn global_hpke_config_with_taskprov() {
+    let (clock, _ephemeral_datastore, datastore, _) = setup_http_handler_test().await;
+
+    // Insert an HPKE config, i.e. start the application with a keypair already
+    // in the database.
+    let first_hpke_keypair = generate_test_hpke_config_and_private_key_with_id(1);
+    datastore
+        .run_unnamed_tx(|tx| {
+            let keypair = first_hpke_keypair.clone();
+            Box::pin(async move {
+                tx.put_global_hpke_keypair(&keypair).await.unwrap();
+                tx.set_global_hpke_keypair_state(keypair.config().id(), &HpkeKeyState::Active)
+                    .await
+                    .unwrap();
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+    // Insert a taskprov task. This task won't have its task-specific HPKE key.
+    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count).build();
+    let taskprov_helper_task = task.taskprov_helper_view().unwrap();
+    datastore
+        .put_aggregator_task(&taskprov_helper_task)
+        .await
+        .unwrap();
+
+    let cfg = Config {
+        taskprov_config: TaskprovConfig {
+            enabled: true,
+            ignore_unknown_differential_privacy_mechanism: false,
+        },
+        ..Default::default()
+    };
+
+    let aggregator = Arc::new(
+        crate::aggregator::Aggregator::new(
+            datastore.clone(),
+            clock.clone(),
+            TestRuntime::default(),
+            &noop_meter(),
+            cfg,
+        )
+        .await
+        .unwrap(),
+    );
+    let handler = aggregator_handler_with_aggregator(aggregator.clone(), &noop_meter())
+        .await
+        .unwrap();
+
+    let mut test_conn = get(&format!("/hpke_config?task_id={}", task.id()))
+        .run_async(&handler)
+        .await;
+    assert_eq!(test_conn.status(), Some(Status::Ok));
+    let hpke_config_list: HpkeConfigList = decode_response_body(&mut test_conn).await;
+    assert_eq!(
+        hpke_config_list.hpke_configs(),
+        &[first_hpke_keypair.config().clone()]
+    );
+    check_hpke_config_is_usable(&hpke_config_list, &first_hpke_keypair);
+}
+
+fn check_hpke_config_is_usable(hpke_config_list: &HpkeConfigList, hpke_keypair: &HpkeKeypair) {
+    let application_info =
+        HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
+    let message = b"this is a message";
+    let associated_data = b"some associated data";
+
+    let ciphertext = hpke::seal(
+        &hpke_config_list.hpke_configs()[0],
+        &application_info,
+        message,
+        associated_data,
+    )
+    .unwrap();
+    let plaintext = hpke::open(
+        hpke_keypair,
+        &application_info,
+        &ciphertext,
+        associated_data,
+    )
+    .unwrap();
+    assert_eq!(&plaintext, message);
+}
+
+#[tokio::test]
+async fn hpke_config_cors_headers() {
+    let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
+
+    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Count)
+        .build()
+        .leader_view()
+        .unwrap();
+    datastore.put_aggregator_task(&task).await.unwrap();
+
+    // Check for appropriate CORS headers in response to a preflight request.
+    let test_conn = TestConn::build(
+        trillium::Method::Options,
+        &format!("/hpke_config?task_id={}", task.id()),
+        (),
+    )
+    .with_request_header(KnownHeaderName::Origin, "https://example.com/")
+    .with_request_header(KnownHeaderName::AccessControlRequestMethod, "GET")
+    .run_async(&handler)
+    .await;
+    assert!(test_conn.status().unwrap().is_success());
+    assert_headers!(
+        &test_conn,
+        "access-control-allow-origin" => "https://example.com/",
+        "access-control-allow-methods"=> "GET",
+        "access-control-max-age"=> "86400",
+    );
+
+    // Check for appropriate CORS headers with a simple GET request.
+    let test_conn = get(&format!("/hpke_config?task_id={}", task.id()))
+        .with_request_header(KnownHeaderName::Origin, "https://example.com/")
+        .run_async(&handler)
+        .await;
+    assert!(test_conn.status().unwrap().is_success());
+    assert_headers!(
+        &test_conn,
+        "access-control-allow-origin" => "https://example.com/",
+    );
+}
