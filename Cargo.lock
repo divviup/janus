@@ -2115,7 +2115,7 @@ dependencies = [
  "opentelemetry_sdk",
  "postgres-protocol",
  "postgres-types",
- "prio 0.16.1",
+ "prio 0.16.2",
  "prometheus",
  "rand",
  "regex",
@@ -2216,7 +2216,7 @@ dependencies = [
  "opentelemetry",
  "postgres-protocol",
  "postgres-types",
- "prio 0.16.1",
+ "prio 0.16.2",
  "rand",
  "regex",
  "reqwest",
@@ -2255,7 +2255,7 @@ dependencies = [
  "janus_core",
  "janus_messages 0.7.0-prerelease-5",
  "mockito",
- "prio 0.16.1",
+ "prio 0.16.2",
  "rand",
  "reqwest",
  "thiserror",
@@ -2282,7 +2282,7 @@ dependencies = [
  "janus_core",
  "janus_messages 0.7.0-prerelease-5",
  "mockito",
- "prio 0.16.1",
+ "prio 0.16.2",
  "rand",
  "reqwest",
  "retry-after",
@@ -2316,7 +2316,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "mockito",
- "prio 0.16.1",
+ "prio 0.16.2",
  "rand",
  "regex",
  "reqwest",
@@ -2363,7 +2363,7 @@ dependencies = [
  "janus_messages 0.7.0-prerelease-5",
  "k8s-openapi",
  "kube",
- "prio 0.16.1",
+ "prio 0.16.2",
  "rand",
  "reqwest",
  "rstest",
@@ -2399,7 +2399,7 @@ dependencies = [
  "janus_interop_binaries",
  "janus_messages 0.7.0-prerelease-5",
  "opentelemetry",
- "prio 0.16.1",
+ "prio 0.16.2",
  "rand",
  "regex",
  "reqwest",
@@ -2448,7 +2448,7 @@ dependencies = [
  "derivative",
  "hex",
  "num_enum",
- "prio 0.16.1",
+ "prio 0.16.2",
  "rand",
  "serde",
  "serde_test",
@@ -2470,7 +2470,7 @@ dependencies = [
  "janus_collector",
  "janus_core",
  "janus_messages 0.7.0-prerelease-5",
- "prio 0.16.1",
+ "prio 0.16.2",
  "rand",
  "reqwest",
  "serde_json",
@@ -3407,8 +3407,9 @@ dependencies = [
 
 [[package]]
 name = "prio"
-version = "0.16.1"
-source = "git+https://github.com/divviup/libprio-rs?rev=8774573dee1932c19c28ab83173b358b42a52b78#8774573dee1932c19c28ab83173b358b42a52b78"
+version = "0.16.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5cec5eb0d28eee4ea74be34b28ed4c625e88c54ff83c21b412a5ea7cc48624ae"
 dependencies = [
  "aes",
  "bitvec",
