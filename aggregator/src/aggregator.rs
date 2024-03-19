@@ -942,7 +942,7 @@ impl<C: Clock> TaskAggregator<C> {
             }
 
             #[cfg(feature = "test-util")]
-            VdafInstance::Fake => VdafOps::Fake(Arc::new(dummy::Vdaf::new(1))),
+            VdafInstance::Fake { rounds } => VdafOps::Fake(Arc::new(dummy::Vdaf::new(*rounds))),
 
             #[cfg(feature = "test-util")]
             VdafInstance::FakeFailsPrepInit => VdafOps::Fake(Arc::new(

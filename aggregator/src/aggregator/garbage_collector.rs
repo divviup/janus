@@ -216,11 +216,14 @@ mod tests {
             .run_unnamed_tx(|tx| {
                 let (clock, vdaf) = (clock.clone(), vdaf.clone());
                 Box::pin(async move {
-                    let task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
-                        .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
-                        .build()
-                        .leader_view()
-                        .unwrap();
+                    let task = TaskBuilder::new(
+                        task::QueryType::TimeInterval,
+                        VdafInstance::Fake { rounds: 1 },
+                    )
+                    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+                    .build()
+                    .leader_view()
+                    .unwrap();
                     tx.put_aggregator_task(&task).await?;
 
                     // Client report artifacts.
@@ -364,11 +367,14 @@ mod tests {
             .run_unnamed_tx(|tx| {
                 let clock = clock.clone();
                 Box::pin(async move {
-                    let task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake)
-                        .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
-                        .build()
-                        .helper_view()
-                        .unwrap();
+                    let task = TaskBuilder::new(
+                        task::QueryType::TimeInterval,
+                        VdafInstance::Fake { rounds: 1 },
+                    )
+                    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+                    .build()
+                    .helper_view()
+                    .unwrap();
                     tx.put_aggregator_task(&task).await?;
 
                     // Client report artifacts.
@@ -538,7 +544,7 @@ mod tests {
                             max_batch_size: Some(10),
                             batch_time_window_size: None,
                         },
-                        VdafInstance::Fake,
+                        VdafInstance::Fake { rounds: 1 },
                     )
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                     .build()
@@ -699,7 +705,7 @@ mod tests {
                             max_batch_size: Some(10),
                             batch_time_window_size: None,
                         },
-                        VdafInstance::Fake,
+                        VdafInstance::Fake { rounds: 1 },
                     )
                     .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
                     .build()

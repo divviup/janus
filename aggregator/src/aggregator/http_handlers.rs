@@ -1763,7 +1763,8 @@ mod tests {
     async fn aggregate_init() {
         let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake).build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
 
         let helper_task = task.helper_view().unwrap();
 
@@ -2240,7 +2241,7 @@ mod tests {
                 max_batch_size: Some(100),
                 batch_time_window_size: None,
             },
-            VdafInstance::Fake,
+            VdafInstance::Fake { rounds: 1 },
         )
         .build();
 
@@ -2334,7 +2335,8 @@ mod tests {
     async fn aggregate_init_with_reports_encrypted_by_global_key() {
         let (clock, _ephemeral_datastore, datastore, _) = setup_http_handler_test().await;
 
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake).build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
 
         let helper_task = task.helper_view().unwrap();
         datastore.put_aggregator_task(&helper_task).await.unwrap();
@@ -2673,7 +2675,8 @@ mod tests {
     async fn aggregate_init_duplicated_report_id() {
         let (clock, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake).build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
 
         let helper_task = task.helper_view().unwrap();
         let prep_init_generator = PrepareInitGenerator::new(
@@ -4333,7 +4336,8 @@ mod tests {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake).build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
         let helper_task = task.helper_view().unwrap();
         let aggregation_job_id = random();
         let report_metadata = ReportMetadata::new(
@@ -4518,7 +4522,7 @@ mod tests {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
             .with_min_batch_size(1)
             .build();
         let leader_task = task.leader_view().unwrap();
@@ -5093,7 +5097,8 @@ mod tests {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
         // Prepare parameters.
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake).build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 }).build();
         let leader_task = task.leader_view().unwrap();
         datastore.put_aggregator_task(&leader_task).await.unwrap();
 
@@ -5136,7 +5141,7 @@ mod tests {
 
         // Prepare parameters.
         const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(3600);
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
             .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
             .build();
         let helper_task = task.helper_view().unwrap();
@@ -5211,7 +5216,7 @@ mod tests {
     async fn aggregate_share_request() {
         let (_, _ephemeral_datastore, datastore, handler) = setup_http_handler_test().await;
 
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
             .with_max_batch_query_count(1)
             .with_time_precision(Duration::from_seconds(500))
             .with_min_batch_size(10)
@@ -5287,7 +5292,7 @@ mod tests {
                                 0,
                                 interval_1,
                                 BatchAggregationState::Aggregating {
-                                    aggregate_share: Some(dummy::AggregateShare(64)),
+                                    aggregate_share: Some(dummy::AggregateShare(16)),
                                     report_count: interval_1_report_count,
                                     checksum: interval_1_checksum,
                                     aggregation_jobs_created: 1,
@@ -5306,7 +5311,7 @@ mod tests {
                                 0,
                                 interval_2,
                                 BatchAggregationState::Aggregating {
-                                    aggregate_share: Some(dummy::AggregateShare(128)),
+                                    aggregate_share: Some(dummy::AggregateShare(32)),
                                     report_count: interval_2_report_count,
                                     checksum: interval_2_checksum,
                                     aggregation_jobs_created: 1,
@@ -5325,7 +5330,7 @@ mod tests {
                                 0,
                                 interval_3,
                                 BatchAggregationState::Aggregating {
-                                    aggregate_share: Some(dummy::AggregateShare(256)),
+                                    aggregate_share: Some(dummy::AggregateShare(64)),
                                     report_count: interval_3_report_count,
                                     checksum: interval_3_checksum,
                                     aggregation_jobs_created: 1,
@@ -5344,7 +5349,7 @@ mod tests {
                                 0,
                                 interval_4,
                                 BatchAggregationState::Aggregating {
-                                    aggregate_share: Some(dummy::AggregateShare(512)),
+                                    aggregate_share: Some(dummy::AggregateShare(128)),
                                     report_count: interval_4_report_count,
                                     checksum: interval_4_checksum,
                                     aggregation_jobs_created: 1,
@@ -5496,7 +5501,7 @@ mod tests {
                     10,
                     ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
                 ),
-                dummy::AggregateShare(64 + 128),
+                dummy::expected_aggregate_result(0, [16, 32]),
             ),
             (
                 "third and fourth batches",
@@ -5513,7 +5518,7 @@ mod tests {
                     ReportIdChecksum::get_decoded(&[8 ^ 4; 32]).unwrap(),
                 ),
                 // Should get sum over the third and fourth batches
-                dummy::AggregateShare(256 + 512),
+                dummy::expected_aggregate_result(0, [64, 128]),
             ),
         ] {
             // Request the aggregate share multiple times. If the request parameters don't change,
@@ -5564,7 +5569,8 @@ mod tests {
                 let decoded_aggregate_share =
                     dummy::AggregateShare::get_decoded(aggregate_share.as_ref()).unwrap();
                 assert_eq!(
-                    decoded_aggregate_share, expected_result,
+                    decoded_aggregate_share,
+                    dummy::AggregateShare(expected_result),
                     "test case: {label:?}, iteration: {iteration}"
                 );
 

@@ -14,9 +14,9 @@ use janus_integration_tests::{
 use janus_messages::{
     problem_type::DapProblemType,
     query_type::{self, FixedSize},
-    Duration, FixedSizeQuery, Interval, Query,
+    Duration, FixedSizeQuery, Interval, Query, Time,
 };
-use prio::vdaf::{self, prio3::Prio3};
+use prio::vdaf::{self, dummy, prio3::Prio3};
 use rand::{random, thread_rng, Rng};
 use std::{iter, time::Duration as StdDuration};
 use tokio::time::{self, sleep};
@@ -175,13 +175,47 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
     V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
     V::AggregateResult: PartialEq,
 {
+    let before_timestamp =
+        submit_measurements_generic(&test_case.measurements, client_implementation).await;
+
+    verify_aggregate_generic(
+        task_parameters,
+        leader_port,
+        vdaf,
+        test_case,
+        before_timestamp,
+    )
+    .await
+}
+
+pub async fn submit_measurements_generic<V>(
+    measurements: &[V::Measurement],
+    client_implementation: &ClientImplementation<'_, V>,
+) -> Time
+where
+    V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
+    V::AggregateResult: PartialEq,
+{
     // Submit some measurements, recording a timestamp before measurement upload to allow us to
     // determine the correct collect interval. (for time interval tasks)
     let before_timestamp = RealClock::default().now();
-    for measurement in test_case.measurements.iter() {
+    for measurement in measurements.iter() {
         client_implementation.upload(measurement).await.unwrap();
     }
 
+    before_timestamp
+}
+
+pub async fn verify_aggregate_generic<V>(
+    task_parameters: &TaskParameters,
+    leader_port: u16,
+    vdaf: V,
+    test_case: &AggregationTestCase<V>,
+    before_timestamp: Time,
+) where
+    V: vdaf::Client<16> + vdaf::Collector + InteropClientEncoding,
+    V::AggregateResult: PartialEq,
+{
     let leader_endpoint = task_parameters
         .endpoint_fragments
         .leader_endpoint_for_host(leader_port);
@@ -514,6 +548,61 @@ pub async fn submit_measurements_and_verify_aggregate(
                 &client_implementation,
             )
             .await;
+        }
+        _ => panic!("Unsupported VdafInstance: {:?}", task_parameters.vdaf),
+    }
+}
+
+pub async fn submit_measurements_and_verify_aggregate_varying_aggregation_parameter(
+    test_name: &str,
+    task_parameters: &TaskParameters,
+    aggregation_parameters: &[dummy::AggregationParam],
+    (leader_port, helper_port): (u16, u16),
+    client_backend: &ClientBackend<'_>,
+) {
+    // We generate exactly one batch's worth of measurement uploads.
+    let total_measurements: usize = task_parameters.min_batch_size.try_into().unwrap();
+
+    match &task_parameters.vdaf {
+        VdafInstance::Fake { rounds } => {
+            let vdaf = dummy::Vdaf::new(*rounds);
+            let client_implementation = client_backend
+                .build(
+                    test_name,
+                    task_parameters,
+                    (leader_port, helper_port),
+                    vdaf.clone(),
+                )
+                .await
+                .unwrap();
+
+            let measurements = iter::repeat_with(random::<u8>)
+                .take(total_measurements)
+                .collect::<Vec<_>>();
+
+            let before_timestamp =
+                submit_measurements_generic(&measurements, &client_implementation).await;
+
+            for aggregation_parameter in aggregation_parameters {
+                let aggregate_result = measurements.iter().map(|m| u64::from(*m)).sum::<u64>()
+                    % (u64::from(u8::MAX) + 1)
+                    + u64::from(aggregation_parameter.0);
+
+                let test_case = AggregationTestCase {
+                    measurements: measurements.clone(),
+                    aggregation_parameter: *aggregation_parameter,
+                    aggregate_result,
+                };
+
+                verify_aggregate_generic(
+                    task_parameters,
+                    leader_port,
+                    vdaf.clone(),
+                    &test_case,
+                    before_timestamp,
+                )
+                .await;
+            }
         }
         _ => panic!("Unsupported VdafInstance: {:?}", task_parameters.vdaf),
     }

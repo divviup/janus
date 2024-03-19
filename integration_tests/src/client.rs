@@ -8,7 +8,7 @@ use janus_messages::{Duration, TaskId};
 use prio::{
     codec::Encode,
     vdaf::{
-        self,
+        self, dummy,
         prio3::{Prio3Count, Prio3Histogram, Prio3Sum, Prio3SumVecMultithreaded},
     },
 };
@@ -61,6 +61,12 @@ impl InteropClientEncoding for Prio3SumVecField64MultiproofHmacSha256Aes128 {
                 .map(|value| Value::String(format!("{value}")))
                 .collect(),
         )
+    }
+}
+
+impl InteropClientEncoding for dummy::Vdaf {
+    fn json_encode_measurement(&self, measurement: &Self::Measurement) -> Value {
+        Value::String(format!("{measurement}"))
     }
 }
 

@@ -758,7 +758,7 @@ mod tests {
         CollectionJob<0, TimeInterval, dummy::Vdaf>,
     ) {
         let time_precision = Duration::from_seconds(500);
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
             .with_helper_aggregator_endpoint(server.url().parse().unwrap())
             .with_time_precision(time_precision)
             .with_min_batch_size(10)
@@ -900,7 +900,7 @@ mod tests {
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()).await);
 
         let time_precision = Duration::from_seconds(500);
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
             .with_helper_aggregator_endpoint(server.url().parse().unwrap())
             .with_time_precision(time_precision)
             .with_min_batch_size(10)

@@ -32,7 +32,7 @@ janus_interop_binaries = { workspace = true, features = ["test-util"] }
 janus_messages.workspace = true
 k8s-openapi = { workspace = true, optional = true }
 kube = { workspace = true, optional = true }
-prio.workspace = true
+prio = { workspace = true, features = ["test-util"] }
 rand.workspace = true
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
 serde.workspace = true
