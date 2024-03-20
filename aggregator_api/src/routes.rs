@@ -2,7 +2,7 @@ use crate::{
     models::{
         AggregatorApiConfig, AggregatorRole, DeleteTaskprovPeerAggregatorReq, GetTaskIdsResp,
         GetTaskMetricsResp, GetTaskUploadMetricsResp, GlobalHpkeConfigResp,
-        PatchGlobalHpkeConfigReq, PostTaskReq, PostTaskprovPeerAggregatorReq,
+        PatchGlobalHpkeConfigReq, PatchTaskReq, PostTaskReq, PostTaskprovPeerAggregatorReq,
         PutGlobalHpkeConfigReq, SupportedVdaf, TaskResp, TaskprovPeerAggregatorResp,
     },
     Config, ConnExt, Error,
@@ -256,6 +256,28 @@ pub(super) async fn delete_task<C: Clock>(
         Ok(_) | Err(datastore::Error::MutationTargetNotFound) => Ok(Status::NoContent),
         Err(err) => Err(err.into()),
     }
+}
+
+pub(super) async fn patch_task<C: Clock>(
+    conn: &mut Conn,
+    (State(ds), Json(req)): (State<Arc<Datastore<C>>>, Json<PatchTaskReq>),
+) -> Result<Json<TaskResp>, Error> {
+    let task_id = conn.task_id_param()?;
+    let task = ds
+        .run_tx("patch_task", |tx| {
+            Box::pin(async move {
+                if let Some(task_expiration) = req.task_expiration {
+                    tx.update_task_expiration(&task_id, task_expiration.as_ref())
+                        .await?;
+                }
+                tx.get_aggregator_task(&task_id).await
+            })
+        })
+        .await?
+        .ok_or(Error::NotFound)?;
+    Ok(Json(
+        TaskResp::try_from(&task).map_err(|err| Error::Internal(err.to_string()))?,
+    ))
 }
 
 pub(super) async fn get_task_metrics<C: Clock>(

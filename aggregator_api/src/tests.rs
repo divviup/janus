@@ -636,15 +636,7 @@ async fn get_task(#[case] role: Role) {
         .view_for_role(role)
         .unwrap();
 
-    ds.run_unnamed_tx(|tx| {
-        let task = task.clone();
-        Box::pin(async move {
-            tx.put_aggregator_task(&task).await?;
-            Ok(())
-        })
-    })
-    .await
-    .unwrap();
+    ds.put_aggregator_task(&task).await.unwrap();
 
     // Verify: getting the task returns the expected result.
     let want_task_resp = TaskResp::try_from(&task).unwrap();
@@ -758,6 +750,124 @@ async fn delete_task() {
             .await,
         Status::Unauthorized,
         ""
+    );
+}
+
+#[rstest::rstest]
+#[case::leader(Role::Leader)]
+#[case::helper(Role::Helper)]
+#[tokio::test]
+async fn patch_task(#[case] role: Role) {
+    // Setup: write a task to the datastore.
+    let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
+
+    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
+        .with_task_expiration(Some(Time::from_seconds_since_epoch(1000)))
+        .build()
+        .view_for_role(role)
+        .unwrap();
+
+    ds.put_aggregator_task(&task).await.unwrap();
+    let task_id = *task.id();
+
+    // Verify: patching the task with empty body does nothing.
+    let want_task_resp = TaskResp::try_from(&task).unwrap();
+    let mut conn = patch(&format!("/tasks/{}", task.id()))
+        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+        .with_request_header("Accept", CONTENT_TYPE)
+        .with_request_body("{}")
+        .run_async(&handler)
+        .await;
+    assert_status!(conn, Status::Ok);
+    let got_task_resp = serde_json::from_slice(
+        &conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(want_task_resp, got_task_resp);
+    let task = ds
+        .run_unnamed_tx(|tx| Box::pin(async move { tx.get_aggregator_task(&task_id).await }))
+        .await
+        .unwrap();
+    assert_eq!(
+        task.unwrap().task_expiration(),
+        Some(&Time::from_seconds_since_epoch(1000))
+    );
+
+    // Verify: patching the task with a null task expiration returns the expected result.
+    let mut conn = patch(&format!("/tasks/{}", task_id))
+        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+        .with_request_header("Accept", CONTENT_TYPE)
+        .with_request_body(r#"{"task_expiration": null}"#)
+        .run_async(&handler)
+        .await;
+    assert_status!(conn, Status::Ok);
+    let got_task_resp: TaskResp = serde_json::from_slice(
+        &conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(got_task_resp.task_expiration, None);
+    let task = ds
+        .run_unnamed_tx(|tx| Box::pin(async move { tx.get_aggregator_task(&task_id).await }))
+        .await
+        .unwrap();
+    assert_eq!(task.unwrap().task_expiration(), None);
+
+    // Verify: patching the task with a task expiration returns the expected result.
+    let expected_time = Some(Time::from_seconds_since_epoch(2000));
+    let mut conn = patch(&format!("/tasks/{}", task_id))
+        .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+        .with_request_header("Accept", CONTENT_TYPE)
+        .with_request_body(r#"{"task_expiration": 2000}"#)
+        .run_async(&handler)
+        .await;
+    assert_status!(conn, Status::Ok);
+    let got_task_resp: TaskResp = serde_json::from_slice(
+        &conn
+            .take_response_body()
+            .unwrap()
+            .into_bytes()
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(got_task_resp.task_expiration, expected_time);
+    let task = ds
+        .run_unnamed_tx(|tx| Box::pin(async move { tx.get_aggregator_task(&task_id).await }))
+        .await
+        .unwrap();
+    assert_eq!(task.unwrap().task_expiration(), expected_time.as_ref());
+
+    // Verify: patching a nonexistent task returns NotFound.
+    assert_response!(
+        patch(&format!("/tasks/{}", random::<TaskId>()))
+            .with_request_header("Authorization", format!("Bearer {AUTH_TOKEN}"))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .with_request_body("{}")
+            .run_async(&handler)
+            .await,
+        Status::NotFound,
+        "",
+    );
+
+    // Verify: unauthorized requests are denied appropriately.
+    assert_response!(
+        patch(&format!("/tasks/{}", task_id))
+            .with_request_header("Accept", CONTENT_TYPE)
+            .with_request_body("{}")
+            .run_async(&handler)
+            .await,
+        Status::Unauthorized,
+        "",
     );
 }
 
