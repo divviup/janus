@@ -584,6 +584,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// Writes a task into the datastore.
     #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     pub async fn put_aggregator_task(&self, task: &AggregatorTask) -> Result<(), Error> {
+        let now = self.clock.now().as_naive_date_time()?;
         // Main task insert.
         let stmt = self
             .prepare_cached(
@@ -593,10 +594,10 @@ impl<C: Clock> Transaction<'_, C> {
                     time_precision, tolerable_clock_skew, collector_hpke_config, vdaf_verify_key,
                     taskprov_task_info, aggregator_auth_token_type, aggregator_auth_token,
                     aggregator_auth_token_hash, collector_auth_token_type,
-                    collector_auth_token_hash, created_at, updated_by)
+                    collector_auth_token_hash, created_at, updated_at, updated_by)
                 VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-                    $19, $20, $21
+                    $19, $20, $21, $22
                 )
                 ON CONFLICT DO NOTHING",
             )
@@ -675,7 +676,8 @@ impl<C: Clock> Transaction<'_, C> {
                     &task
                         .collector_auth_token_hash()
                         .map(|token_hash| token_hash.as_ref()),
-                    /* created_at */ &self.clock.now().as_naive_date_time()?,
+                    /* created_at */ &now,
+                    /* updated_at */ &now,
                     /* updated_by */ &self.name,
                 ],
             )
@@ -751,7 +753,8 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<(), Error> {
         let stmt = self
             .prepare_cached(
-                "UPDATE tasks SET task_expiration = $1, updated_by = $2 WHERE task_id = $3",
+                "UPDATE tasks SET task_expiration = $1, updated_at = $2, updated_by = $3
+                    WHERE task_id = $4",
             )
             .await?;
         check_single_row_mutation(
@@ -760,9 +763,8 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* task_expiration */
                     &task_expiration.map(Time::as_naive_date_time).transpose()?,
-                    // TODO(#2819): set updated_at
-                    /* updated_by */
-                    &self.name,
+                    /* updated_at */ &self.clock.now().as_naive_date_time()?,
+                    /* updated_by */ &self.name,
                     /* task_id */ &task_id.as_ref(),
                 ],
             )
