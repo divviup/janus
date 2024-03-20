@@ -130,6 +130,7 @@ CREATE TABLE tasks(
 
     -- creation/update records
     created_at TIMESTAMP NOT NULL,  -- when the row was created
+    updated_at TIMESTAMP NOT NULL,  -- when the row was last changed
     updated_by TEXT NOT NULL        -- the name of the transaction that last updated the row
 );
 CREATE INDEX task_id_index ON tasks(task_id);
