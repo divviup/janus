@@ -708,7 +708,7 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// Sets or unsets the expiration date of a task.
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self), err(level = Level::DEBUG))]
     pub async fn update_task_expiration(
         &self,
         task_id: &TaskId,
