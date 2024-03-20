@@ -280,6 +280,55 @@ async fn roundtrip_task(ephemeral_datastore: EphemeralDatastore) {
 
 #[rstest_reuse::apply(schema_versions_template)]
 #[tokio::test]
+async fn update_task_expiration(ephemeral_datastore: EphemeralDatastore) {
+    install_test_trace_subscriber();
+    let ds = ephemeral_datastore.datastore(MockClock::default()).await;
+
+    let task = TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Prio3Count)
+        .with_task_expiration(Some(Time::from_seconds_since_epoch(1000)))
+        .build()
+        .leader_view()
+        .unwrap();
+    ds.put_aggregator_task(&task).await.unwrap();
+
+    ds.run_unnamed_tx(|tx| {
+        let task_id = *task.id();
+        Box::pin(async move {
+            let task = tx.get_aggregator_task(&task_id).await.unwrap().unwrap();
+            assert_eq!(
+                task.task_expiration().cloned(),
+                Some(Time::from_seconds_since_epoch(1000))
+            );
+
+            tx.update_task_expiration(&task_id, Some(&Time::from_seconds_since_epoch(2000)))
+                .await
+                .unwrap();
+
+            let task = tx.get_aggregator_task(&task_id).await.unwrap().unwrap();
+            assert_eq!(
+                task.task_expiration().cloned(),
+                Some(Time::from_seconds_since_epoch(2000))
+            );
+
+            tx.update_task_expiration(&task_id, None).await.unwrap();
+
+            let task = tx.get_aggregator_task(&task_id).await.unwrap().unwrap();
+            assert_eq!(task.task_expiration().cloned(), None);
+
+            let result = tx
+                .update_task_expiration(&random(), Some(&Time::from_seconds_since_epoch(2000)))
+                .await;
+            assert_matches!(result, Err(Error::MutationTargetNotFound));
+
+            Ok(())
+        })
+    })
+    .await
+    .unwrap();
+}
+
+#[rstest_reuse::apply(schema_versions_template)]
+#[tokio::test]
 async fn put_task_invalid_aggregator_auth_tokens(ephemeral_datastore: EphemeralDatastore) {
     install_test_trace_subscriber();
     let ds = ephemeral_datastore.datastore(MockClock::default()).await;

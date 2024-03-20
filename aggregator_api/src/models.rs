@@ -13,7 +13,7 @@ use janus_messages::{
     query_type::Code as SupportedQueryType, Duration, HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId,
     Role, TaskId, Time,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use url::Url;
 
 #[allow(dead_code)]
@@ -89,6 +89,12 @@ pub(crate) struct PostTaskReq {
     /// sub-protocol requests received from the helper. If this aggregator is the helper, the value
     /// is `None`.
     pub(crate) collector_auth_token_hash: Option<AuthenticationTokenHash>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct PatchTaskReq {
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub(crate) task_expiration: Option<Option<Time>>,
 }
 
 #[derive(Clone, Derivative, PartialEq, Eq, Serialize, Deserialize)]
@@ -243,4 +249,14 @@ pub(crate) struct PostTaskprovPeerAggregatorReq {
 pub(crate) struct DeleteTaskprovPeerAggregatorReq {
     pub(crate) endpoint: Url,
     pub(crate) role: Role,
+}
+
+// Any value that is present is considered Some value, including null. See
+// https://github.com/serde-rs/serde/issues/984#issuecomment-314143738
+fn deserialize_some<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Deserialize::deserialize(deserializer).map(Some)
 }
