@@ -761,7 +761,7 @@ async fn patch_task(#[case] role: Role) {
     // Setup: write a task to the datastore.
     let (handler, _ephemeral_datastore, ds) = setup_api_test().await;
 
-    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake { rounds: 1 })
+    let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake)
         .with_task_expiration(Some(Time::from_seconds_since_epoch(1000)))
         .build()
         .view_for_role(role)
