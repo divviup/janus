@@ -3164,14 +3164,6 @@ mod tests {
         assert_eq!(report_ids, seen_report_ids);
     }
 
-    /// Test helper function that reads all aggregation jobs & batch aggregations for a given task
-    /// ID, returning the aggregation jobs, the report IDs included in the aggregation job, and the
-    /// batch aggregations. Report IDs are returned in the order they are included in the
-    /// aggregation job, and report aggregations are verified to be in the correct state based on
-    /// `want_ra_states`. Batch aggregations for the same batch (by task ID, batch identifier, and
-    /// aggregation parameter) are merged together, with the resulting batch aggregation having
-    /// shard 0; batch aggregations for different batches are returned sorted by task ID, batch
-    /// identifier, and aggregation parameter.
     #[tokio::test]
     async fn create_aggregation_jobs_for_time_interval_task_with_param() {
         install_test_trace_subscriber();
@@ -3182,9 +3174,11 @@ mod tests {
         const MAX_AGGREGATION_JOB_SIZE: usize = 10;
 
         // Note that the minimum aggregation job size setting has no effect here, because we always
-        // wait for a collection job before scheduling any aggregation jobs, and DAP requires that no
-        // more reports are accepted for a time interval after that interval already has a collect
-        // job.
+        // wait for a collection job before scheduling any aggregation jobs, and then create
+        // aggregation jobs for all reports that have been received. DAP requires that no more
+        // reports are accepted for a time interval after that interval has already been collected,
+        // and there is no reason to wait for more reports between receipt of a collection job and
+        // performing the collection.
 
         let vdaf = Arc::new(dummy::Vdaf::new(1));
         let task = Arc::new(
@@ -3423,7 +3417,6 @@ mod tests {
         assert_eq!(seen_pairs, expected_pairs);
 
         // Run once more, and confirm that no further aggregation jobs are created.
-        // Run again, this time it should create some aggregation jobs.
         Arc::clone(&job_creator)
             .create_aggregation_jobs_for_time_interval_task_with_param::<0, dummy::Vdaf>(
                 Arc::clone(&task),
