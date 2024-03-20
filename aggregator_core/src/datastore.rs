@@ -2137,6 +2137,7 @@ impl<C: Clock> Transaction<'_, C> {
                 "SELECT 1 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 WHERE report_aggregations.task_id = $1
+                  AND aggregation_jobs.task_id = $1
                   AND report_aggregations.client_report_id = $2
                   AND aggregation_jobs.aggregation_param = $3
                   AND aggregation_jobs.aggregation_job_id != $4
@@ -2190,6 +2191,7 @@ impl<C: Clock> Transaction<'_, C> {
                 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 WHERE report_aggregations.task_id = $1
+                  AND aggregation_jobs.task_id = $1
                   AND aggregation_jobs.aggregation_job_id = $2
                   AND UPPER(client_timestamp_interval) >= $3
                 ORDER BY ord ASC",
@@ -2241,20 +2243,22 @@ impl<C: Clock> Transaction<'_, C> {
         };
 
         let stmt = self
-                .prepare_cached(
-                    "SELECT
-                        ord, client_timestamp, last_prep_resp, report_aggregations.state,
-                        public_share, leader_extensions, leader_input_share,
-                        helper_encrypted_input_share, leader_prep_transition, helper_prep_state,
-                        error_code
-                    FROM report_aggregations
-                    JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
-                    WHERE report_aggregations.task_id = $1
-                      AND aggregation_jobs.aggregation_job_id = $2
-                      AND report_aggregations.client_report_id = $3
-                      AND UPPER(client_timestamp_interval) >= $4",
-                )
-                .await?;
+            .prepare_cached(
+                "SELECT
+                    ord, client_timestamp, last_prep_resp, report_aggregations.state,
+                    public_share, leader_extensions, leader_input_share,
+                    helper_encrypted_input_share, leader_prep_transition, helper_prep_state,
+                    error_code
+                FROM report_aggregations
+                JOIN aggregation_jobs
+                    ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                WHERE report_aggregations.task_id = $1
+                    AND aggregation_jobs.task_id = $1
+                    AND aggregation_jobs.aggregation_job_id = $2
+                    AND report_aggregations.client_report_id = $3
+                    AND UPPER(client_timestamp_interval) >= $4",
+            )
+            .await?;
         self.query_opt(
             &stmt,
             &[
@@ -2309,6 +2313,7 @@ impl<C: Clock> Transaction<'_, C> {
                 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 WHERE report_aggregations.task_id = $1
+                  AND aggregation_jobs.task_id = $1
                   AND UPPER(aggregation_jobs.client_timestamp_interval) >= $2",
             )
             .await?;
@@ -2743,6 +2748,7 @@ impl<C: Clock> Transaction<'_, C> {
                 FROM aggregation_jobs
                 WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
                   AND aggregation_jobs.aggregation_job_id = $12
+                  AND aggregation_jobs.task_id = $13
                   AND report_aggregations.task_id = $13
                   AND report_aggregations.client_report_id = $14
                   AND report_aggregations.client_timestamp = $15
