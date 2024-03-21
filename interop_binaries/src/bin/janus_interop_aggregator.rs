@@ -2,7 +2,6 @@ use anyhow::Context;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
 use janus_aggregator::{
-    aggregator::{self, http_handlers::aggregator_handler},
     binary_utils::{janus_main, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
 };
@@ -14,22 +13,21 @@ use janus_aggregator_core::{
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     time::RealClock,
-    Runtime, TokioRuntime,
 };
 use janus_interop_binaries::{
     status::{ERROR, SUCCESS},
     AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole, HpkeConfigRegistry, Keyring,
 };
 use janus_messages::{Duration, HpkeConfig, Time};
-use opentelemetry::metrics::Meter;
 use prio::codec::Decode;
 use serde::{Deserialize, Serialize};
-use sqlx::{migrate::Migrator, Connection, PgConnection};
-use std::{net::SocketAddr, path::Path, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 use trillium::{Conn, Handler};
 use trillium_api::{api, Json};
+use trillium_proxy::{upstream::IntoUpstreamSelector, Client, Proxy};
 use trillium_router::Router;
+use trillium_tokio::ClientConfig;
 
 #[derive(Debug, Serialize)]
 struct EndpointResponse {
@@ -128,35 +126,26 @@ async fn handle_add_task(
         .context("error adding task to database")
 }
 
-async fn make_handler<R: Runtime + Send + Sync + 'static>(
+async fn make_handler(
     datastore: Arc<Datastore<RealClock>>,
-    runtime: R,
-    meter: &Meter,
     dap_serving_prefix: String,
+    aggregator_address: SocketAddr,
 ) -> anyhow::Result<impl Handler> {
     let keyring = Keyring::new();
-    let dap_handler = aggregator_handler(
-        Arc::clone(&datastore),
-        RealClock::default(),
-        runtime,
-        meter,
-        aggregator::Config {
-            max_upload_batch_size: 100,
-            max_upload_batch_write_delay: std::time::Duration::from_millis(100),
-            batch_aggregation_shard_count: 32,
-            ..Default::default()
-        },
-    )
-    .await?;
+
+    let upstream = format!("http://{aggregator_address}/").into_upstream();
+    let proxy_handler = Proxy::new(
+        Client::new(ClientConfig::default()).with_default_pool(),
+        upstream,
+    );
 
     let handler = Router::new()
-        .all(format!("{dap_serving_prefix}/*"), dap_handler)
         .post("internal/test/ready", Json(serde_json::Map::new()))
         .post(
             "internal/test/endpoint_for_task",
             Json(EndpointResponse {
                 status: "success",
-                endpoint: dap_serving_prefix,
+                endpoint: dap_serving_prefix.clone(),
             }),
         )
         .post(
@@ -179,7 +168,8 @@ async fn make_handler<R: Runtime + Send + Sync + 'static>(
                     }
                 },
             ),
-        );
+        )
+        .all(format!("{dap_serving_prefix}/*"), proxy_handler);
     Ok(handler)
 }
 
@@ -219,6 +209,10 @@ struct Config {
     /// Path prefix, e.g. `/dap/`, to serve DAP from.
     #[serde(default = "default_dap_serving_prefix")]
     dap_serving_prefix: String,
+
+    /// Address on which the aggregator's HTTP server is listening. DAP requests will be proxied to
+    /// this.
+    aggregator_address: SocketAddr,
 }
 
 impl BinaryConfig for Config {
@@ -236,21 +230,12 @@ async fn main() -> anyhow::Result<()> {
     janus_main::<_, Options, Config, _, _>(RealClock::default(), |ctx| async move {
         let datastore = Arc::new(ctx.datastore);
 
-        // Apply SQL migrations to database
-        let mut connection =
-            PgConnection::connect(ctx.config.common_config.database.url.as_str()).await?;
-        // Migration scripts are mounted into the container at this path by
-        // Dockerfile.interop_aggregator
-        let migrator = Migrator::new(Path::new("/etc/janus/migrations")).await?;
-        migrator.run(&mut connection).await?;
-
         // Run an HTTP server with both the DAP aggregator endpoints and the interoperation test
         // endpoints.
         let handler = make_handler(
             Arc::clone(&datastore),
-            TokioRuntime,
-            &ctx.meter,
             ctx.config.dap_serving_prefix,
+            ctx.config.aggregator_address,
         )
         .await?;
         trillium_tokio::config()

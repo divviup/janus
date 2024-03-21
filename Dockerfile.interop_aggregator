@@ -2,7 +2,6 @@ ARG PROFILE=release
 
 FROM rust:1.76.0-alpine AS chef
 RUN apk add --no-cache libc-dev
-ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 RUN cargo install cargo-chef --version 0.1.60 && \
     rm -r $CARGO_HOME/registry
 WORKDIR /src
@@ -40,6 +39,7 @@ COPY messages /src/messages
 COPY tools /src/tools
 COPY xtask /src/xtask
 RUN cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_aggregator \
+    --bin aggregator \
     --bin aggregation_job_creator \
     --bin aggregation_job_driver \
     --bin collection_job_driver
@@ -63,6 +63,13 @@ COPY tools /src/tools
 RUN cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_interop_binaries \
     --bin janus_interop_aggregator
 
+FROM rust:1.76.0-alpine AS sqlx
+ARG SQLX_VERSION=0.7.2
+RUN apk add --no-cache libc-dev
+RUN cargo install sqlx-cli \
+    --version ${SQLX_VERSION} \
+    --no-default-features --features postgres
+
 FROM postgres:15-alpine AS final
 RUN mkdir /logs && mkdir /etc/janus
 RUN apk add --no-cache supervisor && rm -rf /tmp/* /var/cache/apk/*
@@ -70,6 +77,7 @@ COPY db /etc/janus/migrations
 COPY interop_binaries/setup.sh /usr/local/bin/setup.sh
 COPY interop_binaries/config/supervisord.conf \
     interop_binaries/config/janus_interop_aggregator.yaml \
+    interop_binaries/config/aggregator.yaml \
     interop_binaries/config/aggregation_job_creator.yaml \
     interop_binaries/config/aggregation_job_driver.yaml \
     interop_binaries/config/collection_job_driver.yaml \
@@ -77,10 +85,12 @@ COPY interop_binaries/config/supervisord.conf \
 ARG PROFILE
 COPY --from=builder-interop /src/target/$PROFILE/janus_interop_aggregator /usr/local/bin/
 COPY --from=builder-aggregator \
+    /src/target/$PROFILE/aggregator \
     /src/target/$PROFILE/aggregation_job_creator \
     /src/target/$PROFILE/aggregation_job_driver \
     /src/target/$PROFILE/collection_job_driver \
     /usr/local/bin/
+COPY --from=sqlx /usr/local/cargo/bin/sqlx /usr/local/bin/
 ENV RUST_LOG=info
 EXPOSE 8080
 ENTRYPOINT ["/usr/bin/supervisord", "-c", "/etc/janus/supervisord.conf"]
