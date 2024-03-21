@@ -3,8 +3,10 @@
 database:
   url: postgres://postgres@127.0.0.1:5432/postgres
   check_schema_version: false
-health_check_listen_address: 0.0.0.0:8000
+health_check_listen_address: 0.0.0.0:8004
 logging_config:
   force_json_output: true
-listen_address: 0.0.0.0:8080
-aggregator_address: 127.0.0.1:8081
+listen_address: 0.0.0.0:8081
+max_upload_batch_size: 100
+max_upload_batch_write_delay_ms: 100
+batch_aggregation_shard_count: 32

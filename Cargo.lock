@@ -710,6 +710,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cidr"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d18b093eba54c9aaa1e3784d4361eb2ba944cf7d0a932a830132238f483e8d8"
+
+[[package]]
 name = "cipher"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1432,6 +1438,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13624c2627564efccf4934284bdd98cbaa14e79b0b5a141218e507b3a823456"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "full-duplex-async-copy"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb69fcc211c8359cc56981e36370c21f6410d6f9820c68dab273bed4bc58d99e"
+dependencies = [
+ "fastrand 1.9.0",
+ "futures-lite 1.13.0",
+ "pin-project-lite",
 ]
 
 [[package]]
@@ -2398,7 +2415,6 @@ dependencies = [
  "janus_core",
  "janus_interop_binaries",
  "janus_messages 0.7.0-prerelease-5",
- "opentelemetry",
  "prio 0.16.2",
  "rand",
  "regex",
@@ -2406,7 +2422,6 @@ dependencies = [
  "ring 0.17.8",
  "serde",
  "serde_json",
- "sqlx",
  "testcontainers",
  "tokio",
  "tracing",
@@ -2414,6 +2429,7 @@ dependencies = [
  "tracing-subscriber",
  "trillium",
  "trillium-api",
+ "trillium-proxy",
  "trillium-router",
  "trillium-tokio",
  "url",
@@ -4326,6 +4342,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sluice"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d7400c0eff44aa2fcb5e31a5f24ba9716ed90138769e4977a2ba6014ae63eb5"
+dependencies = [
+ "async-channel 1.9.0",
+ "futures-core",
+ "futures-io",
+]
+
+[[package]]
 name = "smallvec"
 version = "1.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5308,6 +5335,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "trillium-forwarding"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0c9d3277d2479cd05fd8915e825cee7535d3ccc7ccf06d4c57465a666437d74"
+dependencies = [
+ "cidr",
+ "log",
+ "trillium",
+]
+
+[[package]]
 name = "trillium-head"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5381,6 +5419,27 @@ dependencies = [
  "tracing",
  "trillium",
  "trillium-router",
+]
+
+[[package]]
+name = "trillium-proxy"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2a7e6aa0e67f5bd645a25f19623e973aac00cd12c5b72c4f36eba4a4285a57f"
+dependencies = [
+ "event-listener 4.0.3",
+ "fastrand 2.0.1",
+ "full-duplex-async-copy",
+ "futures-lite 2.2.0",
+ "log",
+ "size",
+ "sluice",
+ "trillium",
+ "trillium-client",
+ "trillium-forwarding",
+ "trillium-http",
+ "trillium-server-common",
+ "url",
 ]
 
 [[package]]
