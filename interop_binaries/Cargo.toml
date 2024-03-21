@@ -24,11 +24,11 @@ backoff = { version = "0.4", features = ["tokio"] }
 base64.workspace = true
 clap.workspace = true
 derivative.workspace = true
-futures = { version = "0.3.30", optional = true }
 fixed = { version = "1.26", optional = true }
+futures = { version = "0.3.30", optional = true }
 hex = { version = "0.4", optional = true }
-janus_aggregator_core = { workspace = true, features = ["test-util"] }
 janus_aggregator.workspace = true
+janus_aggregator_core = { workspace = true, features = ["test-util"] }
 janus_client.workspace = true
 janus_collector.workspace = true
 janus_core.workspace = true
@@ -55,6 +55,6 @@ zstd = { version = "0.13", optional = true }
 
 [dev-dependencies]
 fixed-macro = "1.1.1"
-janus_interop_binaries = { path = ".", features = ["fpvec_bounded_l2", "test-util"] }
 janus_core = { workspace = true, features = ["test-util", "fpvec_bounded_l2"] }
+janus_interop_binaries = { path = ".", features = ["fpvec_bounded_l2", "test-util"] }
 reqwest = { version = "0.11.26", default-features = false, features = ["json"] }
