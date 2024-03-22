@@ -151,6 +151,7 @@ jobs:
     - run: docker run --rm janus_aggregation_job_driver --help
     - run: docker run --rm janus_collection_job_driver --help
     - run: docker run --rm janus_cli --help
+    - run: docker run --rm janus_db_migrator --help
 
   janus_interop_docker:
     runs-on: ubuntu-latest

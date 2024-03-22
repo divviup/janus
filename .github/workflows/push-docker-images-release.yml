@@ -59,6 +59,7 @@ jobs:
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_driver:${{ steps.get_version.outputs.VERSION }}
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_collection_job_driver:${{ steps.get_version.outputs.VERSION }}
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_cli:${{ steps.get_version.outputs.VERSION }}
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_db_migrator:${{ steps.get_version.outputs.VERSION }}
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_client:${{ steps.get_version.outputs.VERSION }}
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_aggregator:${{ steps.get_version.outputs.VERSION }}
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_collector:${{ steps.get_version.outputs.VERSION }}
@@ -83,6 +84,7 @@ jobs:
     - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_aggregation_job_driver:${{ steps.get_version.outputs.VERSION }}
     - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_collection_job_driver:${{ steps.get_version.outputs.VERSION }}
     - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_cli:${{ steps.get_version.outputs.VERSION }}
+    - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_db_migrator:${{ steps.get_version.outputs.VERSION }}
     - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_interop_client:${{ steps.get_version.outputs.VERSION }}
     - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_interop_aggregator:${{ steps.get_version.outputs.VERSION }}
     - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_interop_collector:${{ steps.get_version.outputs.VERSION }}
