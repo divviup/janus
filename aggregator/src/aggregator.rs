@@ -1032,7 +1032,8 @@ macro_rules! vdaf_ops_dispatch {
                 let $verify_key = verify_key;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Count;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
-                $body
+                let body = $body;
+                body
             }
 
             crate::aggregator::VdafOps::Prio3CountVec(vdaf, verify_key) => {
@@ -1040,7 +1041,8 @@ macro_rules! vdaf_ops_dispatch {
                 let $verify_key = verify_key;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
-                $body
+                let body = $body;
+                body
             }
 
             crate::aggregator::VdafOps::Prio3Sum(vdaf, verify_key) => {
@@ -1048,7 +1050,8 @@ macro_rules! vdaf_ops_dispatch {
                 let $verify_key = verify_key;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Sum;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
-                $body
+                let body = $body;
+                body
             }
 
             crate::aggregator::VdafOps::Prio3SumVec(vdaf, verify_key) => {
@@ -1056,7 +1059,8 @@ macro_rules! vdaf_ops_dispatch {
                 let $verify_key = verify_key;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3SumVecMultithreaded;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
-                $body
+                let body = $body;
+                body
             }
 
             crate::aggregator::VdafOps::Prio3Histogram(vdaf, verify_key) => {
@@ -1064,7 +1068,8 @@ macro_rules! vdaf_ops_dispatch {
                 let $verify_key = verify_key;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Histogram;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
-                $body
+                let body = $body;
+                body
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
@@ -1074,7 +1079,8 @@ macro_rules! vdaf_ops_dispatch {
                 type $Vdaf =
                     ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI16<U15>>;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
-                $body
+                let body = $body;
+                body
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
@@ -1084,7 +1090,8 @@ macro_rules! vdaf_ops_dispatch {
                 type $Vdaf =
                     ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI32<U31>>;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
-                $body
+                let body = $body;
+                body
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
@@ -1094,7 +1101,8 @@ macro_rules! vdaf_ops_dispatch {
                 type $Vdaf =
                     ::prio::vdaf::prio3::Prio3FixedPointBoundedL2VecSumMultithreaded<FixedI64<U63>>;
                 const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
-                $body
+                let body = $body;
+                body
             }
 
             #[cfg(feature = "test-util")]
@@ -1103,7 +1111,8 @@ macro_rules! vdaf_ops_dispatch {
                 let $verify_key = &VerifyKey::new([]);
                 type $Vdaf = ::janus_core::test_util::dummy_vdaf::Vdaf;
                 const $VERIFY_KEY_LENGTH: usize = 0;
-                $body
+                let body = $body;
+                body
             }
         }
     };
