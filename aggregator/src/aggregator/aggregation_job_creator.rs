@@ -9,6 +9,8 @@ use fixed::{
 };
 use futures::future::try_join_all;
 use itertools::Itertools as _;
+#[cfg(feature = "test-util")]
+use janus_aggregator_core::VdafHasAggregationParameter;
 use janus_aggregator_core::{
     datastore::{
         self,
@@ -19,7 +21,6 @@ use janus_aggregator_core::{
         Datastore,
     },
     task::{self, AggregatorTask},
-    VdafHasAggregationParameter,
 };
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
@@ -31,9 +32,10 @@ use janus_core::{
         VERIFY_KEY_LENGTH_HMACSHA256_AES128,
     },
 };
+#[cfg(feature = "test-util")]
+use janus_messages::ReportMetadata;
 use janus_messages::{
-    query_type::TimeInterval, AggregationJobStep, Duration as DurationMsg, Interval,
-    ReportMetadata, Role, TaskId,
+    query_type::TimeInterval, AggregationJobStep, Duration as DurationMsg, Interval, Role, TaskId,
 };
 use opentelemetry::{
     metrics::{Histogram, Meter, Unit},
