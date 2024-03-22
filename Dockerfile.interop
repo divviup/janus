@@ -45,9 +45,9 @@ FROM alpine:3.19.1 AS final
 ARG BINARY
 ARG PROFILE
 RUN mkdir /logs
-COPY --from=builder /src/target/$PROFILE/janus_interop_binaries /janus_interop_binaries
-RUN ln -s /janus_interop_binaries /janus_interop_client
-RUN ln -s /janus_interop_binaries /janus_interop_collector
+COPY --from=builder /src/target/$PROFILE/janus_interop /janus_interop
+RUN ln -s /janus_interop /janus_interop_client
+RUN ln -s /janus_interop /janus_interop_collector
 EXPOSE 8080
 # Store the build argument in an environment variable so we can reference it
 # from the ENTRYPOINT at runtime.

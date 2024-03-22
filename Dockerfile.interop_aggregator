@@ -83,7 +83,7 @@ COPY interop_binaries/config/supervisord.conf \
     interop_binaries/config/collection_job_driver.yaml \
     /etc/janus/
 ARG PROFILE
-COPY --from=builder-interop /src/target/$PROFILE/janus_interop_binaries /usr/local/bin/janus_interop_aggregator
+COPY --from=builder-interop /src/target/$PROFILE/janus_interop /usr/local/bin/janus_interop_aggregator
 COPY --from=builder-aggregator \
     /src/target/$PROFILE/aggregator \
     /src/target/$PROFILE/aggregation_job_creator \

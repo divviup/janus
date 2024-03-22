@@ -12,7 +12,7 @@ enum Options {
     Aggregator(janus_interop_aggregator::Options),
     #[clap(name = "janus_interop_collector")]
     Collector(janus_interop_collector::Options),
-    #[clap(name = "janus_interop_binaries", subcommand)]
+    #[clap(name = "janus_interop", subcommand)]
     Default(Nested),
 }
 
