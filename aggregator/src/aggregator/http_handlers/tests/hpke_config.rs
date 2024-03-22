@@ -2,12 +2,15 @@ use crate::{
     aggregator::{
         http_handlers::{
             aggregator_handler_with_aggregator,
-            test_util::{decode_response_body, setup_http_handler_test, take_problem_details},
+            test_util::{setup_http_handler_test, take_problem_details, take_response_body},
+            HPKE_CONFIG_SIGNATURE_HEADER,
         },
+        test_util::{hpke_config_signing_key, hpke_config_verification_key},
         Config,
     },
     config::TaskprovConfig,
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use janus_aggregator_core::{
     datastore::models::HpkeKeyState,
     task::{test_util::TaskBuilder, QueryType},
@@ -22,6 +25,7 @@ use janus_core::{
     vdaf::VdafInstance,
 };
 use janus_messages::{HpkeConfigList, Role, TaskId};
+use prio::codec::Decode as _;
 use rand::random;
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
@@ -81,8 +85,7 @@ async fn hpke_config() {
         "cache-control" => "max-age=86400",
         "content-type" => (HpkeConfigList::MEDIA_TYPE),
     );
-
-    let hpke_config_list: HpkeConfigList = decode_response_body(&mut test_conn).await;
+    let hpke_config_list = verify_and_decode_hpke_config_list(&mut test_conn).await;
     assert_eq!(
         hpke_config_list.hpke_configs(),
         &[want_hpke_key.config().clone()]
@@ -117,7 +120,10 @@ async fn global_hpke_config() {
             clock.clone(),
             TestRuntime::default(),
             &noop_meter(),
-            Config::default(),
+            Config {
+                hpke_config_signing_key: Some(hpke_config_signing_key()),
+                ..Default::default()
+            },
         )
         .await
         .unwrap(),
@@ -134,7 +140,7 @@ async fn global_hpke_config() {
         "cache-control" => "max-age=86400",
         "content-type" => (HpkeConfigList::MEDIA_TYPE),
     );
-    let hpke_config_list: HpkeConfigList = decode_response_body(&mut test_conn).await;
+    let hpke_config_list = verify_and_decode_hpke_config_list(&mut test_conn).await;
     assert_eq!(
         hpke_config_list.hpke_configs(),
         &[first_hpke_keypair.config().clone()]
@@ -153,7 +159,7 @@ async fn global_hpke_config() {
     aggregator.refresh_caches().await.unwrap();
     let mut test_conn = get("/hpke_config").run_async(&handler).await;
     assert_eq!(test_conn.status(), Some(Status::Ok));
-    let hpke_config_list: HpkeConfigList = decode_response_body(&mut test_conn).await;
+    let hpke_config_list = verify_and_decode_hpke_config_list(&mut test_conn).await;
     assert_eq!(
         hpke_config_list.hpke_configs(),
         &[first_hpke_keypair.config().clone()]
@@ -173,7 +179,7 @@ async fn global_hpke_config() {
     aggregator.refresh_caches().await.unwrap();
     let mut test_conn = get("/hpke_config").run_async(&handler).await;
     assert_eq!(test_conn.status(), Some(Status::Ok));
-    let hpke_config_list: HpkeConfigList = decode_response_body(&mut test_conn).await;
+    let hpke_config_list = verify_and_decode_hpke_config_list(&mut test_conn).await;
     // Unordered comparison.
     assert_eq!(
         HashMap::from_iter(
@@ -208,7 +214,7 @@ async fn global_hpke_config() {
     aggregator.refresh_caches().await.unwrap();
     let mut test_conn = get("/hpke_config").run_async(&handler).await;
     assert_eq!(test_conn.status(), Some(Status::Ok));
-    let hpke_config_list: HpkeConfigList = decode_response_body(&mut test_conn).await;
+    let hpke_config_list = verify_and_decode_hpke_config_list(&mut test_conn).await;
     assert_eq!(
         hpke_config_list.hpke_configs(),
         &[first_hpke_keypair.config().clone()]
@@ -261,6 +267,7 @@ async fn global_hpke_config_with_taskprov() {
             enabled: true,
             ignore_unknown_differential_privacy_mechanism: false,
         },
+        hpke_config_signing_key: Some(hpke_config_signing_key()),
         ..Default::default()
     };
 
@@ -283,7 +290,7 @@ async fn global_hpke_config_with_taskprov() {
         .run_async(&handler)
         .await;
     assert_eq!(test_conn.status(), Some(Status::Ok));
-    let hpke_config_list: HpkeConfigList = decode_response_body(&mut test_conn).await;
+    let hpke_config_list = verify_and_decode_hpke_config_list(&mut test_conn).await;
     assert_eq!(
         hpke_config_list.hpke_configs(),
         &[first_hpke_keypair.config().clone()]
@@ -352,4 +359,20 @@ async fn hpke_config_cors_headers() {
         &test_conn,
         "access-control-allow-origin" => "https://example.com/",
     );
+}
+
+async fn verify_and_decode_hpke_config_list(test_conn: &mut TestConn) -> HpkeConfigList {
+    let response_body = take_response_body(test_conn).await;
+    let signature = URL_SAFE_NO_PAD
+        .decode(
+            test_conn
+                .response_headers()
+                .get(HPKE_CONFIG_SIGNATURE_HEADER)
+                .unwrap(),
+        )
+        .unwrap();
+    hpke_config_verification_key()
+        .verify(&response_body, &signature)
+        .unwrap();
+    HpkeConfigList::get_decoded(&response_body).unwrap()
 }

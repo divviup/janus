@@ -68,6 +68,7 @@ opentelemetry-otlp = { version = "0.15", optional = true, features = ["metrics"]
 opentelemetry-prometheus = { version = "0.15", optional = true }
 opentelemetry_sdk = { workspace = true, features = ["rt-tokio"], optional = true }
 opentelemetry-semantic-conventions = { version = "0.14", optional = true }
+pem = "3"
 postgres-protocol = "0.6.6"
 postgres-types = { version = "0.2.6", features = ["derive", "array-impls"] }
 prio.workspace = true
@@ -78,6 +79,7 @@ reqwest = { version = "0.11.26", default-features = false, features = ["rustls-t
 ring = "0.17.8"
 rustls = "0.22.2"
 rustls-pemfile = "2.1.1"
+sec1 = "0.7"
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded = "0.7.1"
