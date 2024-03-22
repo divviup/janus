@@ -35,6 +35,8 @@ use trillium::{async_trait, Conn, Handler, Status};
 use trillium_api::ApiConnExt;
 use url::Url;
 
+pub mod commands;
+
 #[cfg(feature = "testcontainer")]
 pub mod testcontainer;
 

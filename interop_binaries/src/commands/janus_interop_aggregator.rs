@@ -1,3 +1,7 @@
+use crate::{
+    status::{ERROR, SUCCESS},
+    AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole, HpkeConfigRegistry, Keyring,
+};
 use anyhow::Context;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
@@ -13,10 +17,6 @@ use janus_aggregator_core::{
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
     time::RealClock,
-};
-use janus_interop_binaries::{
-    status::{ERROR, SUCCESS},
-    AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole, HpkeConfigRegistry, Keyring,
 };
 use janus_messages::{Duration, HpkeConfig, Time};
 use prio::codec::Decode;
@@ -180,7 +180,7 @@ async fn make_handler(
     rename_all = "kebab-case",
     version = env!("CARGO_PKG_VERSION")
 )]
-struct Options {
+pub struct Options {
     #[clap(flatten)]
     common: CommonBinaryOptions,
 }
@@ -225,29 +225,30 @@ impl BinaryConfig for Config {
     }
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    janus_main::<_, Options, Config, _, _>(RealClock::default(), |ctx| async move {
-        let datastore = Arc::new(ctx.datastore);
+impl Options {
+    pub async fn run(self) -> anyhow::Result<()> {
+        janus_main::<_, _, Config, _, _>(self, RealClock::default(), |ctx| async move {
+            let datastore = Arc::new(ctx.datastore);
 
-        // Run an HTTP server with both the DAP aggregator endpoints and the interoperation test
-        // endpoints.
-        let handler = make_handler(
-            Arc::clone(&datastore),
-            ctx.config.dap_serving_prefix,
-            ctx.config.aggregator_address,
-        )
-        .await?;
-        trillium_tokio::config()
-            .with_host(&ctx.config.listen_address.ip().to_string())
-            .with_port(ctx.config.listen_address.port())
-            .without_signals()
-            .run_async(handler)
-            .await;
+            // Run an HTTP server with both the DAP aggregator endpoints and the interoperation test
+            // endpoints.
+            let handler = make_handler(
+                Arc::clone(&datastore),
+                ctx.config.dap_serving_prefix,
+                ctx.config.aggregator_address,
+            )
+            .await?;
+            trillium_tokio::config()
+                .with_host(&ctx.config.listen_address.ip().to_string())
+                .with_port(ctx.config.listen_address.port())
+                .without_signals()
+                .run_async(handler)
+                .await;
 
-        Ok(())
-    })
-    .await
+            Ok(())
+        })
+        .await
+    }
 }
 
 #[cfg(test)]

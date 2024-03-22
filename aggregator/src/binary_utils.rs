@@ -240,7 +240,11 @@ pub struct BinaryContext<C: Clock, Options: BinaryOptions, Config: BinaryConfig>
     pub stopper: Stopper,
 }
 
-pub async fn janus_main<C, Options, Config, F, Fut>(clock: C, f: F) -> anyhow::Result<()>
+pub async fn janus_main<C, Options, Config, F, Fut>(
+    options: Options,
+    clock: C,
+    f: F,
+) -> anyhow::Result<()>
 where
     C: Clock,
     Options: BinaryOptions,
@@ -248,8 +252,7 @@ where
     F: FnOnce(BinaryContext<C, Options, Config>) -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
 {
-    // Parse arguments, then read & parse config.
-    let options = Options::parse();
+    // Read and parse config.
     let config: Config = read_config(options.common_options())?;
 
     // Install tracing/metrics handlers.

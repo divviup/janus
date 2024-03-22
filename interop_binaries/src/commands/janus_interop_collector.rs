@@ -1,7 +1,12 @@
-use anyhow::{anyhow, Context};
+use crate::{
+    install_tracing_subscriber,
+    status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
+    ErrorHandler, HpkeConfigRegistry, Keyring, NumberAsString, VdafObject,
+};
+use anyhow::Context;
 use backoff::ExponentialBackoffBuilder;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use clap::{value_parser, Arg, Command};
+use clap::Parser;
 use derivative::Derivative;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::types::extra::{U15, U31};
@@ -12,12 +17,6 @@ use janus_core::vdaf::new_prio3_sum_vec_field64_multiproof_hmacsha256_aes128;
 #[cfg(feature = "fpvec_bounded_l2")]
 use janus_core::vdaf::Prio3FixedPointBoundedL2VecSumBitSize;
 use janus_core::{auth_tokens::AuthenticationToken, hpke::HpkeKeypair, vdaf::VdafInstance};
-use janus_interop_binaries::Keyring;
-use janus_interop_binaries::{
-    install_tracing_subscriber,
-    status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
-    ErrorHandler, HpkeConfigRegistry, NumberAsString, VdafObject,
-};
 use janus_messages::{
     query_type::QueryType, BatchId, Duration, FixedSizeQuery, HpkeConfig, Interval,
     PartialBatchSelector, Query, TaskId, Time,
@@ -830,36 +829,34 @@ fn handler() -> anyhow::Result<impl Handler> {
     ))
 }
 
-fn app() -> clap::Command {
-    Command::new("Janus interoperation test collector").arg(
-        Arg::new("port")
-            .long("port")
-            .short('p')
-            .default_value("8080")
-            .value_parser(value_parser!(u16))
-            .help("Port number to listen on."),
-    )
+#[derive(Debug, Parser)]
+/// Janus interoperation test collector
+pub struct Options {
+    /// Port number to listen on.
+    #[clap(long, short, default_value = "8080")]
+    port: u16,
 }
 
-fn main() -> anyhow::Result<()> {
-    install_tracing_subscriber()?;
-    let matches = app().get_matches();
-    let port = matches
-        .try_get_one::<u16>("port")?
-        .ok_or_else(|| anyhow!("port argument missing"))?;
-    trillium_tokio::config()
-        .with_host(&Ipv4Addr::UNSPECIFIED.to_string())
-        .with_port(*port)
-        .run(handler()?);
-    Ok(())
+impl Options {
+    pub async fn run(self) -> anyhow::Result<()> {
+        install_tracing_subscriber()?;
+        trillium_tokio::config()
+            .with_host(&Ipv4Addr::UNSPECIFIED.to_string())
+            .with_port(self.port)
+            .run_async(handler()?)
+            .await;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::app;
+    use clap::CommandFactory;
+
+    use super::Options;
 
     #[test]
     fn verify_clap_app() {
-        app().debug_assert();
+        Options::command().debug_assert();
     }
 }

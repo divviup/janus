@@ -60,8 +60,8 @@ COPY integration_tests /src/integration_tests
 COPY interop_binaries /src/interop_binaries
 COPY messages /src/messages
 COPY tools /src/tools
-RUN cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_interop_binaries \
-    --bin janus_interop_aggregator
+COPY xtask /src/xtask
+RUN cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_interop_binaries
 
 FROM rust:1.76.0-alpine AS sqlx
 ARG SQLX_VERSION=0.7.2
@@ -83,7 +83,7 @@ COPY interop_binaries/config/supervisord.conf \
     interop_binaries/config/collection_job_driver.yaml \
     /etc/janus/
 ARG PROFILE
-COPY --from=builder-interop /src/target/$PROFILE/janus_interop_aggregator /usr/local/bin/
+COPY --from=builder-interop /src/target/$PROFILE/janus_interop_binaries /usr/local/bin/janus_interop_aggregator
 COPY --from=builder-aggregator \
     /src/target/$PROFILE/aggregator \
     /src/target/$PROFILE/aggregation_job_creator \
