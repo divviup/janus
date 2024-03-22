@@ -47,7 +47,7 @@ tracing-log = "0.2.0"
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"] }
 trillium.workspace = true
 trillium-api.workspace = true
-trillium-proxy = "0.5.2"
+trillium-proxy = { version = "0.5.3", default-features = false }
 trillium-router.workspace = true
 trillium-tokio.workspace = true
 url.workspace = true
