@@ -647,7 +647,8 @@ macro_rules! options_dispatch {
     ($options:expr, ($query:ident, $vdaf:ident) => $body:tt) => {
         options_query_dispatch!($options, ($query) => {
             options_vdaf_dispatch!($options, ($vdaf) => {
-                $body
+                let body = $body;
+                body
             })
         })
     }
