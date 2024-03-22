@@ -8,11 +8,13 @@ use self::models::{
     ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
     ReportAggregationState, ReportAggregationStateCode, SqlInterval, TaskUploadCounter,
 };
+#[cfg(feature = "test-util")]
+use crate::VdafHasAggregationParameter;
 use crate::{
     query_type::{AccumulableQueryType, CollectableQueryType},
     task::{self, AggregatorTask, AggregatorTaskParameters},
     taskprov::PeerAggregator,
-    SecretBytes, VdafHasAggregationParameter,
+    SecretBytes,
 };
 use chrono::NaiveDateTime;
 use futures::future::try_join_all;
