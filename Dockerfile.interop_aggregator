@@ -38,11 +38,7 @@ COPY interop_binaries /src/interop_binaries
 COPY messages /src/messages
 COPY tools /src/tools
 COPY xtask /src/xtask
-RUN cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_aggregator \
-    --bin aggregator \
-    --bin aggregation_job_creator \
-    --bin aggregation_job_driver \
-    --bin collection_job_driver
+RUN cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_aggregator
 
 FROM chef AS builder-interop
 COPY --from=planner /src/recipe.json /src/recipe.json
@@ -85,11 +81,12 @@ COPY interop_binaries/config/supervisord.conf \
 ARG PROFILE
 COPY --from=builder-interop /src/target/$PROFILE/janus_interop /usr/local/bin/janus_interop_aggregator
 COPY --from=builder-aggregator \
-    /src/target/$PROFILE/aggregator \
-    /src/target/$PROFILE/aggregation_job_creator \
-    /src/target/$PROFILE/aggregation_job_driver \
-    /src/target/$PROFILE/collection_job_driver \
+    /src/target/$PROFILE/janus_aggregator \
     /usr/local/bin/
+RUN ln -s /usr/local/bin/janus_aggregator /usr/local/bin/aggregator && \
+    ln -s /usr/local/bin/janus_aggregator /usr/local/bin/aggregation_job_creator && \
+    ln -s /usr/local/bin/janus_aggregator /usr/local/bin/aggregation_job_driver && \
+    ln -s /usr/local/bin/janus_aggregator /usr/local/bin/collection_job_driver
 COPY --from=sqlx /usr/local/cargo/bin/sqlx /usr/local/bin/
 ENV RUST_LOG=info
 EXPOSE 8080
