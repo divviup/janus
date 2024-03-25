@@ -1,4 +1,5 @@
 FROM rust:1.76.0-alpine as builder
+ENV CARGO_INCREMENTAL=0
 ARG SQLX_VERSION
 RUN apk add libc-dev
 RUN cargo install sqlx-cli \
