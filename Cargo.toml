@@ -20,7 +20,7 @@ homepage = "https://divviup.org"
 license = "MPL-2.0"
 repository = "https://github.com/divviup/janus"
 rust-version = "1.73.0"
-version = "0.7.0-prerelease-5"
+version = "0.7.1"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -36,15 +36,15 @@ derivative = "2.2.0"
 http = "1.1"
 http-api-problem = "0.58.0"
 itertools = "0.11"
-janus_aggregator = { version = "0.7.0-prerelease-5", path = "aggregator" }
-janus_aggregator_api = { version = "0.7.0-prerelease-5", path = "aggregator_api" }
-janus_aggregator_core = { version = "0.7.0-prerelease-5", path = "aggregator_core" }
-janus_client = { version = "0.7.0-prerelease-5", path = "client" }
-janus_collector = { version = "0.7.0-prerelease-5", path = "collector" }
-janus_core = { version = "0.7.0-prerelease-5", path = "core" }
-janus_integration_tests = { version = "0.7.0-prerelease-5", path = "integration_tests" }
-janus_interop_binaries = { version = "0.7.0-prerelease-5", path = "interop_binaries" }
-janus_messages = { version = "0.7.0-prerelease-5", path = "messages" }
+janus_aggregator = { version = "0.7.1", path = "aggregator" }
+janus_aggregator_api = { version = "0.7.1", path = "aggregator_api" }
+janus_aggregator_core = { version = "0.7.1", path = "aggregator_core" }
+janus_client = { version = "0.7.1", path = "client" }
+janus_collector = { version = "0.7.1", path = "collector" }
+janus_core = { version = "0.7.1", path = "core" }
+janus_integration_tests = { version = "0.7.1", path = "integration_tests" }
+janus_interop_binaries = { version = "0.7.1", path = "interop_binaries" }
+janus_messages = { version = "0.7.1", path = "messages" }
 k8s-openapi = { version = "0.20.0", features = ["v1_26"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
 kube = { version = "0.87.2", default-features = false, features = ["client", "rustls-tls"] }
 opentelemetry = { version = "0.22", features = ["metrics"] }
@@ -76,6 +76,8 @@ uuid = { version = "1.7.0", features = ["v4"] }
 # Disabling debug info improves build speeds & reduces build artifact sizes, which helps CI caching.
 inherits = "dev"
 debug = 0
+# Incremental compilation is also disabled via environment variable by the Swatinem/rust-cache action.
+incremental = false
 
 [profile.small]
 # We define a profile intended to minimize the eventual binary size, while still allowing for

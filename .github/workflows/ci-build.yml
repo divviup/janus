@@ -86,7 +86,7 @@ jobs:
         RUST_LOG: info
         JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
         DIVVIUP_TS_INTEROP_CONTAINER: ${{ steps.default-input-values.outputs.divviup_ts_interop_container }}
-      run: cargo xtask test-docker --profile=ci --locked
+      run: cargo run --package xtask --profile=ci -- test-docker --profile=ci --locked
       # Continue on error so we can upload logs
       continue-on-error: true
     - name: Upload container logs

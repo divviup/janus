@@ -8,11 +8,13 @@ use self::models::{
     ReportAggregation, ReportAggregationMetadata, ReportAggregationMetadataState,
     ReportAggregationState, ReportAggregationStateCode, SqlInterval, TaskUploadCounter,
 };
+#[cfg(feature = "test-util")]
+use crate::VdafHasAggregationParameter;
 use crate::{
     query_type::{AccumulableQueryType, CollectableQueryType},
     task::{self, AggregatorTask, AggregatorTaskParameters},
     taskprov::PeerAggregator,
-    SecretBytes, VdafHasAggregationParameter,
+    SecretBytes,
 };
 use chrono::NaiveDateTime;
 use futures::future::try_join_all;
@@ -2139,6 +2141,7 @@ impl<C: Clock> Transaction<'_, C> {
                 "SELECT 1 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 WHERE report_aggregations.task_id = $1
+                  AND aggregation_jobs.task_id = $1
                   AND report_aggregations.client_report_id = $2
                   AND aggregation_jobs.aggregation_param = $3
                   AND aggregation_jobs.aggregation_job_id != $4
@@ -2192,6 +2195,7 @@ impl<C: Clock> Transaction<'_, C> {
                 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 WHERE report_aggregations.task_id = $1
+                  AND aggregation_jobs.task_id = $1
                   AND aggregation_jobs.aggregation_job_id = $2
                   AND UPPER(client_timestamp_interval) >= $3
                 ORDER BY ord ASC",
@@ -2243,20 +2247,22 @@ impl<C: Clock> Transaction<'_, C> {
         };
 
         let stmt = self
-                .prepare_cached(
-                    "SELECT
-                        ord, client_timestamp, last_prep_resp, report_aggregations.state,
-                        public_share, leader_extensions, leader_input_share,
-                        helper_encrypted_input_share, leader_prep_transition, helper_prep_state,
-                        error_code
-                    FROM report_aggregations
-                    JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
-                    WHERE report_aggregations.task_id = $1
-                      AND aggregation_jobs.aggregation_job_id = $2
-                      AND report_aggregations.client_report_id = $3
-                      AND UPPER(client_timestamp_interval) >= $4",
-                )
-                .await?;
+            .prepare_cached(
+                "SELECT
+                    ord, client_timestamp, last_prep_resp, report_aggregations.state,
+                    public_share, leader_extensions, leader_input_share,
+                    helper_encrypted_input_share, leader_prep_transition, helper_prep_state,
+                    error_code
+                FROM report_aggregations
+                JOIN aggregation_jobs
+                    ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                WHERE report_aggregations.task_id = $1
+                    AND aggregation_jobs.task_id = $1
+                    AND aggregation_jobs.aggregation_job_id = $2
+                    AND report_aggregations.client_report_id = $3
+                    AND UPPER(client_timestamp_interval) >= $4",
+            )
+            .await?;
         self.query_opt(
             &stmt,
             &[
@@ -2311,6 +2317,7 @@ impl<C: Clock> Transaction<'_, C> {
                 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 WHERE report_aggregations.task_id = $1
+                  AND aggregation_jobs.task_id = $1
                   AND UPPER(aggregation_jobs.client_timestamp_interval) >= $2",
             )
             .await?;
@@ -2596,37 +2603,37 @@ impl<C: Clock> Transaction<'_, C> {
                 let stmt = self
                     .prepare_cached(
                         "INSERT INTO report_aggregations
-                        (task_id, aggregation_job_id, ord, client_report_id, client_timestamp,
-                        state, public_share, leader_extensions, leader_input_share,
-                        helper_encrypted_input_share, created_at, updated_at, updated_by)
-                    SELECT
-                        $1, aggregation_jobs.id, $3, $4, $5, 'START'::REPORT_AGGREGATION_STATE,
-                        client_reports.public_share, client_reports.extensions,
-                        client_reports.leader_input_share,
-                        client_reports.helper_encrypted_input_share, $6, $7, $8
-                    FROM aggregation_jobs
-                    JOIN client_reports
-                        ON aggregation_jobs.task_id = client_reports.task_id
-                       AND client_reports.report_id = $4
-                    WHERE aggregation_jobs.task_id = $1
-                      AND aggregation_job_id = $2
-                    ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
-                        SET (
-                            client_report_id, client_timestamp, last_prep_resp, state, public_share,
-                            leader_extensions, leader_input_share, helper_encrypted_input_share,
-                            leader_prep_transition, helper_prep_state, error_code, created_at,
-                            updated_at, updated_by
-                        ) = (
-                            excluded.client_report_id, excluded.client_timestamp,
-                            excluded.last_prep_resp, excluded.state, excluded.public_share,
-                            excluded.leader_extensions, excluded.leader_input_share,
-                            excluded.helper_encrypted_input_share, excluded.leader_prep_transition,
-                            excluded.helper_prep_state, excluded.error_code, excluded.created_at,
-                            excluded.updated_at, excluded.updated_by
-                        )
-                        WHERE (SELECT UPPER(client_timestamp_interval)
-                               FROM aggregation_jobs
-                               WHERE id = report_aggregations.aggregation_job_id) >= $9",
+                            (task_id, aggregation_job_id, ord, client_report_id, client_timestamp,
+                            state, public_share, leader_extensions, leader_input_share,
+                            helper_encrypted_input_share, created_at, updated_at, updated_by)
+                        SELECT
+                            $1, aggregation_jobs.id, $3, $4, $5, 'START'::REPORT_AGGREGATION_STATE,
+                            client_reports.public_share, client_reports.extensions,
+                            client_reports.leader_input_share,
+                            client_reports.helper_encrypted_input_share, $6, $7, $8
+                        FROM aggregation_jobs
+                        JOIN client_reports
+                            ON aggregation_jobs.task_id = client_reports.task_id
+                        AND client_reports.report_id = $4
+                        WHERE aggregation_jobs.task_id = $1
+                        AND aggregation_job_id = $2
+                        ON CONFLICT(task_id, aggregation_job_id, ord) DO UPDATE
+                            SET (
+                                client_report_id, client_timestamp, last_prep_resp, state, public_share,
+                                leader_extensions, leader_input_share, helper_encrypted_input_share,
+                                leader_prep_transition, helper_prep_state, error_code, created_at,
+                                updated_at, updated_by
+                            ) = (
+                                excluded.client_report_id, excluded.client_timestamp,
+                                excluded.last_prep_resp, excluded.state, excluded.public_share,
+                                excluded.leader_extensions, excluded.leader_input_share,
+                                excluded.helper_encrypted_input_share, excluded.leader_prep_transition,
+                                excluded.helper_prep_state, excluded.error_code, excluded.created_at,
+                                excluded.updated_at, excluded.updated_by
+                            )
+                            WHERE (SELECT UPPER(client_timestamp_interval)
+                                FROM aggregation_jobs
+                                WHERE id = report_aggregations.aggregation_job_id) >= $9",
                     )
                     .await?;
                 check_insert(
@@ -2745,6 +2752,7 @@ impl<C: Clock> Transaction<'_, C> {
                 FROM aggregation_jobs
                 WHERE report_aggregations.aggregation_job_id = aggregation_jobs.id
                   AND aggregation_jobs.aggregation_job_id = $12
+                  AND aggregation_jobs.task_id = $13
                   AND report_aggregations.task_id = $13
                   AND report_aggregations.client_report_id = $14
                   AND report_aggregations.client_timestamp = $15
@@ -4484,22 +4492,22 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "WITH non_gc_batches AS (
-                SELECT batch_identifier, SUM(report_count) AS report_count
-                FROM batch_aggregations
-                WHERE task_id = $1
-                GROUP BY batch_identifier
-                HAVING MAX(UPPER(client_timestamp_interval)) >= $3
-            ),
-            selected_outstanding_batch AS (
-                SELECT outstanding_batches.id
-                FROM outstanding_batches
-                WHERE task_id = $1
-                  AND (SELECT report_count FROM non_gc_batches
-                       WHERE batch_identifier = outstanding_batches.batch_id) >= $2::BIGINT
-                LIMIT 1
-            )
-            DELETE FROM outstanding_batches WHERE id IN (SELECT id FROM selected_outstanding_batch)
-            RETURNING batch_id",
+                    SELECT batch_identifier, SUM(report_count) AS report_count
+                    FROM batch_aggregations
+                    WHERE task_id = $1
+                    GROUP BY batch_identifier
+                    HAVING MAX(UPPER(client_timestamp_interval)) >= $3
+                ),
+                selected_outstanding_batch AS (
+                    SELECT outstanding_batches.id
+                    FROM outstanding_batches
+                    WHERE task_id = $1
+                    AND (SELECT report_count FROM non_gc_batches
+                        WHERE batch_identifier = outstanding_batches.batch_id) >= $2::BIGINT
+                    LIMIT 1
+                )
+                DELETE FROM outstanding_batches WHERE id IN (SELECT id FROM selected_outstanding_batch)
+                RETURNING batch_id",
             )
             .await?;
 

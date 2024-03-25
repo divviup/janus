@@ -9,7 +9,9 @@ on:
           be marked as the latest release.
         required: false
         type: string
-        default: '["release/0.6","release/0.5"]'
+        # This action may be run against the main branch so long as we are not
+        # in a prerelease window.
+        default: '["main", "release/0.6","release/0.5"]'
 
 jobs:
   bump-version:

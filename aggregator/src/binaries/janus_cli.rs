@@ -1,13 +1,13 @@
-use anyhow::{anyhow, Context, Result};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use clap::Parser;
-use janus_aggregator::{
+use crate::{
     binary_utils::{database_pool, datastore, read_config, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
     git_revision,
     metrics::{install_metrics_exporter, MetricsExporterHandle},
     trace::{install_trace_subscriber, TraceGuards},
 };
+use anyhow::{anyhow, Context, Result};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use clap::Parser;
 use janus_aggregator_core::{
     datastore::{self, Datastore},
     task::{AggregatorTask, SerializedAggregatorTask},
@@ -27,10 +27,8 @@ use std::{
 use tokio::fs;
 use tracing::{debug, info};
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Parse command-line options, then read & parse config.
-    let command_line_options = CommandLineOptions::parse();
+pub async fn run(command_line_options: CommandLineOptions) -> Result<()> {
+    // Read and parse config.
     let config_file: ConfigFile = read_config(&command_line_options.common_options)?;
 
     let _guards = install_tracing_and_metrics_handlers(config_file.common_config()).await?;
@@ -334,7 +332,7 @@ async fn datastore_from_opts(
     rename_all = "kebab-case",
     version = env!("CARGO_PKG_VERSION"),
 )]
-struct CommandLineOptions {
+pub struct CommandLineOptions {
     #[clap(subcommand)]
     cmd: Command,
 
@@ -458,14 +456,14 @@ impl From<kube::Client> for LazyKubeClient {
 #[cfg(test)]
 mod tests {
     use super::{fetch_datastore_keys, CommandLineOptions, ConfigFile, KubernetesSecretOptions};
-    use crate::{LazyKubeClient, URL_SAFE_NO_PAD};
-    use base64::Engine;
-    use clap::CommandFactory;
-    use janus_aggregator::{
+    use crate::{
+        binaries::janus_cli::{LazyKubeClient, URL_SAFE_NO_PAD},
         binary_utils::CommonBinaryOptions,
         config::test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
         config::{default_max_transaction_retries, CommonConfig},
     };
+    use base64::Engine;
+    use clap::CommandFactory;
     use janus_aggregator_core::{
         datastore::{test_util::ephemeral_datastore, Datastore},
         task::{test_util::TaskBuilder, AggregatorTask, QueryType},
