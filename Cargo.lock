@@ -4670,9 +4670,9 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stopper"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb29dcd6766b0303882c945c8efc9229a1826b0307ced080d8382e5e1acc9de1"
+checksum = "66c82d03d16a1e591756e978782ce4bc4300f83048b57d44c5600dafa7337019"
 dependencies = [
  "event-listener 5.2.0",
  "futures-lite 2.2.0",
