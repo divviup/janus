@@ -29,7 +29,6 @@ use std::{
     future::Future,
     io::{ErrorKind, Write},
     net::{Ipv4Addr, SocketAddr},
-    path::Path,
     process::{Child, Command, Stdio},
     time::Instant,
 };
@@ -116,8 +115,7 @@ fn forward_stdout_stderr(
     }
 }
 
-async fn graceful_shutdown<C: BinaryConfig + Serialize>(binary: &Path, mut config: C) {
-    let binary_name = binary.file_name().unwrap().to_str().unwrap();
+async fn graceful_shutdown<C: BinaryConfig + Serialize>(binary_name: &str, mut config: C) {
     install_test_trace_subscriber();
 
     // This datastore will be used indirectly by the child process, which
@@ -160,9 +158,16 @@ async fn graceful_shutdown<C: BinaryConfig + Serialize>(binary: &Path, mut confi
             "--map-root-user",
             "--fork",
             "--kill-child",
+            "bash",
+            "-c",
+            &format!(
+                "exec -a {binary_name} \"{}\" --config-file \"{}\"",
+                trycmd::cargo::cargo_bin!("janus_aggregator")
+                    .to_str()
+                    .unwrap(),
+                config_path.to_str().unwrap()
+            ),
         ])
-        .arg(binary)
-        .args(["--config-file", config_path.to_str().unwrap()])
         .env("RUSTLOG", "trace")
         .env(
             "DATASTORE_KEYS",
@@ -273,7 +278,7 @@ async fn aggregator_shutdown() {
         global_hpke_configs_refresh_interval: None,
     };
 
-    graceful_shutdown(trycmd::cargo::cargo_bin!("aggregator"), config).await;
+    graceful_shutdown("aggregator", config).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -300,7 +305,7 @@ async fn aggregation_job_creator_shutdown() {
         aggregation_job_creation_report_window: 5000,
     };
 
-    graceful_shutdown(trycmd::cargo::cargo_bin!("aggregation_job_creator"), config).await;
+    graceful_shutdown("aggregation_job_creator", config).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -335,7 +340,7 @@ async fn aggregation_job_driver_shutdown() {
         batch_aggregation_shard_count: 32,
     };
 
-    graceful_shutdown(trycmd::cargo::cargo_bin!("aggregation_job_driver"), config).await;
+    graceful_shutdown("aggregation_job_driver", config).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -370,5 +375,5 @@ async fn collection_job_driver_shutdown() {
         min_collection_job_retry_delay_secs: 1,
     };
 
-    graceful_shutdown(trycmd::cargo::cargo_bin!("collection_job_driver"), config).await;
+    graceful_shutdown("collection_job_driver", config).await;
 }
