@@ -67,7 +67,7 @@ trillium-rustls = "0.4.2"
 trillium-testing = "0.5.0"
 trillium-tokio = "0.3.4"
 url = { version = "2.5.0", features = ["serde"] }
-uuid = { version = "1.7.0", features = ["v4"] }
+uuid = { version = "1.8.0", features = ["v4"] }
 
 [profile.ci]
 # Disabling debug info improves build speeds & reduces build artifact sizes, which helps CI caching.
