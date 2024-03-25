@@ -77,7 +77,7 @@ rand = { workspace = true, features = ["min_const_gen"] }
 regex = "1"
 reqwest = { version = "0.11.26", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.17.8"
-rustls = "0.22.2"
+rustls = "0.22.3"
 rustls-pemfile = "2.1.1"
 serde.workspace = true
 serde_json.workspace = true
