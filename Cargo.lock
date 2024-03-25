@@ -3056,12 +3056,12 @@ checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
 
 [[package]]
 name = "prio"
-version = "0.12.5"
+version = "0.12.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cab675f8d928f89d5b05f3fce3ec039e3cb525aab9ad3a8e405576d7e47cb426"
+checksum = "2435d1b1ba9803bdda2f7d61e5541b8d258548312bbf9f86eec54cdfab92b19a"
 dependencies = [
  "aes",
- "base64 0.21.7",
+ "base64 0.22.0",
  "bitvec",
  "byteorder",
  "cmac",
@@ -3232,9 +3232,9 @@ dependencies = [
 
 [[package]]
 name = "rayon"
-version = "1.8.1"
+version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa7237101a77a10773db45d62004a272517633fbcc3df19d96455ede1122e051"
+checksum = "b418a60154510ca1a002a752ca9714984e21e4241e804d32555251faf8b78ffa"
 dependencies = [
  "either",
  "rayon-core",
