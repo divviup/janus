@@ -31,7 +31,7 @@ use std::{io::Cursor, sync::Arc};
 use tracing::warn;
 use trillium::{Conn, Handler, KnownHeaderName, Status};
 use trillium_api::{api, State};
-use trillium_caching_headers::CacheControlDirective;
+use trillium_caching_headers::{CacheControlDirective, CachingHeadersExt as _};
 use trillium_opentelemetry::metrics;
 use trillium_router::{Router, RouterConnExt};
 
@@ -364,14 +364,16 @@ struct HpkeConfigQuery {
     task_id: Option<String>,
 }
 
+const HPKE_CONFIG_SIGNATURE_HEADER: &str = "x-hpke-config-signature";
+
 /// API handler for the "/hpke_config" GET endpoint.
 async fn hpke_config<C: Clock>(
     conn: &mut Conn,
     State(aggregator): State<Arc<Aggregator<C>>>,
-) -> Result<(CacheControlDirective, EncodedBody<HpkeConfigList>), Error> {
+) -> Result<(), Error> {
     let query = serde_urlencoded::from_str::<HpkeConfigQuery>(conn.querystring())
         .map_err(|err| Error::BadRequest(format!("couldn't parse query string: {err}")))?;
-    let hpke_config_list = aggregator
+    let (encoded_hpke_config_list, signature) = aggregator
         .handle_hpke_config(query.task_id.as_ref().map(AsRef::as_ref))
         .await?;
 
@@ -383,10 +385,18 @@ async fn hpke_config<C: Clock>(
             .insert(KnownHeaderName::AccessControlAllowOrigin, origin);
     }
 
-    Ok((
-        CacheControlDirective::MaxAge(StdDuration::from_secs(86400)),
-        EncodedBody::new(hpke_config_list, HpkeConfigList::MEDIA_TYPE),
-    ))
+    conn.set_cache_control(CacheControlDirective::MaxAge(StdDuration::from_secs(86400)));
+    let headers = conn.headers_mut();
+    headers.insert(KnownHeaderName::ContentType, HpkeConfigList::MEDIA_TYPE);
+    if let Some(signature) = signature {
+        headers.insert(
+            HPKE_CONFIG_SIGNATURE_HEADER,
+            URL_SAFE_NO_PAD.encode(signature),
+        );
+    }
+    conn.set_status(Status::Ok);
+    conn.set_body(encoded_hpke_config_list);
+    Ok(())
 }
 
 /// Handler for CORS preflight requests to "/hpke_config".
@@ -709,17 +719,18 @@ pub mod test_util {
         time::MockClock,
     };
     use janus_messages::codec::Decode;
-    use std::{borrow::Cow, sync::Arc};
+    use std::sync::Arc;
     use trillium::Handler;
     use trillium_testing::{assert_headers, TestConn};
 
-    pub async fn take_response_body(test_conn: &mut TestConn) -> Cow<'_, [u8]> {
+    pub async fn take_response_body(test_conn: &mut TestConn) -> Vec<u8> {
         test_conn
             .take_response_body()
             .unwrap()
             .into_bytes()
             .await
             .unwrap()
+            .into_owned()
     }
 
     pub async fn decode_response_body<T: Decode>(test_conn: &mut TestConn) -> T {
