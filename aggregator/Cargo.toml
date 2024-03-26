@@ -49,8 +49,8 @@ futures = "0.3.30"
 fixed = { version = "1.26", optional = true }
 git-version = "0.3.9"
 hex = { version = "0.4.3", features = ["serde"], optional = true }
-http = "0.2.11"
-http-api-problem = "0.57.0"
+http.workspace = true
+http-api-problem.workspace = true
 hyper = "1.2.0"
 itertools.workspace = true
 janus_aggregator_api.workspace = true
@@ -72,7 +72,7 @@ prio.workspace = true
 prometheus = { version = "0.13.3", optional = true }
 rand = { version = "0.8", features = ["min_const_gen"] }
 regex = "1"
-reqwest = { version = "0.11.26", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { workspace = true, features = ["json"] }
 ring = "0.17.8"
 routefinder = "0.5.4"
 serde.workspace = true
