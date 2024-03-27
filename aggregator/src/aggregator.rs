@@ -5,8 +5,8 @@ use crate::{
     aggregator::{
         aggregate_share::compute_aggregate_share,
         aggregation_job_writer::{
-            AggregationJobWriter, InitialWrite, ReportAggregationUpdate as _,
-            WritableReportAggregation, AggregationJobWriterMetrics,
+            AggregationJobWriter, AggregationJobWriterMetrics, InitialWrite,
+            ReportAggregationUpdate as _, WritableReportAggregation,
         },
         error::{handle_ping_pong_error, ReportRejection, ReportRejectionReason},
         error::{BatchMismatch, OptOutReason},
