@@ -1,8 +1,10 @@
 //! Implements portions of aggregation job continuation for the helper.
 
-use super::error::handle_ping_pong_error;
 use crate::aggregator::{
-    aggregation_job_writer::{AggregationJobWriter, UpdateWrite, WritableReportAggregation},
+    aggregation_job_writer::{
+        AggregationJobWriter, AggregationJobWriterMetrics, UpdateWrite, WritableReportAggregation,
+    },
+    error::handle_ping_pong_error,
     Error, VdafOps,
 };
 use janus_aggregator_core::{
@@ -40,6 +42,7 @@ impl VdafOps {
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
         req: Arc<AggregationJobContinueReq>,
         request_hash: [u8; 32],
+        aggregation_success_counter: Counter<u64>,
         aggregate_step_failure_counter: Counter<u64>,
     ) -> Result<AggregationJobResp, datastore::Error>
     where
@@ -210,7 +213,10 @@ impl VdafOps {
             AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
                 task,
                 batch_aggregation_shard_count,
-                Some(aggregate_step_failure_counter),
+                Some(AggregationJobWriterMetrics {
+                    aggregation_success_counter,
+                    aggregate_step_failure_counter,
+                }),
             );
         aggregation_job_writer.put(aggregation_job, report_aggregations_to_write)?;
         let prepare_resps = aggregation_job_writer
