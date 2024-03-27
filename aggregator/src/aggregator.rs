@@ -6,7 +6,7 @@ use crate::{
         aggregate_share::compute_aggregate_share,
         aggregation_job_writer::{
             AggregationJobWriter, InitialWrite, ReportAggregationUpdate as _,
-            WritableReportAggregation,
+            WritableReportAggregation, AggregationJobWriterMetrics,
         },
         error::{handle_ping_pong_error, ReportRejection, ReportRejectionReason},
         error::{BatchMismatch, OptOutReason},
@@ -117,6 +117,16 @@ pub mod report_writer;
 #[cfg(test)]
 mod taskprov_tests;
 
+pub(crate) fn aggregation_success_counter(meter: &Meter) -> Counter<u64> {
+    let aggregation_success_counter = meter
+        .u64_counter("janus_aggregation_success_counter")
+        .with_description("Number of successfully-aggregated report shares")
+        .with_unit(Unit::new("{report}"))
+        .init();
+    aggregation_success_counter.add(0, &[]);
+    aggregation_success_counter
+}
+
 pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
     let aggregate_step_failure_counter = meter
         .u64_counter("janus_step_failures")
@@ -180,6 +190,8 @@ pub struct Aggregator<C: Clock> {
     /// Counter tracking the number of failed message decodes while handling the
     /// `tasks/{task-id}/reports` endpoint.
     upload_decode_failure_counter: Counter<u64>,
+    /// Counter tracking the number of successfully-aggregated reports.
+    aggregation_success_counter: Counter<u64>,
     /// Counters tracking the number of failures to step client reports through the aggregation
     /// process.
     aggregate_step_failure_counter: Counter<u64>,
@@ -267,8 +279,8 @@ impl<C: Clock> Aggregator<C> {
             .init();
         upload_decode_failure_counter.add(0, &[]);
 
+        let aggregation_success_counter = aggregation_success_counter(meter);
         let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
-        aggregate_step_failure_counter.add(0, &[]);
 
         let global_hpke_keypairs = GlobalHpkeKeypairCache::new(
             datastore.clone(),
@@ -286,6 +298,7 @@ impl<C: Clock> Aggregator<C> {
             task_aggregators: Mutex::new(HashMap::new()),
             upload_decrypt_failure_counter,
             upload_decode_failure_counter,
+            aggregation_success_counter,
             aggregate_step_failure_counter,
             global_hpke_keypairs,
             peer_aggregators,
@@ -425,7 +438,8 @@ impl<C: Clock> Aggregator<C> {
                 &self.datastore,
                 &self.clock,
                 &self.global_hpke_keypairs,
-                &self.aggregate_step_failure_counter,
+                self.aggregation_success_counter.clone(),
+                self.aggregate_step_failure_counter.clone(),
                 self.cfg.batch_aggregation_shard_count,
                 aggregation_job_id,
                 taskprov_task_config.is_some(),
@@ -472,7 +486,8 @@ impl<C: Clock> Aggregator<C> {
         task_aggregator
             .handle_aggregate_continue(
                 &self.datastore,
-                &self.aggregate_step_failure_counter,
+                self.aggregation_success_counter.clone(),
+                self.aggregate_step_failure_counter.clone(),
                 self.cfg.batch_aggregation_shard_count,
                 aggregation_job_id,
                 req,
@@ -1014,7 +1029,8 @@ impl<C: Clock> TaskAggregator<C> {
         datastore: &Datastore<C>,
         clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
-        aggregate_step_failure_counter: &Counter<u64>,
+        aggregation_success_counter: Counter<u64>,
+        aggregate_step_failure_counter: Counter<u64>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         require_taskprov_extension: bool,
@@ -1025,6 +1041,7 @@ impl<C: Clock> TaskAggregator<C> {
                 datastore,
                 clock,
                 global_hpke_keypairs,
+                aggregation_success_counter,
                 aggregate_step_failure_counter,
                 Arc::clone(&self.task),
                 batch_aggregation_shard_count,
@@ -1038,7 +1055,8 @@ impl<C: Clock> TaskAggregator<C> {
     async fn handle_aggregate_continue(
         &self,
         datastore: &Datastore<C>,
-        aggregate_step_failure_counter: &Counter<u64>,
+        aggregation_success_counter: Counter<u64>,
+        aggregate_step_failure_counter: Counter<u64>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         req: AggregationJobContinueReq,
@@ -1047,6 +1065,7 @@ impl<C: Clock> TaskAggregator<C> {
         self.vdaf_ops
             .handle_aggregate_continue(
                 datastore,
+                aggregation_success_counter,
                 aggregate_step_failure_counter,
                 Arc::clone(&self.task),
                 batch_aggregation_shard_count,
@@ -1386,7 +1405,8 @@ impl VdafOps {
         datastore: &Datastore<C>,
         clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
-        aggregate_step_failure_counter: &Counter<u64>,
+        aggregation_success_counter: Counter<u64>,
+        aggregate_step_failure_counter: Counter<u64>,
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
@@ -1401,6 +1421,7 @@ impl VdafOps {
                         clock,
                         global_hpke_keypairs,
                         Arc::clone(vdaf),
+                        aggregation_success_counter,
                         aggregate_step_failure_counter,
                         task,
                         batch_aggregation_shard_count,
@@ -1419,6 +1440,7 @@ impl VdafOps {
                         clock,
                         global_hpke_keypairs,
                         Arc::clone(vdaf),
+                        aggregation_success_counter,
                         aggregate_step_failure_counter,
                         task,
                         batch_aggregation_shard_count,
@@ -1441,7 +1463,8 @@ impl VdafOps {
     async fn handle_aggregate_continue<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        aggregate_step_failure_counter: &Counter<u64>,
+        aggregation_success_counter: Counter<u64>,
+        aggregate_step_failure_counter: Counter<u64>,
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
@@ -1454,6 +1477,7 @@ impl VdafOps {
                     Self::handle_aggregate_continue_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
                         datastore,
                         Arc::clone(vdaf),
+                        aggregation_success_counter,
                         aggregate_step_failure_counter,
                         task,
                         batch_aggregation_shard_count,
@@ -1469,6 +1493,7 @@ impl VdafOps {
                     Self::handle_aggregate_continue_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
                         datastore,
                         Arc::clone(vdaf),
+                        aggregation_success_counter,
                         aggregate_step_failure_counter,
                         task,
                         batch_aggregation_shard_count,
@@ -1715,7 +1740,8 @@ impl VdafOps {
         clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
         vdaf: Arc<A>,
-        aggregate_step_failure_counter: &Counter<u64>,
+        aggregation_success_counter: Counter<u64>,
+        aggregate_step_failure_counter: Counter<u64>,
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
@@ -1961,7 +1987,7 @@ impl VdafOps {
                             Role::Helper,
                             prepare_init.report_share().metadata().id(),
                             error,
-                            aggregate_step_failure_counter,
+                            &aggregate_step_failure_counter,
                         )
                     })
                 })
@@ -2048,11 +2074,16 @@ impl VdafOps {
             .with_last_request_hash(request_hash),
         );
 
+        let aggregation_job_writer_metrics = AggregationJobWriterMetrics {
+            aggregation_success_counter,
+            aggregate_step_failure_counter,
+        };
+
         Ok(datastore
             .run_tx("aggregate_init", |tx| {
                 let vdaf = vdaf.clone();
                 let task = Arc::clone(&task);
-                let aggregate_step_failure_counter = aggregate_step_failure_counter.clone();
+                let aggregation_job_writer_metrics = aggregation_job_writer_metrics.clone();
                 let aggregation_job = Arc::clone(&aggregation_job);
                 let mut report_share_data = report_share_data.clone();
 
@@ -2141,7 +2172,7 @@ impl VdafOps {
                         AggregationJobWriter::<SEED_SIZE, _, _, InitialWrite, _>::new(
                             task,
                             batch_aggregation_shard_count,
-                            Some(aggregate_step_failure_counter),
+                            Some(aggregation_job_writer_metrics),
                         );
                     aggregation_job_writer.put(
                         aggregation_job.as_ref().clone(),
@@ -2169,7 +2200,8 @@ impl VdafOps {
     >(
         datastore: &Datastore<C>,
         vdaf: Arc<A>,
-        aggregate_step_failure_counter: &Counter<u64>,
+        aggregation_success_counter: Counter<u64>,
+        aggregate_step_failure_counter: Counter<u64>,
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
@@ -2198,13 +2230,12 @@ impl VdafOps {
         // TODO(#1035): don't do O(n) network round-trips (where n is the number of prepare steps)
         Ok(datastore
             .run_tx("aggregate_continue", |tx| {
-                let (vdaf, aggregate_step_failure_counter, task, aggregation_job_id, req) = (
-                    Arc::clone(&vdaf),
-                    aggregate_step_failure_counter.clone(),
-                    Arc::clone(&task),
-                    *aggregation_job_id,
-                    Arc::clone(&req),
-                );
+                let vdaf = Arc::clone(&vdaf);
+                let aggregation_success_counter = aggregation_success_counter.clone();
+                let aggregate_step_failure_counter = aggregate_step_failure_counter.clone();
+                let task = Arc::clone(&task);
+                let aggregation_job_id = *aggregation_job_id;
+                let req = Arc::clone(&req);
 
                 Box::pin(async move {
                     // Read existing state.
@@ -2292,6 +2323,7 @@ impl VdafOps {
                         report_aggregations,
                         req,
                         request_hash,
+                        aggregation_success_counter,
                         aggregate_step_failure_counter,
                     )
                     .await

@@ -1,10 +1,13 @@
-use super::{error::handle_ping_pong_error, Error, RequestBody};
 use crate::aggregator::{
     aggregate_step_failure_counter,
-    aggregation_job_writer::{AggregationJobWriter, UpdateWrite, WritableReportAggregation},
+    aggregation_job_writer::{
+        AggregationJobWriter, AggregationJobWriterMetrics, UpdateWrite, WritableReportAggregation,
+    },
+    aggregation_success_counter,
+    error::handle_ping_pong_error,
     http_handlers::AGGREGATION_JOB_ROUTE,
     query_type::CollectableQueryType,
-    send_request_to_helper,
+    send_request_to_helper, Error, RequestBody,
 };
 use anyhow::{anyhow, Result};
 use backoff::backoff::Backoff;
@@ -54,6 +57,8 @@ pub struct AggregationJobDriver<B> {
     backoff: B,
 
     #[derivative(Debug = "ignore")]
+    aggregation_success_counter: Counter<u64>,
+    #[derivative(Debug = "ignore")]
     aggregate_step_failure_counter: Counter<u64>,
     #[derivative(Debug = "ignore")]
     job_cancel_counter: Counter<u64>,
@@ -73,6 +78,7 @@ where
         meter: &Meter,
         batch_aggregation_shard_count: u64,
     ) -> Self {
+        let aggregation_success_counter = aggregation_success_counter(meter);
         let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
 
         let job_cancel_counter = meter
@@ -101,6 +107,7 @@ where
             batch_aggregation_shard_count,
             http_client,
             backoff,
+            aggregation_success_counter,
             aggregate_step_failure_counter,
             job_cancel_counter,
             job_retry_counter,
@@ -673,7 +680,10 @@ where
             AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
                 Arc::clone(&task),
                 self.batch_aggregation_shard_count,
-                Some(self.aggregate_step_failure_counter.clone()),
+                Some(AggregationJobWriterMetrics {
+                    aggregation_success_counter: self.aggregation_success_counter.clone(),
+                    aggregate_step_failure_counter: self.aggregate_step_failure_counter.clone(),
+                }),
             );
         let new_step = aggregation_job.step().increment();
         aggregation_job_writer.put(
