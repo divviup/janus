@@ -24,8 +24,8 @@ deadpool-postgres = "0.12.1"
 derivative.workspace = true
 futures = "0.3.30"
 hex = { version = "0.4.3", features = ["serde"], optional = true }
-http = "0.2.11"
-http-api-problem = "0.57.0"
+http.workspace = true
+http-api-problem.workspace = true
 hyper = "1.2.0"
 janus_core.workspace = true
 janus_messages.workspace = true
@@ -38,7 +38,7 @@ postgres-types = { version = "0.2.6", features = ["derive", "array-impls"] }
 prio = { workspace = true, features = ["experimental"] }
 rand = { version = "0.8", features = ["min_const_gen"] }
 regex = "1"
-reqwest = { version = "0.11.26", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { workspace = true, features = ["json"] }
 ring = "0.17.8"
 serde.workspace = true
 serde_json.workspace = true
