@@ -38,6 +38,7 @@ backoff = { version = "0.4.0", features = ["tokio"] }
 base64.workspace = true
 bytes.workspace = true
 chrono = { workspace = true, features = ["clock"] }
+clap.workspace = true
 derivative.workspace = true
 fixed = { version = "1.26", optional = true }
 futures = "0.3.30"

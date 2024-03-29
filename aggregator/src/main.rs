@@ -30,6 +30,7 @@ enum Options {
     about = "Janus aggregator",
     version = env!("CARGO_PKG_VERSION"),
 )]
+#[allow(clippy::large_enum_variant)]
 enum Nested {
     #[clap(name = "aggregator")]
     Aggregator(aggregator::Options),
