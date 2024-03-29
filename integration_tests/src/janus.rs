@@ -151,6 +151,7 @@ impl JanusInProcess {
         let aggregator_options = AggregatorOptions {
             common: common_binary_options.clone(),
             aggregator_api_auth_tokens: Vec::new(),
+            hpke_config_signing_key: None,
         };
         let aggregator_config = AggregatorConfig {
             common_config: common_config.clone(),
@@ -164,7 +165,6 @@ impl JanusInProcess {
             batch_aggregation_shard_count: 32,
             task_counter_shard_count: 64,
             global_hpke_configs_refresh_interval: None,
-            hpke_config_signing_key: None,
         };
         let aggregation_job_creator_options = AggregationJobCreatorOptions {
             common: common_binary_options.clone(),

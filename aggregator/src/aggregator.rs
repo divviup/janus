@@ -3175,21 +3175,20 @@ pub(crate) mod test_util {
 
     pub(crate) const BATCH_AGGREGATION_SHARD_COUNT: u64 = 32;
 
-    pub(crate) fn hpke_config_signing_key() -> EcdsaKeyPair {
-        // ring's EcdsaKeyPair does not implement Clone, so we instead store the serialized key &
-        // parse it each time.
-        //
-        // Generated via `openssl ecparam -name prime256v1 -genkey -noout -out -`. Standard
-        // boilerplate: this is a non-sensitive test key, so it is OK that it is checked into a
-        // public GitHub repository. Given that this key is public, it should not be used for any
-        // sensitive purpose.
-        const TEST_HPKE_SIGNING_KEY_PEM: &str = "-----BEGIN EC PRIVATE KEY-----
+    // Generated via `openssl ecparam -name prime256v1 -genkey -noout -out -`. Standard
+    // boilerplate: this is a non-sensitive test key, so it is OK that it is checked into a
+    // public GitHub repository. Given that this key is public, it should not be used for any
+    // sensitive purpose.
+    pub(crate) const HPKE_CONFIG_SIGNING_KEY_PEM: &str = "-----BEGIN EC PRIVATE KEY-----
 MHcCAQEEIKGNaNJDOZfSoSOIjjLLRRb8JGAu2VsPpv02i444h39QoAoGCCqGSM49
 AwEHoUQDQgAEk50h0z1EX7fEvdoyfzBqgFW4LsjSaD2CvoukoPmo3Xgq0GeAGSVL
 SMdf0+lRhHWUzi58NuK51BxC9WrTwzSUfA==
 -----END EC PRIVATE KEY-----";
 
-        parse_pem_ec_private_key(TEST_HPKE_SIGNING_KEY_PEM).unwrap()
+    pub(crate) fn hpke_config_signing_key() -> EcdsaKeyPair {
+        // ring's EcdsaKeyPair does not implement Clone, so we instead store the serialized key &
+        // parse it each time.
+        parse_pem_ec_private_key(HPKE_CONFIG_SIGNING_KEY_PEM).unwrap()
     }
 
     #[cfg(test)]

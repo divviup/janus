@@ -271,7 +271,6 @@ async fn aggregator_shutdown() {
         batch_aggregation_shard_count: 32,
         task_counter_shard_count: 64,
         global_hpke_configs_refresh_interval: None,
-        hpke_config_signing_key: None,
     };
 
     graceful_shutdown(trycmd::cargo::cargo_bin!("aggregator"), config).await;
