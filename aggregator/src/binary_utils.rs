@@ -82,13 +82,18 @@ pub async fn database_pool(db_config: &DbConfig, db_password: Option<&str>) -> R
     } else {
         Manager::new(database_config, NoTls)
     };
-    let pool = Pool::builder(conn_mgr)
+
+    let mut pool = Pool::builder(conn_mgr)
         .runtime(Runtime::Tokio1)
         .timeouts(Timeouts {
             wait: Some(connection_pool_timeout),
             create: Some(connection_pool_timeout),
             recycle: Some(connection_pool_timeout),
-        })
+        });
+    if let Some(max_size) = db_config.connection_pool_max_size {
+        pool = pool.max_size(max_size)
+    }
+    let pool = pool
         .build()
         .context("failed to create database connection pool")?;
 
@@ -657,6 +662,7 @@ mod tests {
                 .parse()
                 .unwrap(),
             connection_pool_timeouts_secs: 5,
+            connection_pool_max_size: None,
             check_schema_version: false,
             tls_trust_store_path: Some("tests/tls_files/rootCA.pem".into()),
         };
