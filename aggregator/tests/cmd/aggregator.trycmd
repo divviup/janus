@@ -1,8 +1,8 @@
 ```
-$ aggregator --help
+$ janus_aggregator aggregator --help
 DAP aggregator server
 
-Usage: aggregator [OPTIONS] --config-file <CONFIG_FILE>
+Usage: janus_aggregator aggregator [OPTIONS] --config-file <CONFIG_FILE>
 
 Options:
       --config-file <CONFIG_FILE>
@@ -32,7 +32,9 @@ Options:
           [env: AGGREGATOR_API_AUTH_TOKENS]
 
       --hpke-config-signing-key <HPKE_CONFIG_SIGNING_KEY>
-          The private key used to sign HPKE configs, as a PEM-encoding of a DER-encoding of an RFC5915 ECPrivateKey. Only P-256 keys are supported
+          The private key used to sign HPKE configs, as a PEM-encoded RFC5915 ECPrivateKey.
+          
+          Only P-256 keys are supported.
           
           [env: HPKE_CONFIG_SIGNING_KEY]
 

@@ -1,8 +1,8 @@
 ```
-$ aggregation_job_driver --help
+$ janus_aggregator aggregation_job_driver --help
 Janus aggregation job driver
 
-Usage: aggregation_job_driver [OPTIONS] --config-file <CONFIG_FILE>
+Usage: janus_aggregator aggregation_job_driver [OPTIONS] --config-file <CONFIG_FILE>
 
 Options:
       --config-file <CONFIG_FILE>
