@@ -1001,7 +1001,7 @@ impl<C: Clock> TaskAggregator<C> {
             .handle_upload(
                 clock,
                 global_hpke_keypairs,
-                &metrics,
+                metrics,
                 &self.task,
                 &self.report_writer,
                 report,
