@@ -16,11 +16,11 @@ in-cluster-rate-limits = []
 [dependencies]
 anyhow.workspace = true
 assert_matches.workspace = true
-backoff = { version = "0.4", features = ["tokio"] }
+backoff = { workspace = true, features = ["tokio"] }
 base64.workspace = true
 clap.workspace = true
-futures = "0.3.30"
-hex = "0.4"
+futures = { workspace = true }
+hex = { workspace = true }
 http.workspace = true
 itertools.workspace = true
 janus_aggregator = { workspace = true, features = ["test-util"] }
@@ -36,7 +36,7 @@ prio = { workspace = true, features = ["test-util"] }
 rand.workspace = true
 reqwest.workspace = true
 serde.workspace = true
-serde_json = "1.0.114"
+serde_json = { workspace = true }
 testcontainers.workspace = true
 tokio.workspace = true
 trillium-tokio.workspace = true
@@ -45,8 +45,8 @@ uuid.workspace = true
 
 [dev-dependencies]
 chrono.workspace = true
-divviup-client = { version = "0.1", features = ["admin"] }
+divviup-client = { workspace = true, features = ["admin"] }
 janus_collector = { workspace = true, features = ["test-util"] }
 rstest.workspace = true
-tempfile = "3"
+tempfile = { workspace = true }
 trillium-rustls.workspace = true

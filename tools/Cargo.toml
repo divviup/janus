@@ -12,11 +12,11 @@ version.workspace = true
 fpvec_bounded_l2 = ["dep:fixed", "janus_collector/fpvec_bounded_l2", "prio/experimental"]
 
 [dependencies]
-anyhow = "1"
+anyhow = { workspace = true }
 base64.workspace = true
 clap.workspace = true
 derivative.workspace = true
-fixed = { version = "1.27", optional = true }
+fixed = { workspace = true, optional = true }
 janus_collector.workspace = true
 janus_core.workspace = true
 janus_messages.workspace = true
@@ -26,14 +26,14 @@ reqwest = { workspace = true, features = ["json"] }
 serde_json.workspace = true
 serde_yaml.workspace = true
 tokio.workspace = true
-tracing = "0.1.40"
-tracing-log = "0.2.0"
-tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"] }
-url = "2.5.0"
+tracing = { workspace = true }
+tracing-log = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["std", "env-filter", "fmt"] }
+url = { workspace = true }
 
 [dev-dependencies]
 assert_matches.workspace = true
-cfg-if = "1.0.0"
+cfg-if = { workspace = true }
 janus_core = { workspace = true, features = ["test-util"] }
-tempfile = "3.10.1"
-trycmd = "0.15.0"
+tempfile = { workspace = true }
+trycmd = { workspace = true }

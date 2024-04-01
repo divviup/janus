@@ -22,16 +22,16 @@ test-util = [
 
 [dependencies]
 anyhow.workspace = true
-async-trait = "0.1"
-backoff = { version = "0.4.0", features = ["tokio"] }
+async-trait = { workspace = true }
+backoff = { workspace = true, features = ["tokio"] }
 base64.workspace = true
 bytes.workspace = true
 chrono.workspace = true
-deadpool = { version = "0.11.0", features = ["rt_tokio_1"] }
-deadpool-postgres = "0.13.0"
+deadpool = { workspace = true, features = ["rt_tokio_1"] }
+deadpool-postgres = { workspace = true }
 derivative.workspace = true
-futures = "0.3.30"
-hex = { version = "0.4.3", features = ["serde"], optional = true }
+futures = { workspace = true }
+hex = { workspace = true, features = ["serde"], optional = true }
 http.workspace = true
 http-api-problem.workspace = true
 itertools = { workspace = true, optional = true }
@@ -40,25 +40,25 @@ janus_messages.workspace = true
 k8s-openapi.workspace = true
 kube.workspace = true
 opentelemetry.workspace = true
-postgres-protocol = "0.6.6"
-postgres-types = { version = "0.2.6", features = ["derive", "array-impls"] }
+postgres-protocol = { workspace = true }
+postgres-types = { workspace = true, features = ["derive", "array-impls"] }
 prio = { workspace = true, features = ["experimental"] }
 rand = { workspace = true, features = ["min_const_gen"] }
-regex = "1"
+regex = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
-ring = "0.17.8"
+ring = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
-sqlx = { version = "0.7.4", optional = true, features = ["runtime-tokio-rustls", "migrate", "postgres"] }
+sqlx = { workspace = true, features = ["runtime-tokio-rustls", "migrate", "postgres"], optional = true }
 testcontainers = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio.workspace = true
-tokio-postgres = { version = "0.7.10", features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1", "array-impls"] }
-tracing = "0.1.40"
-tracing-log = "0.2.0"
+tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1", "array-impls"] }
+tracing = { workspace = true }
+tracing-log = { workspace = true }
 trillium.workspace = true
-trillium-macros = "0.0.5"
+trillium-macros = { workspace = true }
 trillium-router.workspace = true
 url.workspace = true
 
@@ -67,10 +67,10 @@ assert_matches.workspace = true
 janus_aggregator_core = { path = ".", features = ["test-util"] }
 janus_core = { workspace = true, features = ["test-util"] }
 rstest.workspace = true
-rstest_reuse = "0.6.0"
+rstest_reuse = { workspace = true }
 serde_test.workspace = true
-tempfile = "3.10.1"
-tokio = { version = "1", features = ["test-util"] }  # ensure this remains compatible with the non-dev dependency
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }  # ensure this remains compatible with the non-dev dependency
 
 [build-dependencies]
-rustc_version = "0.4.0"
+rustc_version = { workspace = true }
