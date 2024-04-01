@@ -1,8 +1,8 @@
 ```
-$ aggregation_job_creator --help
+$ janus_aggregator aggregation_job_creator --help
 Janus aggregation job creator
 
-Usage: aggregation_job_creator [OPTIONS] --config-file <CONFIG_FILE>
+Usage: janus_aggregator aggregation_job_creator [OPTIONS] --config-file <CONFIG_FILE>
 
 Options:
       --config-file <CONFIG_FILE>
