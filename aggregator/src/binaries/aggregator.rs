@@ -215,8 +215,9 @@ pub struct Options {
     )]
     pub aggregator_api_auth_tokens: Vec<String>,
 
-    /// The private key used to sign HPKE configs, as a PEM-encoding of a DER-encoding of an RFC5915
-    /// ECPrivateKey. Only P-256 keys are supported.
+    /// The private key used to sign HPKE configs, as a PEM-encoded RFC5915 ECPrivateKey.
+    ///
+    /// Only P-256 keys are supported.
     #[clap(long, env = "HPKE_CONFIG_SIGNING_KEY", hide_env_values = true)]
     pub hpke_config_signing_key: Option<String>,
 }
