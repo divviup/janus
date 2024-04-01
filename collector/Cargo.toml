@@ -23,7 +23,7 @@ chrono.workspace = true
 derivative.workspace = true
 janus_core.workspace = true
 janus_messages.workspace = true
-fixed = { version = "1.26", optional = true }
+fixed = { version = "1.27", optional = true }
 prio.workspace = true
 rand = { workspace = true, features = ["min_const_gen"] }
 reqwest = { workspace = true, features = ["json"] }
