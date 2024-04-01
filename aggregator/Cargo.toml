@@ -51,7 +51,7 @@ console-subscriber = { version = "0.2.0", optional = true }
 deadpool = { version = "0.10.0", features = ["rt_tokio_1"] }
 deadpool-postgres = "0.12.1"
 derivative.workspace = true
-fixed = { version = "1.26", optional = true }
+fixed = { version = "1.27", optional = true }
 futures = "0.3.30"
 git-version = "0.3.9"
 hex = { version = "0.4.3", features = ["serde"], optional = true }
@@ -69,6 +69,7 @@ opentelemetry-otlp = { version = "0.15", optional = true, features = ["metrics"]
 opentelemetry-prometheus = { version = "0.15", optional = true }
 opentelemetry_sdk = { workspace = true, features = ["rt-tokio"], optional = true }
 opentelemetry-semantic-conventions = { version = "0.14", optional = true }
+pem = "3"
 postgres-protocol = "0.6.6"
 postgres-types = { version = "0.2.6", features = ["derive", "array-impls"] }
 prio.workspace = true
@@ -79,6 +80,7 @@ reqwest = { workspace = true, features = ["json"] }
 ring = "0.17.8"
 rustls = "0.22.3"
 rustls-pemfile = "2.1.1"
+sec1 = "0.7"
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded = "0.7.1"

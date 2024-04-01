@@ -30,12 +30,12 @@ bytes = "1"
 # Disable default features to disable compatibility with the old `time` crate, and we also don't
 # (yet) need other default features.
 # https://docs.rs/chrono/latest/chrono/#duration
-chrono = { version = "0.4", default-features = false }
+chrono = { version = "0.4.33", default-features = false }
 clap = { version = "4.5.3", features = ["cargo", "derive", "env"] }
 derivative = "2.2.0"
 http = "1.1"
 http-api-problem = "0.58.0"
-itertools = "0.11"
+itertools = "0.12"
 janus_aggregator = { version = "0.7.1", path = "aggregator" }
 janus_aggregator_api = { version = "0.7.1", path = "aggregator_api" }
 janus_aggregator_core = { version = "0.7.1", path = "aggregator_core" }
