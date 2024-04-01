@@ -38,7 +38,7 @@ base64.workspace = true
 bytes.workspace = true
 chrono = { workspace = true, features = ["clock"] }
 derivative.workspace = true
-fixed = { version = "1.26", optional = true }
+fixed = { version = "1.27", optional = true }
 futures = "0.3.30"
 hex = "0.4"
 hpke-dispatch = { version = "0.5.1", features = ["serde"] }
@@ -68,7 +68,7 @@ trillium.workspace = true
 url = "2.5.0"
 
 [dev-dependencies]
-fixed = "1.26"
+fixed = "1.27"
 hex = { version = "0.4", features = ["serde"] }  # ensure this remains compatible with the non-dev dependency
 janus_core = { path = ".", features = ["test-util"] }
 mockito = "1.4.0"
