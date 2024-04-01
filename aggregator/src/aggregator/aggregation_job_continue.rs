@@ -1,11 +1,9 @@
 //! Implements portions of aggregation job continuation for the helper.
 
 use crate::aggregator::{
-    aggregation_job_writer::{
-        AggregationJobWriter, AggregationJobWriterMetrics, UpdateWrite, WritableReportAggregation,
-    },
+    aggregation_job_writer::{AggregationJobWriter, UpdateWrite, WritableReportAggregation},
     error::handle_ping_pong_error,
-    Error, VdafOps,
+    AggregatorMetrics, Error, VdafOps,
 };
 use janus_aggregator_core::{
     datastore::{
@@ -21,7 +19,6 @@ use janus_messages::{
     AggregationJobContinueReq, AggregationJobResp, PrepareError, PrepareResp, PrepareStepResult,
     Role,
 };
-use opentelemetry::metrics::Counter;
 use prio::{
     codec::{Encode, ParameterizedDecode},
     topology::ping_pong::{PingPongContinuedValue, PingPongState, PingPongTopology},
@@ -42,8 +39,7 @@ impl VdafOps {
         report_aggregations: Vec<ReportAggregation<SEED_SIZE, A>>,
         req: Arc<AggregationJobContinueReq>,
         request_hash: [u8; 32],
-        aggregation_success_counter: Counter<u64>,
-        aggregate_step_failure_counter: Counter<u64>,
+        metrics: &AggregatorMetrics,
     ) -> Result<AggregationJobResp, datastore::Error>
     where
         C: Clock,
@@ -163,7 +159,7 @@ impl VdafOps {
                             Role::Leader,
                             prep_step.report_id(),
                             error,
-                            &aggregate_step_failure_counter,
+                            &metrics.aggregate_step_failure_counter,
                         )
                     })
                     .unwrap_or_else(|prepare_error| {
@@ -213,10 +209,7 @@ impl VdafOps {
             AggregationJobWriter::<SEED_SIZE, _, _, UpdateWrite, _>::new(
                 task,
                 batch_aggregation_shard_count,
-                Some(AggregationJobWriterMetrics {
-                    aggregation_success_counter,
-                    aggregate_step_failure_counter,
-                }),
+                Some(metrics.for_aggregation_job_writer()),
             );
         aggregation_job_writer.put(aggregation_job, report_aggregations_to_write)?;
         let prepare_resps = aggregation_job_writer

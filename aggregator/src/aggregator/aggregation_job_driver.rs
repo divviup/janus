@@ -3,11 +3,10 @@ use crate::aggregator::{
     aggregation_job_writer::{
         AggregationJobWriter, AggregationJobWriterMetrics, UpdateWrite, WritableReportAggregation,
     },
-    aggregation_success_counter,
     error::handle_ping_pong_error,
     http_handlers::AGGREGATION_JOB_ROUTE,
     query_type::CollectableQueryType,
-    send_request_to_helper, Error, RequestBody,
+    report_aggregation_success_counter, send_request_to_helper, Error, RequestBody,
 };
 use anyhow::{anyhow, Result};
 use backoff::backoff::Backoff;
@@ -78,7 +77,7 @@ where
         meter: &Meter,
         batch_aggregation_shard_count: u64,
     ) -> Self {
-        let aggregation_success_counter = aggregation_success_counter(meter);
+        let aggregation_success_counter = report_aggregation_success_counter(meter);
         let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
 
         let job_cancel_counter = meter
@@ -681,7 +680,7 @@ where
                 Arc::clone(&task),
                 self.batch_aggregation_shard_count,
                 Some(AggregationJobWriterMetrics {
-                    aggregation_success_counter: self.aggregation_success_counter.clone(),
+                    report_aggregation_success_counter: self.aggregation_success_counter.clone(),
                     aggregate_step_failure_counter: self.aggregate_step_failure_counter.clone(),
                 }),
             );

@@ -50,7 +50,7 @@ where
 /// Metrics for the aggregation job writer.
 #[derive(Clone)]
 pub struct AggregationJobWriterMetrics {
-    pub aggregation_success_counter: Counter<u64>,
+    pub report_aggregation_success_counter: Counter<u64>,
     pub aggregate_step_failure_counter: Counter<u64>,
 }
 
@@ -249,6 +249,12 @@ where
                 )
             })
             .collect())
+    }
+
+    fn update_metrics<F: FnOnce(&AggregationJobWriterMetrics)>(&self, f: F) {
+        if let Some(metrics) = self.metrics.as_ref() {
+            f(metrics)
+        }
     }
 }
 
@@ -664,18 +670,18 @@ where
 
                     match ra_batch_aggregation.merged_with(batch_aggregation) {
                         Ok(merged_batch_aggregation) => {
-                            if let Some(metrics) = self.writer.metrics.as_ref() {
-                                metrics.aggregation_success_counter.add(1, &[])
-                            }
+                            self.writer.update_metrics(|metrics| {
+                                metrics.report_aggregation_success_counter.add(1, &[])
+                            });
                             *batch_aggregation = merged_batch_aggregation
                         }
                         Err(err) => {
                             warn!(report_id = %report_aggregation.report_id(), ?err, "Couldn't update batch aggregation");
-                            if let Some(metrics) = self.writer.metrics.as_ref() {
+                            self.writer.update_metrics(|metrics| {
                                 metrics
                                     .aggregate_step_failure_counter
-                                    .add(1, &[KeyValue::new("type", "accumulate_failure")]);
-                            }
+                                    .add(1, &[KeyValue::new("type", "accumulate_failure")])
+                            });
                             *report_aggregation.to_mut() = report_aggregation
                                 .as_ref()
                                 .clone()
