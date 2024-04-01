@@ -31,6 +31,11 @@ Options:
           
           [env: AGGREGATOR_API_AUTH_TOKENS]
 
+      --hpke-config-signing-key <HPKE_CONFIG_SIGNING_KEY>
+          The private key used to sign HPKE configs, as a PEM-encoding of a DER-encoding of an RFC5915 ECPrivateKey. Only P-256 keys are supported
+          
+          [env: HPKE_CONFIG_SIGNING_KEY]
+
   -h, --help
           Print help (see a summary with '-h')
 

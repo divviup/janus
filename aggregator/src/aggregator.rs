@@ -84,7 +84,11 @@ use prio::{
     },
 };
 use reqwest::Client;
-use ring::digest::{digest, SHA256};
+use ring::{
+    digest::{digest, SHA256},
+    rand::SystemRandom,
+    signature::{EcdsaKeyPair, Signature},
+};
 use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
@@ -192,7 +196,7 @@ pub struct Aggregator<C: Clock> {
 }
 
 /// Config represents a configuration for an Aggregator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Config {
     /// Defines the maximum size of a batch of uploaded reports which will be written in a single
     /// transaction.
@@ -217,6 +221,9 @@ pub struct Config {
     /// becomes aware of key state changes.
     pub global_hpke_configs_refresh_interval: StdDuration,
 
+    /// The key used to sign HPKE configurations.
+    pub hpke_config_signing_key: Option<EcdsaKeyPair>,
+
     pub taskprov_config: TaskprovConfig,
 }
 
@@ -228,6 +235,7 @@ impl Default for Config {
             batch_aggregation_shard_count: 1,
             task_counter_shard_count: 32,
             global_hpke_configs_refresh_interval: GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
+            hpke_config_signing_key: None,
             taskprov_config: TaskprovConfig::default(),
         }
     }
@@ -292,20 +300,25 @@ impl<C: Clock> Aggregator<C> {
         })
     }
 
+    /// Handles an HPKE config request.
+    ///
+    /// The returned value is the encoded HPKE config list (i.e. the response body), and an optional
+    /// signature over the body if the aggregator is configured to sign HPKE config responses.
     async fn handle_hpke_config(
         &self,
         task_id_base64: Option<&[u8]>,
-    ) -> Result<HpkeConfigList, Error> {
-        // If we're running in taskprov mode, unconditionally provide the global keys and ignore
-        // the task_id parameter.
-        if self.cfg.taskprov_config.enabled {
+    ) -> Result<(Vec<u8>, Option<Signature>), Error> {
+        // Retrieve the appropriate HPKE config list.
+        let hpke_config_list = if self.cfg.taskprov_config.enabled {
+            // If we're running in taskprov mode, unconditionally provide the global keys and ignore
+            // the task_id parameter.
             let configs = self.global_hpke_keypairs.configs();
             if configs.is_empty() {
-                Err(Error::Internal(
+                return Err(Error::Internal(
                     "this server is missing its global HPKE config".into(),
-                ))
+                ));
             } else {
-                Ok(HpkeConfigList::new(configs.to_vec()))
+                HpkeConfigList::new(configs.to_vec())
             }
         } else {
             // Otherwise, try to get the task-specific key.
@@ -322,13 +335,15 @@ impl<C: Clock> Aggregator<C> {
                         .ok_or(Error::UnrecognizedTask(task_id))?;
 
                     match task_aggregator.handle_hpke_config() {
-                        Some(hpke_config_list) => Ok(hpke_config_list),
+                        Some(hpke_config_list) => hpke_config_list,
                         // Assuming something hasn't gone horribly wrong with the database, this
                         // should only happen in the case where the system has been moved from taskprov
                         // mode to non-taskprov mode. Thus there's still taskprov tasks in the database.
                         // This isn't a supported use case, so the operator needs to delete these tasks
                         // or move the system back into taskprov mode.
-                        None => Err(Error::Internal("task has no HPKE configs".to_string())),
+                        None => {
+                            return Err(Error::Internal("task has no HPKE configs".to_string()))
+                        }
                     }
                 }
                 // No task ID present, try to fall back to a global config.
@@ -337,13 +352,25 @@ impl<C: Clock> Aggregator<C> {
                     if configs.is_empty() {
                         // This server isn't configured to provide global HPKE keys, the client
                         // should have given us a task ID.
-                        Err(Error::MissingTaskId)
+                        return Err(Error::MissingTaskId);
                     } else {
-                        Ok(HpkeConfigList::new(configs.to_vec()))
+                        HpkeConfigList::new(configs.to_vec())
                     }
                 }
             }
-        }
+        };
+
+        // Encode & (if configured to do so) sign the HPKE config list.
+        let encoded_hpke_config_list = hpke_config_list.get_encoded()?;
+        let signature = self
+            .cfg
+            .hpke_config_signing_key
+            .as_ref()
+            .map(|key| key.sign(&SystemRandom::new(), &encoded_hpke_config_list))
+            .transpose()
+            .map_err(|_| Error::Internal("hpke config list signing error".to_string()))?;
+
+        Ok((encoded_hpke_config_list, signature))
     }
 
     async fn handle_upload(&self, task_id: &TaskId, report_bytes: &[u8]) -> Result<(), Arc<Error>> {
@@ -3142,11 +3169,38 @@ async fn send_request_to_helper(
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub(crate) mod test_util {
+    use crate::{aggregator::Config, binaries::aggregator::parse_pem_ec_private_key};
+    use ring::signature::EcdsaKeyPair;
     use std::time::Duration;
 
-    use crate::aggregator::Config;
-
     pub(crate) const BATCH_AGGREGATION_SHARD_COUNT: u64 = 32;
+
+    /// HPKE config signing key for use in tests.
+    ///
+    /// This key is "testECCP256", a standard test key taken from [RFC
+    /// 9500](https://www.rfc-editor.org/rfc/rfc9500.html#name-ecdlp-keys). Boilerplate: this is a
+    /// non-sensitive test key, so it is OK that it is checked into a public GitHub repository.
+    /// Given that this key is public, it should not be used for any sensitive purpose.
+    pub(crate) const HPKE_CONFIG_SIGNING_KEY_PEM: &str = "-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIObLW92AqkWunJXowVR2Z5/+yVPBaFHnEedDk5WJxk/BoAoGCCqGSM49
+AwEHoUQDQgAEQiVI+I+3gv+17KN0RFLHKh5Vj71vc75eSOkyMsxFxbFsTNEMTLjV
+uKFxOelIgsiZJXKZNCX0FBmrfpCkKklCcg==
+-----END EC PRIVATE KEY-----";
+
+    pub(crate) fn hpke_config_signing_key() -> EcdsaKeyPair {
+        // ring's EcdsaKeyPair does not implement Clone, so we instead store the serialized key &
+        // parse it each time.
+        parse_pem_ec_private_key(HPKE_CONFIG_SIGNING_KEY_PEM).unwrap()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn hpke_config_verification_key() -> ring::signature::UnparsedPublicKey<Vec<u8>> {
+        use ring::signature::{KeyPair, UnparsedPublicKey, ECDSA_P256_SHA256_ASN1};
+        UnparsedPublicKey::new(
+            &ECDSA_P256_SHA256_ASN1,
+            hpke_config_signing_key().public_key().as_ref().to_vec(),
+        )
+    }
 
     pub(crate) fn default_aggregator_config() -> Config {
         // Enable upload write batching & batch aggregation sharding by default, in hopes that we
@@ -3155,6 +3209,7 @@ pub(crate) mod test_util {
             max_upload_batch_size: 5,
             max_upload_batch_write_delay: Duration::from_millis(100),
             batch_aggregation_shard_count: BATCH_AGGREGATION_SHARD_COUNT,
+            hpke_config_signing_key: Some(hpke_config_signing_key()),
             ..Default::default()
         }
     }
