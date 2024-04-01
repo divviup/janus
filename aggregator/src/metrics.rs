@@ -38,7 +38,7 @@ use {
 use {
     crate::git_revision,
     janus_aggregator_core::datastore::TRANSACTION_RETRIES_METER_NAME,
-    opentelemetry::{metrics::MetricsError, KeyValue},
+    opentelemetry::metrics::MetricsError,
     opentelemetry_sdk::{
         metrics::{
             new_view, Aggregation, Instrument, InstrumentKind, SdkMeterProvider, Stream, View,
