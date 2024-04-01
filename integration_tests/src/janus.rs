@@ -140,6 +140,7 @@ impl JanusInProcess {
             database: DbConfig {
                 url: database_url,
                 connection_pool_timeouts_secs: 60,
+                connection_pool_max_size: None,
                 check_schema_version: false,
                 tls_trust_store_path: None,
             },

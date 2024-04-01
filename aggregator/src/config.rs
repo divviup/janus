@@ -82,6 +82,14 @@ pub struct DbConfig {
     #[serde(default = "DbConfig::default_connection_pool_timeout")]
     pub connection_pool_timeouts_secs: u64,
 
+    /// Maximum size of the connection pool. Affects the number of concurrent database operations.
+    /// If unspecified, the default is `cpu_count * 4`, see [`deadpool_postgres::PoolConfig`].
+    ///
+    /// Be aware that each connection pool slot consumes a database connection. Ensure that the
+    /// database has sufficient resources to handle the maximum number of connections, and that
+    /// the database `max_connections` limit is high enough.
+    pub connection_pool_max_size: Option<usize>,
+
     /// If false, the program will not check whether the database's current
     /// schema version is supported.
     #[serde(default = "DbConfig::default_check_schema_version")]
@@ -250,6 +258,7 @@ pub mod test_util {
         DbConfig {
             url: Url::parse("postgres://postgres:postgres@localhost:5432/postgres").unwrap(),
             connection_pool_timeouts_secs: DbConfig::default_connection_pool_timeout(),
+            connection_pool_max_size: None,
             check_schema_version: DbConfig::default_check_schema_version(),
             tls_trust_store_path: None,
         }
@@ -309,6 +318,21 @@ mod tests {
             serde_yaml::from_str("url: \"postgres://postgres:postgres@localhost:5432/postgres\"")
                 .unwrap();
         assert_eq!(db_config.connection_pool_timeouts_secs, 60);
+    }
+
+    #[test]
+    fn db_config_max_retries() {
+        let db_config: DbConfig =
+            serde_yaml::from_str("url: \"postgres://postgres:postgres@localhost:5432/postgres\"")
+                .unwrap();
+        assert_eq!(db_config.connection_pool_max_size, None);
+
+        let db_config: DbConfig = serde_yaml::from_str(
+            "url: \"postgres://postgres:postgres@localhost:5432/postgres\"
+connection_pool_max_size: 42",
+        )
+        .unwrap();
+        assert_eq!(db_config.connection_pool_max_size, Some(42));
     }
 
     #[test]

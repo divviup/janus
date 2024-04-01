@@ -254,6 +254,7 @@ async fn aggregator_shutdown() {
             database: DbConfig {
                 url: "postgres://localhost".parse().unwrap(),
                 connection_pool_timeouts_secs: 60,
+                connection_pool_max_size: None,
                 check_schema_version: true,
                 tls_trust_store_path: None,
             },
@@ -289,6 +290,7 @@ async fn aggregation_job_creator_shutdown() {
             database: DbConfig {
                 url: "postgres://localhost".parse().unwrap(),
                 connection_pool_timeouts_secs: 60,
+                connection_pool_max_size: None,
                 check_schema_version: true,
                 tls_trust_store_path: None,
             },
@@ -316,6 +318,7 @@ async fn aggregation_job_driver_shutdown() {
             database: DbConfig {
                 url: "postgres://localhost".parse().unwrap(),
                 connection_pool_timeouts_secs: 60,
+                connection_pool_max_size: None,
                 check_schema_version: true,
                 tls_trust_store_path: None,
             },
@@ -351,6 +354,7 @@ async fn collection_job_driver_shutdown() {
             database: DbConfig {
                 url: "postgres://localhost".parse().unwrap(),
                 connection_pool_timeouts_secs: 60,
+                connection_pool_max_size: None,
                 check_schema_version: true,
                 tls_trust_store_path: None,
             },
