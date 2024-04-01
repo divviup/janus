@@ -3176,7 +3176,7 @@ pub(crate) mod test_util {
     pub(crate) const BATCH_AGGREGATION_SHARD_COUNT: u64 = 32;
 
     /// HPKE config signing key for use in tests.
-    /// 
+    ///
     /// This key is "testECCP256", a standard test key taken from [RFC
     /// 9500](https://www.rfc-editor.org/rfc/rfc9500.html#name-ecdlp-keys). Boilerplate: this is a
     /// non-sensitive test key, so it is OK that it is checked into a public GitHub repository.
