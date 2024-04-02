@@ -4,6 +4,11 @@ database:
   url: postgres://postgres@127.0.0.1:5432/postgres
   check_schema_version: false
 health_check_listen_address: 0.0.0.0:8000
+health_check_peers:
+  - http://127.0.0.1:8001/healthz
+  - http://127.0.0.1:8002/healthz
+  - http://127.0.0.1:8003/healthz
+  - http://127.0.0.1:8004/healthz
 logging_config:
   force_json_output: true
 listen_address: 0.0.0.0:8080

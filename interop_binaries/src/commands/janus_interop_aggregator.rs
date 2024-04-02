@@ -5,6 +5,7 @@ use crate::{
 use anyhow::Context;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
+use futures::future::try_join_all;
 use janus_aggregator::{
     binary_utils::{janus_main, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
@@ -21,13 +22,15 @@ use janus_core::{
 use janus_messages::{Duration, HpkeConfig, Time};
 use prio::codec::Decode;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
-use trillium::{Conn, Handler};
-use trillium_api::{api, Json};
+use trillium::{Conn, Handler, Status};
+use trillium_api::{api, ApiConnExt, Json};
 use trillium_proxy::{upstream::IntoUpstreamSelector, Client, Proxy};
 use trillium_router::Router;
 use trillium_tokio::ClientConfig;
+use url::Url;
 
 #[derive(Debug, Serialize)]
 struct EndpointResponse {
@@ -130,6 +133,7 @@ async fn make_handler(
     datastore: Arc<Datastore<RealClock>>,
     dap_serving_prefix: String,
     aggregator_address: SocketAddr,
+    health_check_peers: Vec<Url>,
 ) -> anyhow::Result<impl Handler> {
     let keyring = Keyring::new();
 
@@ -138,9 +142,28 @@ async fn make_handler(
         Client::new(ClientConfig::default()).with_default_pool(),
         upstream,
     );
+    let health_check_client = Client::new(ClientConfig::default()).with_default_pool();
 
     let handler = Router::new()
-        .post("internal/test/ready", Json(serde_json::Map::new()))
+        .post("internal/test/ready", move |conn: Conn| {
+            let health_check_peers = health_check_peers.clone();
+            let health_check_client = health_check_client.clone();
+            async move {
+                let result: Result<_, anyhow::Error> =
+                    try_join_all(health_check_peers.iter().map(|peer| {
+                        let client = health_check_client.clone();
+                        async move {
+                            let _ = client.get(peer.as_str()).await?.success()?;
+                            Ok(())
+                        }
+                    }))
+                    .await;
+                match result {
+                    Ok(_) => conn.with_json(&json!({})),
+                    Err(_) => conn.with_status(Status::ServiceUnavailable),
+                }
+            }
+        })
         .post(
             "internal/test/endpoint_for_task",
             Json(EndpointResponse {
@@ -213,6 +236,10 @@ struct Config {
     /// Address on which the aggregator's HTTP server is listening. DAP requests will be proxied to
     /// this.
     aggregator_address: SocketAddr,
+
+    /// List of URLs to health check endpoints of aggregator subprocesses. The interop aggregator
+    /// will check these endpoints for readiness before considering itself ready.
+    health_check_peers: Vec<Url>,
 }
 
 impl BinaryConfig for Config {
@@ -236,6 +263,7 @@ impl Options {
                 Arc::clone(&datastore),
                 ctx.config.dap_serving_prefix,
                 ctx.config.aggregator_address,
+                ctx.config.health_check_peers,
             )
             .await?;
             trillium_tokio::config()
