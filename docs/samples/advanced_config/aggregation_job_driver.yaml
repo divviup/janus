@@ -7,6 +7,9 @@ database:
   # Timeout for new database connections. Defaults to 60 seconds.
   connection_pool_timeout_secs: 60
 
+  # Maximum number of database connections. Defaults to CPUs * 4.
+  connection_pool_max_size: 8
+
   # Flag to check if the database schema version is compatible upon startup.
   # (optional, defaults to true)
   check_schema_version: true
