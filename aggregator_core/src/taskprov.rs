@@ -9,7 +9,7 @@ use serde::{
     de::{self, Visitor},
     Deserialize, Serialize, Serializer,
 };
-use std::{fmt, sync::OnceLock};
+use std::{fmt, str::FromStr, sync::OnceLock};
 use url::Url;
 
 #[derive(Derivative, Clone, Copy, PartialEq, Eq)]
@@ -59,10 +59,7 @@ impl<'de> Visitor<'de> for VerifyKeyInitVisitor {
     where
         E: de::Error,
     {
-        let decoded = URL_SAFE_NO_PAD
-            .decode(value)
-            .map_err(|_| E::custom("invalid base64url value"))?;
-        VerifyKeyInit::try_from(decoded.as_ref()).map_err(|err| E::custom(err.to_string()))
+        VerifyKeyInit::from_str(value).map_err(|err| E::custom(err.to_string()))
     }
 }
 
@@ -80,6 +77,16 @@ impl<'de> Deserialize<'de> for VerifyKeyInit {
 impl Distribution<VerifyKeyInit> for Standard {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> VerifyKeyInit {
         VerifyKeyInit(rng.gen())
+    }
+}
+
+impl FromStr for VerifyKeyInit {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(VerifyKeyInit::try_from(
+            URL_SAFE_NO_PAD.decode(s)?.as_ref(),
+        )?)
     }
 }
 

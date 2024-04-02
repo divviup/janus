@@ -27,6 +27,7 @@ backoff = { workspace = true, features = ["tokio"] }
 base64.workspace = true
 bytes.workspace = true
 chrono.workspace = true
+clap.workspace = true
 deadpool = { workspace = true, features = ["rt_tokio_1"] }
 deadpool-postgres = { workspace = true }
 derivative.workspace = true

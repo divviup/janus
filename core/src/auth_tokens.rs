@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use http::{header::AUTHORIZATION, HeaderValue};
@@ -90,6 +91,25 @@ impl AsRef<[u8]> for AuthenticationToken {
             Self::DapAuth(token) => token.as_ref(),
             Self::Bearer(token) => token.as_ref(),
         }
+    }
+}
+
+impl FromStr for AuthenticationToken {
+    type Err = anyhow::Error;
+
+    /// Parses an authentication token flag value into an AuthenticationToken, in the following way:
+    ///   * `bearer:value` is translated into a Bearer token, with the given value.
+    ///   * `dap:value` is translated into a DAP Auth token, with the given value.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Some(s) = s.strip_prefix("bearer:") {
+            return Ok(Self::Bearer(BearerToken::from_str(s)?));
+        }
+        if let Some(s) = s.strip_prefix("dap:") {
+            return Ok(Self::DapAuth(DapAuthToken::from_str(s)?));
+        }
+        Err(anyhow!(
+            "bad or missing prefix on authentication token flag value"
+        ))
     }
 }
 
@@ -415,6 +435,7 @@ impl AsRef<[u8]> for AuthenticationTokenHash {
 mod tests {
     use crate::auth_tokens::{AuthenticationToken, AuthenticationTokenHash};
     use rand::random;
+    use std::str::FromStr as _;
 
     #[test]
     fn valid_dap_auth_token() {
@@ -450,6 +471,28 @@ mod tests {
             .unwrap_err();
         serde_yaml::from_str::<AuthenticationToken>("{type: \"Bearer\", token: \"AAAA==AAA\"}")
             .unwrap_err();
+    }
+
+    #[test]
+    fn authentication_token_from_str() {
+        for (value, expected_result) in [
+            (
+                "bearer:foo",
+                Some(AuthenticationToken::new_bearer_token_from_string("foo").unwrap()),
+            ),
+            (
+                "dap:foo",
+                Some(AuthenticationToken::new_dap_auth_token_from_string("foo").unwrap()),
+            ),
+            ("badtype:foo", None),
+            ("notype", None),
+        ] {
+            let rslt = AuthenticationToken::from_str(value);
+            match expected_result {
+                Some(expected_result) => assert_eq!(rslt.unwrap(), expected_result),
+                None => assert!(rslt.is_err()),
+            }
+        }
     }
 
     #[rstest::rstest]

@@ -9,13 +9,23 @@ use anyhow::{anyhow, Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
 use janus_aggregator_core::{
-    datastore::{self, Datastore},
+    datastore::{self, models::HpkeKeyState, Datastore},
     task::{AggregatorTask, SerializedAggregatorTask},
+    taskprov::{PeerAggregator, VerifyKeyInit},
 };
-use janus_core::time::{Clock, RealClock};
+use janus_core::{
+    auth_tokens::AuthenticationToken,
+    cli::{AeadAlgorithm, KdfAlgorithm, KemAlgorithm},
+    hpke::generate_hpke_config_and_private_key,
+    time::{Clock, RealClock},
+};
+use janus_messages::{
+    codec::Encode as _, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role,
+};
 use k8s_openapi::api::core::v1::Secret;
 use kube::api::{ObjectMeta, PostParams};
 use opentelemetry::global::meter;
+use prio::codec::Decode as _;
 use rand::{distributions::Standard, thread_rng, Rng};
 use ring::aead::AES_128_GCM;
 use serde::{Deserialize, Serialize};
@@ -26,6 +36,7 @@ use std::{
 };
 use tokio::fs;
 use tracing::{debug, info};
+use url::Url;
 
 pub async fn run(command_line_options: CommandLineOptions) -> Result<()> {
     // Read and parse config.
@@ -53,7 +64,88 @@ pub async fn run(command_line_options: CommandLineOptions) -> Result<()> {
 }
 
 #[derive(Debug, Parser)]
+#[allow(clippy::large_enum_variant)]
 enum Command {
+    /// Generates & writes a new global HPKE key.
+    GenerateGlobalHpkeKey {
+        #[clap(flatten)]
+        kubernetes_secret_options: KubernetesSecretOptions,
+
+        /// Numeric identifier of the HPKE configuration to generate
+        #[arg(long)]
+        id: u8,
+
+        /// HPKE Key Encapsulation Mechanism algorithm
+        #[arg(long)]
+        kem: KemAlgorithm,
+
+        /// HPKE Key Derivation Function algorithm
+        #[arg(long)]
+        kdf: KdfAlgorithm,
+
+        /// HPKE Authenticated Encryption with Associated Data algorithm
+        #[arg(long)]
+        aead: AeadAlgorithm,
+
+        /// The location to write the encoded HpkeConfig
+        #[arg(long)]
+        hpke_config_out_file: Option<PathBuf>,
+    },
+
+    /// Sets the state of a global HPKE key.
+    SetGlobalHpkeKeyState {
+        #[clap(flatten)]
+        kubernetes_secret_options: KubernetesSecretOptions,
+
+        /// Numeric identifier of the HPKE configuration to modify
+        #[arg(long)]
+        id: u8,
+
+        /// State to change the HPKE key to
+        #[arg(long)]
+        state: HpkeKeyState,
+    },
+
+    /// Adds a taskprov peer aggregator.
+    AddTaskprovPeerAggregator {
+        #[clap(flatten)]
+        kubernetes_secret_options: KubernetesSecretOptions,
+
+        /// The peer's endpoint, as a URL.
+        #[arg(long)]
+        peer_endpoint: Url,
+
+        /// This aggregator's role.
+        #[arg(long)]
+        role: Role,
+
+        /// The taskprov verify_key_init value, in unpadded base64url.
+        #[arg(long, env = "VERIFY_KEY_INIT", hide_env_values = true)]
+        verify_key_init: VerifyKeyInit,
+
+        /// The location of the collector HPKE config file, which contains an encoded DAP HpkeConfig
+        /// (i.e. public key & metadata) used to encrypt to the collector.
+        #[arg(long)]
+        collector_hpke_config_file: PathBuf,
+
+        /// The age after which reports are considered expired & will be deleted permanently from
+        /// the datastore, in seconds.
+        #[arg(long)]
+        report_expiry_age_secs: Option<u64>,
+
+        /// The amount of clock skew that the system will accept, in seconds.
+        #[arg(long)]
+        tolerable_clock_skew_secs: u64,
+
+        /// The aggregator auth token, which must be in the format `bearer:value` or `dap:value`.
+        #[arg(long, env = "AGGREGATOR_AUTH_TOKEN", hide_env_values = true)]
+        aggregator_auth_token: AuthenticationToken,
+
+        /// The collector auth token, which must be in the format `bearer:value` or `dap:value`.
+        #[arg(long, env = "COLLECTOR_AUTH_TOKEN", hide_env_values = true)]
+        collector_auth_token: Option<AuthenticationToken>,
+    },
+
     /// Write a set of tasks identified in a file to the datastore
     ProvisionTasks {
         #[clap(flatten)]
@@ -91,6 +183,94 @@ impl Command {
         // function with the main command logic.
         let kube_client = LazyKubeClient::new();
         match self {
+            Command::GenerateGlobalHpkeKey {
+                kubernetes_secret_options,
+                id,
+                kem,
+                kdf,
+                aead,
+                hpke_config_out_file,
+            } => {
+                let datastore = datastore_from_opts(
+                    kubernetes_secret_options,
+                    command_line_options,
+                    config_file,
+                    &kube_client,
+                )
+                .await?;
+
+                generate_global_hpke_key(
+                    &datastore,
+                    command_line_options.dry_run,
+                    (*id).into(),
+                    (*kem).into(),
+                    (*kdf).into(),
+                    (*aead).into(),
+                    hpke_config_out_file.as_deref(),
+                )
+                .await
+            }
+
+            Command::SetGlobalHpkeKeyState {
+                kubernetes_secret_options,
+                id,
+                state,
+            } => {
+                let datastore = datastore_from_opts(
+                    kubernetes_secret_options,
+                    command_line_options,
+                    config_file,
+                    &kube_client,
+                )
+                .await?;
+
+                set_global_hpke_key_state(
+                    &datastore,
+                    command_line_options.dry_run,
+                    (*id).into(),
+                    *state,
+                )
+                .await
+            }
+
+            Command::AddTaskprovPeerAggregator {
+                kubernetes_secret_options,
+                peer_endpoint,
+                role,
+                verify_key_init,
+                collector_hpke_config_file,
+                report_expiry_age_secs,
+                tolerable_clock_skew_secs,
+                aggregator_auth_token,
+                collector_auth_token,
+            } => {
+                let datastore = datastore_from_opts(
+                    kubernetes_secret_options,
+                    command_line_options,
+                    config_file,
+                    &kube_client,
+                )
+                .await?;
+
+                // Parse flags into proper types.
+                let report_expiry_age = report_expiry_age_secs.map(Duration::from_seconds);
+                let tolerable_clock_skew = Duration::from_seconds(*tolerable_clock_skew_secs);
+
+                add_taskprov_peer_aggregator(
+                    &datastore,
+                    command_line_options.dry_run,
+                    peer_endpoint,
+                    *role,
+                    *verify_key_init,
+                    collector_hpke_config_file,
+                    report_expiry_age,
+                    tolerable_clock_skew,
+                    aggregator_auth_token,
+                    collector_auth_token.as_ref(),
+                )
+                .await
+            }
+
             Command::ProvisionTasks {
                 kubernetes_secret_options,
                 tasks_file,
@@ -153,6 +333,95 @@ async fn install_tracing_and_metrics_handlers(
         .await
         .context("failed to install metrics exporter")?;
     Ok((trace_guard, metrics_guard))
+}
+
+async fn generate_global_hpke_key<C: Clock>(
+    datastore: &Datastore<C>,
+    dry_run: bool,
+    id: HpkeConfigId,
+    kem: HpkeKemId,
+    kdf: HpkeKdfId,
+    aead: HpkeAeadId,
+    hpke_config_out_file: Option<&Path>,
+) -> Result<()> {
+    let hpke_keypair = Arc::new(generate_hpke_config_and_private_key(id, kem, kdf, aead)?);
+
+    if !dry_run {
+        datastore
+            .run_tx("generate_global_hpke_key", |tx| {
+                let hpke_keypair = Arc::clone(&hpke_keypair);
+
+                Box::pin(async move { tx.put_global_hpke_keypair(&hpke_keypair).await })
+            })
+            .await?;
+    }
+
+    if let Some(hpke_config_out_file) = hpke_config_out_file {
+        fs::write(hpke_config_out_file, hpke_keypair.config().get_encoded()?).await?;
+    }
+
+    Ok(())
+}
+
+async fn set_global_hpke_key_state<C: Clock>(
+    datastore: &Datastore<C>,
+    dry_run: bool,
+    id: HpkeConfigId,
+    state: HpkeKeyState,
+) -> Result<()> {
+    if !dry_run {
+        datastore
+            .run_tx("set_global_hpke_key_state", |tx| {
+                Box::pin(async move { tx.set_global_hpke_keypair_state(&id, &state).await })
+            })
+            .await?;
+    }
+
+    Ok(())
+}
+
+async fn add_taskprov_peer_aggregator<C: Clock>(
+    datastore: &Datastore<C>,
+    dry_run: bool,
+    peer_endpoint: &Url,
+    role: Role,
+    verify_key_init: VerifyKeyInit,
+    collector_hpke_config_file: &Path,
+    report_expiry_age: Option<Duration>,
+    tolerable_clock_skew: Duration,
+    aggregator_auth_token: &AuthenticationToken,
+    collector_auth_token: Option<&AuthenticationToken>,
+) -> Result<()> {
+    let collector_hpke_config = {
+        let bytes = fs::read(collector_hpke_config_file).await?;
+        HpkeConfig::get_decoded(&bytes)?
+    };
+    let collector_auth_tokens = collector_auth_token
+        .cloned()
+        .map(|token| Vec::from([token]))
+        .unwrap_or_default();
+    let peer_aggregator = Arc::new(PeerAggregator::new(
+        peer_endpoint.clone(),
+        role,
+        verify_key_init,
+        collector_hpke_config,
+        report_expiry_age,
+        tolerable_clock_skew,
+        Vec::from([aggregator_auth_token.clone()]),
+        collector_auth_tokens,
+    ));
+
+    if !dry_run {
+        datastore
+            .run_tx("add_taskprov_peer_aggregator", |tx| {
+                let peer_aggregator = Arc::clone(&peer_aggregator);
+
+                Box::pin(async move { tx.put_taskprov_peer_aggregator(&peer_aggregator).await })
+            })
+            .await?;
+    }
+
+    Ok(())
 }
 
 async fn provision_tasks<C: Clock>(
@@ -455,32 +724,44 @@ impl From<kube::Client> for LazyKubeClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{fetch_datastore_keys, CommandLineOptions, ConfigFile, KubernetesSecretOptions};
     use crate::{
-        binaries::janus_cli::{LazyKubeClient, URL_SAFE_NO_PAD},
+        binaries::janus_cli::{
+            fetch_datastore_keys, CommandLineOptions, ConfigFile, KubernetesSecretOptions,
+            LazyKubeClient,
+        },
         binary_utils::CommonBinaryOptions,
         config::test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
         config::{default_max_transaction_retries, CommonConfig},
     };
-    use base64::Engine;
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use clap::CommandFactory;
     use janus_aggregator_core::{
-        datastore::{test_util::ephemeral_datastore, Datastore},
+        datastore::{models::HpkeKeyState, test_util::ephemeral_datastore, Datastore},
         task::{test_util::TaskBuilder, AggregatorTask, QueryType},
+        taskprov::{PeerAggregator, VerifyKeyInit},
     };
     use janus_core::{
+        auth_tokens::AuthenticationToken,
+        hpke::generate_hpke_config_and_private_key,
         test_util::{kubernetes, roundtrip_encoding},
         time::RealClock,
         vdaf::VdafInstance,
     };
-    use janus_messages::{Role, TaskId};
+    use janus_messages::{
+        codec::Encode, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role,
+        TaskId,
+    };
+    use prio::codec::Decode;
+    use rand::random;
     use ring::aead::{UnboundKey, AES_128_GCM};
     use std::{
         collections::HashMap,
         io::Write,
         net::{Ipv4Addr, SocketAddr},
     };
-    use tempfile::NamedTempFile;
+    use tempfile::{tempdir, NamedTempFile};
+    use tokio::fs;
+    use url::Url;
 
     #[test]
     fn verify_app() {
@@ -561,6 +842,333 @@ mod tests {
 
     fn task_hashmap_from_slice(tasks: Vec<AggregatorTask>) -> HashMap<TaskId, AggregatorTask> {
         tasks.into_iter().map(|task| (*task.id(), task)).collect()
+    }
+
+    // Returns the HPKE config written to disk.
+    async fn run_generate_global_hpke_key_testcase(
+        ds: &Datastore<RealClock>,
+        dry_run: bool,
+        id: HpkeConfigId,
+        kem: HpkeKemId,
+        kdf: HpkeKdfId,
+        aead: HpkeAeadId,
+    ) -> HpkeConfig {
+        let temp_dir = tempdir().unwrap();
+        let hpke_config_out_file = temp_dir.path().join("hpke_config");
+
+        super::generate_global_hpke_key(
+            ds,
+            dry_run,
+            id,
+            kem,
+            kdf,
+            aead,
+            Some(&hpke_config_out_file),
+        )
+        .await
+        .unwrap();
+
+        HpkeConfig::get_decoded(&fs::read(hpke_config_out_file).await.unwrap()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn generate_global_hpke_key() {
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(RealClock::default()).await;
+
+        let id = HpkeConfigId::from(12);
+        let kem = HpkeKemId::P256HkdfSha256;
+        let kdf = HpkeKdfId::HkdfSha256;
+        let aead = HpkeAeadId::Aes128Gcm;
+
+        let disk_hpke_config = run_generate_global_hpke_key_testcase(
+            &ds, /* dry_run */ false, id, kem, kdf, aead,
+        )
+        .await;
+
+        let global_hpke_keypair = ds
+            .run_unnamed_tx(|tx| {
+                Box::pin(async move { Ok(tx.get_global_hpke_keypair(&id).await.unwrap()) })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Verify datastore state matches what was written to disk.
+        assert_eq!(global_hpke_keypair.state(), &HpkeKeyState::Pending);
+        assert_eq!(
+            global_hpke_keypair.hpke_keypair().config(),
+            &disk_hpke_config
+        );
+
+        // Verify HPKE configuration matches what was expected.
+        assert_eq!(disk_hpke_config.id(), &id);
+        assert_eq!(disk_hpke_config.kem_id(), &kem);
+        assert_eq!(disk_hpke_config.kdf_id(), &kdf);
+        assert_eq!(disk_hpke_config.aead_id(), &aead);
+    }
+
+    #[tokio::test]
+    async fn generate_global_hpke_key_dry_run() {
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(RealClock::default()).await;
+
+        let id = HpkeConfigId::from(43);
+        let kem = HpkeKemId::X25519HkdfSha256;
+        let kdf = HpkeKdfId::HkdfSha512;
+        let aead = HpkeAeadId::ChaCha20Poly1305;
+
+        let disk_hpke_config =
+            run_generate_global_hpke_key_testcase(&ds, /* dry_run */ true, id, kem, kdf, aead)
+                .await;
+
+        let global_hpke_keypairs = ds
+            .run_unnamed_tx(|tx| {
+                Box::pin(async move { Ok(tx.get_global_hpke_keypairs().await.unwrap()) })
+            })
+            .await
+            .unwrap();
+
+        // Verify that nothing was written to the datastore.
+        assert!(global_hpke_keypairs.is_empty());
+
+        // Verify HPKE configuration written to disk matches what was expected.
+        assert_eq!(disk_hpke_config.id(), &id);
+        assert_eq!(disk_hpke_config.kem_id(), &kem);
+        assert_eq!(disk_hpke_config.kdf_id(), &kdf);
+        assert_eq!(disk_hpke_config.aead_id(), &aead);
+    }
+
+    #[tokio::test]
+    async fn set_global_hpke_key_state() {
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(RealClock::default()).await;
+
+        // Insert a global HPKE key for the command to modify.
+        let id = HpkeConfigId::from(26);
+        ds.run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                tx.put_global_hpke_keypair(
+                    &generate_hpke_config_and_private_key(
+                        id,
+                        HpkeKemId::P256HkdfSha256,
+                        HpkeKdfId::HkdfSha256,
+                        HpkeAeadId::Aes128Gcm,
+                    )
+                    .unwrap(),
+                )
+                .await
+                .unwrap();
+
+                let global_hpke_keypair = tx.get_global_hpke_keypair(&id).await.unwrap().unwrap();
+                assert_eq!(global_hpke_keypair.state(), &HpkeKeyState::Pending);
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        // Run command.
+        super::set_global_hpke_key_state(&ds, /* dry_run */ false, id, HpkeKeyState::Active)
+            .await
+            .unwrap();
+
+        // Verify the global HPKE key was updated appropriately.
+        ds.run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                let global_hpke_keypair = tx.get_global_hpke_keypair(&id).await.unwrap().unwrap();
+                assert_eq!(global_hpke_keypair.state(), &HpkeKeyState::Active);
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn set_global_hpke_key_state_dry_run() {
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(RealClock::default()).await;
+
+        // Insert a global HPKE key for the command to modify.
+        let id = HpkeConfigId::from(26);
+        ds.run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                tx.put_global_hpke_keypair(
+                    &generate_hpke_config_and_private_key(
+                        id,
+                        HpkeKemId::P256HkdfSha256,
+                        HpkeKdfId::HkdfSha256,
+                        HpkeAeadId::Aes128Gcm,
+                    )
+                    .unwrap(),
+                )
+                .await
+                .unwrap();
+
+                let global_hpke_keypair = tx.get_global_hpke_keypair(&id).await.unwrap().unwrap();
+                assert_eq!(global_hpke_keypair.state(), &HpkeKeyState::Pending);
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        // Run command.
+        super::set_global_hpke_key_state(&ds, /* dry_run */ true, id, HpkeKeyState::Active)
+            .await
+            .unwrap();
+
+        // Verify the global HPKE key was not updated.
+        ds.run_unnamed_tx(|tx| {
+            Box::pin(async move {
+                let global_hpke_keypair = tx.get_global_hpke_keypair(&id).await.unwrap().unwrap();
+                assert_eq!(global_hpke_keypair.state(), &HpkeKeyState::Pending);
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+    }
+
+    async fn run_add_taskprov_peer_aggregator_testcase(
+        ds: &Datastore<RealClock>,
+        dry_run: bool,
+        peer_endpoint: &Url,
+        role: Role,
+        verify_key_init: VerifyKeyInit,
+        collector_hpke_config: &HpkeConfig,
+        report_expiry_age: Option<Duration>,
+        tolerable_clock_skew: Duration,
+        aggregator_auth_token: &AuthenticationToken,
+        collector_auth_token: Option<&AuthenticationToken>,
+    ) {
+        let mut collector_hpke_config_file = NamedTempFile::new().unwrap();
+        collector_hpke_config_file
+            .write_all(&collector_hpke_config.get_encoded().unwrap())
+            .unwrap();
+        let collector_hpke_config_file = collector_hpke_config_file.into_temp_path();
+
+        super::add_taskprov_peer_aggregator(
+            ds,
+            dry_run,
+            peer_endpoint,
+            role,
+            verify_key_init,
+            &collector_hpke_config_file,
+            report_expiry_age,
+            tolerable_clock_skew,
+            aggregator_auth_token,
+            collector_auth_token,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn add_taskprov_peer_aggregator() {
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(RealClock::default()).await;
+
+        let peer_endpoint = "https://example.com".try_into().unwrap();
+        let role = Role::Leader;
+        let verify_key_init = random();
+        let collector_hpke_config = generate_hpke_config_and_private_key(
+            HpkeConfigId::from(96),
+            HpkeKemId::P256HkdfSha256,
+            HpkeKdfId::HkdfSha256,
+            HpkeAeadId::Aes128Gcm,
+        )
+        .unwrap()
+        .config()
+        .clone();
+        let report_expiry_age = Some(Duration::from_seconds(3600));
+        let tolerable_clock_skew = Duration::from_seconds(60);
+        let aggregator_auth_token = random();
+        let collector_auth_token = random();
+
+        run_add_taskprov_peer_aggregator_testcase(
+            &ds,
+            /* dry_run */ false,
+            &peer_endpoint,
+            role,
+            verify_key_init,
+            &collector_hpke_config,
+            report_expiry_age,
+            tolerable_clock_skew,
+            &aggregator_auth_token,
+            Some(&collector_auth_token),
+        )
+        .await;
+
+        let want_peer_aggregator = PeerAggregator::new(
+            peer_endpoint.clone(),
+            role,
+            verify_key_init,
+            collector_hpke_config,
+            report_expiry_age,
+            tolerable_clock_skew,
+            Vec::from([aggregator_auth_token]),
+            Vec::from([collector_auth_token]),
+        );
+
+        let got_peer_aggregator = ds
+            .run_unnamed_tx(|tx| {
+                let peer_endpoint = peer_endpoint.clone();
+
+                Box::pin(async move {
+                    Ok(tx
+                        .get_taskprov_peer_aggregator(&peer_endpoint, &role)
+                        .await
+                        .unwrap()
+                        .unwrap())
+                })
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(want_peer_aggregator, got_peer_aggregator);
+    }
+
+    #[tokio::test]
+    async fn add_taskprov_peer_aggregator_dry_run() {
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(RealClock::default()).await;
+
+        run_add_taskprov_peer_aggregator_testcase(
+            &ds,
+            /* dry_run */ true,
+            &"https://example.com".try_into().unwrap(),
+            Role::Leader,
+            random(),
+            &generate_hpke_config_and_private_key(
+                HpkeConfigId::from(96),
+                HpkeKemId::P256HkdfSha256,
+                HpkeKdfId::HkdfSha256,
+                HpkeAeadId::Aes128Gcm,
+            )
+            .unwrap()
+            .config()
+            .clone(),
+            Some(Duration::from_seconds(3600)),
+            Duration::from_seconds(60),
+            &random(),
+            Some(&random()),
+        )
+        .await;
+
+        let got_peer_aggregators = ds
+            .run_unnamed_tx(|tx| {
+                Box::pin(async move { Ok(tx.get_taskprov_peer_aggregators().await.unwrap()) })
+            })
+            .await
+            .unwrap();
+
+        assert!(got_peer_aggregators.is_empty())
     }
 
     async fn run_provision_tasks_testcase(

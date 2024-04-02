@@ -3,6 +3,7 @@
 use crate::{datastore::Error, task};
 use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::NaiveDateTime;
+use clap::ValueEnum;
 use derivative::Derivative;
 use janus_core::{
     auth_tokens::{AuthenticationToken, AuthenticationTokenHash},
@@ -2135,7 +2136,9 @@ impl ToSql for SqlInterval {
 }
 
 /// The state of an HPKE key pair, corresponding to the HPKE_KEY_STATE enum in the schema.
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, ToSql, FromSql, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Debug, Hash, PartialEq, Eq, ToSql, FromSql, Serialize, Deserialize, ValueEnum,
+)]
 #[postgres(name = "hpke_key_state")]
 #[serde(rename_all = "snake_case")]
 pub enum HpkeKeyState {
