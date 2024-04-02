@@ -64,6 +64,7 @@ pub async fn run(command_line_options: CommandLineOptions) -> Result<()> {
 }
 
 #[derive(Debug, Parser)]
+#[allow(clippy::large_enum_variant)]
 enum Command {
     /// Generates & writes a new global HPKE key.
     GenerateGlobalHpkeKey {
@@ -119,8 +120,8 @@ enum Command {
         role: Role,
 
         /// The taskprov verify_key_init value, in unpadded base64url.
-        #[arg(long, env = "VERIFY_KEY_INIT")]
-        verify_key_init: String,
+        #[arg(long, env = "VERIFY_KEY_INIT", hide_env_values = true)]
+        verify_key_init: VerifyKeyInit,
 
         /// The location of the collector HPKE config file, which contains an encoded DAP HpkeConfig
         /// (i.e. public key & metadata) used to encrypt to the collector.
@@ -137,12 +138,12 @@ enum Command {
         tolerable_clock_skew_secs: u64,
 
         /// The aggregator auth token, which must be in the format `bearer:value` or `dap:value`.
-        #[arg(long, env = "AGGREGATOR_AUTH_TOKEN")]
-        aggregator_auth_token: String,
+        #[arg(long, env = "AGGREGATOR_AUTH_TOKEN", hide_env_values = true)]
+        aggregator_auth_token: AuthenticationToken,
 
         /// The collector auth token, which must be in the format `bearer:value` or `dap:value`.
-        #[arg(long, env = "COLLECTOR_AUTH_TOKEN")]
-        collector_auth_token: Option<String>,
+        #[arg(long, env = "COLLECTOR_AUTH_TOKEN", hide_env_values = true)]
+        collector_auth_token: Option<AuthenticationToken>,
     },
 
     /// Write a set of tasks identified in a file to the datastore
@@ -252,26 +253,19 @@ impl Command {
                 .await?;
 
                 // Parse flags into proper types.
-                let verify_key_init =
-                    VerifyKeyInit::try_from(URL_SAFE_NO_PAD.decode(verify_key_init)?.as_ref())?;
                 let report_expiry_age = report_expiry_age_secs.map(Duration::from_seconds);
                 let tolerable_clock_skew = Duration::from_seconds(*tolerable_clock_skew_secs);
-                let aggregator_auth_token = parse_authentication_token_flag(aggregator_auth_token)?;
-                let collector_auth_token = collector_auth_token
-                    .as_deref()
-                    .map(parse_authentication_token_flag)
-                    .transpose()?;
 
                 add_taskprov_peer_aggregator(
                     &datastore,
                     command_line_options.dry_run,
                     peer_endpoint,
                     *role,
-                    verify_key_init,
+                    *verify_key_init,
                     collector_hpke_config_file,
                     report_expiry_age,
                     tolerable_clock_skew,
-                    &aggregator_auth_token,
+                    aggregator_auth_token,
                     collector_auth_token.as_ref(),
                 )
                 .await
@@ -354,7 +348,7 @@ async fn generate_global_hpke_key<C: Clock>(
 
     if !dry_run {
         datastore
-            .run_tx("generate-global-hpke-key", |tx| {
+            .run_tx("generate_global_hpke_key", |tx| {
                 let hpke_keypair = Arc::clone(&hpke_keypair);
 
                 Box::pin(async move { tx.put_global_hpke_keypair(&hpke_keypair).await })
@@ -377,7 +371,7 @@ async fn set_global_hpke_key_state<C: Clock>(
 ) -> Result<()> {
     if !dry_run {
         datastore
-            .run_tx("set-global-hpke-key-state", |tx| {
+            .run_tx("set_global_hpke_key_state", |tx| {
                 Box::pin(async move { tx.set_global_hpke_keypair_state(&id, &state).await })
             })
             .await?;
@@ -419,7 +413,7 @@ async fn add_taskprov_peer_aggregator<C: Clock>(
 
     if !dry_run {
         datastore
-            .run_tx("add-taskprov-peer-aggregator", |tx| {
+            .run_tx("add_taskprov_peer_aggregator", |tx| {
                 let peer_aggregator = Arc::clone(&peer_aggregator);
 
                 Box::pin(async move { tx.put_taskprov_peer_aggregator(&peer_aggregator).await })
@@ -726,21 +720,6 @@ impl From<kube::Client> for LazyKubeClient {
             lock: OnceLock::from(value),
         }
     }
-}
-
-/// Parses an authentication token flag value into an AuthenticationToken, in the following way:
-///   * `bearer:value`` is translated into a Bearer token, with the given value.
-///   * `dap:value` is translated into a DAP Auth token, with the given value.
-fn parse_authentication_token_flag(value: &str) -> Result<AuthenticationToken> {
-    if let Some(value) = value.strip_prefix("bearer:") {
-        return AuthenticationToken::new_bearer_token_from_string(value);
-    }
-    if let Some(value) = value.strip_prefix("dap:") {
-        return AuthenticationToken::new_dap_auth_token_from_string(value);
-    }
-    Err(anyhow!(
-        "bad or missing prefix on authentication token flag value"
-    ))
 }
 
 #[cfg(test)]
@@ -1500,28 +1479,6 @@ mod tests {
         fetch_datastore_keys(&kube_client, NAMESPACE, SECRET_NAME, SECRET_DATA_KEY)
             .await
             .unwrap_err();
-    }
-
-    #[test]
-    fn parse_authentication_token_flag() {
-        for (flag_value, expected_result) in [
-            (
-                "bearer:foo",
-                Some(AuthenticationToken::new_bearer_token_from_string("foo").unwrap()),
-            ),
-            (
-                "dap:foo",
-                Some(AuthenticationToken::new_dap_auth_token_from_string("foo").unwrap()),
-            ),
-            ("badtype:foo", None),
-            ("notype", None),
-        ] {
-            let rslt = super::parse_authentication_token_flag(flag_value);
-            match expected_result {
-                Some(expected_result) => assert_eq!(rslt.unwrap(), expected_result),
-                None => assert!(rslt.is_err()),
-            }
-        }
     }
 
     #[test]

@@ -17,7 +17,6 @@ base64.workspace = true
 clap.workspace = true
 derivative.workspace = true
 fixed = { version = "1.26", optional = true }
-janus_aggregator_core.workspace = true
 janus_collector.workspace = true
 janus_core.workspace = true
 janus_messages.workspace = true
