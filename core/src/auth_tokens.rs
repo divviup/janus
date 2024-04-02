@@ -433,9 +433,9 @@ impl AsRef<[u8]> for AuthenticationTokenHash {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr as _;
     use crate::auth_tokens::{AuthenticationToken, AuthenticationTokenHash};
     use rand::random;
+    use std::str::FromStr as _;
 
     #[test]
     fn valid_dap_auth_token() {

@@ -84,7 +84,9 @@ impl FromStr for VerifyKeyInit {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(VerifyKeyInit::try_from(URL_SAFE_NO_PAD.decode(s)?.as_ref())?)
+        Ok(VerifyKeyInit::try_from(
+            URL_SAFE_NO_PAD.decode(s)?.as_ref(),
+        )?)
     }
 }
 
