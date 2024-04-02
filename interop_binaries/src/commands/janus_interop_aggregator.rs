@@ -140,17 +140,18 @@ async fn make_handler(
     let upstream = format!("http://{aggregator_address}/").into_upstream();
     let proxy_handler = Proxy::new(
         Client::new(ClientConfig::default()).with_default_pool(),
-        upstream.clone(),
+        upstream,
     );
+    let health_check_client = Client::new(ClientConfig::default()).with_default_pool();
 
     let handler = Router::new()
         .post("internal/test/ready", move |conn: Conn| {
             let health_check_peers = health_check_peers.clone();
-            let client = Client::new(ClientConfig::default()).with_default_pool();
+            let health_check_client = health_check_client.clone();
             async move {
                 let result: Result<_, anyhow::Error> =
                     try_join_all(health_check_peers.iter().map(|peer| {
-                        let client = client.clone();
+                        let client = health_check_client.clone();
                         async move {
                             let _ = client.get(peer.as_str()).await?.success()?;
                             Ok(())
