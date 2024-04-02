@@ -5,8 +5,8 @@ use crate::{
     aggregator::{
         aggregate_share::compute_aggregate_share,
         aggregation_job_writer::{
-            AggregationJobWriter, InitialWrite, ReportAggregationUpdate as _,
-            WritableReportAggregation,
+            AggregationJobWriter, AggregationJobWriterMetrics, InitialWrite,
+            ReportAggregationUpdate as _, WritableReportAggregation,
         },
         error::{handle_ping_pong_error, ReportRejection, ReportRejectionReason},
         error::{BatchMismatch, OptOutReason},
@@ -15,6 +15,7 @@ use crate::{
     },
     cache::{GlobalHpkeKeypairCache, PeerAggregatorCache},
     config::TaskprovConfig,
+    metrics::{aggregate_step_failure_counter, report_aggregation_success_counter},
 };
 use backoff::{backoff::Backoff, Notify};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -121,49 +122,6 @@ pub mod report_writer;
 #[cfg(test)]
 mod taskprov_tests;
 
-pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
-    let aggregate_step_failure_counter = meter
-        .u64_counter("janus_step_failures")
-        .with_description(concat!(
-            "Failures while stepping aggregation jobs; these failures are ",
-            "related to individual client reports rather than entire aggregation jobs."
-        ))
-        .with_unit(Unit::new("{error}"))
-        .init();
-
-    // Initialize counters with desired status labels. This causes Prometheus to see the first
-    // non-zero value we record.
-    for failure_type in [
-        "missing_prepare_message",
-        "missing_leader_input_share",
-        "missing_helper_input_share",
-        "prepare_init_failure",
-        "prepare_step_failure",
-        "prepare_message_failure",
-        "unknown_hpke_config_id",
-        "decrypt_failure",
-        "input_share_decode_failure",
-        "public_share_decode_failure",
-        "prepare_message_decode_failure",
-        "leader_prep_share_decode_failure",
-        "helper_prep_share_decode_failure",
-        "continue_mismatch",
-        "accumulate_failure",
-        "finish_mismatch",
-        "helper_step_failure",
-        "plaintext_input_share_decode_failure",
-        "duplicate_extension",
-        "missing_client_report",
-        "missing_prepare_message",
-        "missing_or_malformed_taskprov_extension",
-        "unexpected_taskprov_extension",
-    ] {
-        aggregate_step_failure_counter.add(0, &[KeyValue::new("type", failure_type)]);
-    }
-
-    aggregate_step_failure_counter
-}
-
 /// Aggregator implements a DAP aggregator.
 pub struct Aggregator<C: Clock> {
     /// Datastore used for durable storage.
@@ -176,23 +134,38 @@ pub struct Aggregator<C: Clock> {
     report_writer: Arc<ReportWriteBatcher<C>>,
     /// Cache of task aggregators.
     task_aggregators: Mutex<HashMap<TaskId, Arc<TaskAggregator<C>>>>,
-
-    // Metrics.
-    /// Counter tracking the number of failed decryptions while handling the
-    /// `tasks/{task-id}/reports` endpoint.
-    upload_decrypt_failure_counter: Counter<u64>,
-    /// Counter tracking the number of failed message decodes while handling the
-    /// `tasks/{task-id}/reports` endpoint.
-    upload_decode_failure_counter: Counter<u64>,
-    /// Counters tracking the number of failures to step client reports through the aggregation
-    /// process.
-    aggregate_step_failure_counter: Counter<u64>,
+    /// Metrics.
+    metrics: AggregatorMetrics,
 
     /// Cache of global HPKE keypairs and configs.
     global_hpke_keypairs: GlobalHpkeKeypairCache,
 
     /// Cache of taskprov peer aggregators.
     peer_aggregators: PeerAggregatorCache,
+}
+
+#[derive(Clone)]
+struct AggregatorMetrics {
+    /// Counter tracking the number of failed decryptions while handling the
+    /// `tasks/{task-id}/reports` endpoint.
+    upload_decrypt_failure_counter: Counter<u64>,
+    /// Counter tracking the number of failed message decodes while handling the
+    /// `tasks/{task-id}/reports` endpoint.
+    upload_decode_failure_counter: Counter<u64>,
+    /// Counter tracking the number of successfully-aggregated reports.
+    report_aggregation_success_counter: Counter<u64>,
+    /// Counters tracking the number of failures to step client reports through the aggregation
+    /// process.
+    aggregate_step_failure_counter: Counter<u64>,
+}
+
+impl AggregatorMetrics {
+    fn for_aggregation_job_writer(&self) -> AggregationJobWriterMetrics {
+        AggregationJobWriterMetrics {
+            report_aggregation_success_counter: self.report_aggregation_success_counter.clone(),
+            aggregate_step_failure_counter: self.aggregate_step_failure_counter.clone(),
+        }
+    }
 }
 
 /// Config represents a configuration for an Aggregator.
@@ -275,8 +248,8 @@ impl<C: Clock> Aggregator<C> {
             .init();
         upload_decode_failure_counter.add(0, &[]);
 
+        let report_aggregation_success_counter = report_aggregation_success_counter(meter);
         let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
-        aggregate_step_failure_counter.add(0, &[]);
 
         let global_hpke_keypairs = GlobalHpkeKeypairCache::new(
             datastore.clone(),
@@ -292,9 +265,12 @@ impl<C: Clock> Aggregator<C> {
             cfg,
             report_writer,
             task_aggregators: Mutex::new(HashMap::new()),
-            upload_decrypt_failure_counter,
-            upload_decode_failure_counter,
-            aggregate_step_failure_counter,
+            metrics: AggregatorMetrics {
+                upload_decrypt_failure_counter,
+                upload_decode_failure_counter,
+                report_aggregation_success_counter,
+                aggregate_step_failure_counter,
+            },
             global_hpke_keypairs,
             peer_aggregators,
         })
@@ -387,8 +363,7 @@ impl<C: Clock> Aggregator<C> {
             .handle_upload(
                 &self.clock,
                 &self.global_hpke_keypairs,
-                &self.upload_decrypt_failure_counter,
-                &self.upload_decode_failure_counter,
+                &self.metrics,
                 report,
             )
             .await
@@ -452,7 +427,7 @@ impl<C: Clock> Aggregator<C> {
                 &self.datastore,
                 &self.clock,
                 &self.global_hpke_keypairs,
-                &self.aggregate_step_failure_counter,
+                &self.metrics,
                 self.cfg.batch_aggregation_shard_count,
                 aggregation_job_id,
                 taskprov_task_config.is_some(),
@@ -499,7 +474,7 @@ impl<C: Clock> Aggregator<C> {
         task_aggregator
             .handle_aggregate_continue(
                 &self.datastore,
-                &self.aggregate_step_failure_counter,
+                &self.metrics,
                 self.cfg.batch_aggregation_shard_count,
                 aggregation_job_id,
                 req,
@@ -1019,16 +994,14 @@ impl<C: Clock> TaskAggregator<C> {
         &self,
         clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
-        upload_decrypt_failure_counter: &Counter<u64>,
-        upload_decode_failure_counter: &Counter<u64>,
+        metrics: &AggregatorMetrics,
         report: Report,
     ) -> Result<(), Arc<Error>> {
         self.vdaf_ops
             .handle_upload(
                 clock,
                 global_hpke_keypairs,
-                upload_decrypt_failure_counter,
-                upload_decode_failure_counter,
+                metrics,
                 &self.task,
                 &self.report_writer,
                 report,
@@ -1041,7 +1014,7 @@ impl<C: Clock> TaskAggregator<C> {
         datastore: &Datastore<C>,
         clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
-        aggregate_step_failure_counter: &Counter<u64>,
+        metrics: &AggregatorMetrics,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         require_taskprov_extension: bool,
@@ -1052,7 +1025,7 @@ impl<C: Clock> TaskAggregator<C> {
                 datastore,
                 clock,
                 global_hpke_keypairs,
-                aggregate_step_failure_counter,
+                metrics,
                 Arc::clone(&self.task),
                 batch_aggregation_shard_count,
                 aggregation_job_id,
@@ -1065,7 +1038,7 @@ impl<C: Clock> TaskAggregator<C> {
     async fn handle_aggregate_continue(
         &self,
         datastore: &Datastore<C>,
-        aggregate_step_failure_counter: &Counter<u64>,
+        metrics: &AggregatorMetrics,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         req: AggregationJobContinueReq,
@@ -1074,7 +1047,7 @@ impl<C: Clock> TaskAggregator<C> {
         self.vdaf_ops
             .handle_aggregate_continue(
                 datastore,
-                aggregate_step_failure_counter,
+                metrics,
                 Arc::clone(&self.task),
                 batch_aggregation_shard_count,
                 aggregation_job_id,
@@ -1360,8 +1333,7 @@ impl VdafOps {
         &self,
         clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
-        upload_decrypt_failure_counter: &Counter<u64>,
-        upload_decode_failure_counter: &Counter<u64>,
+        metrics: &AggregatorMetrics,
         task: &AggregatorTask,
         report_writer: &ReportWriteBatcher<C>,
         report: Report,
@@ -1373,8 +1345,7 @@ impl VdafOps {
                         Arc::clone(vdaf),
                         clock,
                         global_hpke_keypairs,
-                        upload_decrypt_failure_counter,
-                        upload_decode_failure_counter,
+                        metrics,
                         task,
                         report_writer,
                         report,
@@ -1388,8 +1359,7 @@ impl VdafOps {
                         Arc::clone(vdaf),
                         clock,
                         global_hpke_keypairs,
-                        upload_decrypt_failure_counter,
-                        upload_decode_failure_counter,
+                        metrics,
                         task,
                         report_writer,
                         report,
@@ -1404,7 +1374,7 @@ impl VdafOps {
     ///
     /// [1]: https://www.ietf.org/archive/id/draft-ietf-ppm-dap-07.html#name-helper-initialization
     #[tracing::instrument(
-        skip(self, datastore, global_hpke_keypairs, aggregate_step_failure_counter, task, req_bytes),
+        skip(self, datastore, global_hpke_keypairs, metrics, task, req_bytes),
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
@@ -1413,7 +1383,7 @@ impl VdafOps {
         datastore: &Datastore<C>,
         clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
-        aggregate_step_failure_counter: &Counter<u64>,
+        metrics: &AggregatorMetrics,
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
@@ -1428,7 +1398,7 @@ impl VdafOps {
                         clock,
                         global_hpke_keypairs,
                         Arc::clone(vdaf),
-                        aggregate_step_failure_counter,
+                        metrics,
                         task,
                         batch_aggregation_shard_count,
                         aggregation_job_id,
@@ -1446,7 +1416,7 @@ impl VdafOps {
                         clock,
                         global_hpke_keypairs,
                         Arc::clone(vdaf),
-                        aggregate_step_failure_counter,
+                        metrics,
                         task,
                         batch_aggregation_shard_count,
                         aggregation_job_id,
@@ -1461,14 +1431,14 @@ impl VdafOps {
     }
 
     #[tracing::instrument(
-        skip(self, datastore, aggregate_step_failure_counter, task, req, request_hash),
+        skip(self, datastore, metrics, task, req, request_hash),
         fields(task_id = ?task.id()),
         err(level = Level::DEBUG)
     )]
     async fn handle_aggregate_continue<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        aggregate_step_failure_counter: &Counter<u64>,
+        metrics: &AggregatorMetrics,
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
@@ -1481,7 +1451,7 @@ impl VdafOps {
                     Self::handle_aggregate_continue_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
                         datastore,
                         Arc::clone(vdaf),
-                        aggregate_step_failure_counter,
+                        metrics,
                         task,
                         batch_aggregation_shard_count,
                         aggregation_job_id,
@@ -1496,7 +1466,7 @@ impl VdafOps {
                     Self::handle_aggregate_continue_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
                         datastore,
                         Arc::clone(vdaf),
-                        aggregate_step_failure_counter,
+                        metrics,
                         task,
                         batch_aggregation_shard_count,
                         aggregation_job_id,
@@ -1542,8 +1512,7 @@ impl VdafOps {
         vdaf: Arc<A>,
         clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
-        upload_decrypt_failure_counter: &Counter<u64>,
-        upload_decode_failure_counter: &Counter<u64>,
+        metrics: &AggregatorMetrics,
         task: &AggregatorTask,
         report_writer: &ReportWriteBatcher<C>,
         report: Report,
@@ -1615,7 +1584,7 @@ impl VdafOps {
                         ?err,
                         "public share decoding failed",
                     );
-                    upload_decode_failure_counter.add(1, &[]);
+                    metrics.upload_decode_failure_counter.add(1, &[]);
                     return Err(reject_report(ReportRejectionReason::DecodeFailure).await?);
                 }
             };
@@ -1673,7 +1642,7 @@ impl VdafOps {
                     ?error,
                     "Report decryption failed",
                 );
-                upload_decrypt_failure_counter.add(1, &[]);
+                metrics.upload_decrypt_failure_counter.add(1, &[]);
                 return Err(reject_report(ReportRejectionReason::DecryptFailure).await?);
             }
         };
@@ -1700,7 +1669,7 @@ impl VdafOps {
                     ?err,
                     "Leader input share decoding failed",
                 );
-                upload_decode_failure_counter.add(1, &[]);
+                metrics.upload_decode_failure_counter.add(1, &[]);
                 return Err(reject_report(ReportRejectionReason::DecodeFailure).await?);
             }
         };
@@ -1742,7 +1711,7 @@ impl VdafOps {
         clock: &C,
         global_hpke_keypairs: &GlobalHpkeKeypairCache,
         vdaf: Arc<A>,
-        aggregate_step_failure_counter: &Counter<u64>,
+        metrics: &AggregatorMetrics,
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
@@ -1825,7 +1794,8 @@ impl VdafOps {
                     config_id = %prepare_init.report_share().encrypted_input_share().config_id(),
                     "Helper encrypted input share references unknown HPKE config ID"
                 );
-                aggregate_step_failure_counter
+                metrics
+                    .aggregate_step_failure_counter
                     .add(1, &[KeyValue::new("type", "unknown_hpke_config_id")]);
                 Err(PrepareError::HpkeUnknownConfigId)
             } else {
@@ -1853,7 +1823,8 @@ impl VdafOps {
                         ?error,
                         "Couldn't decrypt helper's report share"
                     );
-                    aggregate_step_failure_counter
+                    metrics
+                        .aggregate_step_failure_counter
                         .add(1, &[KeyValue::new("type", "decrypt_failure")]);
                     PrepareError::HpkeDecryptError
                 })
@@ -1867,7 +1838,7 @@ impl VdafOps {
                             metadata = ?prepare_init.report_share().metadata(),
                             ?error, "Couldn't decode helper's plaintext input share",
                         );
-                        aggregate_step_failure_counter.add(
+                        metrics.aggregate_step_failure_counter.add(
                             1,
                             &[KeyValue::new(
                                 "type",
@@ -1889,7 +1860,7 @@ impl VdafOps {
                         metadata = ?prepare_init.report_share().metadata(),
                         "Received report share with duplicate extensions",
                     );
-                    aggregate_step_failure_counter
+                    metrics.aggregate_step_failure_counter
                         .add(1, &[KeyValue::new("type", "duplicate_extension")]);
                     return Err(PrepareError::InvalidMessage);
                 }
@@ -1901,7 +1872,7 @@ impl VdafOps {
                             metadata = ?prepare_init.report_share().metadata(),
                             "Taskprov task received report with missing or malformed taskprov extension",
                         );
-                        aggregate_step_failure_counter
+                        metrics.aggregate_step_failure_counter
                             .add(1, &[KeyValue::new("type", "missing_or_malformed_taskprov_extension")]);
                         return Err(PrepareError::InvalidMessage);
                     }
@@ -1912,7 +1883,7 @@ impl VdafOps {
                         metadata = ?prepare_init.report_share().metadata(),
                         "Non-taskprov task received report with unexpected taskprov extension",
                     );
-                    aggregate_step_failure_counter
+                    metrics.aggregate_step_failure_counter
                         .add(1, &[KeyValue::new("type", "unexpected_taskprov_extension")]);
                     return Err(PrepareError::InvalidMessage);
                 }
@@ -1931,7 +1902,8 @@ impl VdafOps {
                         metadata = ?prepare_init.report_share().metadata(),
                         ?error, "Couldn't decode helper's input share",
                     );
-                    aggregate_step_failure_counter
+                    metrics
+                        .aggregate_step_failure_counter
                         .add(1, &[KeyValue::new("type", "input_share_decode_failure")]);
                     PrepareError::InvalidMessage
                 })
@@ -1947,7 +1919,8 @@ impl VdafOps {
                     metadata = ?prepare_init.report_share().metadata(),
                     ?error, "Couldn't decode public share",
                 );
-                aggregate_step_failure_counter
+                metrics
+                    .aggregate_step_failure_counter
                     .add(1, &[KeyValue::new("type", "public_share_decode_failure")]);
                 PrepareError::InvalidMessage
             });
@@ -1988,7 +1961,7 @@ impl VdafOps {
                             Role::Helper,
                             prepare_init.report_share().metadata().id(),
                             error,
-                            aggregate_step_failure_counter,
+                            &metrics.aggregate_step_failure_counter,
                         )
                     })
                 })
@@ -2079,7 +2052,7 @@ impl VdafOps {
             .run_tx("aggregate_init", |tx| {
                 let vdaf = vdaf.clone();
                 let task = Arc::clone(&task);
-                let aggregate_step_failure_counter = aggregate_step_failure_counter.clone();
+                let aggregation_job_writer_metrics = metrics.for_aggregation_job_writer();
                 let aggregation_job = Arc::clone(&aggregation_job);
                 let mut report_share_data = report_share_data.clone();
 
@@ -2168,7 +2141,7 @@ impl VdafOps {
                         AggregationJobWriter::<SEED_SIZE, _, _, InitialWrite, _>::new(
                             task,
                             batch_aggregation_shard_count,
-                            Some(aggregate_step_failure_counter),
+                            Some(aggregation_job_writer_metrics),
                         );
                     aggregation_job_writer.put(
                         aggregation_job.as_ref().clone(),
@@ -2196,7 +2169,7 @@ impl VdafOps {
     >(
         datastore: &Datastore<C>,
         vdaf: Arc<A>,
-        aggregate_step_failure_counter: &Counter<u64>,
+        metrics: &AggregatorMetrics,
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
@@ -2225,13 +2198,11 @@ impl VdafOps {
         // TODO(#1035): don't do O(n) network round-trips (where n is the number of prepare steps)
         Ok(datastore
             .run_tx("aggregate_continue", |tx| {
-                let (vdaf, aggregate_step_failure_counter, task, aggregation_job_id, req) = (
-                    Arc::clone(&vdaf),
-                    aggregate_step_failure_counter.clone(),
-                    Arc::clone(&task),
-                    *aggregation_job_id,
-                    Arc::clone(&req),
-                );
+                let vdaf = Arc::clone(&vdaf);
+                let metrics = metrics.clone();
+                let task = Arc::clone(&task);
+                let aggregation_job_id = *aggregation_job_id;
+                let req = Arc::clone(&req);
 
                 Box::pin(async move {
                     // Read existing state.
@@ -2319,7 +2290,7 @@ impl VdafOps {
                         report_aggregations,
                         req,
                         request_hash,
-                        aggregate_step_failure_counter,
+                        &metrics,
                     )
                     .await
                 })

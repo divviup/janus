@@ -2,6 +2,10 @@
 
 #[cfg(any(not(feature = "prometheus"), not(feature = "otlp")))]
 use anyhow::anyhow;
+use opentelemetry::{
+    metrics::{Counter, Meter, Unit},
+    KeyValue,
+};
 use serde::{Deserialize, Serialize};
 use std::net::AddrParseError;
 
@@ -34,7 +38,7 @@ use {
 use {
     crate::git_revision,
     janus_aggregator_core::datastore::TRANSACTION_RETRIES_METER_NAME,
-    opentelemetry::{metrics::MetricsError, KeyValue},
+    opentelemetry::metrics::MetricsError,
     opentelemetry_sdk::{
         metrics::{
             new_view, Aggregation, Instrument, InstrumentKind, SdkMeterProvider, Stream, View,
@@ -294,4 +298,57 @@ fn resource() -> Resource {
     ]);
 
     version_info_resource.merge(&default_resource)
+}
+
+pub(crate) fn report_aggregation_success_counter(meter: &Meter) -> Counter<u64> {
+    let report_aggregation_success_counter = meter
+        .u64_counter("janus_report_aggregation_success_counter")
+        .with_description("Number of successfully-aggregated report shares")
+        .with_unit(Unit::new("{report}"))
+        .init();
+    report_aggregation_success_counter.add(0, &[]);
+    report_aggregation_success_counter
+}
+
+pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
+    let aggregate_step_failure_counter = meter
+        .u64_counter("janus_step_failures")
+        .with_description(concat!(
+            "Failures while stepping aggregation jobs; these failures are ",
+            "related to individual client reports rather than entire aggregation jobs."
+        ))
+        .with_unit(Unit::new("{error}"))
+        .init();
+
+    // Initialize counters with desired status labels. This causes Prometheus to see the first
+    // non-zero value we record.
+    for failure_type in [
+        "missing_prepare_message",
+        "missing_leader_input_share",
+        "missing_helper_input_share",
+        "prepare_init_failure",
+        "prepare_step_failure",
+        "prepare_message_failure",
+        "unknown_hpke_config_id",
+        "decrypt_failure",
+        "input_share_decode_failure",
+        "public_share_decode_failure",
+        "prepare_message_decode_failure",
+        "leader_prep_share_decode_failure",
+        "helper_prep_share_decode_failure",
+        "continue_mismatch",
+        "accumulate_failure",
+        "finish_mismatch",
+        "helper_step_failure",
+        "plaintext_input_share_decode_failure",
+        "duplicate_extension",
+        "missing_client_report",
+        "missing_prepare_message",
+        "missing_or_malformed_taskprov_extension",
+        "unexpected_taskprov_extension",
+    ] {
+        aggregate_step_failure_counter.add(0, &[KeyValue::new("type", failure_type)]);
+    }
+
+    aggregate_step_failure_counter
 }
