@@ -46,8 +46,8 @@ hpke-dispatch = { workspace = true, features = ["serde"] }
 http.workspace = true
 http-api-problem.workspace = true
 janus_messages.workspace = true
-kube = { workspace = true, optional = true, features = ["rustls-tls"] }
 k8s-openapi = { workspace = true, optional = true }
+kube = { workspace = true, optional = true, features = ["rustls-tls"] }
 prio = { workspace = true, default-features = true, features = ["multithreaded", "experimental"] }
 rand.workspace = true
 regex = { workspace = true }
