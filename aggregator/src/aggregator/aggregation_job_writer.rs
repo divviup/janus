@@ -42,9 +42,16 @@ where
     aggregation_parameter: Option<A::AggregationParam>,
     aggregation_jobs: HashMap<AggregationJobId, AggregationJobInfo<SEED_SIZE, Q, A, RA>>,
     by_batch_identifier_index: HashMap<Q::BatchIdentifier, HashMap<AggregationJobId, Vec<usize>>>,
-    failure_counter: Option<Counter<u64>>,
+    metrics: Option<AggregationJobWriterMetrics>,
 
     _phantom_wt: PhantomData<WT>,
+}
+
+/// Metrics for the aggregation job writer.
+#[derive(Clone)]
+pub struct AggregationJobWriterMetrics {
+    pub report_aggregation_success_counter: Counter<u64>,
+    pub aggregate_step_failure_counter: Counter<u64>,
 }
 
 #[allow(private_bounds)]
@@ -60,7 +67,7 @@ where
     pub fn new(
         task: Arc<AggregatorTask>,
         batch_aggregation_shard_count: u64,
-        failure_counter: Option<Counter<u64>>,
+        metrics: Option<AggregationJobWriterMetrics>,
     ) -> Self {
         Self {
             task,
@@ -68,7 +75,7 @@ where
             aggregation_parameter: None,
             aggregation_jobs: HashMap::new(),
             by_batch_identifier_index: HashMap::new(),
-            failure_counter,
+            metrics,
 
             _phantom_wt: PhantomData,
         }
@@ -242,6 +249,12 @@ where
                 )
             })
             .collect())
+    }
+
+    fn update_metrics<F: FnOnce(&AggregationJobWriterMetrics)>(&self, f: F) {
+        if let Some(metrics) = self.metrics.as_ref() {
+            f(metrics)
+        }
     }
 }
 
@@ -657,14 +670,18 @@ where
 
                     match ra_batch_aggregation.merged_with(batch_aggregation) {
                         Ok(merged_batch_aggregation) => {
+                            self.writer.update_metrics(|metrics| {
+                                metrics.report_aggregation_success_counter.add(1, &[])
+                            });
                             *batch_aggregation = merged_batch_aggregation
                         }
                         Err(err) => {
                             warn!(report_id = %report_aggregation.report_id(), ?err, "Couldn't update batch aggregation");
-                            if let Some(failure_counter) = self.writer.failure_counter.as_ref() {
-                                failure_counter
-                                    .add(1, &[KeyValue::new("type", "accumulate_failure")]);
-                            }
+                            self.writer.update_metrics(|metrics| {
+                                metrics
+                                    .aggregate_step_failure_counter
+                                    .add(1, &[KeyValue::new("type", "accumulate_failure")])
+                            });
                             *report_aggregation.to_mut() = report_aggregation
                                 .as_ref()
                                 .clone()

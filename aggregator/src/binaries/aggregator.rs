@@ -4,13 +4,18 @@ use crate::{
     cache::GlobalHpkeKeypairCache,
     config::{BinaryConfig, CommonConfig, TaskprovConfig},
 };
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use derivative::Derivative;
 use janus_aggregator_api::{self, aggregator_api_handler};
 use janus_aggregator_core::datastore::Datastore;
 use janus_core::{auth_tokens::AuthenticationToken, time::RealClock, TokioRuntime};
 use opentelemetry::metrics::Meter;
+use ring::{
+    rand::SystemRandom,
+    signature::{EcdsaKeyPair, ECDSA_P256_SHA256_ASN1_SIGNING},
+};
+use sec1::EcPrivateKey;
 use serde::{de, Deserialize, Deserializer, Serialize};
 use std::{
     future::{ready, Future},
@@ -65,7 +70,7 @@ async fn run_aggregator(
             clock,
             TokioRuntime,
             &meter,
-            config.aggregator_config(),
+            config.aggregator_config(&options)?,
         )
         .await?,
         None,
@@ -187,7 +192,7 @@ fn build_aggregator_api_handler<'a>(
     )))
 }
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Default, Parser)]
 #[clap(
     name = "janus-aggregator",
     about = "DAP aggregator server",
@@ -209,6 +214,13 @@ pub struct Options {
         use_value_delimiter = true,
     )]
     pub aggregator_api_auth_tokens: Vec<String>,
+
+    /// The private key used to sign HPKE configs, as the PEM encoding of a DER-encoded RFC5915
+    /// ECPrivateKey.
+    ///
+    /// Only P-256 keys are supported.
+    #[clap(long, env = "HPKE_CONFIG_SIGNING_KEY", hide_env_values = true)]
+    pub hpke_config_signing_key: Option<String>,
 }
 
 impl BinaryOptions for Options {
@@ -421,8 +433,8 @@ impl Config {
             .collect()
     }
 
-    fn aggregator_config(&self) -> aggregator::Config {
-        aggregator::Config {
+    fn aggregator_config(&self, options: &Options) -> Result<aggregator::Config> {
+        Ok(aggregator::Config {
             max_upload_batch_size: self.max_upload_batch_size,
             max_upload_batch_write_delay: Duration::from_millis(
                 self.max_upload_batch_write_delay_ms,
@@ -434,7 +446,12 @@ impl Config {
                 Some(duration) => Duration::from_millis(duration),
                 None => GlobalHpkeKeypairCache::DEFAULT_REFRESH_INTERVAL,
             },
-        }
+            hpke_config_signing_key: options
+                .hpke_config_signing_key
+                .as_deref()
+                .map(parse_pem_ec_private_key)
+                .transpose()?,
+        })
     }
 }
 
@@ -448,11 +465,31 @@ impl BinaryConfig for Config {
     }
 }
 
+/// Parses a PEM-encoding of a DER-encoding of an RFC5915 ECPrivateKey representing a P-256 key. The
+/// parsed key will be returned as an ECDSA_P256_SHA256_ASN1_SIGNING key.
+pub(crate) fn parse_pem_ec_private_key(ec_private_key_pem: &str) -> Result<EcdsaKeyPair> {
+    let pem = pem::parse(ec_private_key_pem)?;
+    let ec_private_key = EcPrivateKey::try_from(pem.contents())
+        .map_err(|err| anyhow!("couldn't parse EcPrivateKey: {:?}", err))?;
+    EcdsaKeyPair::from_private_key_and_public_key(
+        &ECDSA_P256_SHA256_ASN1_SIGNING,
+        ec_private_key.private_key,
+        ec_private_key
+            .public_key
+            .ok_or_else(|| anyhow!("EcPrivateKey missing public key component"))?,
+        &SystemRandom::new(),
+    )
+    .map_err(|err| anyhow!("couldn't create EcdsaKeyPair: {:?}", err))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{AggregatorApi, Config, GarbageCollectorConfig, HeaderEntry, Options};
     use crate::{
-        aggregator,
+        aggregator::{
+            self,
+            test_util::{hpke_config_signing_key, HPKE_CONFIG_SIGNING_KEY_PEM},
+        },
         config::{
             default_max_transaction_retries,
             test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
@@ -466,6 +503,11 @@ mod tests {
     use assert_matches::assert_matches;
     use clap::CommandFactory;
     use janus_core::test_util::roundtrip_encoding;
+    use rand::random;
+    use ring::{
+        rand::SystemRandom,
+        signature::{KeyPair, UnparsedPublicKey, ECDSA_P256_SHA256_ASN1},
+    };
     use std::{
         net::{IpAddr, Ipv4Addr, SocketAddr},
         time::Duration,
@@ -516,7 +558,7 @@ mod tests {
             batch_aggregation_shard_count: 32,
             task_counter_shard_count: 64,
             taskprov_config: TaskprovConfig::default(),
-            global_hpke_configs_refresh_interval: None,
+            global_hpke_configs_refresh_interval: Some(42),
         })
     }
 
@@ -624,6 +666,43 @@ mod tests {
             TaskprovConfig {
                 enabled: true,
                 ignore_unknown_differential_privacy_mechanism: false
+            },
+        );
+    }
+
+    #[test]
+    fn config_hpke_signing_key() {
+        let options = Options {
+            hpke_config_signing_key: Some(HPKE_CONFIG_SIGNING_KEY_PEM.into()),
+            ..Default::default()
+        };
+
+        assert_aggregator_configs_match(
+            &serde_yaml::from_str::<Config>(
+                r#"---
+    listen_address: "0.0.0.0:8080"
+    health_check_listen_address: "0.0.0.0:8080"
+    database:
+        url: "postgres://postgres:postgres@localhost:5432/postgres"
+        connection_pool_timeouts_secs: 60
+    logging_config:
+        tokio_console_config:
+            enabled: true
+            listen_address: 127.0.0.1:6669
+    max_upload_batch_size: 100
+    max_upload_batch_write_delay_ms: 250
+    batch_aggregation_shard_count: 32"#,
+            )
+            .unwrap()
+            .aggregator_config(&options)
+            .unwrap(),
+            &aggregator::Config {
+                max_upload_batch_size: 100,
+                max_upload_batch_write_delay: Duration::from_millis(250),
+                batch_aggregation_shard_count: 32,
+                taskprov_config: TaskprovConfig::default(),
+                hpke_config_signing_key: Some(hpke_config_signing_key()),
+                ..Default::default()
             },
         );
     }
@@ -758,8 +837,8 @@ mod tests {
             },
         );
 
-        assert_eq!(
-            serde_yaml::from_str::<Config>(
+        assert_aggregator_configs_match(
+            &serde_yaml::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
     health_check_listen_address: "0.0.0.0:8080"
@@ -773,17 +852,18 @@ mod tests {
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
     batch_aggregation_shard_count: 32
-    "#
+    "#,
             )
             .unwrap()
-            .aggregator_config(),
-            aggregator::Config {
+            .aggregator_config(&Options::default())
+            .unwrap(),
+            &aggregator::Config {
                 max_upload_batch_size: 100,
                 max_upload_batch_write_delay: Duration::from_millis(250),
                 batch_aggregation_shard_count: 32,
                 taskprov_config: TaskprovConfig::default(),
                 ..Default::default()
-            }
+            },
         );
 
         assert_eq!(
@@ -906,5 +986,49 @@ mod tests {
             "../../../docs/samples/advanced_config/aggregator.yaml"
         ))
         .unwrap();
+    }
+
+    // This function checks that two aggregator configs are equivalent. We can't use PartialEq/Eq
+    // because this is not supported by the EcdsaKeyPair type used for the HPKE config signing key;
+    // this type does not expose any functionality that can be used to determine key-equivalence.
+    fn assert_aggregator_configs_match(left: &aggregator::Config, right: &aggregator::Config) {
+        assert_eq!(left.max_upload_batch_size, right.max_upload_batch_size);
+        assert_eq!(
+            left.max_upload_batch_write_delay,
+            right.max_upload_batch_write_delay
+        );
+        assert_eq!(
+            left.batch_aggregation_shard_count,
+            right.batch_aggregation_shard_count
+        );
+        assert_eq!(
+            left.task_counter_shard_count,
+            right.task_counter_shard_count
+        );
+        assert_eq!(
+            left.global_hpke_configs_refresh_interval,
+            right.global_hpke_configs_refresh_interval
+        );
+        assert_eq!(left.taskprov_config, right.taskprov_config);
+
+        if let Some(left_hpke_config_signing_key) = left.hpke_config_signing_key.as_ref() {
+            let right_hpke_config_signing_key = right.hpke_config_signing_key.as_ref().unwrap();
+
+            // EcdsaKeyPair does not provide any equality/equivalence-checking functionality. To
+            // determine if the keypairs are the same, sign with one keypair and verify with the
+            // other.
+            let data: [u8; 32] = random();
+            let signature = left_hpke_config_signing_key
+                .sign(&SystemRandom::new(), &data)
+                .unwrap();
+
+            let right_public_key = UnparsedPublicKey::new(
+                &ECDSA_P256_SHA256_ASN1,
+                right_hpke_config_signing_key.public_key().as_ref(),
+            );
+            right_public_key.verify(&data, signature.as_ref()).unwrap();
+        } else {
+            assert!(right.hpke_config_signing_key.is_none());
+        }
     }
 }

@@ -140,6 +140,7 @@ impl JanusInProcess {
             database: DbConfig {
                 url: database_url,
                 connection_pool_timeouts_secs: 60,
+                connection_pool_max_size: None,
                 check_schema_version: false,
                 tls_trust_store_path: None,
             },
@@ -151,6 +152,7 @@ impl JanusInProcess {
         let aggregator_options = AggregatorOptions {
             common: common_binary_options.clone(),
             aggregator_api_auth_tokens: Vec::new(),
+            hpke_config_signing_key: None,
         };
         let aggregator_config = AggregatorConfig {
             common_config: common_config.clone(),

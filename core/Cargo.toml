@@ -33,46 +33,46 @@ test-util = [
 
 [dependencies]
 anyhow.workspace = true
-assert_matches = { version = "1", optional = true }
-backoff = { version = "0.4.0", features = ["tokio"] }
+assert_matches = { workspace = true, optional = true }
+backoff = { workspace = true, features = ["tokio"] }
 base64.workspace = true
 bytes.workspace = true
 chrono = { workspace = true, features = ["clock"] }
 clap.workspace = true
 derivative.workspace = true
-fixed = { version = "1.26", optional = true }
-futures = "0.3.30"
-hex = "0.4"
-hpke-dispatch = { version = "0.5.1", features = ["serde"] }
+fixed = { workspace = true, optional = true }
+futures = { workspace = true }
+hex = { workspace = true }
+hpke-dispatch = { workspace = true, features = ["serde"] }
 http.workspace = true
 http-api-problem.workspace = true
 janus_messages.workspace = true
-kube = { workspace = true, optional = true, features = ["rustls-tls"] }
 k8s-openapi = { workspace = true, optional = true }
-prio.workspace = true
+kube = { workspace = true, optional = true, features = ["rustls-tls"] }
+prio = { workspace = true, default-features = true, features = ["multithreaded", "experimental"] }
 rand.workspace = true
-regex = "1.10.4"
+regex = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
-ring = "0.17.8"
+ring = { workspace = true }
 serde.workspace = true
 serde_json = { workspace = true, optional = true }
 serde_yaml.workspace = true
-stopper = { version = "0.2.7", optional = true }
-tempfile = { version = "3", optional = true }
+stopper = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
 testcontainers = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt"] }
-tokio-stream = { version = "0.1.15", features = ["net"], optional = true }
-tracing = "0.1.40"
-tracing-log = { version = "0.2.0", optional = true }
-tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"], optional = true }
+tokio-stream = { workspace = true, features = ["net"], optional = true }
+tracing = { workspace = true }
+tracing-log = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, features = ["std", "env-filter", "fmt"], optional = true }
 trillium.workspace = true
-url = "2.5.0"
+url = { workspace = true }
 
 [dev-dependencies]
-fixed = "1.26"
-hex = { version = "0.4", features = ["serde"] }  # ensure this remains compatible with the non-dev dependency
+fixed = { workspace = true }
+hex = { workspace = true, features = ["serde"] }  # ensure this remains compatible with the non-dev dependency
 janus_core = { path = ".", features = ["test-util"] }
-mockito = "1.4.0"
+mockito = { workspace = true }
 rstest.workspace = true
 serde_test.workspace = true

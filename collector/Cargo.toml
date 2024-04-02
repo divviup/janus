@@ -18,28 +18,28 @@ fpvec_bounded_l2 = ["dep:fixed", "janus_core/fpvec_bounded_l2", "prio/experiment
 test-util = []
 
 [dependencies]
-backoff = { version = "0.4.0", features = ["tokio"] }
+backoff = { workspace = true, features = ["tokio"] }
 chrono.workspace = true
 derivative.workspace = true
+fixed = { workspace = true, optional = true }
+hpke-dispatch = { workspace = true, features = ["serde"] }
 janus_core.workspace = true
 janus_messages.workspace = true
-fixed = { version = "1.26", optional = true }
 prio.workspace = true
 rand = { workspace = true, features = ["min_const_gen"] }
 reqwest = { workspace = true, features = ["json"] }
-retry-after = "0.4.0"
+retry-after = { workspace = true }
+serde = { workspace = true }
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-tracing = "0.1.40"
-url = "2.5.0"
-serde = { workspace = true }
-hpke-dispatch = { version = "0.5.1", features = ["serde"] }
-serde_json.workspace = true
+tracing = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
 assert_matches.workspace = true
 base64.workspace = true
-fixed-macro = "1.1.1"
+fixed-macro = { workspace = true }
 janus_collector = { path = ".", features = ["fpvec_bounded_l2", "test-util"] }
 janus_core = { workspace = true, features = ["fpvec_bounded_l2", "test-util"] }
-mockito = "1.4.0"
+mockito = { workspace = true }

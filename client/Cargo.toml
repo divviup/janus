@@ -10,7 +10,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-backoff = { version = "0.4.0", features = ["tokio"] }
+backoff = { workspace = true, features = ["tokio"] }
 derivative.workspace = true
 http.workspace = true
 itertools.workspace = true
@@ -21,13 +21,13 @@ rand.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 thiserror.workspace = true
 tokio.workspace = true
-tracing = "0.1.40"
-url = "2.5.0"
+tracing = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
 assert_matches.workspace = true
-hex-literal = "0.4.1"
-janus_core = { workspace = true, features = ["test-util"]}
-mockito = "1.4.0"
-tracing-log = "0.2.0"
-tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"] }
+hex-literal = { workspace = true }
+janus_core = { workspace = true, features = ["test-util"] }
+mockito = { workspace = true }
+tracing-log = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["std", "env-filter", "fmt"] }

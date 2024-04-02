@@ -115,6 +115,7 @@ pub struct Datastore<C: Clock> {
     transaction_retry_histogram: Histogram<u64>,
     rollback_error_counter: Counter<u64>,
     transaction_duration_histogram: Histogram<f64>,
+    transaction_pool_wait_histogram: Histogram<f64>,
     max_transaction_retries: u64,
 }
 
@@ -205,7 +206,18 @@ impl<C: Clock> Datastore<C> {
             .init();
         let transaction_duration_histogram = meter
             .f64_histogram(TRANSACTION_DURATION_METER_NAME)
-            .with_description("Duration of database transactions.")
+            .with_description(concat!(
+                "Duration of database transactions. This counts only the time spent between the ",
+                "BEGIN and COMMIT/ROLLBACK statements."
+            ))
+            .with_unit(Unit::new("s"))
+            .init();
+        let transaction_pool_wait_histogram = meter
+            .f64_histogram(TRANSACTION_POOL_WAIT_METER_NAME)
+            .with_description(concat!(
+                "Time spent waiting for a transaction to BEGIN, because it is waiting for a ",
+                "slot to become available in the connection pooler."
+            ))
             .with_unit(Unit::new("s"))
             .init();
 
@@ -218,6 +230,7 @@ impl<C: Clock> Datastore<C> {
             transaction_retry_histogram,
             rollback_error_counter,
             transaction_duration_histogram,
+            transaction_pool_wait_histogram,
             max_transaction_retries,
         }
     }
@@ -240,11 +253,7 @@ impl<C: Clock> Datastore<C> {
     {
         let mut retry_count = 0;
         loop {
-            let before = Instant::now();
             let (mut rslt, retry) = self.run_tx_once(name, &f).await;
-            let elapsed = before.elapsed();
-            self.transaction_duration_histogram
-                .record(elapsed.as_secs_f64(), &[KeyValue::new("tx", name)]);
             let retries_exceeded = retry_count + 1 > self.max_transaction_retries;
             let status = match (rslt.as_ref(), retry) {
                 (_, true) => {
@@ -292,11 +301,26 @@ impl<C: Clock> Datastore<C> {
         for<'a> F:
             Fn(&'a Transaction<C>) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
     {
-        // Open transaction.
-        let mut client = match self.pool.get().await {
+        // Acquire connection from the connection pooler.
+        let before = Instant::now();
+        let result = self.pool.get().await;
+        let elapsed = before.elapsed();
+        // We don't record the transaction name for this metric, since it's not particularly
+        // interesting. All transactions should get FIFO access to connections.
+        self.transaction_pool_wait_histogram.record(
+            elapsed.as_secs_f64(),
+            &[KeyValue::new(
+                "status",
+                if result.is_err() { "error" } else { "success" },
+            )],
+        );
+        let mut client = match result {
             Ok(client) => client,
             Err(err) => return (Err(err.into()), false),
         };
+
+        // Open transaction.
+        let before = Instant::now();
         let raw_tx = match client
             .build_transaction()
             .isolation_level(IsolationLevel::RepeatableRead)
@@ -348,6 +372,10 @@ impl<C: Clock> Datastore<C> {
                 rslt
             }
         };
+        let elapsed = before.elapsed();
+        self.transaction_duration_histogram
+            .record(elapsed.as_secs_f64(), &[KeyValue::new("tx", name)]);
+
         (rslt, retry.load(Ordering::Relaxed))
     }
 
@@ -405,6 +433,7 @@ pub const TRANSACTION_METER_NAME: &str = "janus_database_transactions";
 pub const TRANSACTION_ROLLBACK_METER_NAME: &str = "janus_database_rollback_errors";
 pub const TRANSACTION_RETRIES_METER_NAME: &str = "janus_database_transaction_retries";
 pub const TRANSACTION_DURATION_METER_NAME: &str = "janus_database_transaction_duration";
+pub const TRANSACTION_POOL_WAIT_METER_NAME: &str = "janus_database_pool_wait_duration";
 
 /// Transaction represents an ongoing datastore transaction.
 pub struct Transaction<'a, C: Clock> {
