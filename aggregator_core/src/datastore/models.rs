@@ -683,6 +683,9 @@ pub struct AcquiredCollectionJob {
     collection_job_id: CollectionJobId,
     query_type: task::QueryType,
     vdaf: VdafInstance,
+    time_precision: Duration,
+    encoded_batch_identifier: Vec<u8>,
+    encoded_aggregation_param: Vec<u8>,
 }
 
 impl AcquiredCollectionJob {
@@ -692,12 +695,18 @@ impl AcquiredCollectionJob {
         collection_job_id: CollectionJobId,
         query_type: task::QueryType,
         vdaf: VdafInstance,
+        time_precision: Duration,
+        encoded_batch_identifier: Vec<u8>,
+        encoded_aggregation_param: Vec<u8>,
     ) -> Self {
         Self {
             task_id,
             collection_job_id,
             query_type,
             vdaf,
+            time_precision,
+            encoded_batch_identifier,
+            encoded_aggregation_param,
         }
     }
 
@@ -719,6 +728,22 @@ impl AcquiredCollectionJob {
     /// Returns the VDAF associated with this acquired collection job.
     pub fn vdaf(&self) -> &VdafInstance {
         &self.vdaf
+    }
+
+    /// Returns the time precision of the task associated with this acquired collection job.
+    pub fn time_precision(&self) -> &Duration {
+        &self.time_precision
+    }
+
+    /// Returns the batch identifier associated with this acquired collection job, encoded to bytes.
+    pub fn encoded_batch_identifier(&self) -> &[u8] {
+        &self.encoded_batch_identifier
+    }
+
+    /// Returns the aggregation parameter associated with this acquired collection job, encoded to
+    /// bytes.
+    pub fn encoded_aggregation_param(&self) -> &[u8] {
+        &self.encoded_aggregation_param
     }
 }
 

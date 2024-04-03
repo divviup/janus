@@ -3444,7 +3444,7 @@ mod tests {
                             VERIFY_KEY_LENGTH,
                             Poplar1<XofTurboShake128, 16>,
                             _,
-                        >(tx, &task, &vdaf, &batch_id, &aggregation_param)
+                        >(tx, task.id(), task.time_precision(), &vdaf, &batch_id, &aggregation_param)
                         .await.unwrap());
                     Ok((
                         aggregation_job,

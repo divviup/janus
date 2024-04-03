@@ -3313,7 +3313,9 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .prepare_cached(
                 "WITH incomplete_jobs AS (
-                    SELECT collection_jobs.id, tasks.task_id, tasks.query_type, tasks.vdaf
+                    SELECT
+                        collection_jobs.id, collection_jobs.batch_identifier, tasks.task_id,
+                        tasks.query_type, tasks.vdaf, tasks.time_precision
                     FROM collection_jobs
                     JOIN tasks ON tasks.id = collection_jobs.task_id
                     WHERE tasks.aggregator_role = 'LEADER'
@@ -3341,9 +3343,11 @@ impl<C: Clock> Transaction<'_, C> {
                     updated_by = $3
                 FROM incomplete_jobs
                 WHERE collection_jobs.id = incomplete_jobs.id
-                RETURNING incomplete_jobs.task_id, incomplete_jobs.query_type, incomplete_jobs.vdaf,
-                          collection_jobs.collection_job_id, collection_jobs.lease_token,
-                          collection_jobs.lease_attempts",
+                RETURNING
+                    incomplete_jobs.task_id, incomplete_jobs.query_type, incomplete_jobs.vdaf,
+                    incomplete_jobs.time_precision, collection_jobs.collection_job_id,
+                    collection_jobs.batch_identifier, collection_jobs.aggregation_param,
+                    collection_jobs.lease_token, collection_jobs.lease_attempts",
             )
             .await?;
 
@@ -3365,10 +3369,22 @@ impl<C: Clock> Transaction<'_, C> {
                 row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
             let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
             let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
+            let time_precision =
+                Duration::from_seconds(row.get_bigint_and_convert("time_precision")?);
+            let encoded_batch_identifier = row.get("batch_identifier");
+            let encoded_aggregation_param = row.get("aggregation_param");
             let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
             let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
             Ok(Lease::new(
-                AcquiredCollectionJob::new(task_id, collection_job_id, query_type, vdaf),
+                AcquiredCollectionJob::new(
+                    task_id,
+                    collection_job_id,
+                    query_type,
+                    vdaf,
+                    time_precision,
+                    encoded_batch_identifier,
+                    encoded_aggregation_param,
+                ),
                 lease_expiry_time,
                 lease_token,
                 lease_attempts,
@@ -3673,6 +3689,74 @@ impl<C: Clock> Transaction<'_, C> {
             )
         })
         .collect()
+    }
+
+    /// Retrieves the number of aggregation jobs created & terminated for the given batch
+    /// identifier.
+    #[tracing::instrument(skip(self, aggregation_parameter), err(level = Level::DEBUG))]
+    pub async fn get_batch_aggregation_job_count_for_batch<
+        const SEED_SIZE: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<SEED_SIZE, 16>,
+    >(
+        &self,
+        vdaf: &A,
+        task_id: &TaskId,
+        batch_identifier: &Q::BatchIdentifier,
+        aggregation_parameter: &A::AggregationParam,
+    ) -> Result<(u64, u64), Error> {
+        let task_info = match self.task_info_for(task_id).await? {
+            Some(task_info) => task_info,
+            None => return Ok((0, 0)),
+        };
+
+        // non_gc_batches finds batches (by task ID, batch identifier, and aggregation param) which
+        // are _not_ garbage collected. This is used to evaluate whether given batch_aggregations
+        // rows are GC'ed.
+        let stmt = self
+            .prepare_cached(
+                "WITH non_gc_batches AS (
+                    SELECT batch_identifier, aggregation_param
+                    FROM batch_aggregations
+                    WHERE task_id = $1
+                      AND batch_identifier = $2
+                      AND aggregation_param = $3
+                    GROUP BY batch_identifier, aggregation_param
+                    HAVING MAX(UPPER(COALESCE(batch_interval, client_timestamp_interval))) >= $4
+                )
+                SELECT
+                    SUM(aggregation_jobs_created)::BIGINT AS created,
+                    SUM(aggregation_jobs_terminated)::BIGINT AS terminated
+                FROM batch_aggregations
+                WHERE task_id = $1
+                  AND batch_identifier = $2
+                  AND aggregation_param = $3
+                  AND EXISTS(SELECT 1 FROM non_gc_batches
+                             WHERE batch_identifier = $2
+                               AND aggregation_param = $3)",
+            )
+            .await?;
+
+        let row = self
+            .query_one(
+                &stmt,
+                &[
+                    /* task_id */ &task_info.pkey,
+                    /* batch_identifier */ &batch_identifier.get_encoded()?,
+                    /* aggregation_param */ &aggregation_parameter.get_encoded()?,
+                    /* threshold */
+                    &task_info.report_expiry_threshold(&self.clock.now().as_naive_date_time()?)?,
+                ],
+            )
+            .await?;
+
+        let aggregation_jobs_created = row.get_nullable_bigint_and_convert("created")?;
+        let aggregation_jobs_terminated = row.get_nullable_bigint_and_convert("terminated")?;
+
+        Ok((
+            aggregation_jobs_created.unwrap_or(0),
+            aggregation_jobs_terminated.unwrap_or(0),
+        ))
     }
 
     #[cfg(feature = "test-util")]
