@@ -5,6 +5,9 @@ targets = [
 ]
 all-features = true
 
+[advisories]
+version = 2
+
 [bans]
 multiple-versions = "allow"
 deny = [
